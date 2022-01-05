@@ -1,0 +1,2 @@
+include polytope_server/common/config/schema.yaml
+include polytope_server/frontend/static/openapi.yaml

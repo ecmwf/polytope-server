@@ -1,0 +1,1 @@
+Polytope has been developed at ECMWF as part of the EU projects LEXIS https://lexis-project.eu/web/ and HiDALGO https://hidalgo-project.eu/. The LEXIS and HiDALGO projects have received funding from the European Union’s Horizon 2020 research and innovation programme under grant agreements No. 825532 and No. 824115.

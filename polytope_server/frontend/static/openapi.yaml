@@ -1,0 +1,481 @@
+##
+## Copyright 2022 European Centre for Medium-Range Weather Forecasts (ECMWF)
+##
+## Licensed under the Apache License, Version 2.0 (the "License");
+## you may not use this file except in compliance with the License.
+## You may obtain a copy of the License at
+##
+##     http://www.apache.org/licenses/LICENSE-2.0
+##
+## Unless required by applicable law or agreed to in writing, software
+## distributed under the License is distributed on an "AS IS" BASIS,
+## WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+## See the License for the specific language governing permissions and
+## limitations under the License.
+##
+## In applying this licence, ECMWF does not waive the privileges and immunities
+## granted to it by virtue of its status as an intergovernmental organisation nor
+## does it submit to any jurisdiction.
+##
+
+components:
+  securitySchemes:
+    basicAuth:
+      scheme: basic
+      type: http
+    bearerAuth:
+      scheme: bearer
+      type: http
+    ecmwfKey:
+      description: Enter your ECMWF credentials as **EmailKey &lt;email&gt;&#58;&lt;apikey&gt;**
+      in: header
+      name: Authorization
+      type: apiKey
+definitions:
+  collections:
+    items:
+      enum:
+      - collection1
+      type: string
+    type: array
+  request:
+    properties:
+      collection:
+        example: collection1
+        type: string
+      content_length:
+        example: 0
+        type: string
+      id:
+        example: 1
+        type: string
+      log:
+        example: an error message
+        type: string
+      md5:
+        type: string
+      status:
+        example: queued
+        type: string
+      timestamp:
+        example: 123
+        type: string
+      url:
+        example: http://localhost:32003/123
+        type: string
+      user_request:
+        type: string
+      username:
+        example: admin
+        type: string
+      verb:
+        example: retrieve
+        type: string
+    type: object
+  response:
+    properties:
+      contentLength:
+        type: integer
+      contenttype:
+        type: string
+      location:
+        type: string
+      log:
+        type: string
+      status:
+        type: string
+      verb:
+        type: string
+    type: object
+  unauthenticated:
+    content:
+      application/json:
+        schema:
+          properties:
+            message:
+              example: Missing authorization token. Please authenticate
+              type: string
+          type: object
+    description: Missing authorization token or Key unrecognized. Please authenticate
+  unauthorized:
+    content:
+      application/json:
+        schema:
+          properties:
+            message:
+              example: Not authorized to access this resource
+              type: string
+          type: object
+    description: Not authorized to access this resource
+info:
+  description: REST API for ECMWF data retrieval
+  title: Polytope
+  version: null
+openapi: 3.0.2
+paths:
+  /api/v1/auth/keys:
+    post:
+      description: Post user details to receive a key
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties:
+                  expires:
+                    type: string
+                  key:
+                    type: string
+                type: object
+          description: Key with expiry date
+        '400':
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    example: Missing authorization header
+                    type: string
+                type: object
+          description: Missing authorization header
+        '401':
+          $ref: '#/definitions/unauthenticated'
+      security:
+      - basicAuth: []
+      summary: null
+  /api/v1/collections:
+    get:
+      description: Get collections
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    items:
+                      $ref: '#/definitions/collections'
+                    type: array
+                type: object
+          description: List of collections
+        '400':
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    example: No user information found for token
+                    type: string
+                type: object
+          description: No user information found for token
+        '401':
+          $ref: '#/definitions/unauthenticated'
+        '403':
+          $ref: '#/definitions/unauthorized'
+      summary: null
+  /api/v1/downloads/{request_id}:
+    get:
+      description: download data
+      parameters:
+      - description: The id of the request to download
+        in: path
+        name: request_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/x-grib:
+              schema:
+                format: binary
+                type: string
+          description: data
+        '400':
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    example: Request 123 not ready for download yet
+                    type: string
+                type: object
+          description: Request not ready for download yet
+        '401':
+          $ref: '#/definitions/unauthenticated'
+        '403':
+          $ref: '#/definitions/unauthorized'
+      summary: null
+  /api/v1/requests:
+    get:
+      description: Get user requests
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    items:
+                      $ref: '#/definitions/request'
+                    type: array
+                type: object
+          description: List of requests
+        '401':
+          $ref: '#/definitions/unauthenticated'
+        '403':
+          $ref: '#/definitions/unauthorized'
+      summary: null
+  /api/v1/requests/{collection_or_request_id}:
+    delete:
+      description: Get specific request or list of requests on collection
+      parameters:
+      - description: The id of the request to delete
+        in: path
+        name: collection_or_request_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    example: Successfully deleted request
+                    type: string
+                type: object
+          description: Delete specific request
+        '400':
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    example: No user information found for token
+                    type: string
+                type: object
+          description: No user information found for token
+        '401':
+          $ref: '#/definitions/unauthenticated'
+        '403':
+          $ref: '#/definitions/unauthorized'
+      summary: null
+    get:
+      description: Get specific request or list of requests on collection
+      parameters:
+      - description: The id of the request to retrieve
+        in: path
+        name: collection_or_request_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    items:
+                      $ref: '#/definitions/request'
+                    type: array
+                type: object
+            application/x-grib:
+              schema:
+                example: Binary ECMWF data
+                format: binary
+                type: string
+          description: List of collection requests OR data (click Media type for more
+            information)
+        '202':
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    example: Request queued
+                    type: string
+                  status:
+                    example: queued
+                    type: string
+                type: object
+          description: Specific request
+          headers:
+            content-length:
+              schema:
+                example: 10
+                type: string
+            content-type:
+              schema:
+                example: application/json
+                type: string
+            location:
+              schema:
+                example: http://127.0.0.1:32002/api/requests/123
+                type: string
+            retry-after:
+              schema:
+                example: 5
+                type: string
+        '303':
+          content:
+            application/json:
+              schema:
+                $ref: '#/definitions/response'
+          description: redirects
+          headers:
+            location:
+              description: URI where the client can refresh the expired token.
+              schema:
+                type: string
+        '400':
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    example: No user information found for token
+                    type: string
+                type: object
+          description: No user information found for token
+        '401':
+          $ref: '#/definitions/unauthenticated'
+        '403':
+          $ref: '#/definitions/unauthorized'
+      summary: null
+    post:
+      description: Get specific request or list of requests on collection
+      parameters:
+      - description: The collection to post the request to
+        in: path
+        name: collection_or_request_id
+        required: true
+        schema:
+          example: collection1
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                request:
+                  example:
+                    class: od
+                    date: '20200101'
+                    expver: '1'
+                    levelist: '500'
+                    levtype: pl
+                    param: t
+                    step: '0'
+                    stream: oper
+                    time: '00'
+                    type: fc
+                  type: string
+                verb:
+                  example: retrieve
+                  type: string
+              required:
+              - verb
+              - request
+              type: object
+      responses:
+        '202':
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    example: Request queued
+                    type: string
+                  status:
+                    example: queued
+                    type: string
+                type: object
+          description: Message and status of submitted request
+          headers:
+            content-length:
+              schema:
+                example: 10
+                type: string
+            content-type:
+              schema:
+                example: application/json
+                type: string
+            location:
+              schema:
+                example: http://127.0.0.1:32002/api/requests/123
+                type: string
+            retry-after:
+              schema:
+                example: 5
+                type: string
+        '400':
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    example: No user information found for token
+                    type: string
+                type: object
+          description: No user information found for token
+        '401':
+          $ref: '#/definitions/unauthenticated'
+        '403':
+          $ref: '#/definitions/unauthorized'
+      summary: null
+  /api/v1/test:
+    get:
+      description: Test if the server is alive
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    example: Polytope server is alive
+                    type: string
+                type: object
+          description: String saying server is alive
+      security:
+      - None
+      summary: null
+  /api/v1/user:
+    get:
+      description: Get user information
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                properties:
+                  live requests:
+                    example: 1
+                    type: string
+                type: object
+          description: User information
+        '400':
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    example: No user information found for token
+                    type: string
+                type: object
+          description: No user information found for token
+        '401':
+          $ref: '#/definitions/unauthenticated'
+        '403':
+          $ref: '#/definitions/unauthorized'
+      summary: null
+security:
+- bearerAuth: []
+- basicAuth: []
+- ecmwfKey: []
+tags:
+  description: REST API for ECMWF data retrieval
+  name: Polytope

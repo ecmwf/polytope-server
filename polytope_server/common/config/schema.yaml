@@ -1,0 +1,225 @@
+##
+## Copyright 2022 European Centre for Medium-Range Weather Forecasts (ECMWF)
+##
+## Licensed under the Apache License, Version 2.0 (the "License");
+## you may not use this file except in compliance with the License.
+## You may obtain a copy of the License at
+##
+##     http://www.apache.org/licenses/LICENSE-2.0
+##
+## Unless required by applicable law or agreed to in writing, software
+## distributed under the License is distributed on an "AS IS" BASIS,
+## WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+## See the License for the specific language governing permissions and
+## limitations under the License.
+##
+## In applying this licence, ECMWF does not waive the privileges and immunities
+## granted to it by virtue of its status as an intergovernmental organisation nor
+## does it submit to any jurisdiction.
+##
+
+
+type: map
+matching: "*"
+mapping:
+
+##########################################
+#            V E R S I O N 
+##########################################
+
+  version:
+    desc: version of the configuration
+    required: true
+    type: str
+    example: dev
+
+##########################################
+#           L O G G I N G 
+##########################################
+  
+  logging:
+    desc: type of logging to use
+    type: map
+    required: true
+    func: one_of
+    mapping:
+      stdio:
+        desc: log to stdout and stderr
+        type: any
+        func: empty
+
+##########################################
+#        A U T H E N T I C A T I O N 
+##########################################
+
+  authentication:
+    desc: type of authentication to use for REST API
+    type: map
+    required: true
+    func: one_of
+    mapping:
+
+      mongodb:
+        desc: use a mongodb to hold users & tokens
+        type: map
+        func: one_of
+        mapping:
+          manual:
+            desc: point to a hosted mongodb
+            type: map
+            mapping:
+              endpoint:
+                desc: host and port
+                example: localhost:27017
+                type: str
+                required: true
+          
+          auto:
+            desc: mongodb will be deployed as containers
+            type: map
+            mapping:
+              replicas:
+                desc: number of load-balanced entrypoints to create
+                type: int
+                example: "3"
+              persistent_storage:
+                desc: path to the database on a shared filesystem
+                example: /shared/fs/mongodb
+                type: str
+                required: true
+
+
+
+      no_auth:
+        type: any
+        func: empty
+
+
+
+##########################################
+#      R E Q U E S T   S T O R E 
+##########################################
+
+  request_store:
+    desc: type of request_store to use
+    type: map
+    required: true
+    func: one_of
+    mapping:
+
+      mongodb:
+        desc: use a mongodb to hold requests
+        type: map
+        func: one_of
+        mapping:
+          manual:
+            desc: point to a hosted mongodb
+            type: map
+            mapping:
+              endpoint:
+                desc: host and port
+                example: localhost:27017
+                type: str
+                required: true
+          
+          auto:
+            desc: mongodb will be deployed as containers
+            type: map
+            mapping:
+              replicas:
+                desc: number of load-balanced entrypoints to create
+                type: int
+                example: "3"
+              persistent_storage:
+                desc: path to the database on a shared filesystem
+                example: /shared/fs/mongo
+                type: str
+                required: true
+
+
+##########################################
+#      T E S T   R U N N E R
+##########################################
+
+  testrunner:
+    desc: deployment of testrunner
+    type: map
+    required: true
+    func: one_of
+    mapping:
+      local:
+        type: any
+        func: empty
+      auto:
+        desc: testrunner will be deployed as a containers
+        type: any
+        func: empty
+
+##########################################
+#               Q U E U E  
+##########################################
+  queue:
+    desc: type of queuing to use to dispatch requests to workers
+    type: map
+    required: true
+    func: one_of
+    mapping:
+
+      rabbitmq:
+        desc: use rabbitmq
+        type: map
+        func: one_of
+        mapping:
+          manual:
+            desc: point to a hosted rabbitmq
+            type: map
+            mapping:
+              endpoint:
+                desc: host and port
+                example: localhost:5672
+                type: str
+                required: true
+          auto:
+            desc: rabbitmq will be deployed as containers
+            type: map
+            mapping:
+              replicas:
+                desc: number of replicas to create
+                type: int
+                example: "3"
+              persistent_storage:
+                desc: path to a persistent cache for rabbitmq
+                example: /shared/fs/rabbitmq
+                type: str
+                required: true
+
+
+  broker:
+    type: any
+  staging:
+    type: any
+  worker:
+    type: any
+  frontend:
+    type: any
+
+  profiling:
+    type: any
+
+  telemetry:
+    type: any
+
+  build:
+    type: any
+  image_registry:
+    type: any
+  tag:
+    type: any
+
+##########################################
+#           T E S T I N G 
+#    allow anything with test_
+##########################################
+
+  regex;(test_.):
+    type: any

@@ -1,0 +1,21 @@
+name: Check
+
+on:
+
+  workflow_dispatch:
+
+  push:
+    branches: ['develop', 'release/*', 'hotfix/*']
+
+jobs:
+
+  quality:
+    name: Code QA
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - run: pip install black flake8 isort
+      - run: black --version
+      - run: isort --check .
+      - run: black --check .
+      - run: flake8 .

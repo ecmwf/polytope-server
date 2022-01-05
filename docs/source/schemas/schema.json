@@ -1,0 +1,1593 @@
+{
+  "type": "object",
+  "anyOf": [
+    { "$ref": "#/definitions/PolytopeConfig" }
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+
+  "definitions": {
+    "PolytopeConfig": {
+      "required": [
+        "frontend",
+        "telemetry",
+        "metric_store",
+        "request_store",
+        "caching",
+        "queue",
+        "worker",
+        "broker",
+        "staging",
+        "garbage-collector",
+        "authentication",
+        "datasources",
+        "collections"
+      ],
+      "preferredOrder": [
+        "frontend",
+        "telemetry",
+        "metric_store",
+        "request_store",
+        "caching",
+        "queue",
+        "worker",
+        "broker",
+        "testrunner",
+        "staging",
+        "garbage-collector",
+        "authentication",
+        "federation",
+        "identity",
+        "api-keys",
+        "admin",
+        "datasources",
+        "collections"
+      ],
+      "properties": {
+        "frontend": {
+          "$ref": "#/definitions/FrontendConfig",
+          "description": "describes the frontend microservices"
+        },
+        "telemetry": {
+          "$ref": "#/definitions/TelemetryConfig",
+          "description": "describes the telemetry microservice"
+        },
+        "metric_store": {
+          "$ref": "#/definitions/MetricStoreConfig",
+          "description": "describes the metric store microservice, used by telemetry"
+        },
+        "request_store": {
+          "$ref": "#/definitions/RequestStoreConfig",
+          "description": "describes the request store microservice"
+        },
+        "caching": {
+          "$ref": "#/definitions/CachingConfig",
+          "description": "describes the caching microservice"
+        },
+        "queue": {
+          "$ref": "#/definitions/QueueConfig",
+          "description": "describes the queue microservice"
+        },
+        "worker": {
+          "$ref": "#/definitions/WorkerConfig",
+          "description": "describes the worker microservices"
+        },
+        "broker": {
+          "$ref": "#/definitions/BrokerConfig",
+          "description": "describes the broker microservice"
+        },
+        "testrunner": {
+          "$ref": "#/definitions/TestRunnerConfig",
+          "description": "describes the testrunner microservice"
+        },
+        "staging": {
+          "$ref": "#/definitions/StagingConfig",
+          "description": "describes the data staging microservice"
+        },
+        "garbage-collector": {
+          "$ref": "#/definitions/GCConfig",
+          "description": "describes the garbage collector microservice"
+        },
+        "authentication": {
+          "$ref": "#/definitions/AuthenticationConfig",
+          "description": "describes the authentication mechanisms"
+        },
+        "federation": {
+          "$ref": "#/definitions/FederationConfig",
+          "description": "describes federated access from remote instances of polytope"
+        },
+        "identity": {
+          "$ref": "#/definitions/IdentityConfig",
+          "description": "describes the identity service for adding and removing users"
+        },
+        "api-keys": {
+          "$ref": "#/definitions/APIKeyConfig",
+          "description": "describes the mechanism for user-generated API keys and their subsequent authentication"
+        },
+        "admin": {
+          "$ref": "#/definitions/AdminConfig",
+          "description": "describes the authorization to access administrator API calls"
+        },
+        "datasources": {
+          "$ref": "#/definitions/DatasourcesConfig",
+          "description": "describes the datasources which Polytope should serve"
+        },
+        "collections": {
+          "$ref": "#/definitions/CollectionsConfig",
+          "description": "describes the collections which Polytope will expose"
+        }
+          
+      },
+      "type": "object",
+      "description": "holds the fields parsed from the Polytope configuration file."
+    },
+
+    "CollectionsConfig": {
+      "type" : "object",
+      "anyOf": [
+        { 
+          "properties" : {
+            "collection1": {
+              "$ref": "#/definitions/CollectionsConfig-Example",
+              "description" : "custom collection name"
+            }
+          },
+          "preferredOrder": [
+            "collection1"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+
+    "CollectionsConfig-Example": {
+      "type" : "object",
+      "anyOf": [
+        { 
+          "properties" : {
+            "roles": {
+              "$ref": "#/definitions/CollectionsConfig-Example-Roles",
+              "description" : "roles which a user must have in order to access this collection; unspecified realms will have no access by default"
+            },
+            "limits" : {
+              "$ref": "#/definitions/CollectionsConfig-Example-Limits",
+              "description" : "quality of service limits"
+            },
+            "datasources" : {
+              "type" : "array",
+              "items" : {
+                "$ref" : "#/definitions/CollectionsConfig-Example-Datasources",
+                "description" : "datasources which will be tried in order by this collection"
+              }
+            }
+          },
+          "preferredOrder": [
+            "roles", "limits", "datasources"
+          ],
+          "required": [
+            "datasources"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+
+    "CollectionsConfig-Example-Datasources": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type" : "string",
+          "default": "",
+          "description" : "name of datasource, defined above<br>additional properties will override datasource configuration<br>(e.g. override \"match\" and \"patch\" rules)"
+        }
+      },
+      "additionalProperties": true,
+      "preferredOrder" : ["name"]
+    },
+
+    "CollectionsConfig-Example-Roles": {
+      "type": "object",
+      "properties": {
+        "realm1": {
+          "type" : "array",
+          "items" : {
+            "type":"string"
+          },
+          "examples": ["[\"role_a, role_b\"]"]
+        },
+        "realm2": {
+          "type" : "array",
+          "items" : {
+            "type":"string"
+          },
+          "examples": []
+        }
+      },
+      "preferredOrder" : ["realm1", "realm2" ]
+    },
+    "CollectionsConfig-Example-Limits": {
+      "type": "object",
+      "properties": {
+        "total": {
+          "type" : "integer",
+          "description" : "maximum number of simultaneous requests to this collection"
+        },
+        "per-user": {
+          "type" : "integer",
+          "description" : "maximum number of simultaneous requests per user"
+        }
+      },
+      "preferredOrder" : ["total", "per-user" ]
+    },
+
+    "DatasourcesConfig": {
+      "type" : "object",
+      "anyOf": [
+        { 
+          "properties" : {
+            "datasource1": {
+              "$ref": "#/definitions/DatasourcesConfig-Datasource-WebMARS",
+              "description" : "custom datasource name"
+            },
+            "datasource2": {
+              "$ref": "#/definitions/DatasourcesConfig-Datasource-MARS"
+            },
+            "datasource3": {
+              "$ref": "#/definitions/DatasourcesConfig-Datasource-FDB"
+            },
+            "datasource4": {
+              "$ref": "#/definitions/DatasourcesConfig-Datasource-Echo"
+            },
+            "datasource5": {
+              "$ref": "#/definitions/DatasourcesConfig-Datasource-Raise"
+            },
+            "datasource6": {
+              "$ref": "#/definitions/DatasourcesConfig-Datasource-Dummy"
+            }
+          },
+          "preferredOrder": [
+            "datasource1", "datasource2", "datasource3", "datasource4", "datasource5", "datasource6"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+
+    "DatasourcesConfig-Datasource-Echo" : {
+      "type": "object",
+      "properties": {
+        "type":{
+          "type": "string",
+          "default": "echo",
+          "description": "Debug datasource which echos back the user request"
+        }
+      },
+      "preferredOrder": [
+        "type"
+      ],
+      "required": [
+        "type"
+      ]
+    },
+    "DatasourcesConfig-Datasource-Raise" : {
+      "type": "object",
+      "properties": {
+        "type":{
+          "type": "string",
+          "default": "echo",
+          "description": "Debug datasource which always raises an exception"
+        }
+      },
+      "preferredOrder": [
+        "type"
+      ],
+      "required": [
+        "type"
+      ]
+    },
+    "DatasourcesConfig-Datasource-Dummy" : {
+      "type": "object",
+      "properties": {
+        "type":{
+          "type": "string",
+          "default": "echo",
+          "description": "Debug datasource which returns dummy data back to the user, the user request should be an integer which will be the number of bytes returned."
+        }
+      },
+      "preferredOrder": [
+        "type"
+      ],
+      "required": [
+        "type"
+      ]
+    },
+
+    "DatasourcesConfig-Datasource-WebMARS" : {
+      "type": "object",
+      "properties": {
+        "type":{
+          "type": "string",
+          "default": "webmars",
+          "description": "See https://www.ecmwf.int/en/forecasts/access-forecasts/ecmwf-web-api"
+        },
+        "url":{
+          "type": "string",
+          "description": "URL of the webmars API",
+          "default" : "https://api.ecmwf.int/v1"
+        },
+        "override_email":{
+          "type": "string",
+          "description": "overrides the user attribute \"ecmwf-email\" for all requests"
+        },
+        "override_apikey":{
+          "type": "string",
+          "description": "overrides the user attribute \"ecmwf-apikey\" for all requests"
+        },
+        "tmp_dir":{
+          "type": "string",
+          "description": "path to local directory where data will be temporarily downloaded"
+        }
+      },
+      "preferredOrder": [
+        "type", "url", "override_email", "override_apikey", "tmp_dir"
+      ],
+      "required": [
+        "type", "tmp_dir"
+      ]
+    },
+
+    "DatasourcesConfig-Datasource-FDB" : {
+      "type": "object",
+      "properties": {
+        "type":{
+          "type": "string",
+          "default": "fdb",
+          "description": "Configuration for https://github.com/ecmwf/fdb as a datasource"
+        },
+        "config":{
+          "$ref": "#/definitions/DatasourcesConfig-Datasource-FDB-Config",
+          "description": "FDB configuration"
+        },
+        "match":{
+          "$ref": "#/definitions/DatasourcesConfig-Datasource-MARS-Match",
+          "description": "filters requests based on presence of specific key=value pair in user request"
+        },
+        "patch":{
+          "$ref": "#/definitions/DatasourcesConfig-Datasource-MARS-Patch",
+          "description": "overrides the specified key=value pair in the user request"
+        }
+      },
+      "preferredOrder": [
+        "type", "config", "match", "patch"
+      ],
+      "required": [
+        "type"
+      ]
+    },
+
+    "DatasourcesConfig-Datasource-FDB-Config" : {
+      "type": "object",
+      "properties": {
+        "type":{
+          "type": "string",
+          "default": "local"
+        },
+        "engine":{
+          "type": "string",
+          "default": "toc"
+        },
+        "schema":{
+            "$ref": "DatasourcesConfig-Datasource-FDB-Config-Schema",
+            "description" : "location of FDB schema file: plain string or dictionary describing git location",
+            "examples" : ["path/to/schema"]
+        },
+        "spaces":{
+          "type": "object",
+          "default": "{}"
+        }
+      },
+      "preferredOrder": [
+        "type", "engine", "schema", "spaces"
+      ],
+      "required": [
+        "type", "engine", "schema", "spaces"
+      ]
+    },
+
+    "DatasourcesConfig-Datasource-FDB-Config-Schema" : {
+      "type": "object",
+      "properties": {
+        "git":{
+          "$ref": "DatasourcesConfig-Datasource-FDB-Config-Schema-Git",
+          "description": ""
+        }
+      },
+      "preferredOrder": [
+        "git"
+      ]
+    },
+
+    "DatasourcesConfig-Datasource-FDB-Config-Schema-Git" : {
+      "type": "object",
+      "properties": {
+        "remote":{
+          "type": "string",
+          "description": "Git URL including protocol (e.g. ssh://)"
+        },
+        "branch":{
+          "type": "string",
+          "description": ""
+        },
+        "path":{
+          "type": "string",
+          "description" : "git-local path to schema file"
+        }
+      },
+      "preferredOrder": [
+        "remote", "branch", "path"
+      ],
+      "required": [
+        "remote", "branch", "path"
+      ]
+    },
+
+    "DatasourcesConfig-Datasource-MARS" : {
+      "type": "object",
+      "properties": {
+        "type":{
+          "type": "string",
+          "default": "mars",
+          "description": "[Proprietary] Use a dedicated MARS client backend (https://www.ecmwf.int/en/forecasts/accessing-forecasts)"
+        },
+        "command":{
+          "type": "string",
+          "description": "path to mars client script",
+          "default" : "/usr/local/bin/mars"
+        },
+        "match":{
+          "$ref": "#/definitions/DatasourcesConfig-Datasource-MARS-Match",
+          "description": "filters requests based on presence of specific key=value pair in user request"
+        },
+        "patch":{
+          "$ref": "#/definitions/DatasourcesConfig-Datasource-MARS-Patch",
+          "description": "overrides the specified key=value pair in the user request"
+        }
+      },
+      "preferredOrder": [
+        "type", "command", "match", "patch"
+      ],
+      "required": [
+        "type"
+      ]
+    },
+
+    "DatasourcesConfig-Datasource-MARS-Match" : {
+      "type": "object",
+      "properties": {
+        "key1":{
+          "type": "array",
+          "items" : {
+            "type": "string"
+          },
+          "default" : "[]",
+          "description" : "value matches any in list"
+        },
+        "key2":{
+          "type": "array",
+          "items" : {
+            "type": "string"
+          },
+          "default" : "[]"
+        }
+      },
+      "preferredOrder": [
+        "key1", "key2"
+      ]
+    },
+
+    "DatasourcesConfig-Datasource-MARS-Patch" : {
+      "type": "object",
+      "properties": {
+        "key1":{
+          "type": "string",
+          "default" : "",
+          "examples": ["new_value"]
+        },
+        "key2":{
+          "type": "string",
+          "default" : ""
+        }
+      },
+      "preferredOrder": [
+        "key1", "key2"
+      ]
+    },
+
+    "AdminConfig": {
+      "type" : "object",
+      "anyOf": [
+        { 
+          "properties" : {
+            "roles": {
+              "$ref": "#/definitions/AdminConfig-Roles",
+              "description" : "roles which a user must have in order to access admin API calls, per realm"
+            }
+          },
+          "required": [
+            "roles"
+          ],
+          "preferredOrder" : [
+            "roles"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+
+    "AdminConfig-Roles": {
+      "type": "object",
+      "properties": {
+        "realm1": {
+          "type" : "array",
+          "items" : {
+            "type":"string"
+          },
+          "examples": ["[\"example-role-polytope-admin\"]"]
+        },
+        "realm2": {
+          "type" : "array",
+          "items" : {
+            "type":"string"
+          },
+          "examples": []
+        }
+      },
+      "preferredOrder" : ["realm1", "realm2" ]
+    },
+
+    "APIKeyConfig": {
+      "type" : "object",
+      "anyOf": [
+        { 
+          "properties" : {
+            "generator": {
+              "$ref": "#/definitions/APIKeyConfig-Generator",
+              "description" : "describes the API key generator"
+            },
+            "authenticator": {
+              "$ref": "#/definitions/APIKeyConfig-Authenticator",
+              "description" : "describes the extra authenticator which accepts the API keys"
+            }
+          },
+          "preferredOrder": [
+            "generator",
+            "authenticator"
+          ],
+          "required": [
+            "generator",
+            "authenticator"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+
+    "APIKeyConfig-Generator": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "host" : "string",
+          "default": "mongodb"
+        },
+        "host": {
+          "type" : "string",
+          "default": "localhost",
+          "description" : "mongodb-based store for API keys"
+        },
+        "port": {
+          "type" : "integer",
+          "default":27017
+        },
+        "collection": {
+          "type" : "string",
+          "description" : "mongodb collection name",
+          "default":"keys"
+        },
+        "allowed_realms": {
+          "type" : "array",
+          "items" : {
+            "type" : "string"
+          },
+          "description" : "realms in which users may generate API keys",
+          "default": "[]"
+        }
+      },
+      "preferredOrder" : ["type", "host", "port", "collection", "allowed_realms" ],
+      "required" : ["type"]
+    },
+
+    "APIKeyConfig-Authenticator": {
+      "type": "object",
+      "properties": {
+        "host": {
+          "type" : "string",
+          "default": "mongodb",
+          "description" : "mongodb-based store for API keys"
+        },
+        "type": {
+          "host" : "string",
+          "default": "localhost"
+        },
+        "port": {
+          "type" : "integer",
+          "default":27017
+        },
+        "collection": {
+          "type" : "string",
+          "description" : "mongodb collection name",
+          "default":"keys"
+        }
+      },
+      "preferredOrder" : ["type", "host", "port", "collection" ],
+      "required" : ["type"]
+    },
+
+    "IdentityConfig": {
+      "type" : "object",
+      "anyOf": [
+        { 
+          "properties" : {
+            "mongodb": {
+              "$ref": "#/definitions/IdentityConfig-MongoDB",
+              "description" : "mongodb-backed identity service"
+            }
+          },
+          "preferredOrder": [
+            "mongodb"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+
+    "IdentityConfig-MongoDB": {
+      "type": "object",
+      "properties": {
+        "host": {
+          "type" : "string",
+          "description" : "mongodb host",
+          "default": "localhost"
+        },
+        "port": {
+          "type" : "integer",
+          "description" : "mongodb port",
+          "default":27017
+        },
+        "collection": {
+          "type" : "string",
+          "description" : "mongodb collection name",
+          "default":"users"
+        },
+        "realm": {
+          "type" : "string",
+          "description" : "realm to assign users to",
+          "default": ""
+        },
+        "extra-users":{
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/IdentityConfig-MongoDB-User"
+          },
+          "default" : [],
+          "description": "additional users to be created at start-up"
+        }
+      },
+      "preferredOrder" : [ "host", "port", "collection", "realm", "extra-users" ],
+      "required" : ["realm"]
+    },
+  
+    "IdentityConfig-MongoDB-User" : {
+      "type": "object",
+      "properties": {
+        "uid":{
+          "type": "string",
+          "examples": ["user1"],
+          "description": ""
+        },
+        "password":{
+          "type": "string",
+          "examples": ["password"],
+          "description": ""
+        },
+        "roles":{
+          "type": "array",
+          "items": {
+            "type" : "string"
+          },
+          "description": "a list of roles to grant the user"
+        }
+      },
+      "preferredOrder": [
+        "uid", "password", "roles"
+      ]
+    },
+
+    "FederationConfig": {
+      "type" : "object",
+      "anyOf": [
+        { 
+          "properties" : {
+            "instance1": {
+              "$ref": "#/definitions/FederationConfig-Instance",
+              "description" : "custom federation name"
+            },
+            "instance2": {
+              "description": "more instances can be defined"
+            },
+            "instance3": {
+              "description": "..."
+            }
+
+          },
+          "preferredOrder": [
+            "instance1", "instance2", "instance3"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+
+    "FederationConfig-Instance" : {
+      "type": "object",
+      "properties": {
+        "secret": {
+            "type" : "string",
+            "description" : "custom secret, to be placed in remote polytope datasource configuration",
+            "examples": ["UUID-XXXX-YYYY-ZZZZ"]
+        },
+        "allowed_realms": {
+          "type": "array",
+          "items" : {
+            "type":"string"
+          },
+          "description" : "list of realms that this instance may authenticate as"
+        }
+      },
+      "preferredOrder": [
+        "secret", "allowed_realms"
+      ],
+      "additionalProperties": false
+    },
+
+    "AuthenticationConfig": {
+      "type" : "object",
+      "anyOf": [
+        { 
+          "properties" : {
+            "realm1": {
+              "$ref": "#/definitions/AuthenticationConfig-Realm",
+              "description" : "custom realm name which becomes front-facing realm name"
+            },
+            "realm2": {
+              "description": "more realms can be defined"
+            },
+            "realm3": {
+              "description": "..."
+            }
+
+          },
+          "preferredOrder": [
+            "realm1", "realm2", "realm3"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+
+    "AuthenticationConfig-Realm" : {
+      "type": "object",
+      "properties": {
+        "authenticators": {
+            "$ref": "#/definitions/AuthenticationConfig-Realm-Authenticators",
+            "description" : "all authenticators will be visited until successful authentication"
+        },
+        "authorizers": {
+          "$ref": "#/definitions/AuthenticationConfig-Realm-Authenticators-Authorizers",
+          "description" : "all authorizers will be visited and roles concatenated"
+        }
+      },
+      "preferredOrder": [
+        "authenticators", "authorizers"
+      ],
+      "additionalProperties": false
+    },
+
+    "AuthenticationConfig-Realm-Authenticators" : {
+        "type" : "object",
+        "anyOf": [
+          { 
+            "properties" : {
+              "authenticator1": {
+                "$ref": "#/definitions/AuthenticationConfig-Realm-Authenticators-MongoDB",
+                "description" : "custom authenticator name"
+              },
+              "authenticator2": {
+                "$ref": "#/definitions/AuthenticationConfig-Realm-Authenticators-Plain"
+              },
+              "authenticator3": {
+                "$ref": "#/definitions/AuthenticationConfig-Realm-Authenticators-Keycloak"
+              }
+            },
+            "preferredOrder": [
+              "authenticator1", "authenticator2", "authenticator3"
+            ],
+            "additionalProperties": false
+          }
+        ]
+    },
+
+    "AuthenticationConfig-Realm-Authenticators-Authorizers" : {
+      "type" : "object",
+      "anyOf": [
+        { 
+          "properties" : {
+            "authorizer1": {
+              "$ref": "#/definitions/AuthenticationConfig-Realm-Authenticators-Authorizers-LDAP",
+              "description" : "custom authorizer name"
+            },
+            "authorizer2": {
+              "$ref": "#/definitions/AuthenticationConfig-Realm-Authenticators-Authorizers-MongoDB"
+            },
+            "authorizer3": {
+              "$ref": "#/definitions/AuthenticationConfig-Realm-Authenticators-Authorizers-Plain"
+            }
+          },
+          "preferredOrder": [
+            "authorizer1", "authorizer2", "authorizer3"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+
+    "AuthenticationConfig-Realm-Authenticators-Authorizers-Plain" : {
+      "type": "object",
+      "properties": {
+        "type":{
+          "type": "string",
+          "default": "plain",
+          "description": "creates a database of users directly in the config file"
+        },
+        "roles":{
+          "$ref": "AuthenticationConfig-Realm-Authenticators-Authorizers-Plain-Roles",
+          "description": ""
+        },
+        "user-attributes":{
+          "$ref": "AuthenticationConfig-Realm-Authenticators-Authorizers-Plain-User",
+          "description": ""
+        }
+      },
+      "preferredOrder": [
+        "type", "roles", "user-attributes"
+      ]
+    },
+
+    "AuthenticationConfig-Realm-Authenticators-Authorizers-Plain-User" : {
+      "type": "object",
+      "properties": {
+        "uid1":{
+          "type": "string",
+          "description": "UID and a dictionary of attribute:values to be granted",
+          "examples": ["{\"attribute\": \"value\", ...}"]
+        },
+        "uid2":{
+          "type": "string",
+          "description": "[\"uid1\", \"uid2\"]",
+          "examples": ["{\"attribute\": \"value\", ...}"]
+        }
+      },
+      "preferredOrder": ["uid1", "uid2"]
+    },
+
+    "AuthenticationConfig-Realm-Authenticators-Authorizers-Plain-Roles" : {
+      "type": "object",
+      "properties": {
+        "role1":{
+          "type": "array",
+          "items": {
+            "type":"string"
+          },
+          "default": [],
+          "examples": [
+            "[\"uid1\", \"uid2\"]"
+          ],
+          "description": "Role name and a list of uids who will be granted the role"
+        },
+        "role2":{
+          "type": "array",
+          "items": {
+            "type":"string"
+          },
+          "description": "more roles can be defined"
+        }
+      },
+      "preferredOrder": ["role1", "role2"]
+    },
+
+    "AuthenticationConfig-Realm-Authenticators-Authorizers-LDAP" : {
+      "type": "object",
+      "properties": {
+        "type":{
+          "type": "string",
+          "default": "ldap",
+          "description": "connect to an LDAP service"
+        },
+        "url":{
+          "type": "string",
+          "description": "URL of the LDAP service"
+        },
+        "filter":{
+          "type": "string",
+          "description": "filter to apply to the LDAP query"
+        }
+      },
+      "preferredOrder": [
+        "type", "url", "filter"
+      ]
+    },
+
+    "AuthenticationConfig-Realm-Authenticators-Authorizers-MongoDB" : {
+      "type": "object",
+      "properties": {
+        "type":{
+          "type": "string",
+          "default": "mongodb",
+          "description": "connect to a mongodb-backed authorizer"
+        },
+        "host":{
+          "type": "string",
+          "default": "localhost",
+          "description": "mongodb hostname"
+        },
+        "port":{
+          "type": "integer",
+          "default": 27017,
+          "description": "mongodb port"
+        },
+        "collection":{
+          "type": "string",
+          "default": "users",
+          "description": "mongodb port"
+        }
+      },
+      "preferredOrder": [
+        "type", "host", "port", "collection"
+      ],
+      "required": [
+        "type"
+      ]
+    },
+
+    "AuthenticationConfig-Realm-Authenticators-Keycloak" : {
+      "type": "object",
+      "properties": {
+        "type":{
+          "type": "string",
+          "default": "keycloak",
+          "description": "connect to a keycloak service"
+        },
+        "url":{
+          "type": "string",
+          "description": "URL of the keycloak service (ending in /auth/)"
+        },
+        "client_id":{
+          "type": "string",
+          "description": ""
+        },
+        "client_secret":{
+          "type": "string",
+          "description": ""
+        },
+        "keycloak_realm":{
+          "type": "string",
+          "description": ""
+        }
+      },
+      "preferredOrder": [
+        "type", "url", "client_id", "client_secret", "keycloak_realm"
+      ],
+      "required" : ["type", "url", "cliend_id", "client_secret", "keycloak_realm"]
+    },
+
+    "AuthenticationConfig-Realm-Authenticators-Plain" : {
+      "type": "object",
+      "properties": {
+        "type":{
+          "type": "string",
+          "default": "plain",
+          "description": "creates a database of users directly in the config file"
+        },
+        "users":{
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/AuthenticationConfig-Realm-Authenticators-Plain-User"
+          },
+          "description": "a plaintext list of users"
+        }
+      },
+      "preferredOrder": [
+        "type", "users"
+      ],
+      "required": [
+        "type"
+      ]
+    },
+
+    "AuthenticationConfig-Realm-Authenticators-Plain-User" : {
+      "type": "object",
+      "properties": {
+        "uid":{
+          "type": "string",
+          "examples": ["user1"],
+          "description": ""
+        },
+        "password":{
+          "type": "string",
+          "examples": ["password"],
+          "description": ""
+        }
+      },
+      "preferredOrder": [
+        "uid", "password"
+      ],
+      "required": [
+        "uid", "password"
+      ]
+    },
+
+    "AuthenticationConfig-Realm-Authenticators-MongoDB" : {
+      "type": "object",
+      "properties": {
+        "type":{
+          "type": "string",
+          "default": "mongodb",
+          "description": "creates a mongodb-backed authenticator"
+        },
+        "host":{
+          "type": "string",
+          "default": "localhost",
+          "description": "mongodb host"
+        },
+        "port":{
+          "type": "integer",
+          "default": 27017,
+          "description": "mongodb port"
+        },
+        "collection":{
+          "type": "string",
+          "default": "users",
+          "description": "mongodb collection"
+        }
+      },
+      "preferredOrder": [
+        "type", "host", "port", "collection"
+      ],
+      "required": [
+        "type"
+      ]
+    },
+
+    "FrontendConfig": {
+      "properties": {
+        "handler":{
+          "type": "string",
+          "description": "the API handler to use",
+          "default": "flask"
+        },
+        "server":{
+          "type": "string",
+          "description": "the API server to use",
+          "default": "gunicorn"
+        },
+        "host":{
+          "type": "string",
+          "default": "localhost",
+          "description": "host where the frontend service is located"
+        },
+        "port":{
+          "type": "integer",
+          "description": "port where the frontend service is located",
+          "default": 5000
+        },
+        "bind_to":{
+          "type": "string",
+          "description": "host which the handler will bind to, use 0.0.0.0 to expose externally",
+          "default": "localhost"
+        }
+      },
+      "type": "object",
+      "required": [
+      ],
+      "preferredOrder": [
+        "host",
+        "port",
+        "bind_to",
+        "handler",
+        "server"
+      ]
+    },
+
+    "TelemetryConfig": {
+      "properties": {
+        "handler":{
+          "type": "string",
+          "description": "the API handler to use",
+          "default": "flask"
+        },
+        "server":{
+          "type": "string",
+          "description": "the API server to use",
+          "default": "gunicorn"
+        },
+        "host":{
+          "type": "string",
+          "default": "localhost",
+          "description": "host where the telemetry service is located"
+        },
+        "port":{
+          "type": "integer",
+          "description": "port where the telemetry service is located",
+          "default": 6000
+        },
+        "bind_to":{
+          "type": "string",
+          "description": "host which the handler will bind to, use 0.0.0.0 to expose externally",
+          "default": "localhost"
+        }
+      },
+      "type": "object",
+      "required": [
+      ],
+      "preferredOrder": [
+        "host",
+        "port",
+        "bind_to",
+        "handler",
+        "server"
+      ]
+    },
+
+    "MetricStoreConfig": {
+      "type" : "object",
+      "anyOf": [
+        { 
+          "properties" : {
+            "mongodb": {
+              "$ref": "#/definitions/Shared-MongoDB",
+              "description" : "mongodb backend <em>one of</em>"
+            }
+          },
+          "preferredOrder": [
+            "mongodb"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+
+    "RequestStoreConfig": {
+      "type" : "object",
+      "anyOf": [
+        { 
+          "properties" : {
+            "mongodb": {
+              "$ref": "#/definitions/Shared-MongoDB",
+              "description" : "mongodb backend <em>one of</em>"
+            }
+          },
+          "preferredOrder": [
+            "mongodb"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+
+    "CachingConfig": {
+      "type" : "object",
+      "anyOf": [
+        { 
+          "properties" : {
+            "mongodb": {
+              "$ref": "#/definitions/Shared-MongoDB",
+              "description" : "mongodb backend <em>one of</em>"
+            },
+            "redis": {
+              "$ref": "#/definitions/CachingConfig-Redis",
+              "description" : "redis backend <em>one of</em>"
+            },
+            "memcached": {
+              "$ref": "#/definitions/CachingConfig-Memcached",
+              "description" : "memcached backend <em>one of</em>"
+            },
+            "globalvar": {
+              "$ref": "#/definitions/CachingConfig-GlobalVar",
+              "description" : "local process only backend <em>one of</em>"
+            }
+
+          },
+          "preferredOrder": [
+            "mongodb",
+            "redis",
+            "memcached",
+            "globalvar"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+
+    "QueueConfig": {
+      "type" : "object",
+      "anyOf": [
+        { 
+          "properties" : {
+            "rabbitmq": {
+              "$ref": "#/definitions/QueueConfig-RabbitMQ",
+              "description" : "rabbitmq backend <em>one of</em>"
+            }
+          },
+          "preferredOrder": [
+            "rabbitmq"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+
+    "WorkerConfig": {
+      "properties": {
+        "host":{
+          "type": "string",
+          "default": "localhost",
+          "description": "host where the worker service is located"
+        },
+        "port":{
+          "type": "integer",
+          "description": "port where the worker service is located"
+        },
+        "poll_interval":{
+          "type": "number",
+          "description": "frequency at which the queue is polled",
+          "default" : 0.1
+        }
+      },
+      "type": "object",
+      "required": [
+      ],
+      "preferredOrder": [
+        "host",
+        "port",
+        "poll_interval"
+      ]
+    },
+
+    "BrokerConfig": {
+      "properties": {
+        "host":{
+          "type": "string",
+          "default": "localhost",
+          "description": "host where the broker service is located"
+        },
+        "port":{
+          "type": "integer",
+          "description": "port where the broker service is located"
+        },
+        "interval":{
+          "type": "number",
+          "description": "frequency at which the request store is polled",
+          "default" : 10
+        },
+        "user_limit":{
+          "type": "integer",
+          "description": "maximum number of requests allowed to be queued by single user",
+          "default": null
+        }
+      },
+      "type": "object",
+      "required": [
+      ],
+      "preferredOrder": [
+        "host",
+        "port",
+        "interval",
+        "user_limit"
+      ]
+    },
+
+    "TestRunnerConfig": {
+      "properties": {
+        "host":{
+          "type": "string",
+          "default": "localhost",
+          "description": "host where the testrunner service is located"
+        },
+        "port":{
+          "type": "integer",
+          "description": "port where the testrunner service is located"
+        }
+      },
+      "type": "object",
+      "required": [
+      ],
+      "preferredOrder": [
+        "host",
+        "port"
+      ]
+    },
+
+    "GCConfig": {
+      "properties": {
+        "interval":{
+          "type": "string",
+          "description": "frequency at which the GC checks requests",
+          "default" : "60s"
+        },
+        "threshold":{
+          "type": "string",
+          "description": "staging size above which oldest completed requests will be deleted",
+          "default" : "10G"
+        },
+        "age":{
+          "type": "string",
+          "description": "age after which completed requests will be deleted",
+          "default" : "24h"
+        }
+      },
+      "type": "object",
+      "required": [
+      ],
+      "preferredOrder": [
+        "interval",
+        "threshold",
+        "age"
+      ]
+    },
+
+    "StagingConfig": {
+      "type" : "object",
+      "anyOf": [
+        { 
+          "properties" : {
+            "s3": {
+              "$ref": "#/definitions/StagingConfig-S3",
+              "description" : "s3 backend <em>one of</em>"
+            },
+            "polytope": {
+              "$ref": "#/definitions/StagingConfig-Polytope",
+              "description" : "builtin backend <em>one of</em>"
+            }
+          },
+          "preferredOrder": [
+            "s3",
+            "polytope"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+
+    "StagingConfig-S3": {
+      "properties": {
+        "host":{
+          "type": "string",
+          "default": "0.0.0.0",
+          "description": "host where the s3 service is located"
+        },
+        "port":{
+          "type": "integer",
+          "description": "port where the s3 service is located",
+          "default": 8000
+        },
+        "bucket":{
+          "type": "string",
+          "description": "name of the bucket",
+          "default": ""
+        },
+        "access_key":{
+          "type": "string",
+          "description": "",
+          "default": ""
+        },
+        "secret_key":{
+          "type": "string",
+          "description": "",
+          "default": ""
+        },
+        "url":{
+          "type": "string",
+          "description": "the externally-visible URL where the data staging service is exposed",
+          "examples": ["example.polytope.com/staging"]
+        }
+      },
+      "type": "object",
+      "required": [
+      ],
+      "preferredOrder": [
+        "host",
+        "port",
+        "bucket",
+        "access_key",
+        "secret_key",
+        "url"
+      ]
+    },
+
+    "StagingConfig-Polytope": {
+      "properties": {
+        "host":{
+          "type": "string",
+          "default": "0.0.0.0",
+          "description": "host where the service is located"
+        },
+        "port":{
+          "type": "integer",
+          "description": "port where the service is located",
+          "default": 8000
+        },
+        "root_dir":{
+          "type": "string",
+          "description": "path where the data is stored",
+          "default": "/data"
+        },
+        "url":{
+          "type": "string",
+          "description": "the externally-visible URL where the data staging service is exposed",
+          "examples": ["example.polytope.com/staging"]
+        }
+      },
+      "type": "object",
+      "required": [
+      ],
+      "preferredOrder": [
+        "host",
+        "port",
+        "root_dir",
+        "url"
+      ]
+    },
+
+
+    "Shared-MongoDB": {
+      "properties": {
+        "host":{
+          "type": "string",
+          "default": "localhost",
+          "description": "host where the mongodb service is located"
+        },
+        "port":{
+          "type": "integer",
+          "description": "port where the mongodb service is located",
+          "default": 6000
+        },
+        "collection":{
+          "type": "string",
+          "description": "name of the mongodb collection",
+          "default": ""
+        }
+      },
+      "type": "object",
+      "required": [
+        "collection"
+      ],
+      "preferredOrder": [
+        "host",
+        "port",
+        "collection"
+      ]
+    },
+
+    "CachingConfig-Redis": {
+      "properties": {
+        "host":{
+          "type": "string",
+          "default": "localhost",
+          "description": "host where the redis service is located"
+        },
+        "port":{
+          "type": "integer",
+          "description": "port where the redis service is located",
+          "default": 6379
+        },
+        "db":{
+          "type": "interger",
+          "description": "id of the database to use",
+          "default": 0
+        }
+      },
+      "type": "object",
+      "required": [
+      ],
+      "preferredOrder": [
+        "host",
+        "port",
+        "db"
+      ]
+    },
+
+    "CachingConfig-Memcached": {
+      "properties": {
+        "host":{
+          "type": "string",
+          "default": "localhost",
+          "description": "host where the memcached service is located"
+        },
+        "port":{
+          "type": "integer",
+          "description": "port where the memcached service is located",
+          "default": 11211
+        }
+      },
+      "type": "object",
+      "required": [
+      ],
+      "preferredOrder": [
+        "host",
+        "port"
+      ]
+    },
+
+    "CachingConfig-GlobalVar": {
+      "properties": {},
+      "type": "object"
+    },
+
+    "QueueConfig-RabbitMQ": {
+      "properties": {
+        "host":{
+          "type": "string",
+          "default": "localhost",
+          "description": "host where the rabbitmq service is located"
+        },
+        "port":{
+          "type": "integer",
+          "description": "port where the rabbitmq service is located",
+          "default": 5672
+        },
+        "name":{
+          "type": "string",
+          "description": "name of the rabbitmq channel",
+          "default": "default"
+        },
+        "user":{
+          "type": "string",
+          "description": "",
+          "default": "guest"
+        },
+        "password":{
+          "type": "string",
+          "description": "",
+          "default": "guest"
+        },
+        "keep_alive_interval":{
+          "type": "integer",
+          "description": "time between heartbeats",
+          "default": "30"
+        }
+
+      },
+      "type": "object",
+      "required": [
+      ],
+      "preferredOrder": [
+        "host",
+        "port",
+        "name",
+        "user",
+        "password",
+        "keep_alive_interval"
+      ]
+    }
+
+  }
+
+}

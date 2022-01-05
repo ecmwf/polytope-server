@@ -1,0 +1,14 @@
+*.py[cod]
+*.swp
+**/__pycache__
+**/polytope_admin.egg-info
+.so
+.pytest_cache
+.vscode
+telepresence.log
+.coverage
+htmlcov
+validated.yaml
+merged.yaml
+polytope_server.egg-info
+**/build
