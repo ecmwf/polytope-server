@@ -154,10 +154,10 @@ def parse_bytes(size_str):
     if suffix == "K":
         return size * 1024
     elif suffix == "M":
-        return size * 1024 ** 2
+        return size * 1024**2
     elif suffix == "G":
-        return size * 1024 ** 3
+        return size * 1024**3
     elif suffix == "T":
-        return size * 1024 ** 4
+        return size * 1024**4
 
     return False
