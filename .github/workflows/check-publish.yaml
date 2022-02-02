@@ -1,0 +1,59 @@
+name: Check and publish
+
+on:
+
+  push:
+    branches:
+    - '**'
+    tags:
+    - '**'
+
+  pull_request: ~
+
+  workflow_dispatch: ~
+
+jobs:
+
+  quality:
+    name: Code QA
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - run: pip install black flake8 isort
+      - run: black --version
+      - run: isort --check .
+      - run: black --check .
+      - run: flake8 .
+
+  docs:
+    if: github.ref == 'refs/heads/master'
+    name: Build Readthedocs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Start polytope-docs build
+        uses: actions/github-script@v4
+        with:
+          github-token: ${{ secrets.ECMWF_REPO_ACCESS }}
+          script: |-
+            await github.actions.createWorkflowDispatch({
+                owner: 'ecmwf-projects',
+                repo: 'polytope-docs',
+                workflow_id: 'docs.yaml',
+                ref: 'master'
+            });
+
+  publish:
+    if: github.event_name == 'push' && contains(github.ref, 'refs/tags/')
+    name: Publish on Readthedocs
+    needs: [quality, docs]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Start polytope-docs build
+        uses: actions/github-script@v4
+        with:
+          github-token: ${{ secrets.ECMWF_REPO_ACCESS }}
+          script: |-
+            await github.actions.createWorkflowDispatch({
+                owner: 'ecmwf-projects',
+                repo: 'polytope-docs',
+                workflow_id: 'publish.yaml',

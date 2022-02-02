@@ -1,4 +1,4 @@
-flask==0.11
+flask>=1.0.0
 flask-script==2.0.5
 flask-mongoengine==0.8.2
 py-bcrypt==0.4
@@ -7,7 +7,7 @@ pika==1.1.0
 requests==2.22.0
 attrdict==2.0.1
 pytest==5.0.1
-pyyaml==5.1.1
+pyyaml>=5.4
 hiyapyco==0.4.14
 pykwalify==1.7.0
 falcon==2.0.0
