@@ -2,10 +2,15 @@ name: Check
 
 on:
 
-  workflow_dispatch:
-
   push:
-    branches: ['develop', 'release/*', 'hotfix/*']
+    branches:
+    - '**'
+    tags:
+    - '**'
+
+  pull_request: ~
+
+  workflow_dispatch: ~
 
 jobs:
 
