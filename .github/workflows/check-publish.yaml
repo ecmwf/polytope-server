@@ -59,3 +59,5 @@ jobs:
                 owner: 'ecmwf-projects',
                 repo: 'polytope-docs',
                 workflow_id: 'publish.yaml',
+                ref: 'master'
+            });
