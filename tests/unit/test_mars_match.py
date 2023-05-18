@@ -34,7 +34,7 @@ class TestMarsDataSource:
         polytope_config.global_config["datasources"]["mars"] = {
             "type": "mars",
             "command": "mars",
-            "tmp_dir": "/data",
+            "tmp_dir": "/home/polytope/data",
             "match": None,
         }
 
