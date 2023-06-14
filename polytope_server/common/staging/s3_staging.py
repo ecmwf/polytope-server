@@ -82,7 +82,7 @@ class S3Staging(staging.Staging):
         i = 1
         parts = {}
         total_size = 0
-        for buf in self.iterator_buffer(data, 6 * 1024 * 1024):
+        for buf in self.iterator_buffer(data, 200 * 1024 * 1024):
             if len(buf) == 0:
                 break
             try:
