@@ -48,6 +48,15 @@ class MARSDataSource(datasource.DataSource):
         if self.match_rules is None:
             self.match_rules = {}
 
+        self.mars_binary = config.get("binary", "mars")
+
+        # Write the mars config
+        self.mars_config = config.get("config", {})
+        self.mars_home = self.tmp_dir + "/mars-home"
+        os.makedirs(self.mars_home + "/etc/mars-client/")
+        with open(self.mars_home + "/etc/mars-client/databases.yaml", "w") as f:
+            yaml.dump(self.mars_config, f)
+
     def get_type(self):
         return self.type
 
@@ -155,6 +164,8 @@ class MARSDataSource(datasource.DataSource):
                 **os.environ,
                 "MARS_USER_EMAIL": mars_user,
                 "MARS_USER_TOKEN": mars_token,
+                "MARS_HOME": self.mars_home,
+                "ECMWF_MARS_COMMAND": self.mars_binary
             }
 
             logging.info("Accessing MARS on behalf of user {} with token {}".format(mars_user, mars_token))
