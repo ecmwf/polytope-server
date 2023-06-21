@@ -53,7 +53,7 @@ class MARSDataSource(datasource.DataSource):
         # Write the mars config
         self.mars_config = config.get("config", {})
         self.mars_home = self.tmp_dir + "/mars-home"
-        os.makedirs(self.mars_home + "/etc/mars-client/")
+        os.makedirs(self.mars_home + "/etc/mars-client/", exist_ok=True)
         with open(self.mars_home + "/etc/mars-client/databases.yaml", "w") as f:
             yaml.dump(self.mars_config, f)
 
