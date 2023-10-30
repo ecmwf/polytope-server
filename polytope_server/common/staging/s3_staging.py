@@ -195,7 +195,7 @@ class S3Staging(staging.Staging):
     def bucket_policy(self):
         """
         Grants read access to individual objects - user has access to all objects, but would need to know the UUID.
-        Denies read access to the bucket (cannot list objects) - important, so users cannot see all UUIDs!
+        Grants read access to the bucket (was originally denieds).
         Denies read access to the bucket location (quite meaningless for MinIO)
         """
         policy = {
@@ -210,7 +210,7 @@ class S3Staging(staging.Staging):
                 },
                 {
                     "Sid": "",
-                    "Effect": "Deny",
+                    "Effect": "Allow",
                     "Principal": {"AWS": "*"},
                     "Action": "s3:ListBucket",
                     "Resource": "arn:aws:s3:::{}".format(self.bucket),
