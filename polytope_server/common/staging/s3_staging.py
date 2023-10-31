@@ -203,7 +203,7 @@ class S3Staging(staging.Staging):
             "Statement": [
                 {
                     "Sid": "",
-                    "Effect": "Deny",
+                    "Effect": "Allow",
                     "Principal": {"AWS": "*"},
                     "Action": "s3:GetBucketLocation",
                     "Resource": "arn:aws:s3:::{}".format(self.bucket),
@@ -213,13 +213,6 @@ class S3Staging(staging.Staging):
                     "Effect": "Allow",
                     "Principal": {"AWS": "*"},
                     "Action": "s3:ListBucket",
-                    "Resource": "arn:aws:s3:::{}".format(self.bucket),
-                },
-                {
-                    "Sid": "",
-                    "Effect": "Allow",
-                    "Principal": {"AWS": "*"},
-                    "Action": "s3:GetBucketLocation",
                     "Resource": "arn:aws:s3:::{}".format(self.bucket),
                 },
                 {
