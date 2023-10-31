@@ -196,7 +196,7 @@ class S3Staging(staging.Staging):
         """
         Grants read access to individual objects - user has access to all objects, but would need to know the UUID.
         Grants read access to the bucket (was originally denieds).
-        Denies read access to the bucket location (quite meaningless for MinIO)
+        Grants read access to the bucket location
         """
         policy = {
             "Version": "2012-10-17",
