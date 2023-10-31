@@ -219,6 +219,13 @@ class S3Staging(staging.Staging):
                     "Sid": "",
                     "Effect": "Allow",
                     "Principal": {"AWS": "*"},
+                    "Action": "s3:GetBucketLocation",
+                    "Resource": "arn:aws:s3:::{}".format(self.bucket),
+                },
+                {
+                    "Sid": "",
+                    "Effect": "Allow",
+                    "Principal": {"AWS": "*"},
                     "Action": "s3:GetObject",
                     "Resource": "arn:aws:s3:::{}/*".format(self.bucket),
                 },
