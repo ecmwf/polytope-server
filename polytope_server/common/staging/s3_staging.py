@@ -59,7 +59,7 @@ class S3Staging(staging.Staging):
         self.internal_url = ("https://" if secure else "http://") + internal_url
 
         try:
-            self.client.make_bucket(self.bucket)
+            self.client.make_bucket(self.bucket, self.client._region)
         except BucketAlreadyOwnedByYou:
             pass
 
@@ -195,22 +195,22 @@ class S3Staging(staging.Staging):
     def bucket_policy(self):
         """
         Grants read access to individual objects - user has access to all objects, but would need to know the UUID.
-        Grants read access to the bucket (was originally denieds).
-        Grants read access to the bucket location
+        Denies read access to the bucket (cannot list objects) - important, so users cannot see all UUIDs!
+        Denies read access to the bucket location (quite meaningless for MinIO)
         """
         policy = {
             "Version": "2012-10-17",
             "Statement": [
                 {
                     "Sid": "",
-                    "Effect": "Allow",
+                    "Effect": "Deny",
                     "Principal": {"AWS": "*"},
                     "Action": "s3:GetBucketLocation",
                     "Resource": "arn:aws:s3:::{}".format(self.bucket),
                 },
                 {
                     "Sid": "",
-                    "Effect": "Allow",
+                    "Effect": "Deny",
                     "Principal": {"AWS": "*"},
                     "Action": "s3:ListBucket",
                     "Resource": "arn:aws:s3:::{}".format(self.bucket),
