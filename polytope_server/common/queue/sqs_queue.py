@@ -2,21 +2,25 @@ import json
 import logging
 from . import queue
 import boto3
+import os
 
 class SQSQueue(queue.Queue):
     def __init__(self, config):
         
         host = config.get("host", "localhost")
         queue_name = config.get("name", "default")
-        self.username = config.get("user", "guest")
-        self.password = config.get("password", "guest")
+        region = config.get("region", "eu-central-2")
         self.keep_alive_interval = config.get("keep_alive_interval", 60)
         self.visibility_timeout = config.get("visibility_timeout", 120)
         self.queue_url = "{}/{}".format(host, queue_name)
         
         logging.getLogger("sqs").setLevel("WARNING")
-        
-        self.client = boto3.client('sqs')
+        session = boto3.Session(
+            aws_access_key_id=os.getenv('POLYTOPE_S3_ACCESS_KEY'),
+            aws_secret_access_key=os.getenv('POLYTOPE_S3_SECRET_KEY'),
+            region_name=region
+        )
+        self.client = session.client('sqs')
         self.check_connection()
 
     def enqueue(self, message):
