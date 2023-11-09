@@ -11,6 +11,7 @@ class SQSQueue(queue.Queue):
         self.username = config.get("user", "guest")
         self.password = config.get("password", "guest")
         self.keep_alive_interval = config.get("keep_alive_interval", 60)
+        self.visibility_timeout = config.get("visibility_timeout", 120)
         self.queue_url = "{}/{}".format(host, queue_name)
         
         logging.getLogger("sqs").setLevel("WARNING")
@@ -27,7 +28,7 @@ class SQSQueue(queue.Queue):
     def dequeue(self):
         response = self.client.receive_message(
             QueueUrl=self.queue_url,
-            VisibilityTimeout=120, #If processing takes more seconds, message will be read twice
+            VisibilityTimeout=self.visibility_timeout, #If processing takes more seconds, message will be read twice
             MaxNumberOfMessages=1,
             )
         if not response['Messages']:
@@ -88,7 +89,7 @@ class SQSQueue(queue.Queue):
             QueueUrl=self.queue_url,
             AttributeNames=[
                 'ApproximateNumberOfMessages',
-                'ApproximateNumberOfMessages',
+                'ApproximateNumberOfMessagesDelayed',
                 'ApproximateNumberOfMessagesNotVisible',
             ]
         )
