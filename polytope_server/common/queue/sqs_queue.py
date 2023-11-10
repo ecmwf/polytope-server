@@ -69,7 +69,7 @@ class SQSQueue(queue.Queue):
             AttributeNames=['CreatedTimestamp']
         )
         #Tries to parse response
-        return 'Attributes' in response & 'CreatedTimestamp' in response['Attributes']
+        return 'Attributes' in response and 'CreatedTimestamp' in response['Attributes']
 
     def close_connection(self):
         self.client.close()
