@@ -26,7 +26,7 @@ class SQSQueue(queue.Queue):
     def enqueue(self, message):
         self.client.send_message(
         QueueUrl=self.queue_url,
-        MessageBody=json.dumps(message.body).encode("utf-8")
+        MessageBody=json.dumps(message.body)
         )
 
     def dequeue(self):
@@ -60,10 +60,11 @@ class SQSQueue(queue.Queue):
         )
 
     def keep_alive(self):
-        return self.check_connection()
+        #Implemented for compatibility, disabled because each request to SQS is billed
+        pass
+        # return self.check_connection()
 
     def check_connection(self):
-        """Check the queue connection"""
         response = self.client.get_queue_attributes(
             QueueUrl=self.queue_url,
             AttributeNames=['CreatedTimestamp']
