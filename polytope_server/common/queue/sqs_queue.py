@@ -43,7 +43,7 @@ class SQSQueue(queue.Queue):
         body = response['Messages'][0]['Body']   
         receipt_handle = response['Messages'][0]['ReceiptHandle']    
          
-        return queue.Message(json.loads(body.decode("utf-8")), context=receipt_handle)
+        return queue.Message(json.loads(body), context=receipt_handle)
 
 
     def ack(self, message):
