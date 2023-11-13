@@ -34,8 +34,6 @@ class SQSQueue(queue.Queue):
         )
         if not response["Messages"]:
             return None
-        if len(response["Messages"]) > 1:
-            raise ValueError("Received {} messages, should have received 1".format(len(response["Messages"])))
 
         body = response["Messages"][0]["Body"]
         receipt_handle = response["Messages"][0]["ReceiptHandle"]
