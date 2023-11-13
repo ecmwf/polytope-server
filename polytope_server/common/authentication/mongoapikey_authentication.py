@@ -20,12 +20,11 @@
 
 from datetime import datetime
 
-import pymongo
-
 from ..auth import User
 from ..exceptions import ForbiddenRequest
 from ..metric_collector import MongoStorageMetricCollector
 from . import authentication
+from .. import mongo_client_factory
 
 
 class ApiKeyMongoAuthentication(authentication.Authentication):
@@ -45,9 +44,12 @@ class ApiKeyMongoAuthentication(authentication.Authentication):
         host = config.get("host", "localhost")
         port = config.get("port", "27017")
         collection = config.get("collection", "keys")
+        username = config.get("username")
+        password = config.get("password")
+        tls = config.get("tls", False) == True
 
         endpoint = "{}:{}".format(host, port)
-        self.mongo_client = pymongo.MongoClient(endpoint, journal=True, connect=False)
+        self.mongo_client = mongo_client_factory.create_client(host, port, username, password, tls)
         self.database = self.mongo_client.keys
         self.keys = self.database[collection]
         assert realm == "polytope"

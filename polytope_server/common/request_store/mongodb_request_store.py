@@ -31,6 +31,7 @@ from ..metric_collector import (
 )
 from ..request import Request
 from . import request_store
+from .. import mongo_client_factory
 
 
 class MongoRequestStore(request_store.RequestStore):
@@ -39,9 +40,13 @@ class MongoRequestStore(request_store.RequestStore):
         port = config.get("port", "27017")
         request_collection = config.get("collection", "requests")
 
+        username = config.get("username")
+        password = config.get("password")
+        tls = config.get("tls", False) == True
+
         endpoint = "{}:{}".format(host, port)
 
-        self.mongo_client = pymongo.MongoClient(endpoint, journal=True, connect=False)
+        self.mongo_client = mongo_client_factory.create_client(host, port, username, password, tls)
         self.database = self.mongo_client.request_store
         self.store = self.database[request_collection]
 
@@ -87,7 +92,6 @@ class MongoRequestStore(request_store.RequestStore):
             return None
 
     def get_requests(self, ascending=None, descending=None, limit=None, **kwargs):
-
         if ascending:
             if ascending not in Request.__slots__:
                 raise KeyError("Request has no key {}".format(ascending))
@@ -98,7 +102,6 @@ class MongoRequestStore(request_store.RequestStore):
 
         query = {}
         for k, v in kwargs.items():
-
             if k not in Request.__slots__:
                 raise KeyError("Request has no key {}".format(k))
 
@@ -152,7 +155,6 @@ class MongoRequestStore(request_store.RequestStore):
         return res
 
     def wipe(self):
-
         if self.metric_store:
             res = self.get_requests()
             for i in res:

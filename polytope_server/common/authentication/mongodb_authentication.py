@@ -22,12 +22,11 @@ import base64
 import binascii
 import hashlib
 
-import pymongo
-
 from ..auth import User
 from ..exceptions import ForbiddenRequest
 from ..metric_collector import MongoStorageMetricCollector
 from . import authentication
+from .. import mongo_client_factory
 
 
 class MongoAuthentication(authentication.Authentication):
@@ -37,9 +36,12 @@ class MongoAuthentication(authentication.Authentication):
         host = config.get("host", "localhost")
         port = config.get("port", "27017")
         collection = config.get("collection", "users")
+        username = config.get("username")
+        password = config.get("password")
+        tls = config.get("tls", False) == True
 
         endpoint = "{}:{}".format(host, port)
-        self.mongo_client = pymongo.MongoClient(endpoint, journal=True, connect=False)
+        self.mongo_client = mongo_client_factory.create_client(host, port, username, password, tls)
         self.database = self.mongo_client.authentication
         self.users = self.database[collection]
 

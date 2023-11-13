@@ -1,5 +1,6 @@
 from unittest import mock
-from polytope_server.common.staging.s3_staging import S3Staging
+
+from ...polytope_server.common.staging.s3_staging import S3Staging
 
 
 @mock.patch("polytope_server.common.staging.s3_staging.Minio", autospec=True)

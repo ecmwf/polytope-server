@@ -22,12 +22,11 @@ import logging
 import uuid
 from datetime import datetime, timedelta
 
-import pymongo
-
 from ..auth import User
 from ..exceptions import ForbiddenRequest
 from ..metric_collector import MongoStorageMetricCollector
 from . import ApiKey, keygenerator
+from .. import mongo_client_factory
 
 
 class MongoKeyGenerator(keygenerator.KeyGenerator):
@@ -37,8 +36,13 @@ class MongoKeyGenerator(keygenerator.KeyGenerator):
         host = config.get("host", "localhost")
         port = config.get("port", "27017")
         collection = config.get("collection", "keys")
+        username = config.get("username")
+        password = config.get("password")
+        tls = config.get("tls", False) == True
+
         endpoint = "{}:{}".format(host, port)
-        self.mongo_client = pymongo.MongoClient(endpoint, journal=True, connect=False)
+
+        self.mongo_client = mongo_client_factory.create_client(host, port, username, password, tls)
         self.database = self.mongo_client.keys
         self.keys = self.database[collection]
         self.realms = config.get("allowed_realms")

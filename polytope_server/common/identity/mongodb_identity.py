@@ -18,12 +18,11 @@
 # does it submit to any jurisdiction.
 #
 
-import pymongo
-
 from ..authentication.mongodb_authentication import MongoAuthentication
 from ..exceptions import Conflict, NotFound
 from ..metric_collector import MetricCollector, MongoStorageMetricCollector
 from . import identity
+from .. import mongo_client_factory
 
 
 class MongoDBIdentity(identity.Identity):
@@ -32,9 +31,12 @@ class MongoDBIdentity(identity.Identity):
         self.host = config.get("host", "localhost")
         self.port = config.get("port", "27017")
         self.collection = config.get("collection", "users")
+        username = config.get("username")
+        password = config.get("password")
+        tls = config.get("tls", False) == True
 
         endpoint = "{}:{}".format(self.host, self.port)
-        self.mongo_client = pymongo.MongoClient(endpoint, journal=True, connect=False)
+        self.mongo_client = mongo_client_factory.create_client(self.host, self.port, username, password, tls)
         self.database = self.mongo_client.authentication
         self.users = self.database[self.collection]
         self.realm = config.get("realm")
