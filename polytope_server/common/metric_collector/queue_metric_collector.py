@@ -46,3 +46,15 @@ class RabbitmqQueueMetricCollector(QueueMetricCollector):
         channel = connection.channel()
         q = channel.queue_declare(queue=self.queue_name, durable=True, passive=True)
         return q.method.message_count
+
+
+class SQSQueueMetricCollector(QueueMetricCollector):
+    def __init__(self, host):
+        self.host = host
+        self.message_counts = None
+
+    def total_queued(self):
+        num_messages = 0
+        for key in self.message_counts:
+            num_messages += self.message_counts[key]
+        return num_messages

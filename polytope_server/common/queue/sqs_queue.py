@@ -3,12 +3,13 @@ import logging
 from . import queue
 import boto3
 import os
+from ..metric_collector import SQSQueueMetricCollector
 
 
 class SQSQueue(queue.Queue):
     def __init__(self, config):
-        host = config.get("host", "localhost")
-        queue_name = config.get("name", "default")
+        host = config.get("host")
+        queue_name = config.get("name")
         region = config.get("region", "eu-central-2")
         self.keep_alive_interval = config.get("keep_alive_interval", 60)
         self.visibility_timeout = config.get("visibility_timeout", 120)
@@ -22,6 +23,7 @@ class SQSQueue(queue.Queue):
         )
         self.client = session.client("sqs")
         self.check_connection()
+        self.queue_metric_collector = SQSQueueMetricCollector(self.queue_url)
 
     def enqueue(self, message):
         self.client.send_message(QueueUrl=self.queue_url, MessageBody=json.dumps(message.body))
@@ -35,6 +37,10 @@ class SQSQueue(queue.Queue):
         if not response["Messages"]:
             return None
 
+        for item in response["Messages"][1:]:
+            self.client.change_message_visibility(
+                QueueUrl=self.queue_url, ReceiptHandle=item["ReceiptHandle"], VisibilityTimeout=0
+            )
         body = response["Messages"][0]["Body"]
         receipt_handle = response["Messages"][0]["ReceiptHandle"]
 
@@ -81,4 +87,5 @@ class SQSQueue(queue.Queue):
                 "ApproximateNumberOfMessagesNotVisible",
             ],
         )
-        return response["Attributes"]
+        self.queue_metric_collector.message_counts = response["Attributes"]
+        return self.queue_metric_collector.collect().serialize()
