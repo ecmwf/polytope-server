@@ -18,8 +18,7 @@
 # does it submit to any jurisdiction.
 #
 
-import pymongo
-
+from .. import mongo_client_factory
 from ..auth import User
 from ..metric_collector import MongoStorageMetricCollector
 from . import authorization
@@ -32,9 +31,13 @@ class MongoDBAuthorization(authorization.Authorization):
         self.host = config.get("host", "localhost")
         self.port = config.get("port", "27017")
         self.collection = config.get("collection", "users")
+        username = config.get("username")
+        password = config.get("password")
+        tls = config.get("tls", False) == True
+        tlsCAFile = config.get("tlsCAFile", None)
 
         endpoint = "{}:{}".format(self.host, self.port)
-        self.mongo_client = pymongo.MongoClient(endpoint, journal=True, connect=False)
+        self.mongo_client = mongo_client_factory.create_client(self.host, self.port, username, password, tls, tlsCAFile)
         self.database = self.mongo_client.authentication
         self.users = self.database[self.collection]
 
@@ -45,7 +48,6 @@ class MongoDBAuthorization(authorization.Authorization):
         super().__init__(name, realm, config)
 
     def get_roles(self, user: User) -> list:
-
         if user.realm != self.realm():
             raise ValueError(
                 "Trying to authorize a user in the wrong realm, expected {}, got {}".format(self.realm(), user.realm)

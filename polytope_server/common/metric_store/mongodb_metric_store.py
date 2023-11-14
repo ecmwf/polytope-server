@@ -22,6 +22,7 @@ import logging
 
 import pymongo
 
+from .. import mongo_client_factory
 from ..metric import (
     CacheInfo,
     Metric,
@@ -42,10 +43,15 @@ class MongoMetricStore(MetricStore):
         port = config.get("port", "27017")
         metric_collection = config.get("collection", "metrics")
 
+        username = config.get("username")
+        password = config.get("password")
+        tls = config.get("tls", False) == True
+        tlsCAFile = config.get("tlsCAFile", None)
+
         endpoint = "{}:{}".format(host, port)
 
-        self.mongo_client = pymongo.MongoClient(endpoint, journal=True, connect=False)
-        self.database = self.mongo_client.metric_store
+        self.mongo_client = mongo_client_factory.create_client(host, port, username, password, tls, tlsCAFile)
+        self.database = self.mongo_client.metric_storeg
         self.store = self.database[metric_collection]
 
         self.metric_type_class_map = {
@@ -85,7 +91,6 @@ class MongoMetricStore(MetricStore):
             return None
 
     def get_metrics(self, ascending=None, descending=None, limit=None, **kwargs):
-
         all_slots = []
 
         found_type = None
