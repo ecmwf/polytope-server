@@ -31,12 +31,13 @@ class SQSQueue(queue.Queue):
         if not response["Messages"]:
             return None
 
-        for item in response["Messages"][1:]:
+        msg, *remainder = response["Messages"]
+        for item in remainder:
             self.client.change_message_visibility(
                 QueueUrl=self.queue_url, ReceiptHandle=item["ReceiptHandle"], VisibilityTimeout=0
             )
-        body = response["Messages"][0]["Body"]
-        receipt_handle = response["Messages"][0]["ReceiptHandle"]
+        body = msg["Body"]
+        receipt_handle = msg["ReceiptHandle"]
 
         return queue.Message(json.loads(body), context=receipt_handle)
 
