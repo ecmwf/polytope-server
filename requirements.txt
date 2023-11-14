@@ -30,3 +30,4 @@ flask-swagger-ui==3.25.0
 ldap3==2.7
 docker==4.2.0
 python-keycloak==0.24.0
+boto3==1.28.80
