@@ -3,6 +3,7 @@ import logging
 from . import queue
 import boto3
 import os
+import re
 from ..metric_collector import SQSQueueMetricCollector
 
 
@@ -10,18 +11,15 @@ class SQSQueue(queue.Queue):
     def __init__(self, config):
         host = config.get("host")
         queue_name = config.get("name")
-        region = config.get("region", "eu-central-2")
         self.keep_alive_interval = config.get("keep_alive_interval", 60)
         self.visibility_timeout = config.get("visibility_timeout", 120)
+
+        region = self.__parse_region(host)
         self.queue_url = "{}/{}".format(host, queue_name)
 
         logging.getLogger("sqs").setLevel("WARNING")
-        session = boto3.Session(
-            aws_access_key_id=os.getenv("POLYTOPE_S3_ACCESS_KEY"),
-            aws_secret_access_key=os.getenv("POLYTOPE_S3_SECRET_KEY"),
-            region_name=region,
-        )
-        self.client = session.client("sqs")
+
+        self.client = boto3.client("sqs", region_name=region)
         self.check_connection()
         self.queue_metric_collector = SQSQueueMetricCollector(self.queue_url)
 
@@ -89,3 +87,7 @@ class SQSQueue(queue.Queue):
         )
         self.queue_metric_collector.message_counts = response["Attributes"]
         return self.queue_metric_collector.collect().serialize()
+
+    def __parse_region(self, host):
+        pattern = "https:\/\/sqs.(.*).amazonaws.com\/\d+"
+        return re.findall(pattern, host)[0]
