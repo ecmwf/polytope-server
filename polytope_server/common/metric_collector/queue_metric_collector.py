@@ -54,7 +54,4 @@ class SQSQueueMetricCollector(QueueMetricCollector):
         self.message_counts = None
 
     def total_queued(self):
-        num_messages = 0
-        for key in self.message_counts:
-            num_messages += self.message_counts[key]
-        return num_messages
+        return sum(self.message_counts.values())
