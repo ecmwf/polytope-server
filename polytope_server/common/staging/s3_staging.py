@@ -60,10 +60,9 @@ class S3Staging(staging.Staging):
 
         try:
             self.client.make_bucket(self.bucket, self.client._region)
+            self.client.set_bucket_policy(self.bucket, self.bucket_policy())
         except BucketAlreadyOwnedByYou:
             pass
-
-        self.client.set_bucket_policy(self.bucket, self.bucket_policy())
 
         self.storage_metric_collector = S3StorageMetricCollector(endpoint, self.client, self.bucket)
 
