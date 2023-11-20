@@ -38,12 +38,13 @@ class MongoKeyGenerator(keygenerator.KeyGenerator):
         collection = config.get("collection", "keys")
         username = config.get("username")
         password = config.get("password")
-        tls = config.get("tls", False) == True
+        srv = bool(config.get("srv", False))
+        tls = bool(config.get("tls", False))
         tlsCAFile = config.get("tlsCAFile", None)
 
         endpoint = "{}:{}".format(host, port)
 
-        self.mongo_client = mongo_client_factory.create_client(host, port, username, password, tls, tlsCAFile)
+        self.mongo_client = mongo_client_factory.create_client(host, port, username, password, srv, tls, tlsCAFile)
         self.database = self.mongo_client.keys
         self.keys = self.database[collection]
         self.realms = config.get("allowed_realms")
@@ -51,7 +52,6 @@ class MongoKeyGenerator(keygenerator.KeyGenerator):
         self.storage_metric_collector = MongoStorageMetricCollector(endpoint, self.mongo_client, "keys", collection)
 
     def create_key(self, user: User) -> ApiKey:
-
         if user.realm not in self.realms:
             raise ForbiddenRequest("Not allowed to create an API Key for users in realm {}".format(user.realm))
 

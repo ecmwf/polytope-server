@@ -31,18 +31,18 @@ from . import authentication
 
 class MongoAuthentication(authentication.Authentication):
     def __init__(self, name, realm, config):
-
         self.config = config
         host = config.get("host", "localhost")
         port = config.get("port", "27017")
         collection = config.get("collection", "users")
         username = config.get("username")
         password = config.get("password")
-        tls = config.get("tls", False) == True
+        srv = bool(config.get("srv", False))
+        tls = bool(config.get("tls", False))
         tlsCAFile = config.get("tlsCAFile", None)
 
         endpoint = "{}:{}".format(host, port)
-        self.mongo_client = mongo_client_factory.create_client(host, port, username, password, tls, tlsCAFile)
+        self.mongo_client = mongo_client_factory.create_client(host, port, username, password, srv, tls, tlsCAFile)
         self.database = self.mongo_client.authentication
         self.users = self.database[collection]
 
@@ -62,7 +62,6 @@ class MongoAuthentication(authentication.Authentication):
         return "Authenticate with username and password"
 
     def authenticate(self, credentials: str) -> User:
-
         # credentials should be of the form 'base64(<username>:<API_key>)'
         try:
             decoded = base64.b64decode(credentials).decode("utf-8")

@@ -33,11 +33,14 @@ class MongoDBIdentity(identity.Identity):
         self.collection = config.get("collection", "users")
         username = config.get("username")
         password = config.get("password")
-        tls = config.get("tls", False) == True
+        srv = bool(config.get("srv", False))
+        tls = bool(config.get("tls", False))
         tlsCAFile = config.get("tlsCAFile", None)
 
         endpoint = "{}:{}".format(self.host, self.port)
-        self.mongo_client = mongo_client_factory.create_client(self.host, self.port, username, password, tls, tlsCAFile)
+        self.mongo_client = mongo_client_factory.create_client(
+            self.host, self.port, username, password, srv, tls, tlsCAFile
+        )
         self.database = self.mongo_client.authentication
         self.users = self.database[self.collection]
         self.realm = config.get("realm")
@@ -55,7 +58,6 @@ class MongoDBIdentity(identity.Identity):
         self.identity_metric_collector = MetricCollector()
 
     def add_user(self, username: str, password: str, roles: list) -> bool:
-
         if self.users.find_one({"username": username}) is not None:
             raise Conflict("Username already registered")
 
@@ -73,7 +75,6 @@ class MongoDBIdentity(identity.Identity):
         return True
 
     def remove_user(self, username: str) -> bool:
-
         result = self.users.delete_one({"username": username})
         if result.deleted_count > 0:
             return True

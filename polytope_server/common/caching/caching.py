@@ -199,11 +199,13 @@ class MongoDBCaching(Caching):
         port = cache_config.get("port", 27017)
         username = cache_config.get("username")
         password = cache_config.get("password")
-        tls = cache_config.get("tls", False) == True
+        srv = bool(cache_config.get("srv", False))
+        tls = bool(cache_config.get("tls", False))
         tlsCAFile = cache_config.get("tlsCAFile", None)
         endpoint = "{}:{}".format(host, port)
         collection = cache_config.get("collection", "cache")
-        self.client = mongo_client_factory.create_client(host, port, username, password, tls, tlsCAFile)
+        self.client = mongo_client_factory.create_client(host, port, username, password, srv, tls, tlsCAFile)
+
         self.database = self.client.cache
         self.collection = self.database[collection]
         self.collection.create_index("expire_at", expireAfterSeconds=0)

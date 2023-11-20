@@ -39,18 +39,18 @@ class ApiKeyMongoAuthentication(authentication.Authentication):
     """
 
     def __init__(self, name, realm, config):
-
         self.config = config
         host = config.get("host", "localhost")
         port = config.get("port", "27017")
         collection = config.get("collection", "keys")
         username = config.get("username")
         password = config.get("password")
-        tls = config.get("tls", False) == True
+        srv = bool(config.get("srv", False))
+        tls = bool(config.get("tls", False))
         tlsCAFile = config.get("tlsCAFile", None)
 
         endpoint = "{}:{}".format(host, port)
-        self.mongo_client = mongo_client_factory.create_client(host, port, username, password, tls, tlsCAFile)
+        self.mongo_client = mongo_client_factory.create_client(host, port, username, password, srv, tls, tlsCAFile)
         self.database = self.mongo_client.keys
         self.keys = self.database[collection]
         assert realm == "polytope"
@@ -66,7 +66,6 @@ class ApiKeyMongoAuthentication(authentication.Authentication):
         return "Authenticate with Polytope API Key from ../auth/keys"
 
     def authenticate(self, credentials: str) -> User:
-
         # credentials should be of the form '<ApiKey>'
         res = self.keys.find_one({"key.key": credentials})
         if res is None:
