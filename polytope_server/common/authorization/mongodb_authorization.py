@@ -28,24 +28,17 @@ class MongoDBAuthorization(authorization.Authorization):
     def __init__(self, name, realm, config):
         self.config = config
         assert self.config["type"] == "mongodb"
-        self.host = config.get("host", "localhost")
-        self.port = config.get("port", "27017")
+        self.uri = config.get("uri", "mongodb://localhost:27017")
         self.collection = config.get("collection", "users")
         username = config.get("username")
         password = config.get("password")
-        srv = bool(config.get("srv", False))
-        tls = bool(config.get("tls", False))
-        tlsCAFile = config.get("tlsCAFile", None)
 
-        endpoint = "{}:{}".format(self.host, self.port)
-        self.mongo_client = mongo_client_factory.create_client(
-            self.host, self.port, username, password, srv, tls, tlsCAFile
-        )
+        self.mongo_client = mongo_client_factory.create_client(self.uri, username, password)
         self.database = self.mongo_client.authentication
         self.users = self.database[self.collection]
 
         self.storage_metric_collector = MongoStorageMetricCollector(
-            endpoint, self.mongo_client, "authentication", self.collection
+            self.uri, self.mongo_client, "authentication", self.collection
         )
 
         super().__init__(name, realm, config)

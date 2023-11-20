@@ -32,22 +32,17 @@ from . import authentication
 class MongoAuthentication(authentication.Authentication):
     def __init__(self, name, realm, config):
         self.config = config
-        host = config.get("host", "localhost")
-        port = config.get("port", "27017")
+        uri = config.get("uri", "mongodb://localhost:27017")
         collection = config.get("collection", "users")
         username = config.get("username")
         password = config.get("password")
-        srv = bool(config.get("srv", False))
-        tls = bool(config.get("tls", False))
-        tlsCAFile = config.get("tlsCAFile", None)
 
-        endpoint = "{}:{}".format(host, port)
-        self.mongo_client = mongo_client_factory.create_client(host, port, username, password, srv, tls, tlsCAFile)
+        self.mongo_client = mongo_client_factory.create_client(uri, username, password)
         self.database = self.mongo_client.authentication
         self.users = self.database[collection]
 
         self.storage_metric_collector = MongoStorageMetricCollector(
-            endpoint, self.mongo_client, "authentication", collection
+            uri, self.mongo_client, "authentication", collection
         )
 
         super().__init__(name, realm, config)

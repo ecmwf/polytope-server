@@ -195,23 +195,20 @@ class RedisCaching(Caching):
 class MongoDBCaching(Caching):
     def __init__(self, cache_config):
         super().__init__(cache_config)
-        host = cache_config.get("host", "localhost")
-        port = cache_config.get("port", 27017)
+        uri = cache_config.get("uri", "mongodb://localhost:27017")
+
         username = cache_config.get("username")
         password = cache_config.get("password")
-        srv = bool(cache_config.get("srv", False))
-        tls = bool(cache_config.get("tls", False))
-        tlsCAFile = cache_config.get("tlsCAFile", None)
-        endpoint = "{}:{}".format(host, port)
+
         collection = cache_config.get("collection", "cache")
-        self.client = mongo_client_factory.create_client(host, port, username, password, srv, tls, tlsCAFile)
+        self.client = mongo_client_factory.create_client(uri, username, password,)
 
         self.database = self.client.cache
         self.collection = self.database[collection]
         self.collection.create_index("expire_at", expireAfterSeconds=0)
         self.collection.update_one({"_id": "hits"}, {"$setOnInsert": {"n": 0}}, upsert=True)
         self.collection.update_one({"_id": "misses"}, {"$setOnInsert": {"n": 0}}, upsert=True)
-        self.storage_metric_collector = MongoStorageMetricCollector(endpoint, self.client, "cache", collection)
+        self.storage_metric_collector = MongoStorageMetricCollector(uri, self.client, "cache", collection)
         self.cache_metric_collector = MongoCacheMetricCollector(self.client, "cache", collection)
 
     def get_type(self):

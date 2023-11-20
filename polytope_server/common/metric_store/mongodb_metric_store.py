@@ -39,19 +39,13 @@ from . import MetricStore
 
 class MongoMetricStore(MetricStore):
     def __init__(self, config=None):
-        host = config.get("host", "localhost")
-        port = config.get("port", "27017")
+        uri = config.get("uri", "mongodb://localhost:27017")
         metric_collection = config.get("collection", "metrics")
 
         username = config.get("username")
         password = config.get("password")
-        srv = bool(config.get("srv", False))
-        tls = bool(config.get("tls", False))
-        tlsCAFile = config.get("tlsCAFile", None)
 
-        endpoint = "{}:{}".format(host, port)
-
-        self.mongo_client = mongo_client_factory.create_client(host, port, username, password, srv, tls, tlsCAFile)
+        self.mongo_client = mongo_client_factory.create_client(uri, username, password)
         self.database = self.mongo_client.metric_storeg
         self.store = self.database[metric_collection]
 
@@ -65,10 +59,10 @@ class MongoMetricStore(MetricStore):
         }
 
         self.storage_metric_collector = MongoStorageMetricCollector(
-            endpoint, self.mongo_client, "metric_store", metric_collection
+            uri, self.mongo_client, "metric_store", metric_collection
         )
 
-        logging.info("MongoClient configured to open at {}".format(endpoint))
+        logging.info("MongoClient configured to open at {}".format(uri))
 
     def get_type(self):
         return "mongodb"

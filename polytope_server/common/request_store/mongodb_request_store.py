@@ -35,19 +35,12 @@ from . import request_store
 
 class MongoRequestStore(request_store.RequestStore):
     def __init__(self, config=None, metric_store_config=None):
-        host = config.get("host", "localhost")
-        port = config.get("port", "27017")
+        uri = config.get("uri", "mongodb://localhost:27017")
         request_collection = config.get("collection", "requests")
-
         username = config.get("username")
         password = config.get("password")
-        srv = bool(config.get("srv", False))
-        tls = bool(config.get("tls", False))
-        tlsCAFile = config.get("tlsCAFile", None)
 
-        endpoint = "{}:{}".format(host, port)
-
-        self.mongo_client = mongo_client_factory.create_client(host, port, username, password, srv, tls, tlsCAFile)
+        self.mongo_client = mongo_client_factory.create_client(uri, username, password)
         self.database = self.mongo_client.request_store
         self.store = self.database[request_collection]
 
@@ -56,11 +49,11 @@ class MongoRequestStore(request_store.RequestStore):
             self.metric_store = metric_store.create_metric_store(metric_store_config)
 
         self.storage_metric_collector = MongoStorageMetricCollector(
-            endpoint, self.mongo_client, "request_store", request_collection
+            uri, self.mongo_client, "request_store", request_collection
         )
         self.request_store_metric_collector = MongoRequestStoreMetricCollector()
 
-        logging.info("MongoClient configured to open at {}".format(endpoint))
+        logging.info("MongoClient configured to open at {}".format(uri))
 
     def get_type(self):
         return "mongodb"

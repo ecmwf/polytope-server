@@ -33,23 +33,17 @@ class MongoKeyGenerator(keygenerator.KeyGenerator):
     def __init__(self, config):
         self.config = config
         assert self.config["type"] == "mongodb"
-        host = config.get("host", "localhost")
-        port = config.get("port", "27017")
+        uri = config.get("uri", "mongodb://localhost:27017")
         collection = config.get("collection", "keys")
         username = config.get("username")
         password = config.get("password")
-        srv = bool(config.get("srv", False))
-        tls = bool(config.get("tls", False))
-        tlsCAFile = config.get("tlsCAFile", None)
 
-        endpoint = "{}:{}".format(host, port)
-
-        self.mongo_client = mongo_client_factory.create_client(host, port, username, password, srv, tls, tlsCAFile)
+        self.mongo_client = mongo_client_factory.create_client(uri, username, password)
         self.database = self.mongo_client.keys
         self.keys = self.database[collection]
         self.realms = config.get("allowed_realms")
 
-        self.storage_metric_collector = MongoStorageMetricCollector(endpoint, self.mongo_client, "keys", collection)
+        self.storage_metric_collector = MongoStorageMetricCollector(uri, self.mongo_client, "keys", collection)
 
     def create_key(self, user: User) -> ApiKey:
         if user.realm not in self.realms:
