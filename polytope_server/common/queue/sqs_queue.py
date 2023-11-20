@@ -1,8 +1,10 @@
 import json
 import logging
-from . import queue
+
 import boto3
+
 from ..metric_collector import SQSQueueMetricCollector
+from . import queue
 
 
 class SQSQueue(queue.Queue):
@@ -30,7 +32,7 @@ class SQSQueue(queue.Queue):
             VisibilityTimeout=self.visibility_timeout,  # If processing takes more seconds, message will be read twice
             MaxNumberOfMessages=1,
         )
-        if not response["Messages"]:
+        if "Messages" not in response:
             return None
 
         msg, *remainder = response["Messages"]
