@@ -19,7 +19,7 @@ class SQSQueue(queue.Queue):
         self.client = boto3.client("sqs", region_name=region)
         self.queue_url = self.client.get_queue_url(QueueName=queue_name).get("QueueUrl")
         self.check_connection()
-        self.queue_metric_collector = SQSQueueMetricCollector(self.queue_url)
+        self.queue_metric_collector = SQSQueueMetricCollector(self.queue_url, self.client)
 
     def enqueue(self, message):
         self.client.send_message(
@@ -78,13 +78,4 @@ class SQSQueue(queue.Queue):
         return "sqs"
 
     def collect_metric_info(self):
-        response = self.client.get_queue_attributes(
-            QueueUrl=self.queue_url,
-            AttributeNames=[
-                "ApproximateNumberOfMessages",
-                "ApproximateNumberOfMessagesDelayed",
-                "ApproximateNumberOfMessagesNotVisible",
-            ],
-        )
-        self.queue_metric_collector.message_counts = response["Attributes"]
         return self.queue_metric_collector.collect().serialize()
