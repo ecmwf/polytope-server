@@ -14,9 +14,13 @@ class SQSQueue(queue.Queue):
         self.keep_alive_interval = config.get("keep_alive_interval", 60)
         self.visibility_timeout = config.get("visibility_timeout", 120)
         self.message_group_id = config.get("message_group_id", "polytope")
-        logging.getLogger("sqs").setLevel("WARNING")
+
+        logging.getLogger("sqs").setLevel(logging.WARNING)
+        logging.getLogger("boto3").setLevel(logging.WARNING)
+        logging.getLogger("botocore").setLevel(logging.WARNING)
 
         self.client = boto3.client("sqs", region_name=region)
+
         self.queue_url = self.client.get_queue_url(QueueName=queue_name).get("QueueUrl")
         self.check_connection()
         self.queue_metric_collector = SQSQueueMetricCollector(self.queue_url, self.client)
@@ -31,6 +35,7 @@ class SQSQueue(queue.Queue):
             QueueUrl=self.queue_url,
             VisibilityTimeout=self.visibility_timeout,  # If processing takes more seconds, message will be read twice
             MaxNumberOfMessages=1,
+            WaitTimeSeconds=20,
         )
         if "Messages" not in response:
             return None
