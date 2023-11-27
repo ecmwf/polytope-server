@@ -29,6 +29,7 @@ import yaml
 from flask import Flask, request
 from flask_swagger_ui import get_swaggerui_blueprint
 from werkzeug.exceptions import default_exceptions
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from ..common.exceptions import BadRequest, ForbiddenRequest, HTTPException, NotFound
 from ..version import __version__
@@ -47,8 +48,12 @@ class FlaskHandler(frontend.FrontendHandler):
         collections,
         identity,
         apikeygenerator,
+        proxy_support: bool,
     ):
         handler = Flask(__name__)
+
+        if proxy_support:
+            handler.wsgi_app = ProxyFix(handler.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
         openapi_spec = "static/openapi.yaml"
         spec_path = pathlib.Path(__file__).parent.absolute() / openapi_spec
@@ -249,7 +254,6 @@ class FlaskHandler(frontend.FrontendHandler):
         return handler
 
     def run_server(self, handler, server_type, host, port):
-
         if server_type == "flask":
             # flask internal server for non-production environments
             # should only be used for testing and debugging

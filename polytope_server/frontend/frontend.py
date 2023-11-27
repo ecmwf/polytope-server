@@ -59,7 +59,6 @@ class Frontend:
         self.port = frontend_config.get("port", "5000")
 
     def run(self):
-
         # create instances of authentication, request_store & staging
         request_store = create_request_store(self.config.get("request_store"), self.config.get("metric_store"))
 
@@ -72,7 +71,15 @@ class Frontend:
 
         handler_module = importlib.import_module("polytope_server.frontend." + self.handler_type + "_handler")
         handler_class = getattr(handler_module, self.handler_dict[self.handler_type])()
-        handler = handler_class.create_handler(request_store, auth, staging, collections, identity, apikeygenerator)
+        handler = handler_class.create_handler(
+            request_store,
+            auth,
+            staging,
+            collections,
+            identity,
+            apikeygenerator,
+            self.config.get("frontend", {}).get("proxy_support", False),
+        )
 
         logging.info("Starting frontend...")
         handler_class.run_server(handler, self.server_type, self.host, self.port)
