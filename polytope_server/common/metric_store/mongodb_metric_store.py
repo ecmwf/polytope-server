@@ -46,7 +46,7 @@ class MongoMetricStore(MetricStore):
         password = config.get("password")
 
         self.mongo_client = mongo_client_factory.create_client(uri, username, password)
-        self.database = self.mongo_client.metric_storeg
+        self.database = self.mongo_client.metric_store
         self.store = self.database[metric_collection]
 
         self.metric_type_class_map = {
