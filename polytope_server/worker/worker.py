@@ -208,7 +208,6 @@ class Worker:
 
             self.update_metric()
 
-    @perf_time
     def process_request(self, request):
         """Entrypoint for the worker thread."""
         start = timeit.default_timer()
