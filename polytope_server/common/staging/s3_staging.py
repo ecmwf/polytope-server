@@ -29,6 +29,7 @@
 
 import json
 import logging
+import timeit
 
 import minio
 from minio import Minio
@@ -71,6 +72,7 @@ class S3Staging(staging.Staging):
         )
 
     def create(self, name, data, content_type):
+        start = timeit.default_timer()
         url = self.get_url(name)
         logging.info("Putting to staging: {}".format(name))
 
@@ -129,6 +131,11 @@ class S3Staging(staging.Staging):
             raise
 
         logging.info("Put to {}".format(url))
+        end = timeit.default_timer()
+        delta = end - start
+        logging.info(
+            f"PERF_TIME fdb+s3 request_id, elapsed [s], size [bytes], throughput [MiB/s]: {name},{delta:.4f},{total_size},{(total_size/1024/1024/delta):.2f}"
+        )
         return url
 
     def read(self, name):

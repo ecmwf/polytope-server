@@ -23,6 +23,7 @@ import os
 import signal
 import sys
 import time
+import timeit
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
@@ -132,7 +133,6 @@ class Worker:
             self.metric_store.update_metric(self.metric)
 
     def run(self):
-
         self.queue = polytope_queue.create_queue(self.config.get("queue"))
 
         self.thread_pool = ThreadPoolExecutor(1)
@@ -141,7 +141,6 @@ class Worker:
         self.update_metric()
 
         while not time.sleep(self.poll_interval):
-
             self.queue.keep_alive()
 
             # No active request: try to pop from queue and process request in future thread
@@ -209,8 +208,10 @@ class Worker:
 
             self.update_metric()
 
+    @perf_time
     def process_request(self, request):
         """Entrypoint for the worker thread."""
+        start = timeit.default_timer()
 
         id = request.id
         collection = self.collections[request.collection]
@@ -260,6 +261,9 @@ class Worker:
             raise Exception("Failed to process request.")
         else:
             request.user_message += "Success"
+
+        end = timeit.default_timer()
+        logging.info(f"PERF_TIME worker request_id, elapsed [s]: {request.id},{(end-start):.4f}")
 
         return
 
