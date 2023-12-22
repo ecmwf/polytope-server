@@ -307,7 +307,7 @@ class Worker:
         logging.exception("Request failed with exception.", extra={"request_id": request.id})
         self.requests_failed += 1
 
-    def on_process_terminated(self):
+    def on_process_terminated(self, signal, frame):
         """Called when the worker is asked to exit whilst processing a request, and we want to reschedule the request"""
 
         if self.request is not None:
