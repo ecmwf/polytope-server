@@ -59,6 +59,7 @@ class MARSDataSource(datasource.DataSource):
                 yaml.dump(self.mars_config, f)
         else:
             self.mars_home = None
+            self.mars_config = None
 
     def get_type(self):
         return self.type
@@ -68,14 +69,26 @@ class MARSDataSource(datasource.DataSource):
         r = yaml.safe_load(request.user_request) or {}
 
         for k, v in self.match_rules.items():
+            
+            # An empty match rule means that the key must not be present
+            if v is None or len(v) == 0:
+                if k in r:
+                    raise Exception("Request containing key '{}' is not allowed".format(k))
+                else:
+                    continue # no more checks to do
+            
             # Check that all required keys exist
-            if k not in r:
-                raise Exception("Request does not contain expected key {}".format(k))
+            if k not in r and not (v is None or len(v) == 0):
+                raise Exception("Request does not contain expected key '{}'".format(k))
+            
+
             # Process date rules
             if k == "date":
                 self.date_check(r["date"], v)
                 continue
+
             # ... and check the value of other keys
+
             v = [v] if isinstance(v, str) else v
             if r[k] not in v:
                 raise Exception("got {} : {}, but expected one of {}".format(k, r[k], v))
@@ -171,16 +184,13 @@ class MARSDataSource(datasource.DataSource):
             }
 
             if self.mars_config is not None:
-                env = {
-                    **os.environ,
-                    "MARS_HOME": self.mars_home,
-                }
+                env["MARS_HOME"] = self.mars_home
 
             logging.info("Accessing MARS on behalf of user {} with token {}".format(mars_user, mars_token))
 
-        except Exception:
+        except Exception as e:
             logging.error("MARS request aborted because user does not have associated ECMWF credentials")
-            raise Exception()
+            raise e
 
         return env
 

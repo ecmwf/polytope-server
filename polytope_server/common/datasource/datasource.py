@@ -109,6 +109,7 @@ type_to_class_map = {
     "mars": "MARSDataSource",
     "webmars": "WebMARSDataSource",
     "polytope": "PolytopeDataSource",
+    "federated": "FederatedDataSource",
     "echo": "EchoDataSource",
     "dummy": "DummyDataSource",
     "raise": "RaiseDataSource",

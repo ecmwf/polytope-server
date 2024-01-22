@@ -18,205 +18,165 @@
 # does it submit to any jurisdiction.
 #
 
-import hashlib
+import json
 import logging
-import time
-from http import HTTPStatus
+import os
+import subprocess
 
-import requests
+import pygribjump
+import polytope
+import tempfile
+from polytope_mars.api import PolytopeMars
+from polytope_mars.api import features
+from pathlib import Path
+import yaml
 
+from ..caching import cache
 from . import datasource
 
 
 class PolytopeDataSource(datasource.DataSource):
     def __init__(self, config):
+        self.config = config
         self.type = config["type"]
         assert self.type == "polytope"
+        self.match_rules = config.get("match", {})
+        self.patch_rules = config.get("patch", {})
+        self.output = None
 
-        self.url = config["url"]
-        self.port = config.get("port", 443)
-        self.secret = config["secret"]
-        self.collection = config["collection"]
-        self.api_version = config.get("api_version", "v1")
-        self.result_url = None
-        self.mime_type_result = "application/octet-stream"
+        # still need to set up fdb
+        self.fdb_config = self.config["fdb-config"]
 
+        self.check_schema()
+
+        # os.environ["FDB5_CONFIG"] = json.dumps(self.fdb_config)
+        # os.environ["FDB5_HOME"] = self.config.get("fdb_home", "/opt/fdb-gribjump")
+        os.environ["GRIBJUMP_HOME"] = "/opt/fdb/gribjump"
+
+        # if "spaces" in self.fdb_config:
+        #     for space in self.fdb_config["spaces"]:
+        #         for root in space["roots"]:
+        #             os.makedirs(root["path"], exist_ok=True)
+
+        # Set up gribjump
+        self.gribjump_config = self.config["gribjump-config"]
+        os.makedirs("/home/polytope/gribjump/", exist_ok=True)
+        with open("/home/polytope/gribjump/config.yaml", "w") as f:
+            json.dump(self.gribjump_config, f)
+        os.environ["GRIBJUMP_CONFIG_FILE"] = "/home/polytope/gribjump/config.yaml"
+        self.gj = pygribjump.GribJump()
+
+        # Set up polytope feature extraction library
+        self.polytope_options = {
+            "values": {
+                "mapper": {"type": "octahedral", "resolution": 1280, "axes": ["latitude", "longitude"]}
+            },
+            "date": {"merge": {"with": "time", "linkers": ["T", "00"]}},
+            "step": {"type_change": "int"},
+        }
+
+        logging.info("Set up gribjump")
+
+
+    #todo: remove when we no longer need to set up a valid fdb to use gribjump
+    def check_schema(self):
+
+        schema = self.fdb_config.get("schema", None)
+
+        # If schema is empty, leave it empty
+        if schema is None:
+            return
+
+        # If schema is just a string, then it must be a path already
+        if isinstance(self.fdb_config["schema"], str):
+            return
+
+        # pull schema from git
+        if "git" in schema:
+
+            git_config = schema["git"]
+            git_path = Path(git_config["path"])
+
+            local_path = (
+                Path(tempfile.gettempdir())
+                .joinpath(git_config["remote"].replace(":", ""))
+                .joinpath(git_config["branch"])
+                .joinpath(git_path)
+            )
+
+            Path(local_path.parent).mkdir(parents=True, exist_ok=True)
+
+            with open(local_path, "w+") as f:
+                f.write(
+                    self.git_download_schema(
+                        git_config["remote"],
+                        git_config["branch"],
+                        git_path.parent,
+                        git_path.name,
+                    )
+                )
+
+        self.fdb_config["schema"] = str(local_path)
+
+    @cache(lifetime=500)
+    def git_download_schema(self, remote, branch, git_dir, git_file):
+        call = "git archive --remote {} {}:{} {} | tar -xO {}".format(
+            remote, branch, str(git_dir), str(git_file), str(git_file)
+        )
+        logging.debug("Fetching FDB schema from git with call: {}".format(call))
+        output = subprocess.check_output(call, shell=True)
+        return output.decode("utf-8")
+    
     def get_type(self):
         return self.type
 
     def archive(self, request):
-
-        url = "/".join(
-            [
-                self.url + ":" + str(self.port),
-                "api",
-                self.api_version,
-                "requests",
-                self.collection,
-            ]
-        )
-        logging.info("Built URL for request: {}".format(url))
-
-        body = {
-            "verb": "archive",
-            "request": request.user_request,
-        }
-
-        headers = {
-            "Authorization": "Federation {}:{}:{}".format(self.secret, request.user.username, request.user.realm)
-        }
-
-        # Post the initial request
-
-        response = requests.post(url, json=body, headers=headers)
-
-        if response.status_code != HTTPStatus.ACCEPTED:
-            raise Exception(
-                "Request could not be POSTed to remote Polytope at {}.\n\
-                             HTTP error code {}.\n\
-                             Message: {}".format(
-                    url, response.status_code, response.content
-                )
-            )
-
-        url = response.headers["location"]
-
-        # Post the data to the upload location
-
-        response = requests.post(
-            url,
-            self.input_data,
-            headers={
-                **headers,
-                "X-Checksum": hashlib.md5(self.input_data).hexdigest(),
-            },
-        )
-
-        if response.status_code != HTTPStatus.ACCEPTED:
-            raise Exception(
-                "Data could not be POSTed for upload to remote Polytope at {}.\n\
-                             HTTP error code {}.\n\
-                             Message: {}".format(
-                    url, response.status_code, response.content
-                )
-            )
-
-        url = response.headers["location"]
-        time.sleep(int(float(response.headers["retry-after"])))
-
-        status = HTTPStatus.ACCEPTED
-
-        # Poll until the request fails or returns 200
-        while status == HTTPStatus.ACCEPTED:
-            response = requests.get(url, headers=headers, allow_redirects=False)
-            status = response.status_code
-            logging.info(response.json())
-            if "location" in response.headers:
-                url = response.headers["location"]
-            if "retry-after" in response.headers:
-                time.sleep(int(float(response.headers["retry-after"])))
-
-        if status != HTTPStatus.OK:
-            raise Exception(
-                "Request failed on remote Polytope at {}.\n\
-                            HTTP error code {}.\n\
-                            Message: {}".format(
-                    url, status, response.json()["message"]
-                )
-            )
-
-        return True
+        raise NotImplementedError()
 
     def retrieve(self, request):
+        r = yaml.safe_load(request.user_request)
+        logging.info(r)
 
-        url = "/".join(
-            [
-                self.url + ":" + str(self.port),
-                "api",
-                self.api_version,
-                "requests",
-                self.collection,
-            ]
-        )
-        logging.info("Built URL for request: {}".format(url))
+        # We take the static config from the match rules of the datasource
+        self.polytope_config = {}
+        for k, v in self.match_rules.items():
+            self.polytope_config[k] = isinstance(v, list) and v[0] or v
 
-        body = {
-            "verb": "retrieve",
-            "request": request.user_request,
-        }
+        logging.info(self.polytope_config)
+        logging.info(self.polytope_options)
+        p = PolytopeMars(self.polytope_config, self.polytope_options)
+        logging.info(p)
 
-        headers = {
-            "Authorization": "Federation {}:{}:{}".format(self.secret, request.user.username, request.user.realm)
-        }
-
-        # Post the initial request
-
-        response = requests.post(url, json=body, headers=headers)
-
-        if response.status_code != HTTPStatus.ACCEPTED:
-            raise Exception(
-                "Request could not be POSTed to remote Polytope at {}.\n\
-                             HTTP error code {}.\n\
-                             Message: {}".format(
-                    url, response.status_code, response.content
-                )
-            )
-
-        url = response.headers["location"]
-        time.sleep(int(float(response.headers["retry-after"])))
-
-        status = HTTPStatus.ACCEPTED
-
-        # Poll until the request fails or returns 303
-        while status == HTTPStatus.ACCEPTED:
-            response = requests.get(url, headers=headers, allow_redirects=False)
-            status = response.status_code
-            if "location" in response.headers:
-                url = response.headers["location"]
-            if "retry-after" in response.headers:
-                time.sleep(int(float(response.headers["retry-after"])))
-
-        if status != HTTPStatus.SEE_OTHER:
-            raise Exception(
-                "Request failed on remote Polytope at {}.\n\
-                            HTTP error code {}.\n\
-                            Message: {}".format(
-                    url, status, response.json()["message"]
-                )
-            )
-
-        self.result_url = url
-
+        self.output = p.extract(r)
+        self.output = json.dumps(self.output).encode("utf-8")
+        logging.info(self.output)
         return True
 
     def result(self, request):
-
-        response = requests.get(self.result_url, stream=True)
-
-        self.mime_type_result = response.headers["Content-Type"]
-
-        if response.status_code != HTTPStatus.OK:
-            raise Exception(
-                "Request could not be downloaded from remote Polytope at {}.\n\
-                            HTTP error code {}.\n\
-                            Message: {}".format(
-                    self.result_url,
-                    response.status_code,
-                    response.json()["message"],
-                )
-            )
-
-        try:
-            for chunk in response.iter_content(chunk_size=1024):
-                yield chunk
-        finally:
-            response.close()
-
-    def mime_type(self) -> str:
-        return self.mime_type_result
-
-    def destroy(self, request) -> None:
-        return
+        logging.info("Getting result")
+        yield self.output
 
     def match(self, request):
-        return
+
+        r = yaml.safe_load(request.user_request) or {}
+
+        for k, v in self.match_rules.items():
+            # Check that all required keys exist
+            if k not in r:
+                raise Exception("Request does not contain expected key {}".format(k))
+
+            # ... and check the value of other keys
+            v = [v] if isinstance(v, str) else v
+
+            if r[k] not in v:
+                raise Exception("got {} : {}, but expected one of {}".format(k, r[k], v))
+            
+            # Finally check that there is a feature specified in the request
+            if "feature" not in r:
+                raise Exception("Request does not contain expected key 'feature'")
+
+    def destroy(self, request) -> None:
+        pass
+
+    def mime_type(self) -> str:
+        return "application/prs.coverage+json"

@@ -218,7 +218,7 @@ class FlaskHandler(frontend.FrontendHandler):
         @handler.route("/api/v1/collections", methods=["GET"])
         def list_collections():
             auth_header = get_auth_header(request)
-            authorized_collections = []
+            collection_config =  authorized_collections = []
             for name, collection in collections.items():
                 try:
                     if auth.can_access_collection(auth_header, collection):
@@ -226,6 +226,19 @@ class FlaskHandler(frontend.FrontendHandler):
                 except ForbiddenRequest:
                     pass
             return RequestSucceeded(authorized_collections)
+        
+        # New handler
+        # @handler.route("/api/v1/collection/<collection>", methods=["GET"])
+        # def describe_collection(collection):
+        #     auth_header = get_auth_header(request)
+        #     authorized_collections = []
+        #     for name, collection in collections.items():
+        #         try:
+        #             if auth.can_access_collection(auth_header, collection):
+        #                 authorized_collections.append(name)
+        #         except ForbiddenRequest:
+        #             pass
+        #     return RequestSucceeded(authorized_collections)
 
         @handler.after_request
         def add_header(response: flask.Response):
