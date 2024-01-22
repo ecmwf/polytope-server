@@ -23,10 +23,11 @@ import logging
 import os
 import subprocess
 
-os.environ["GRIBJUMP_HOME"] = "/opt/fdb-gribjump"
-
+import pygribjump
 import polytope
 import tempfile
+from polytope_mars.api import PolytopeMars
+from polytope_mars.api import features
 from pathlib import Path
 import yaml
 
@@ -46,19 +47,16 @@ class PolytopeDataSource(datasource.DataSource):
         # still need to set up fdb
         self.fdb_config = self.config["fdb-config"]
 
-        self.non_sliceable = self.config.get("non-sliceable", None)
-        assert self.non_sliceable is not None
-
         self.check_schema()
 
-        os.environ["FDB5_CONFIG"] = json.dumps(self.fdb_config)
-        os.environ["FDB5_HOME"] = self.config.get("fdb_home", "/opt/fdb-gribjump")
-        # forced change
+        # os.environ["FDB5_CONFIG"] = json.dumps(self.fdb_config)
+        # os.environ["FDB5_HOME"] = self.config.get("fdb_home", "/opt/fdb-gribjump")
+        os.environ["GRIBJUMP_HOME"] = "/opt/fdb/gribjump"
 
-        if "spaces" in self.fdb_config:
-            for space in self.fdb_config["spaces"]:
-                for root in space["roots"]:
-                    os.makedirs(root["path"], exist_ok=True)
+        # if "spaces" in self.fdb_config:
+        #     for space in self.fdb_config["spaces"]:
+        #         for root in space["roots"]:
+        #             os.makedirs(root["path"], exist_ok=True)
 
         # Set up gribjump
         self.gribjump_config = self.config["gribjump-config"]
@@ -66,7 +64,7 @@ class PolytopeDataSource(datasource.DataSource):
         with open("/home/polytope/gribjump/config.yaml", "w") as f:
             json.dump(self.gribjump_config, f)
         os.environ["GRIBJUMP_CONFIG_FILE"] = "/home/polytope/gribjump/config.yaml"
-        # self.gj = pygribjump.GribJump()
+        self.gj = pygribjump.GribJump()
 
         # Set up polytope feature extraction library
         self.polytope_options = {
@@ -75,8 +73,6 @@ class PolytopeDataSource(datasource.DataSource):
             },
             "date": {"merge": {"with": "time", "linkers": ["T", "00"]}},
             "step": {"type_change": "int"},
-            "number": {"type_change": "int"},
-            "longitude" : {"cyclic": [0, 360]},
         }
 
         logging.info("Set up gribjump")
@@ -122,7 +118,7 @@ class PolytopeDataSource(datasource.DataSource):
 
         self.fdb_config["schema"] = str(local_path)
 
-    @cache(lifetime=5000000)
+    @cache(lifetime=500)
     def git_download_schema(self, remote, branch, git_dir, git_file):
         call = "git archive --remote {} {}:{} {} | tar -xO {}".format(
             remote, branch, str(git_dir), str(git_file), str(git_file)
@@ -143,19 +139,17 @@ class PolytopeDataSource(datasource.DataSource):
 
         # We take the static config from the match rules of the datasource
         self.polytope_config = {}
-        for k in self.non_sliceable:
-            self.polytope_config[k] = r[k]
-
-        assert len(self.polytope_config) > 0
+        for k, v in self.match_rules.items():
+            self.polytope_config[k] = isinstance(v, list) and v[0] or v
 
         logging.info(self.polytope_config)
         logging.info(self.polytope_options)
-        from polytope_mars.api import PolytopeMars
         p = PolytopeMars(self.polytope_config, self.polytope_options)
+        logging.info(p)
 
         self.output = p.extract(r)
         self.output = json.dumps(self.output).encode("utf-8")
-        # logging.info(self.output)
+        logging.info(self.output)
         return True
 
     def result(self, request):
