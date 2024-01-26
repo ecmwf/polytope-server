@@ -154,7 +154,7 @@ class PolytopeDataSource(datasource.DataSource):
 
         self.output = p.extract(r)
         self.output = json.dumps(self.output).encode("utf-8")
-        logging.info(self.output)
+        # logging.info(self.output)
         return True
 
     def result(self, request):
