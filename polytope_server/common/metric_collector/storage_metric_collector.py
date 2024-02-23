@@ -107,8 +107,8 @@ class MongoStorageMetricCollector(StorageMetricCollector):
 
     def storage_space_used(self):
         space_used = 0
-        # for db in self.client.list_database_names():
-        #     space_used += int(getattr(self.client, db).command({"dbStats": 1}).get("storageSize"))
+        for db in self.client.list_database_names():
+            space_used += int(getattr(self.client, db).command({"dbStats": 1}).get("storageSize"))
         return space_used
 
     def total_entries(self):
