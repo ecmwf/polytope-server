@@ -23,6 +23,7 @@ import os
 import signal
 import sys
 import time
+import timeit
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
@@ -132,7 +133,6 @@ class Worker:
             self.metric_store.update_metric(self.metric)
 
     def run(self):
-
         self.queue = polytope_queue.create_queue(self.config.get("queue"))
 
         self.thread_pool = ThreadPoolExecutor(1)
@@ -141,7 +141,6 @@ class Worker:
         self.update_metric()
 
         while not time.sleep(self.poll_interval):
-
             self.queue.keep_alive()
 
             # No active request: try to pop from queue and process request in future thread
@@ -211,6 +210,7 @@ class Worker:
 
     def process_request(self, request):
         """Entrypoint for the worker thread."""
+        start = timeit.default_timer()
 
         id = request.id
         collection = self.collections[request.collection]
@@ -261,6 +261,9 @@ class Worker:
         else:
             request.user_message += "Success"
 
+        end = timeit.default_timer()
+        logging.info(f"PERF_TIME worker request_id, elapsed [s]: {request.id},{(end-start):.4f}")
+
         return
 
     def fetch_input_data(self, url):
@@ -304,7 +307,7 @@ class Worker:
         logging.exception("Request failed with exception.", extra={"request_id": request.id})
         self.requests_failed += 1
 
-    def on_process_terminated(self):
+    def on_process_terminated(self, signal, frame):
         """Called when the worker is asked to exit whilst processing a request, and we want to reschedule the request"""
 
         if self.request is not None:

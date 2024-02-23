@@ -46,3 +46,21 @@ class RabbitmqQueueMetricCollector(QueueMetricCollector):
         channel = connection.channel()
         q = channel.queue_declare(queue=self.queue_name, durable=True, passive=True)
         return q.method.message_count
+
+
+class SQSQueueMetricCollector(QueueMetricCollector):
+    def __init__(self, host, client):
+        self.host = host
+        self.client = client
+
+    def total_queued(self):
+        response = self.client.get_queue_attributes(
+            QueueUrl=self.host,
+            AttributeNames=[
+                "ApproximateNumberOfMessages",
+                "ApproximateNumberOfMessagesDelayed",
+                "ApproximateNumberOfMessagesNotVisible",
+            ],
+        )
+        values = response.get("Attributes", {}).values()
+        return sum(map(int, values))
