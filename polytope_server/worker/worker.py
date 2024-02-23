@@ -23,7 +23,6 @@ import os
 import signal
 import sys
 import time
-import timeit
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
@@ -210,7 +209,6 @@ class Worker:
 
     def process_request(self, request):
         """Entrypoint for the worker thread."""
-        start = timeit.default_timer()
 
         id = request.id
         collection = self.collections[request.collection]
@@ -260,9 +258,6 @@ class Worker:
             raise Exception("Failed to process request.")
         else:
             request.user_message += "Success"
-
-        end = timeit.default_timer()
-        logging.info(f"PERF_TIME worker request_id, elapsed [s]: {request.id},{(end-start):.4f}")
 
         return
 
