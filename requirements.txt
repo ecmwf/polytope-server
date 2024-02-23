@@ -31,8 +31,3 @@ ldap3==2.7
 docker==4.2.0
 python-keycloak==0.24.0
 boto3==1.28.80
-#FDB
-pyfdb@https://github.com/ecmwf/pyfdb/archive/refs/tags/0.0.3.tar.gz
-#GribJump
-eccovjson==0.0.5
-polytope-python@https://github.com/ecmwf/polytope/archive/refs/heads/develop.zip
