@@ -73,9 +73,9 @@ class PolytopeDataSource(datasource.DataSource):
             "values": {
                 "mapper": {
                     "type": "local_regular",
-                    "resolution": [193, 417],
+                    "resolution": [619, 1366],
                     "axes": ["latitude", "longitude"],
-                    "local": [45.485, 48.1, 5.28985, 10.9087],
+                    "local": [42.123793, 50.389763, -0.672694, 17.552436],
                 }
             },
             "date": {"merge": {"with": "time", "linkers": ["T", "00"]}},
