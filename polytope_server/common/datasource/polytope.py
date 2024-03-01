@@ -71,17 +71,22 @@ class PolytopeDataSource(datasource.DataSource):
         # Set up polytope feature extraction library
         self.polytope_options = {
             "values": {
-                "mapper": {"type": "octahedral", "resolution": 1280, "axes": ["latitude", "longitude"]}
+                "mapper": {
+                    "type": "local_regular",
+                    "resolution": [193, 417],
+                    "axes": ["latitude", "longitude"],
+                    "local": [45.485, 48.1, 5.28985, 10.9087],
+                }
             },
             "date": {"merge": {"with": "time", "linkers": ["T", "00"]}},
             "step": {"type_change": "int"},
             "number": {"type_change": "int"},
+            "levelist": {"type_change": "int"},
         }
 
         logging.info("Set up gribjump")
 
-
-    #todo: remove when we no longer need to set up a valid fdb to use gribjump
+    # todo: remove when we no longer need to set up a valid fdb to use gribjump
     def check_schema(self):
 
         schema = self.fdb_config.get("schema", None)
@@ -129,7 +134,7 @@ class PolytopeDataSource(datasource.DataSource):
         logging.debug("Fetching FDB schema from git with call: {}".format(call))
         output = subprocess.check_output(call, shell=True)
         return output.decode("utf-8")
-    
+
     def get_type(self):
         return self.type
 
@@ -150,6 +155,7 @@ class PolytopeDataSource(datasource.DataSource):
         logging.info(self.polytope_config)
         logging.info(self.polytope_options)
         from polytope_mars.api import PolytopeMars
+
         p = PolytopeMars(self.polytope_config, self.polytope_options)
 
         self.output = p.extract(r)
@@ -175,7 +181,7 @@ class PolytopeDataSource(datasource.DataSource):
 
             if r[k] not in v:
                 raise Exception("got {} : {}, but expected one of {}".format(k, r[k], v))
-            
+
             # Finally check that there is a feature specified in the request
             if "feature" not in r:
                 raise Exception("Request does not contain expected key 'feature'")
