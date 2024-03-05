@@ -76,6 +76,7 @@ class PolytopeDataSource(datasource.DataSource):
             "date": {"merge": {"with": "time", "linkers": ["T", "00"]}},
             "step": {"type_change": "int"},
             "number": {"type_change": "int"},
+            "longitude" : {"cyclic": [0, 360]},
         }
 
         logging.info("Set up gribjump")
