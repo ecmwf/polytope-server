@@ -110,6 +110,7 @@ type_to_class_map = {
     "webmars": "WebMARSDataSource",
     "polytope": "PolytopeDataSource",
     "federated": "FederatedDataSource",
+    "ionbeam": "IonBeamDataSource",
     "echo": "EchoDataSource",
     "dummy": "DummyDataSource",
     "raise": "RaiseDataSource",
