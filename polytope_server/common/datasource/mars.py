@@ -182,13 +182,13 @@ class MARSDataSource(datasource.DataSource):
                 logging.info("Overriding MARS_USER_EMAIL with {}".format(self.override_mars_email))
                 mars_user = self.override_mars_email
             else:
-                mars_user = request.user.attributes["ecmwf-email"]
+                mars_user = request.user.attributes.get("ecmwf-email", "no-email")
 
             if self.override_mars_apikey:
                 logging.info("Overriding MARS_USER_TOKEN with {}".format(self.override_mars_apikey))
                 mars_token = self.override_mars_apikey
             else:
-                mars_token = request.user.attributes["ecmwf-apikey"]
+                mars_token = request.user.attributes.get("ecmwf-apikey", "no-api-key")
 
             env = {
                 **os.environ,
