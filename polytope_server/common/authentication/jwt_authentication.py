@@ -26,9 +26,10 @@ from jose import jwt
 from ..auth import User
 from ..caching import cache
 from . import authentication
+from ..exceptions import ForbiddenRequest
 
 
-class JWTBearerAuthentication(authentication.Authentication):
+class JWTAuthentication(authentication.Authentication):
     def __init__(self, name, realm, config):
         self.config = config
 
@@ -48,16 +49,21 @@ class JWTBearerAuthentication(authentication.Authentication):
 
     @cache(lifetime=120)
     def authenticate(self, credentials: str) -> User:
-        certs = self.get_certs()
-        decoded_token = jwt.decode(token=credentials,
-            algorithms=jwt.get_unverified_header(credentials).get('alg'),
-            key=certs
-        )
 
-        user = User(decoded_token["sub"], self.realm())
+        try:
+            certs = self.get_certs()
+            decoded_token = jwt.decode(token=credentials,
+                algorithms=jwt.get_unverified_header(credentials).get('alg'),
+                key=certs
+            )
 
-        logging.debug("Found user {} from decoded JWT".format(user))
+            user = User(decoded_token["sub"], self.realm())
 
+            logging.info("Found user {} from decoded JWT".format(user))
+        except Exception as e:
+            logging.info("Failed to authenticate user from JWT")
+            logging.info(e)
+            raise ForbiddenRequest("Credentials could not be unpacked")
         return user
 
 
