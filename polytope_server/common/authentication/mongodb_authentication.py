@@ -22,8 +22,7 @@ import base64
 import binascii
 import hashlib
 
-import pymongo
-
+from .. import mongo_client_factory
 from ..auth import User
 from ..exceptions import ForbiddenRequest
 from ..metric_collector import MongoStorageMetricCollector
@@ -32,19 +31,18 @@ from . import authentication
 
 class MongoAuthentication(authentication.Authentication):
     def __init__(self, name, realm, config):
-
         self.config = config
-        host = config.get("host", "localhost")
-        port = config.get("port", "27017")
+        uri = config.get("uri", "mongodb://localhost:27017")
         collection = config.get("collection", "users")
+        username = config.get("username")
+        password = config.get("password")
 
-        endpoint = "{}:{}".format(host, port)
-        self.mongo_client = pymongo.MongoClient(endpoint, journal=True, connect=False)
+        self.mongo_client = mongo_client_factory.create_client(uri, username, password)
         self.database = self.mongo_client.authentication
         self.users = self.database[collection]
 
         self.storage_metric_collector = MongoStorageMetricCollector(
-            endpoint, self.mongo_client, "authentication", collection
+            uri, self.mongo_client, "authentication", collection
         )
 
         super().__init__(name, realm, config)
@@ -59,7 +57,6 @@ class MongoAuthentication(authentication.Authentication):
         return "Authenticate with username and password"
 
     def authenticate(self, credentials: str) -> User:
-
         # credentials should be of the form 'base64(<username>:<API_key>)'
         try:
             decoded = base64.b64decode(credentials).decode("utf-8")

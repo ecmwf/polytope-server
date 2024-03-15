@@ -80,7 +80,7 @@ class Queue(ABC):
         """Collect dictionary of metrics"""
 
 
-queue_dict = {"rabbitmq": "RabbitmqQueue"}
+queue_dict = {"rabbitmq": "RabbitmqQueue", "sqs": "SQSQueue"}
 
 
 def create_queue(queue_config):

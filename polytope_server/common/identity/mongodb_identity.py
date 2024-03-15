@@ -18,8 +18,7 @@
 # does it submit to any jurisdiction.
 #
 
-import pymongo
-
+from .. import mongo_client_factory
 from ..authentication.mongodb_authentication import MongoAuthentication
 from ..exceptions import Conflict, NotFound
 from ..metric_collector import MetricCollector, MongoStorageMetricCollector
@@ -29,12 +28,17 @@ from . import identity
 class MongoDBIdentity(identity.Identity):
     def __init__(self, config):
         self.config = config
-        self.host = config.get("host", "localhost")
-        self.port = config.get("port", "27017")
-        self.collection = config.get("collection", "users")
+        self.uri = config.get("uri", "mongodb://localhost:27017")
 
-        endpoint = "{}:{}".format(self.host, self.port)
-        self.mongo_client = pymongo.MongoClient(endpoint, journal=True, connect=False)
+        self.collection = config.get("collection", "users")
+        username = config.get("username")
+        password = config.get("password")
+
+        self.mongo_client = mongo_client_factory.create_client(
+            self.uri,
+            username,
+            password,
+        )
         self.database = self.mongo_client.authentication
         self.users = self.database[self.collection]
         self.realm = config.get("realm")
@@ -47,12 +51,11 @@ class MongoDBIdentity(identity.Identity):
                 pass
 
         self.storage_metric_collector = MongoStorageMetricCollector(
-            endpoint, self.mongo_client, "authentication", self.collection
+            self.uri, self.mongo_client, "authentication", self.collection
         )
         self.identity_metric_collector = MetricCollector()
 
     def add_user(self, username: str, password: str, roles: list) -> bool:
-
         if self.users.find_one({"username": username}) is not None:
             raise Conflict("Username already registered")
 
@@ -70,7 +73,6 @@ class MongoDBIdentity(identity.Identity):
         return True
 
     def remove_user(self, username: str) -> bool:
-
         result = self.users.delete_one({"username": username})
         if result.deleted_count > 0:
             return True

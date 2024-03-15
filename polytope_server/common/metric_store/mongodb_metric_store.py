@@ -22,6 +22,7 @@ import logging
 
 import pymongo
 
+from .. import mongo_client_factory
 from ..metric import (
     CacheInfo,
     Metric,
@@ -38,13 +39,13 @@ from . import MetricStore
 
 class MongoMetricStore(MetricStore):
     def __init__(self, config=None):
-        host = config.get("host", "localhost")
-        port = config.get("port", "27017")
+        uri = config.get("uri", "mongodb://localhost:27017")
         metric_collection = config.get("collection", "metrics")
 
-        endpoint = "{}:{}".format(host, port)
+        username = config.get("username")
+        password = config.get("password")
 
-        self.mongo_client = pymongo.MongoClient(endpoint, journal=True, connect=False)
+        self.mongo_client = mongo_client_factory.create_client(uri, username, password)
         self.database = self.mongo_client.metric_store
         self.store = self.database[metric_collection]
 
@@ -58,10 +59,10 @@ class MongoMetricStore(MetricStore):
         }
 
         self.storage_metric_collector = MongoStorageMetricCollector(
-            endpoint, self.mongo_client, "metric_store", metric_collection
+            uri, self.mongo_client, "metric_store", metric_collection
         )
 
-        logging.info("MongoClient configured to open at {}".format(endpoint))
+        logging.info("MongoClient configured to open at {}".format(uri))
 
     def get_type(self):
         return "mongodb"
@@ -85,7 +86,6 @@ class MongoMetricStore(MetricStore):
             return None
 
     def get_metrics(self, ascending=None, descending=None, limit=None, **kwargs):
-
         all_slots = []
 
         found_type = None
