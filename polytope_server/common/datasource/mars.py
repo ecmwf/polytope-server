@@ -52,13 +52,14 @@ class MARSDataSource(datasource.DataSource):
 
         self.protocol = config.get("protocol", "dhs")
 
+        # self.fdb_config = None
+        self.fdb_config = config.get("fdb_config", [{}])
         if self.protocol == "remote":
             # need to set FDB5 config in a <path>/etc/fdb/config.yaml
-            self.fdb_config = config.get("fdb_config", {})
             self.fdb_home = self.tmp_dir + "/fdb-home"
-            os.makedirs(self.fdb_home + "/etc/fdb/", exist_ok=True)
-            with open(self.fdb_home + "/etc/fdb/config.yaml", "w") as f:
-                yaml.dump(self.fdb_config, f)
+            # os.makedirs(self.fdb_home + "/etc/fdb/", exist_ok=True)
+            # with open(self.fdb_home + "/etc/fdb/config.yaml", "w") as f:
+            #     yaml.dump(self.fdb_config, f)
 
         # Write the mars config
         if "config" in config:
@@ -194,7 +195,8 @@ class MARSDataSource(datasource.DataSource):
                 **os.environ,
                 "MARS_USER_EMAIL": mars_user,
                 "MARS_USER_TOKEN": mars_token,
-                "ECMWF_MARS_COMMAND": self.mars_binary
+                "ECMWF_MARS_COMMAND": self.mars_binary,
+                "FDB5_CONFIG" : yaml.dump(self.fdb_config[0])
             }
 
             if self.mars_config is not None:
