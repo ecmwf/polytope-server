@@ -86,7 +86,11 @@ class GarbageCollector:
             request = self.request_store.get_request(id=data.name)
             if request is None:
                 logging.info("Deleting {} because it has no matching request.".format(data.name))
-                self.staging.delete(data.name)
+                try:
+                    self.staging.delete(data.name)
+                except KeyError:
+                    # TODO: why does this happen?
+                    logging.info("Data {} not found in staging.".format(data.name))
 
     def remove_by_size(self):
         """Cleans data according to size limits of the staging, removing older requests first."""
@@ -122,7 +126,10 @@ class GarbageCollector:
         # Delete objects in ascending last_modified order (oldest first)
         for name, v in sorted(all_objects_by_age.items(), key=lambda x: x[1]["last_modified"]):
             logging.info("Deleting {} because threshold reached and it is the oldest request.".format(name))
-            self.staging.delete(name)
+            try:
+                self.staging.delete(name)
+            except KeyError:
+                logging.info("Data {} not found in staging.".format(name))
             self.request_store.remove_request(name)
             total_size -= v["size"]
             logging.info("Size of staging is {}/{}".format(total_size, self.threshold))
