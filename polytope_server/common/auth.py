@@ -118,7 +118,7 @@ class AuthHelper:
                 www_authenticate=self.auth_info,
             )
 
-        user.roles = ["default"]
+        user.roles.append("default")
 
         # Visit all authorizers to append additional roles and attributes
         for authorizer in self.authorizers:
