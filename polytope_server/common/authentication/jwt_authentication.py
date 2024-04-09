@@ -34,6 +34,7 @@ class JWTAuthentication(authentication.Authentication):
         self.config = config
 
         self.certs_url = config["cert_url"]
+        self.client_id = config["client_id"]
 
         super().__init__(name, realm, config)
 
@@ -57,7 +58,13 @@ class JWTAuthentication(authentication.Authentication):
                 key=certs
             )
 
+            logging.info("Decoded JWT: {}".format(decoded_token))
+
+
             user = User(decoded_token["sub"], self.realm())
+
+            roles = decoded_token.get("resource_access", {}).get(self.client_id, {}).get("roles", [])
+            user.roles.extend(roles)
 
             logging.info("Found user {} from decoded JWT".format(user))
         except Exception as e:
