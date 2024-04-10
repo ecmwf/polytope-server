@@ -74,7 +74,7 @@ class IonBeamDataSource(datasource.DataSource):
         assert self.type == "ionbeam"
 
         self.match_rules = config.get("match", {})
-        endpoint = config.get("api_endpoint", "http://iotdev-001:18201/api")
+        endpoint = config.get("api_endpoint", "http://iotdev-001:18201/api/v1/")
         self.api = IonBeamAPI(endpoint)
 
     def mime_type(self) -> str:
