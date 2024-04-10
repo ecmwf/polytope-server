@@ -47,22 +47,22 @@ class S3Staging(staging.Staging):
         access_key = config.get("access_key", "")
         secret_key = config.get("secret_key", "")
         self.bucket = config.get("bucket", "default")
+        secure = config.get("secure", False) == True
         self.url = config.get("url", None)
         internal_url = "{}:{}".format(self.host, self.port)
         self.client = Minio(
             internal_url,
             access_key=access_key,
             secret_key=secret_key,
-            secure=False,
+            secure=secure,
         )
-        self.internal_url = "http://" + internal_url
+        self.internal_url = ("https://" if secure else "http://") + internal_url
 
         try:
-            self.client.make_bucket(self.bucket)
+            self.client.make_bucket(self.bucket, self.client._region)
+            self.client.set_bucket_policy(self.bucket, self.bucket_policy())
         except BucketAlreadyOwnedByYou:
             pass
-
-        self.client.set_bucket_policy(self.bucket, self.bucket_policy())
 
         self.storage_metric_collector = S3StorageMetricCollector(endpoint, self.client, self.bucket)
 

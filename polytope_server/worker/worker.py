@@ -132,7 +132,6 @@ class Worker:
             self.metric_store.update_metric(self.metric)
 
     def run(self):
-
         self.queue = polytope_queue.create_queue(self.config.get("queue"))
 
         self.thread_pool = ThreadPoolExecutor(1)
@@ -141,7 +140,6 @@ class Worker:
         self.update_metric()
 
         while not time.sleep(self.poll_interval):
-
             self.queue.keep_alive()
 
             # No active request: try to pop from queue and process request in future thread

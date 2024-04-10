@@ -68,7 +68,7 @@ mapping:
             desc: point to a hosted mongodb
             type: map
             mapping:
-              endpoint:
+              uri:
                 desc: host and port
                 example: localhost:27017
                 type: str
@@ -116,7 +116,7 @@ mapping:
             desc: point to a hosted mongodb
             type: map
             mapping:
-              endpoint:
+              uri:
                 desc: host and port
                 example: localhost:27017
                 type: str
