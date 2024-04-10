@@ -113,6 +113,7 @@ type_to_class_map = {
     "echo": "EchoDataSource",
     "dummy": "DummyDataSource",
     "raise": "RaiseDataSource",
+    "ionbeam": "IonBeamDataSource"
 }
 
 
