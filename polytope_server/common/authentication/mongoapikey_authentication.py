@@ -29,7 +29,6 @@ from . import authentication
 
 
 class ApiKeyMongoAuthentication(authentication.Authentication):
-
     """
     Authenticates a user using a polytope API key. A polytope API key is an alias to a user that was previously
     authenticated. It allows user to authenticate once, retrieve a key, and use that for future authentication.

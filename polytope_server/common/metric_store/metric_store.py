@@ -27,7 +27,6 @@ from ..request import Status
 
 
 class MetricStore(ABC):
-
     """MetricStore is an interface for database-based storage for Metric objects"""
 
     def __init__(self):

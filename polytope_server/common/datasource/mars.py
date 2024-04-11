@@ -84,18 +84,17 @@ class MARSDataSource(datasource.DataSource):
         r = yaml.safe_load(request.user_request) or {}
 
         for k, v in self.match_rules.items():
-            
+
             # An empty match rule means that the key must not be present
             if v is None or len(v) == 0:
                 if k in r:
                     raise Exception("Request containing key '{}' is not allowed".format(k))
                 else:
-                    continue # no more checks to do
-            
+                    continue  # no more checks to do
+
             # Check that all required keys exist
             if k not in r and not (v is None or len(v) == 0):
                 raise Exception("Request does not contain expected key '{}'".format(k))
-            
 
             # Process date rules
             if k == "date":
@@ -196,7 +195,7 @@ class MARSDataSource(datasource.DataSource):
                 "MARS_USER_EMAIL": mars_user,
                 "MARS_USER_TOKEN": mars_token,
                 "ECMWF_MARS_COMMAND": self.mars_binary,
-                "FDB5_CONFIG" : yaml.dump(self.fdb_config[0])
+                "FDB5_CONFIG": yaml.dump(self.fdb_config[0]),
             }
 
             if self.mars_config is not None:

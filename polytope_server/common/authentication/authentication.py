@@ -77,7 +77,7 @@ type_to_class_map = {
     "plain": "PlainAuthentication",
     "keycloak": "KeycloakAuthentication",
     "federation": "FederationAuthentication",
-    "jwt" : "JWTAuthentication",
+    "jwt": "JWTAuthentication",
 }
 
 

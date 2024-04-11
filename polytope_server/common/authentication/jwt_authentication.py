@@ -53,9 +53,8 @@ class JWTAuthentication(authentication.Authentication):
 
         try:
             certs = self.get_certs()
-            decoded_token = jwt.decode(token=credentials,
-                algorithms=jwt.get_unverified_header(credentials).get('alg'),
-                key=certs
+            decoded_token = jwt.decode(
+                token=credentials, algorithms=jwt.get_unverified_header(credentials).get("alg"), key=certs
             )
 
             user = User(decoded_token["sub"], self.realm())
@@ -66,7 +65,6 @@ class JWTAuthentication(authentication.Authentication):
             logging.info(e)
             raise ForbiddenRequest("Credentials could not be unpacked")
         return user
-
 
     def collect_metric_info(self):
         return {}

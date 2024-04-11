@@ -27,7 +27,6 @@ from ..request import Request, Status
 
 
 class RequestStore(ABC):
-
     """RequestStore is an interface for database-based storage for Request objects"""
 
     def __init__(self):
