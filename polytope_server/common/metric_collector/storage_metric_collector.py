@@ -141,16 +141,26 @@ class S3StorageMetricCollector(StorageMetricCollector):
         return m
 
     def total_entries(self):
-        return len(list(self.client.list_objects(self.bucket)))
+        try:
+            return len(list(self.client.list_objects(self.bucket)))
+        except TypeError as e:
+            # boto only accepts keyword arguments
+            return len(list(self.client.list_objects_v2(Bucket=self.bucket)))
 
     def bucket_name(self):
         return self.bucket
 
     def bucket_space_used(self):
         size = 0
-        for o in self.client.list_objects(self.bucket):
-            size += o.size
-        return size
+        try:
+            for o in self.client.list_objects(self.bucket):
+                size += o.size
+            return size
+        except TypeError as e:
+            # boto only accepts keyword arguments
+            for o in self.client.list_objects_v2(Bucket=self.bucket)["Contents"]:
+                size += o["Size"]
+            return size
 
     def bucket_space_limit(self):
-        return "not_implemented"
+        return "not implemented"
