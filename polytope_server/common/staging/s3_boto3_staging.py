@@ -20,7 +20,6 @@
 
 import json
 import logging
-from pprint import pprint as pp
 
 import boto3
 from botocore.exceptions import ClientError
@@ -43,14 +42,6 @@ class S3Staging_boto3(staging.Staging):
 
         # Setup Boto3 client
         self.s3_client = boto3.client(
-            "s3",
-            aws_access_key_id=access_key,
-            aws_secret_access_key=secret_key,
-            endpoint_url=self.host,
-            use_ssl=self.use_ssl,
-        )
-
-        self.resource = boto3.resource(
             "s3",
             aws_access_key_id=access_key,
             aws_secret_access_key=secret_key,
@@ -120,21 +111,21 @@ class S3Staging_boto3(staging.Staging):
                     "Effect": "Allow",
                     "Principal": "*",
                     "Action": "s3:GetObject",
-                    "Resource": "arn:aws:s3:::{self.bucket}}/*",
+                    "Resource": f"arn:aws:s3:::{self.bucket}/*",
                 },
                 {
                     "Sid": "DenyListBucket",
                     "Effect": "Deny",
                     "Principal": "*",
                     "Action": "s3:ListBucket",
-                    "Resource": "arn:aws:s3:::{self.bucket}}",
+                    "Resource": f"arn:aws:s3:::{self.bucket}",
                 },
                 {
                     "Sid": "DenyGetBucketLocation",
                     "Effect": "Deny",
                     "Principal": "*",
                     "Action": "s3:GetBucketLocation",
-                    "Resource": "arn:aws:s3:::{self.bucket}}",
+                    "Resource": f"arn:aws:s3:::{self.bucket}",
                 },
             ],
         }
