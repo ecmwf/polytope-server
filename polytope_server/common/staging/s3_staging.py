@@ -33,7 +33,7 @@ import logging
 import minio
 from minio import Minio
 from minio.definitions import UploadPart
-from minio.error import BucketAlreadyOwnedByYou, NoSuchKey
+from minio.error import BucketAlreadyExists, BucketAlreadyOwnedByYou, NoSuchKey
 
 from ..metric_collector import S3StorageMetricCollector
 from . import staging
@@ -49,16 +49,19 @@ class S3Staging(staging.Staging):
         self.bucket = config.get("bucket", "default")
         self.url = config.get("url", None)
         internal_url = "{}:{}".format(self.host, self.port)
+        secure = config.get("use_ssl", False)
         self.client = Minio(
             internal_url,
             access_key=access_key,
             secret_key=secret_key,
-            secure=False,
+            secure=secure,
         )
         self.internal_url = "http://" + internal_url
 
         try:
             self.client.make_bucket(self.bucket)
+        except BucketAlreadyExists:
+            pass
         except BucketAlreadyOwnedByYou:
             pass
 
@@ -201,25 +204,25 @@ class S3Staging(staging.Staging):
             "Version": "2012-10-17",
             "Statement": [
                 {
-                    "Sid": "",
-                    "Effect": "Deny",
-                    "Principal": {"AWS": "*"},
-                    "Action": "s3:GetBucketLocation",
-                    "Resource": "arn:aws:s3:::{}".format(self.bucket),
-                },
-                {
-                    "Sid": "",
-                    "Effect": "Deny",
-                    "Principal": {"AWS": "*"},
-                    "Action": "s3:ListBucket",
-                    "Resource": "arn:aws:s3:::{}".format(self.bucket),
-                },
-                {
-                    "Sid": "",
+                    "Sid": "AllowReadAccessToIndividualObjects",
                     "Effect": "Allow",
-                    "Principal": {"AWS": "*"},
+                    "Principal": "*",
                     "Action": "s3:GetObject",
-                    "Resource": "arn:aws:s3:::{}/*".format(self.bucket),
+                    "Resource": f"arn:aws:s3:::{self.bucket}/*",
+                },
+                {
+                    "Sid": "DenyListBucket",
+                    "Effect": "Deny",
+                    "Principal": "*",
+                    "Action": "s3:ListBucket",
+                    "Resource": f"arn:aws:s3:::{self.bucket}",
+                },
+                {
+                    "Sid": "DenyGetBucketLocation",
+                    "Effect": "Deny",
+                    "Principal": "*",
+                    "Action": "s3:GetBucketLocation",
+                    "Resource": f"arn:aws:s3:::{self.bucket}",
                 },
             ],
         }
