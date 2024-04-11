@@ -25,13 +25,20 @@ from typing import AnyStr, Dict, Iterator, List, Tuple, Union
 from ..metric import MetricType
 from ..request import Status
 
-type_to_class_map = {"polytope": "PolytopeStaging", "s3": "S3Staging"}
+type_to_class_map = {
+    "polytope": "PolytopeStaging",
+    "s3": "S3Staging",
+    "s3_boto3": "S3Staging_boto3",
+}
 
 
 class ResourceInfo:
     def __init__(self, name, size):
         self.name = name
         self.size = size
+
+    def __repr__(self):
+        return f"ResourceInfo({self.name}, {self.size})"
 
 
 class Staging(ABC):
