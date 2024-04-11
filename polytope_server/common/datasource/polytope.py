@@ -25,9 +25,10 @@ import subprocess
 
 os.environ["GRIBJUMP_HOME"] = "/opt/fdb-gribjump"
 
-import polytope
 import tempfile
 from pathlib import Path
+
+import polytope
 import yaml
 
 from ..caching import cache

@@ -20,13 +20,14 @@
 
 import logging
 import os
+
 import requests
 from jose import jwt
 
 from ..auth import User
 from ..caching import cache
-from . import authentication
 from ..exceptions import ForbiddenRequest
+from . import authentication
 
 
 class JWTAuthentication(authentication.Authentication):
