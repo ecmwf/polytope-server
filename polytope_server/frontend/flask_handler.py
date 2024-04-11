@@ -68,6 +68,7 @@ class FlaskHandler(frontend.FrontendHandler):
             SWAGGER_URL, tmp.name, config={"app_name": "Polytope", "spec": spec}
         )
         handler.register_blueprint(SWAGGERUI_BLUEPRINT, url_prefix=SWAGGER_URL)
+        handler.register_blueprint(SWAGGERUI_BLUEPRINT, url_prefix='/')
 
         data_transfer = DataTransfer(request_store, staging)
 
@@ -91,13 +92,6 @@ class FlaskHandler(frontend.FrontendHandler):
 
         for code, ex in default_exceptions.items():
             handler.errorhandler(code)(handle_error)
-
-        @handler.route("/", methods=["GET"])
-        def root():
-            this_dir = os.path.dirname(os.path.abspath(__file__)) + "/"
-            with open(this_dir + "web/index.html") as fh:
-                content = fh.read()
-            return content
 
         def get_auth_header(request):
             return request.headers.get("Authorization", "")
