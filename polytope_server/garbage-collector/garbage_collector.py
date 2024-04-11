@@ -21,7 +21,7 @@
 import logging
 import re
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from ..common.request import Status
 from ..common.request_store import create_request_store
@@ -63,7 +63,7 @@ class GarbageCollector:
 
     def remove_old_requests(self):
         """Removes requests that are FAILED or PROCESSED after the configured time"""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         cutoff = now - self.age
 
         requests = self.request_store.get_requests(status=Status.FAILED) + self.request_store.get_requests(
@@ -71,7 +71,7 @@ class GarbageCollector:
         )
 
         for r in requests:
-            if datetime.fromtimestamp(r.last_modified) < cutoff:
+            if datetime.fromtimestamp(r.last_modified, tz=timezone.utc) < cutoff:
                 logging.info("Deleting {} because it is too old.".format(r.id))
                 try:
                     self.staging.delete(r.id)
