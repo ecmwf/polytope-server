@@ -143,7 +143,7 @@ class S3StorageMetricCollector(StorageMetricCollector):
     def total_entries(self):
         try:
             return len(list(self.client.list_objects(self.bucket)))
-        except TypeError as e:
+        except TypeError:
             # boto only accepts keyword arguments
             return len(list(self.client.list_objects_v2(Bucket=self.bucket)))
 
@@ -156,7 +156,7 @@ class S3StorageMetricCollector(StorageMetricCollector):
             for o in self.client.list_objects(self.bucket):
                 size += o.size
             return size
-        except TypeError as e:
+        except TypeError:
             # boto only accepts keyword arguments
             for o in self.client.list_objects_v2(Bucket=self.bucket)["Contents"]:
                 size += o["Size"]
