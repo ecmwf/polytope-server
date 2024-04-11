@@ -25,10 +25,7 @@ import pymongo
 
 from .. import metric_store
 from ..metric import MetricType, RequestStatusChange
-from ..metric_collector import (
-    MongoRequestStoreMetricCollector,
-    MongoStorageMetricCollector,
-)
+from ..metric_collector import MongoRequestStoreMetricCollector, MongoStorageMetricCollector
 from ..request import Request
 from . import request_store
 
