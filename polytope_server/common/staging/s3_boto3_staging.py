@@ -114,8 +114,8 @@ class S3Staging_boto3(staging.Staging):
                     "Resource": f"arn:aws:s3:::{self.bucket}/*",
                 },
                 {
-                    "Sid": "DenyListBucket",
-                    "Effect": "Deny",
+                    "Sid": "AllowListBucket",
+                    "Effect": "Allow",
                     "Principal": "*",
                     "Action": "s3:ListBucket",
                     "Resource": f"arn:aws:s3:::{self.bucket}",
