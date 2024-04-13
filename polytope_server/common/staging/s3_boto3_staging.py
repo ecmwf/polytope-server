@@ -60,7 +60,9 @@ class S3Staging_boto3(staging.Staging):
             logging.error(f"Error creating bucket: {e}")
         # Set bucket policy
         self.set_bucket_policy()
-        self.storage_metric_collector = S3StorageMetricCollector(self.host, self.s3_client, self.bucket)
+        self.storage_metric_collector = S3StorageMetricCollector(
+            self.host, self.s3_client, self.bucket, self.get_type()
+        )
 
         logging.info(f"Opened data staging at {self.host} with bucket {self.bucket}")
 
