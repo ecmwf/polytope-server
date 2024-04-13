@@ -67,7 +67,7 @@ class S3Staging(staging.Staging):
 
         self.client.set_bucket_policy(self.bucket, self.bucket_policy())
 
-        self.storage_metric_collector = S3StorageMetricCollector(endpoint, self.client, self.bucket)
+        self.storage_metric_collector = S3StorageMetricCollector(endpoint, self.client, self.bucket, self.get_type())
 
         logging.info(
             "Opened data staging at {}:{}/{}, locatable from {}".format(self.host, self.port, self.bucket, self.url)
