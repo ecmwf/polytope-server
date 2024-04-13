@@ -123,8 +123,8 @@ class S3Staging_boto3(staging.Staging):
                     "Resource": f"arn:aws:s3:::{self.bucket}",
                 },
                 {
-                    "Sid": "DenyGetBucketLocation",
-                    "Effect": "Deny",
+                    "Sid": "AllowGetBucketLocation",
+                    "Effect": "Allow",
                     "Principal": "*",
                     "Action": "s3:GetBucketLocation",
                     "Resource": f"arn:aws:s3:::{self.bucket}",
