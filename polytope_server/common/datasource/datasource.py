@@ -83,6 +83,14 @@ class DataSource(ABC):
             request.user_message += "Skipping datasource {} due to match error: {}\n".format(self.get_type(), repr(e))
             return False
 
+        # Check for datasource-specific roles
+        if hasattr(self, "config"):
+            datasource_role_rules = self.config.get("roles", None)
+            if datasource_role_rules is not None:
+                if not any(role in request.user.roles for role in datasource_role_rules.get(request.user.realm, [])):
+                    request.user_message += "Skipping datasource {}. User is forbidden.\n".format(self.get_type())
+                    return False
+
         # Retrieve/Archive/etc.
         success = False
         try:
