@@ -104,8 +104,8 @@ class GarbageCollector:
         logging.info(
             "Found {} items in staging -- {}/{} bytes -- {:3.1f}%".format(
                 len(all_objects),
-                total_size,
-                self.threshold,
+                format_bytes(total_size),
+                format_bytes(self.threshold),
                 total_size / self.threshold * 100,
             )
         )
@@ -132,7 +132,7 @@ class GarbageCollector:
                 logging.info("Data {} not found in staging.".format(name))
             self.request_store.remove_request(name)
             total_size -= v["size"]
-            logging.info("Size of staging is {}/{}".format(total_size, self.threshold))
+            logging.info("Size of staging is {}/{}".format(format_bytes(total_size), format_bytes(self.threshold)))
             if total_size < self.threshold:
                 return
 
@@ -168,3 +168,13 @@ def parse_bytes(size_str):
         return size * 1024**4
 
     return False
+
+def format_bytes(size_bytes):
+    if size_bytes == 0:
+        return "0B"
+    size_names = ("B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB")
+    i = 0
+    while size_bytes >= 1024 and i < len(size_names) - 1:
+        size_bytes /= 1024.0
+        i += 1
+    return "{:.1f} {}".format(size_bytes, size_names[i])
