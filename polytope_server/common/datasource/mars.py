@@ -34,6 +34,7 @@ from . import datasource
 class MARSDataSource(datasource.DataSource):
     def __init__(self, config):
         assert config["type"] == "mars"
+        self.config = config
         self.type = config.get("type")
         self.command = config.get("command", "/usr/local/bin/mars")
         self.tmp_dir = config.get("tmp_dir", "/tmp")
