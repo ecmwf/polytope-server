@@ -24,7 +24,6 @@ from ..metric import Metric
 
 
 class MetricCollector:
-
     """Interface to collect metrics from any component in Polytope
     for which a collector is implemented.
     """

@@ -41,7 +41,6 @@ class Verb(enum.Enum):
 
 
 class Request:
-
     """A sealed class representing a request"""
 
     __slots__ = [

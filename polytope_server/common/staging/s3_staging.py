@@ -33,7 +33,7 @@ import logging
 import minio
 from minio import Minio
 from minio.definitions import UploadPart
-from minio.error import BucketAlreadyOwnedByYou, NoSuchKey
+from minio.error import BucketAlreadyExists, BucketAlreadyOwnedByYou, NoSuchKey
 
 from ..metric_collector import S3StorageMetricCollector
 from . import staging
@@ -50,6 +50,7 @@ class S3Staging(staging.Staging):
         secure = config.get("secure", False) == True
         self.url = config.get("url", None)
         internal_url = "{}:{}".format(self.host, self.port)
+        secure = config.get("use_ssl", False)
         self.client = Minio(
             internal_url,
             access_key=access_key,
@@ -59,12 +60,14 @@ class S3Staging(staging.Staging):
         self.internal_url = ("https://" if secure else "http://") + internal_url
 
         try:
-            self.client.make_bucket(self.bucket, self.client._region)
+            self.client.make_bucket(self.bucket)
             self.client.set_bucket_policy(self.bucket, self.bucket_policy())
+        except BucketAlreadyExists:
+            pass
         except BucketAlreadyOwnedByYou:
             pass
 
-        self.storage_metric_collector = S3StorageMetricCollector(endpoint, self.client, self.bucket)
+        self.storage_metric_collector = S3StorageMetricCollector(endpoint, self.client, self.bucket, self.get_type())
 
         logging.info(
             "Opened data staging at {}:{}/{}, locatable from {}".format(self.host, self.port, self.bucket, self.url)
@@ -201,25 +204,25 @@ class S3Staging(staging.Staging):
             "Version": "2012-10-17",
             "Statement": [
                 {
-                    "Sid": "",
-                    "Effect": "Deny",
-                    "Principal": {"AWS": "*"},
-                    "Action": "s3:GetBucketLocation",
-                    "Resource": "arn:aws:s3:::{}".format(self.bucket),
-                },
-                {
-                    "Sid": "",
-                    "Effect": "Deny",
-                    "Principal": {"AWS": "*"},
-                    "Action": "s3:ListBucket",
-                    "Resource": "arn:aws:s3:::{}".format(self.bucket),
-                },
-                {
-                    "Sid": "",
+                    "Sid": "AllowReadAccessToIndividualObjects",
                     "Effect": "Allow",
-                    "Principal": {"AWS": "*"},
+                    "Principal": "*",
                     "Action": "s3:GetObject",
-                    "Resource": "arn:aws:s3:::{}/*".format(self.bucket),
+                    "Resource": f"arn:aws:s3:::{self.bucket}/*",
+                },
+                {
+                    "Sid": "AllowListBucket",
+                    "Effect": "Allow",
+                    "Principal": "*",
+                    "Action": "s3:ListBucket",
+                    "Resource": f"arn:aws:s3:::{self.bucket}",
+                },
+                {
+                    "Sid": "AllowGetBucketLocation",
+                    "Effect": "Allow",
+                    "Principal": "*",
+                    "Action": "s3:GetBucketLocation",
+                    "Resource": f"arn:aws:s3:::{self.bucket}",
                 },
             ],
         }

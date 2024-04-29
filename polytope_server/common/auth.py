@@ -31,7 +31,6 @@ from .user import User
 
 
 class AuthHelper:
-
     """A helper to encapsulate checking user authentication and authorization"""
 
     def __init__(self, config):

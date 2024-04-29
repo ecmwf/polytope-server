@@ -25,9 +25,10 @@ import subprocess
 
 os.environ["GRIBJUMP_HOME"] = "/opt/fdb-gribjump"
 
-import polytope
 import tempfile
 from pathlib import Path
+
+import polytope
 import yaml
 
 from ..caching import cache
@@ -70,19 +71,16 @@ class PolytopeDataSource(datasource.DataSource):
 
         # Set up polytope feature extraction library
         self.polytope_options = {
-            "values": {
-                "mapper": {"type": "octahedral", "resolution": 1280, "axes": ["latitude", "longitude"]}
-            },
+            "values": {"mapper": {"type": "octahedral", "resolution": 1280, "axes": ["latitude", "longitude"]}},
             "date": {"merge": {"with": "time", "linkers": ["T", "00"]}},
             "step": {"type_change": "int"},
             "number": {"type_change": "int"},
-            "longitude" : {"cyclic": [0, 360]},
+            "longitude": {"cyclic": [0, 360]},
         }
 
         logging.info("Set up gribjump")
 
-
-    #todo: remove when we no longer need to set up a valid fdb to use gribjump
+    # todo: remove when we no longer need to set up a valid fdb to use gribjump
     def check_schema(self):
 
         schema = self.fdb_config.get("schema", None)
@@ -130,7 +128,7 @@ class PolytopeDataSource(datasource.DataSource):
         logging.debug("Fetching FDB schema from git with call: {}".format(call))
         output = subprocess.check_output(call, shell=True)
         return output.decode("utf-8")
-    
+
     def get_type(self):
         return self.type
 
@@ -151,6 +149,7 @@ class PolytopeDataSource(datasource.DataSource):
         logging.info(self.polytope_config)
         logging.info(self.polytope_options)
         from polytope_mars.api import PolytopeMars
+
         p = PolytopeMars(self.polytope_config, self.polytope_options)
 
         self.output = p.extract(r)
@@ -176,7 +175,7 @@ class PolytopeDataSource(datasource.DataSource):
 
             if r[k] not in v:
                 raise Exception("got {} : {}, but expected one of {}".format(k, r[k], v))
-            
+
             # Finally check that there is a feature specified in the request
             if "feature" not in r:
                 raise Exception("Request does not contain expected key 'feature'")

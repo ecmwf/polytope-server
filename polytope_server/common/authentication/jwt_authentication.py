@@ -20,13 +20,14 @@
 
 import logging
 import os
+
 import requests
 from jose import jwt
 
 from ..auth import User
 from ..caching import cache
-from . import authentication
 from ..exceptions import ForbiddenRequest
+from . import authentication
 
 
 class JWTAuthentication(authentication.Authentication):
@@ -53,9 +54,8 @@ class JWTAuthentication(authentication.Authentication):
 
         try:
             certs = self.get_certs()
-            decoded_token = jwt.decode(token=credentials,
-                algorithms=jwt.get_unverified_header(credentials).get('alg'),
-                key=certs
+            decoded_token = jwt.decode(
+                token=credentials, algorithms=jwt.get_unverified_header(credentials).get("alg"), key=certs
             )
 
             logging.info("Decoded JWT: {}".format(decoded_token))
@@ -72,7 +72,6 @@ class JWTAuthentication(authentication.Authentication):
             logging.info(e)
             raise ForbiddenRequest("Credentials could not be unpacked")
         return user
-
 
     def collect_metric_info(self):
         return {}
