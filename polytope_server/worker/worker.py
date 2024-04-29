@@ -132,7 +132,6 @@ class Worker:
             self.metric_store.update_metric(self.metric)
 
     def run(self):
-
         self.queue = polytope_queue.create_queue(self.config.get("queue"))
 
         self.thread_pool = ThreadPoolExecutor(1)
@@ -141,7 +140,6 @@ class Worker:
         self.update_metric()
 
         while not time.sleep(self.poll_interval):
-
             self.queue.keep_alive()
 
             # No active request: try to pop from queue and process request in future thread
@@ -247,6 +245,7 @@ class Worker:
 
         except Exception:
             request.user_message += "Failed to finalize request"
+            logging.info(request.user_message, extra={"request_id": id})
             logging.exception("Failed to finalize request", extra={"request_id": id})
             raise
 
@@ -257,6 +256,7 @@ class Worker:
 
         if datasource is None:
             request.user_message += "Failed to process request."
+            logging.info(request.user_message, extra={"request_id": id})
             raise Exception("Failed to process request.")
         else:
             request.user_message += "Success"
@@ -304,7 +304,7 @@ class Worker:
         logging.exception("Request failed with exception.", extra={"request_id": request.id})
         self.requests_failed += 1
 
-    def on_process_terminated(self):
+    def on_process_terminated(self, signumm=None, frame=None):
         """Called when the worker is asked to exit whilst processing a request, and we want to reschedule the request"""
 
         if self.request is not None:

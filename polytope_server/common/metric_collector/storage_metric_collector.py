@@ -112,7 +112,7 @@ class MongoStorageMetricCollector(StorageMetricCollector):
         return space_used
 
     def total_entries(self):
-        return self.store.count()
+        return self.store.count_documents({})
 
     def db_name(self):
         return self.database
