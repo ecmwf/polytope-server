@@ -34,27 +34,29 @@ class DummyDataSource(datasource.DataSource):
 
     def retrieve(self, request):
         try:
-            size = int(request.user_request.encode("utf-8"))
+            self.size = int(request.user_request.encode("utf-8"))
         except ValueError:
-            raise ValueError("Request should be an integer (size of random data returned)")
+            raise ValueError("Request should be an integer (size of random data to generate)")
 
-        if size < 0:
+        if self.size < 0:
             raise ValueError("Size must be non-negative")
-
-        repeat = b"polytope"
-        a, b = divmod(size, len(repeat))
-
-        self.data = repeat * a + repeat[:b]
+        
         return True
 
     def result(self, request):
-        yield self.data
+        chunk_size = 2 * 1024 * 1024
+        data_generated = 0
+        while data_generated < self.size:
+            remaining_size = self.size - data_generated
+            current_chunk_size = min(chunk_size, remaining_size)
+            yield b'x' * current_chunk_size
+            data_generated += current_chunk_size
 
     def destroy(self, request) -> None:
         pass
 
     def mime_type(self) -> str:
-        return "text"
+        return "application/x-grib"
 
     def match(self, request):
         return
