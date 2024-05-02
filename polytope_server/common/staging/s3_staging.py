@@ -29,6 +29,37 @@
 
 import json
 import logging
+import concurrent.futures
+
+import time
+from concurrent.futures import Future, ThreadPoolExecutor
+
+class AvailableThreadPoolExecutor(ThreadPoolExecutor):
+
+    def __init__(
+        self, max_workers=None, thread_name_prefix="", initializer=None, initargs=()
+    ):
+        super().__init__(max_workers, thread_name_prefix, initializer, initargs)
+        self._running_worker_futures: set[Future] = set()
+
+    @property
+    def available_workers(self) -> int:
+        return self._max_workers - len(self._running_worker_futures)
+
+    def wait_for_available_worker(self, timeout = None) -> None:
+        start_time = time.monotonic()
+        while True:
+            if self.available_workers > 0:
+                return
+            if timeout is not None and time.monotonic() - start_time > timeout:
+                raise TimeoutError
+            time.sleep(0.1)
+
+    def submit(self, fn, /, *args, **kwargs):
+        f = super().submit(fn, *args, **kwargs)
+        self._running_worker_futures.add(f)
+        f.add_done_callback(self._running_worker_futures.remove)
+        return f
 
 import minio
 from minio import Minio
@@ -37,12 +68,16 @@ from minio.error import BucketAlreadyExists, BucketAlreadyOwnedByYou, NoSuchKey
 
 from ..metric_collector import S3StorageMetricCollector
 from . import staging
+import copy
+import time
 
 
 class S3Staging(staging.Staging):
     def __init__(self, config):
         self.host = config.get("host", "0.0.0.0")
         self.port = config.get("port", "8000")
+        self.max_threads = config.get("max_threads", 20)
+        self.buffer_size = config.get("buffer_size", 20 * 1024 * 1024)
         endpoint = "{}:{}".format(self.host, self.port)
         access_key = config.get("access_key", "")
         secret_key = config.get("secret_key", "")
@@ -51,12 +86,21 @@ class S3Staging(staging.Staging):
         self.url = config.get("url", None)
         internal_url = "{}:{}".format(self.host, self.port)
         secure = config.get("use_ssl", False)
-        self.client = Minio(
-            internal_url,
-            access_key=access_key,
-            secret_key=secret_key,
-            secure=secure,
-        )
+
+        if access_key == "" or secret_key == "":
+            self.client = Minio(
+                internal_url,
+                secure=secure,
+            )
+        
+        else:
+            self.client = Minio(
+                internal_url,
+                access_key=access_key,
+                secret_key=secret_key,
+                secure=secure,
+            )
+
         self.internal_url = ("https://" if secure else "http://") + internal_url
 
         try:
@@ -73,6 +117,14 @@ class S3Staging(staging.Staging):
             "Opened data staging at {}:{}/{}, locatable from {}".format(self.host, self.port, self.bucket, self.url)
         )
 
+    def upload_part(self, part_number, buf, metadata, name, upload_id):
+        logging.info(f"Uploading part {part_number} ({len(buf)} bytes) of {name}")
+        etag = self.client._do_put_object(
+            self.bucket, name, buf, len(buf),
+            part_number=part_number, metadata=metadata, upload_id=upload_id
+        )
+        return etag, len(buf)
+
     def create(self, name, data, content_type):
         url = self.get_url(name)
         logging.info("Putting to staging: {}".format(name))
@@ -82,52 +134,39 @@ class S3Staging(staging.Staging):
 
         upload_id = self.client._new_multipart_upload(self.bucket, name, metadata)
 
-        i = 1
         parts = {}
-        total_size = 0
-        for buf in self.iterator_buffer(data, 200 * 1024 * 1024):
-            if len(buf) == 0:
-                break
-            try:
-                logging.info("Uploading part {} ({} bytes) of {}".format(i, len(buf), name))
-                etag = self.client._do_put_object(
-                    self.bucket,
-                    name,
-                    buf,
-                    len(buf),
-                    part_number=i,
-                    metadata=metadata,
-                    upload_id=upload_id,
-                )
-                total_size += len(buf)
-                parts[i] = UploadPart(self.bucket, name, upload_id, i, etag, None, len(buf))
-                i += 1
-            except Exception:
-                self.client._remove_incomplete_upload(self.bucket, name, upload_id)
-                raise
+        part_number = 1
+        futures = []
 
-        if len(parts) == 0:
-            try:
-                logging.info("Uploading single empty part of {}".format(name))
-                etag = self.client._do_put_object(
-                    self.bucket,
-                    name,
-                    b"",
-                    0,
-                    part_number=i,
-                    metadata=metadata,
-                    upload_id=upload_id,
-                )
-                total_size += 0
-                parts[i] = UploadPart(self.bucket, name, upload_id, i, etag, None, 0)
-                i += 1
-            except Exception:
-                self.client._remove_incomplete_upload(self.bucket, name, upload_id)
-                raise
+        with AvailableThreadPoolExecutor(max_workers=self.max_threads) as executor:
+            executor.wait_for_available_worker()
+            for buf in self.iterator_buffer(data, self.buffer_size):
+                if len(buf) == 0:
+                    break
+                future = executor.submit(self.upload_part, copy.copy(part_number), buf, metadata, name, upload_id)
+                futures.append((future, part_number))
+                part_number += 1
 
         try:
-            self.client._complete_multipart_upload(self.bucket, name, upload_id, parts)
-        except Exception:
+            for future, part_number in futures:
+                etag, size = future.result()
+                parts[part_number] = UploadPart(self.bucket, name, upload_id, part_number, etag, None, size)
+        except Exception as e:
+            logging.error(f"Error uploading parts: {str(e)}")
+            self.client._remove_incomplete_upload(self.bucket, name, upload_id)
+            raise
+
+        # Completing upload
+        try:
+            logging.info(parts)
+            try:
+                self.client._complete_multipart_upload(self.bucket, name, upload_id, parts)
+            except:
+                time.sleep(5)
+                self.client._complete_multipart_upload(self.bucket, name, upload_id, parts)
+
+        except Exception as e:
+            logging.error(f"Error completing multipart upload: {str(e)}")
             self.client._remove_incomplete_upload(self.bucket, name, upload_id)
             raise
 

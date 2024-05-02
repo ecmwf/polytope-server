@@ -23,9 +23,41 @@ import logging
 
 import boto3
 from botocore.exceptions import ClientError
+import botocore
+import random
 
 from ..metric_collector import S3StorageMetricCollector
 from . import staging
+
+import time
+from concurrent.futures import Future, ThreadPoolExecutor
+
+
+class AvailableThreadPoolExecutor(ThreadPoolExecutor):
+    def __init__(
+        self, max_workers=None, thread_name_prefix="", initializer=None, initargs=()
+    ):
+        super().__init__(max_workers, thread_name_prefix, initializer, initargs)
+        self._running_worker_futures: set[Future] = set()
+
+    @property
+    def available_workers(self) -> int:
+        return self._max_workers - len(self._running_worker_futures)
+
+    def wait_for_available_worker(self, timeout = None) -> None:
+        start_time = time.monotonic()
+        while True:
+            if self.available_workers > 0:
+                return
+            if timeout is not None and time.monotonic() - start_time > timeout:
+                raise TimeoutError
+            time.sleep(0.1)
+
+    def submit(self, fn, /, *args, **kwargs):
+        f = super().submit(fn, *args, **kwargs)
+        self._running_worker_futures.add(f)
+        f.add_done_callback(self._running_worker_futures.remove)
+        return f
 
 
 class S3Staging_boto3(staging.Staging):
@@ -35,19 +67,35 @@ class S3Staging_boto3(staging.Staging):
         self.url = config.get("url", None)
 
         self.host = config.get("host", "0.0.0.0")
+        self.port = config.get("port", "8333")
         self.use_ssl = config.get("use_ssl", False)
+        self.max_threads = config.get("max_threads", 10)
+        self.buffer_size = config.get("buffer_size", 10 * 1024 * 1024)
 
         access_key = config.get("access_key", "")
         secret_key = config.get("secret_key", "")
+
+        for name in ['boto', 'urllib3', 's3transfer', 'boto3', 'botocore', 'nose']:
+            logging.getLogger(name).setLevel(logging.WARNING)
+        logger = logging.getLogger(__name__)
+
+        prefix = "https" if self.use_ssl else "http"
+
+        self._internal_url = f"{prefix}://{self.host}:{self.port}"
 
         # Setup Boto3 client
         self.s3_client = boto3.client(
             "s3",
             aws_access_key_id=access_key,
             aws_secret_access_key=secret_key,
-            endpoint_url=self.host,
-            use_ssl=self.use_ssl,
+            endpoint_url=self._internal_url,
+            config=botocore.config.Config(
+                max_pool_connections=50,
+                s3 = {'addressing_style ': 'path'},
+            )
+            # use_ssl=self.use_ssl,
         )
+
 
         # Attempt to create the bucket
         try:
@@ -64,40 +112,60 @@ class S3Staging_boto3(staging.Staging):
             self.host, self.s3_client, self.bucket, self.get_type()
         )
 
-        logging.info(f"Opened data staging at {self.host} with bucket {self.bucket}")
+        logging.info(f"Opened data staging at {self.host}:{self.port} with bucket {self.bucket}")
 
     def create(self, name, data, content_type):
         try:
             multipart_upload = self.s3_client.create_multipart_upload(
                 Bucket=self.bucket, Key=name, ContentType=content_type
             )
-            upload_id = multipart_upload["UploadId"]
+            upload_id = multipart_upload['UploadId']
 
             parts = []
             part_number = 1
-            for part_data in self.iterator_buffer(data, 200 * 1024 * 1024):
-                response = self.s3_client.upload_part(
-                    Bucket=self.bucket, Key=name, PartNumber=part_number, UploadId=upload_id, Body=part_data
-                )
-                parts.append({"PartNumber": part_number, "ETag": response["ETag"]})
-                part_number += 1
+            futures = []
 
-            if not parts:  # Handling the case of empty data
-                logging.info(f"Uploading single empty part of {name}")
-                response = self.s3_client.upload_part(
-                    Bucket=self.bucket, Key=name, PartNumber=part_number, UploadId=upload_id, Body=b""
-                )
-                parts.append({"PartNumber": part_number, "ETag": response["ETag"]})
+            with AvailableThreadPoolExecutor(max_workers=self.max_threads) as executor:
+                executor.wait_for_available_worker()
+                if not data:
+                    logging.info(f"No data provided. Uploading a single empty part for {name}.")
+                else:
+                    for part_data in self.iterator_buffer(data, self.buffer_size):
+                        if part_data:
+                            futures.append(executor.submit(
+                                self.upload_part, name, part_number, part_data, upload_id
+                            ))
+                            part_number += 1
+
+                    for future in futures:
+                        result = future.result()
+                        parts.append(result)
+
+            if not parts:
+                logging.warning(f"No parts uploaded for {name}. Aborting upload.")
+                self.s3_client.abort_multipart_upload(Bucket=self.bucket, Key=name, UploadId=upload_id)
+                raise ValueError(f"No data retrieved")
 
             self.s3_client.complete_multipart_upload(
-                Bucket=self.bucket, Key=name, UploadId=upload_id, MultipartUpload={"Parts": parts}
+                Bucket=self.bucket, Key=name, UploadId=upload_id, MultipartUpload={'Parts': parts}
             )
+
             logging.info(f"Successfully uploaded {name} in {len(parts)} parts.")
             return self.get_url(name)
+
         except ClientError as e:
             logging.error(f"Failed to upload {name}: {e}")
-            self.s3_client.abort_multipart_upload(Bucket=self.bucket, Key=name, UploadId=upload_id)
+            if 'upload_id' in locals():
+                self.s3_client.abort_multipart_upload(Bucket=self.bucket, Key=name, UploadId=upload_id)
             raise
+
+    def upload_part(self, name, part_number, data, upload_id):
+        logging.info(f"Uploading part {part_number} of {name}, {len(data)} bytes")
+        response = self.s3_client.upload_part(
+            Bucket=self.bucket, Key=name, PartNumber=part_number, UploadId=upload_id, Body=data
+        )
+        return {"PartNumber": part_number, "ETag": response["ETag"]}
+
 
     def set_bucket_policy(self):
         """
@@ -131,7 +199,7 @@ class S3Staging_boto3(staging.Staging):
                 },
             ],
         }
-        self.s3_client.put_bucket_policy(Bucket=self.bucket, Policy=json.dumps(policy))
+        # self.s3_client.put_bucket_policy(Bucket=self.bucket, Policy=json.dumps(policy))
 
     def read(self, name):
         try:
@@ -178,7 +246,11 @@ class S3Staging_boto3(staging.Staging):
     def list(self):
         try:
             resources = []
-            data = self.s3_client.list_objects_v2(Bucket=self.bucket)
+            data = self.s3_client.list_objects_v2(Bucket=self.bucket, MaxKeys=999999999999999)
+
+            if data.get("contents", {}).get("IsTruncated  ncated", False):
+                logging.warning("Truncated list of objects. Some objects may not be listed.")
+
             if "Contents" not in data:  # No objects in the bucket
                 return resources
             for o in data["Contents"]:
