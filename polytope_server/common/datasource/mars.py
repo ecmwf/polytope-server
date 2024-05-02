@@ -141,8 +141,10 @@ class MARSDataSource(datasource.DataSource):
                     logging.debug("FIFO is ready for reading.")
                     break
             else:
+                logging.debug("Detected MARS process has exited before opening FIFO.")
                 self.destroy(request)
-        except Exception:
+        except Exception as e:
+            logging.error(f"Error while waiting for MARS process to open FIFO: {e}.")
             self.destroy(request)
             raise
 
@@ -154,20 +156,22 @@ class MARSDataSource(datasource.DataSource):
         for x in self.fifo.data():
             yield x
 
-        self.destroy(request)
+        logging.info("FIFO reached EOF.")
+
         return
 
     def destroy(self, request):
+        try:
+            self.subprocess.finalize(request)  # Will raise if non-zero return
+        except Exception as e:
+            logging.debug("MARS subprocess failed: {}".format(e))
+            pass
         try:
             os.unlink(self.request_file)
         except Exception:
             pass
         try:
             self.fifo.delete()
-        except Exception:
-            pass
-        try:
-            self.subprocess.finalize(request, "mars -")  # Will raise if non-zero return
         except Exception:
             pass
 
