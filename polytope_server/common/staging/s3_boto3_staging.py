@@ -81,6 +81,14 @@ class S3Staging_boto3(staging.Staging):
 
         prefix = "https" if self.use_ssl else "http"
 
+        if config.get("random_host", False):
+            self.host = config.get("random_host", {}).get("host", self.host)
+            index = random.randint(0, config.get("random_host", {}).get("max", 1) - 1)
+            # replace %%ID%% in the host with the index
+            self.host = self.host.replace("%%ID%%", str(index))
+            self.url = self.url + '/' + str(index)
+            logging.info(f"Using random host: {self.host}")
+
         self._internal_url = f"{prefix}://{self.host}:{self.port}"
 
         # Setup Boto3 client
