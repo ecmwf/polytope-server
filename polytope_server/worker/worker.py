@@ -23,6 +23,7 @@ import os
 import signal
 import sys
 import time
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
@@ -300,6 +301,8 @@ class Worker:
         """Called when the future thread raises an exception"""
 
         _, v, _ = sys.exc_info()
+        tb = traceback.format_exception(None, exception, exception.__traceback__)
+        logging.info(tb, extra={"request_id": request.id})
         error_message = request.user_message + "\n" + str(v)
         request.set_status(Status.FAILED)
         request.user_message = error_message

@@ -20,6 +20,7 @@
 
 import logging
 from abc import ABC
+import traceback
 from importlib import import_module
 from typing import Iterator
 
@@ -80,7 +81,13 @@ class DataSource(ABC):
         try:
             self.match(request)
         except Exception as e:
-            request.user_message += "Skipping datasource {} due to match error: {}\n".format(self.get_type(), repr(e))
+            if hasattr(self, "silent_match") and self.silent_match:
+                pass
+            else:
+                request.user_message += "Skipping datasource {} due to match error: {}\n".format(self.get_type(), repr(e))
+            tb = traceback.format_exception(None, e, e.__traceback__)
+            logging.info(tb)
+
             return False
 
         # Check for datasource-specific roles
