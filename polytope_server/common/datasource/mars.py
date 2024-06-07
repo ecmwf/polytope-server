@@ -22,6 +22,7 @@ import logging
 import os
 import tempfile
 from datetime import datetime, timedelta
+import re
 
 import yaml
 from dateutil.relativedelta import relativedelta
@@ -45,6 +46,8 @@ class MARSDataSource(datasource.DataSource):
 
         self.subprocess = None
         self.fifo = None
+
+        self.silent_match = config.get("silent_match", False)
 
         if self.match_rules is None:
             self.match_rules = {}
@@ -99,7 +102,13 @@ class MARSDataSource(datasource.DataSource):
 
             # Process date rules
             if k == "date":
-                self.date_check(r["date"], v)
+                comp, v = v.split(" ", 1)
+                if comp == "<":
+                    self.date_check(r["date"], v, False)
+                elif comp == ">":
+                    self.date_check(r["date"], v, True)
+                else:
+                    raise Exception("Invalid date comparison")
                 continue
 
             # ... and check the value of other keys
@@ -225,15 +234,17 @@ class MARSDataSource(datasource.DataSource):
             request_str = request_str + "," + k + "=" + v
         return request_str
 
-    def check_single_date(self, date, offset, offset_fmted):
+    def check_single_date(self, date, offset, offset_fmted, after=False):
 
         # Date is relative (0 = now, -1 = one day ago)
         if str(date)[0] == "0" or str(date)[0] == "-":
             date_offset = int(date)
             dt = datetime.today() + timedelta(days=date_offset)
 
-            if dt >= offset:
+            if after and dt >= offset:
                 raise Exception("Date is too recent, expected < {}".format(offset_fmted))
+            elif not after and dt < offset:
+                raise Exception("Date is too old, expected > {}".format(offset_fmted))
             else:
                 return
 
@@ -242,12 +253,31 @@ class MARSDataSource(datasource.DataSource):
             dt = datetime.strptime(date, "%Y%m%d")
         except ValueError:
             raise Exception("Invalid date, expected real date in YYYYMMDD format")
-        if dt >= offset:
+        if after and dt >= offset:
             raise Exception("Date is too recent, expected < {}".format(offset_fmted))
+        elif not after and dt < offset:
+            raise Exception("Date is too old, expected > {}".format(offset_fmted))
         else:
             return
 
-    def date_check(self, date, offsets):
+    def parse_relativedelta(self, time_str):
+
+        pattern = r'(\d+)([dhm])'
+        time_dict = {'d': 0, 'h': 0, 'm': 0}
+        matches = re.findall(pattern, time_str)
+        
+        for value, unit in matches:
+            if unit == 'd':
+                time_dict['d'] += int(value)
+            elif unit == 'h':
+                time_dict['h'] += int(value)
+            elif unit == 'm':
+                time_dict['m'] += int(value)
+    
+        return relativedelta(days=time_dict['d'], hours=time_dict['h'], minutes=time_dict['m'])
+
+
+    def date_check(self, date, offsets, after=False):
         """Process special match rules for DATE constraints"""
 
         date = str(date)
@@ -257,14 +287,14 @@ class MARSDataSource(datasource.DataSource):
             date = "-1"
 
         now = datetime.today()
-        offset = now + relativedelta(**dict(offsets))
+        offset = now - self.parse_relativedelta(offsets)
         offset_fmted = offset.strftime("%Y%m%d")
 
         split = str(date).split("/")
 
         # YYYYMMDD
         if len(split) == 1:
-            self.check_single_date(split[0], offset, offset_fmted)
+            self.check_single_date(split[0], offset, offset_fmted, after)
             return True
 
         # YYYYMMDD/to/YYYYMMDD -- check end and start date
@@ -276,12 +306,12 @@ class MARSDataSource(datasource.DataSource):
                 if len(split) == 5 and split[3].casefold() != "by".casefold():
                     raise Exception("Invalid date range")
 
-                self.check_single_date(split[0], offset, offset_fmted)
-                self.check_single_date(split[2], offset, offset_fmted)
+                self.check_single_date(split[0], offset, offset_fmted, after)
+                self.check_single_date(split[2], offset, offset_fmted, after)
                 return True
 
         # YYYYMMDD/YYYYMMDD/YYYYMMDD/... -- check each date
         for s in split:
-            self.check_single_date(s, offset, offset_fmted)
+            self.check_single_date(s, offset, offset_fmted, after)
 
         return True
