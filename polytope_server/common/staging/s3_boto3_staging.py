@@ -123,9 +123,10 @@ class S3Staging_boto3(staging.Staging):
         logging.info(f"Opened data staging at {self.host}:{self.port} with bucket {self.bucket}")
 
     def create(self, name, data, content_type):
+        name = name + '.grib' # fix for seaweedfs auto-setting Content-Disposition to inline and earthkit expecting extension, else using content-disposition header
         try:
             multipart_upload = self.s3_client.create_multipart_upload(
-                Bucket=self.bucket, Key=name, ContentType=content_type
+                Bucket=self.bucket, Key=name, ContentType=content_type, ContentDisposition='attachment'
             )
             upload_id = multipart_upload['UploadId']
 

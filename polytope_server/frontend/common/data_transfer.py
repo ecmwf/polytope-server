@@ -131,9 +131,21 @@ class DataTransfer:
 
     def process_download(self, request):
         try:
-            request.content_type, request.content_length = self.staging.stat(request.id)
+            
+            # TODO: temporary fix for Content-Disposition earthkit issues
+            split = request.url.split(".")
+            extension = None
+            if len(split) > 1:
+                extension = split[-1]
+            
+            object_id = request.id
+            if extension is not None:
+                object_id = request.id + "." + extension
+
+
+            request.content_type, request.content_length = self.staging.stat(object_id)
         except Exception:
-            raise ServerError("Error while querying data staging with {}".format(request.id))
+            raise ServerError("Error while querying data staging with {}".format(object_id))
 
         response = self.construct_response(request)
         return RequestRedirected(response)
