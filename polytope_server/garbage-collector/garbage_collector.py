@@ -71,23 +71,34 @@ class GarbageCollector:
         )
 
         for r in requests:
+            data_name = r.id + ".grib" # TODO temporary fix
             if datetime.fromtimestamp(r.last_modified, tz=timezone.utc) < cutoff:
                 logging.info("Deleting {} because it is too old.".format(r.id))
                 try:
-                    self.staging.delete(r.id)
+                    self.staging.delete(data_name)
                 except KeyError:
-                    pass
+                    logging.info(f"Removing old request but data {data_name} not found in staging.")
                 self.request_store.remove_request(r.id)
 
     def remove_dangling_data(self):
         """As a failsafe, removes data which has no corresponding request."""
         all_objects = self.staging.list()
         for data in all_objects:
-            request = self.request_store.get_request(id=data.name)
+
+            # logging.info(f"Checking {data.name}")
+
+            # TODO: fix properly
+            # remove file extension if it exists
+            request_id = data.name
+            if "." in request_id:
+                request_id = request_id.split(".")[0]
+
+            request = self.request_store.get_request(id=request_id)
+
             if request is None:
-                logging.info("Deleting {} because it has no matching request.".format(data.name))
+                logging.info("Deleting {} because it has no matching request.".format(request_id))
                 try:
-                    self.staging.delete(data.name)
+                    self.staging.delete(data.name) # TODO temporary fix for content-disposition error
                 except KeyError:
                     # TODO: why does this happen?
                     logging.info("Data {} not found in staging.".format(data.name))
@@ -113,7 +124,18 @@ class GarbageCollector:
         all_objects_by_age = {}
 
         for data in all_objects:
+
+            # TODO: fix properly
+            # remove file extension if it exists
+            if "." in data.name:
+                data.name = data.name.split(".")[0]
+
             request = self.request_store.get_request(id=data.name)
+
+            if request is None:
+                logging.info(f"Skipping request {data.name}, not found in request store.")
+                continue
+
             all_objects_by_age[data.name] = {
                 "size": data.size,
                 "last_modified": request.last_modified,
@@ -130,6 +152,11 @@ class GarbageCollector:
                 self.staging.delete(name)
             except KeyError:
                 logging.info("Data {} not found in staging.".format(name))
+
+            # TODO: fix properly
+            if "." in name:
+                name = name.split(".")[0]
+
             self.request_store.remove_request(name)
             total_size -= v["size"]
             logging.info("Size of staging is {}/{}".format(format_bytes(total_size), format_bytes(self.threshold)))
