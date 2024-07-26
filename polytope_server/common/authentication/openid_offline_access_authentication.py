@@ -102,6 +102,8 @@ class OpenIDOfflineAuthentication(authentication.Authentication):
 
             roles = decoded_token.get("resource_access", {}).get(self.public_client_id, {}).get("roles", [])
             user.roles.extend(roles)
+            roles = decoded_token.get("realm_access", {}).get("roles", [])
+            user.roles.extend(roles)
 
             logging.info("Found user {} from openid offline_access token".format(user))
 
