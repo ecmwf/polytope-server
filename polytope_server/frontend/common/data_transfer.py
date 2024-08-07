@@ -133,7 +133,7 @@ class DataTransfer:
         try:
             
             # TODO: temporary fix for Content-Disposition earthkit issues
-            split = request.url.split(".")
+            split = request.url.split('/')[-1].split(".")
             extension = None
             if len(split) > 1:
                 extension = split[-1]
