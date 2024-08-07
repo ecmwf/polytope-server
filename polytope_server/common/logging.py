@@ -23,6 +23,8 @@ import json
 import logging
 import socket
 
+from .. import version
+
 indexable_fields = {"request_id": str}
 
 
@@ -60,6 +62,17 @@ class LogFormatter(logging.Formatter):
                     else:
                         raise TypeError("Extra information with key {} is expected to be of type {}".format(name, typ))
             if self.mode == "logserver":
+                # Get the local IP address
+                try:
+                    local_ip = socket.gethostbyname(socket.gethostname())
+                except Exception as e:
+                    local_ip = "Unable to get IP"
+                # software name
+                software = "polytope-server"
+                # software version
+                swVersion = version.__version__
+                # construct the origin for logserver
+                result["origin"] = {"software": software, "swVersion": swVersion, "ip": local_ip}
                 # Ensuring single line output
                 return json.dumps(result, indent=None)
             elif self.mode == "prettyprint":
