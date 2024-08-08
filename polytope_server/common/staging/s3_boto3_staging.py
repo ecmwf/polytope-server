@@ -20,23 +20,20 @@
 
 import json
 import logging
+import random
+import time
+from concurrent.futures import Future, ThreadPoolExecutor
 
 import boto3
-from botocore.exceptions import ClientError
 import botocore
-import random
+from botocore.exceptions import ClientError
 
 from ..metric_collector import S3StorageMetricCollector
 from . import staging
 
-import time
-from concurrent.futures import Future, ThreadPoolExecutor
-
 
 class AvailableThreadPoolExecutor(ThreadPoolExecutor):
-    def __init__(
-        self, max_workers=None, thread_name_prefix="", initializer=None, initargs=()
-    ):
+    def __init__(self, max_workers=None, thread_name_prefix="", initializer=None, initargs=()):
         super().__init__(max_workers, thread_name_prefix, initializer, initargs)
         self._running_worker_futures: set[Future] = set()
 
@@ -44,7 +41,7 @@ class AvailableThreadPoolExecutor(ThreadPoolExecutor):
     def available_workers(self) -> int:
         return self._max_workers - len(self._running_worker_futures)
 
-    def wait_for_available_worker(self, timeout = None) -> None:
+    def wait_for_available_worker(self, timeout=None) -> None:
         start_time = time.monotonic()
         while True:
             if self.available_workers > 0:
@@ -75,7 +72,7 @@ class S3Staging_boto3(staging.Staging):
         access_key = config.get("access_key", "")
         secret_key = config.get("secret_key", "")
 
-        for name in ['boto', 'urllib3', 's3transfer', 'boto3', 'botocore', 'nose']:
+        for name in ["boto", "urllib3", "s3transfer", "boto3", "botocore", "nose"]:
             logging.getLogger(name).setLevel(logging.WARNING)
         logger = logging.getLogger(__name__)
 
@@ -86,7 +83,7 @@ class S3Staging_boto3(staging.Staging):
             index = random.randint(0, config.get("random_host", {}).get("max", 1) - 1)
             # replace %%ID%% in the host with the index
             self.host = self.host.replace("%%ID%%", str(index))
-            self.url = self.url + '/' + str(index)
+            self.url = self.url + "/" + str(index)
             logging.info(f"Using random host: {self.host}")
 
         self._internal_url = f"{prefix}://{self.host}:{self.port}"
@@ -99,11 +96,10 @@ class S3Staging_boto3(staging.Staging):
             endpoint_url=self._internal_url,
             config=botocore.config.Config(
                 max_pool_connections=50,
-                s3 = {'addressing_style ': 'path'},
-            )
+                s3={"addressing_style ": "path"},
+            ),
             # use_ssl=self.use_ssl,
         )
-
 
         # Attempt to create the bucket
         try:
@@ -123,12 +119,14 @@ class S3Staging_boto3(staging.Staging):
         logging.info(f"Opened data staging at {self.host}:{self.port} with bucket {self.bucket}")
 
     def create(self, name, data, content_type):
-        name = name + '.grib' # fix for seaweedfs auto-setting Content-Disposition to inline and earthkit expecting extension, else using content-disposition header
+        name = (
+            name + ".grib"
+        )  # fix for seaweedfs auto-setting Content-Disposition to inline and earthkit expecting extension, else using content-disposition header
         try:
             multipart_upload = self.s3_client.create_multipart_upload(
-                Bucket=self.bucket, Key=name, ContentType=content_type, ContentDisposition='attachment'
+                Bucket=self.bucket, Key=name, ContentType=content_type, ContentDisposition="attachment"
             )
-            upload_id = multipart_upload['UploadId']
+            upload_id = multipart_upload["UploadId"]
 
             parts = []
             part_number = 1
@@ -141,9 +139,7 @@ class S3Staging_boto3(staging.Staging):
                 else:
                     for part_data in self.iterator_buffer(data, self.buffer_size):
                         if part_data:
-                            futures.append(executor.submit(
-                                self.upload_part, name, part_number, part_data, upload_id
-                            ))
+                            futures.append(executor.submit(self.upload_part, name, part_number, part_data, upload_id))
                             part_number += 1
 
                     for future in futures:
@@ -156,7 +152,7 @@ class S3Staging_boto3(staging.Staging):
                 raise ValueError(f"No data retrieved")
 
             self.s3_client.complete_multipart_upload(
-                Bucket=self.bucket, Key=name, UploadId=upload_id, MultipartUpload={'Parts': parts}
+                Bucket=self.bucket, Key=name, UploadId=upload_id, MultipartUpload={"Parts": parts}
             )
 
             logging.info(f"Successfully uploaded {name} in {len(parts)} parts.")
@@ -164,17 +160,16 @@ class S3Staging_boto3(staging.Staging):
 
         except ClientError as e:
             logging.error(f"Failed to upload {name}: {e}")
-            if 'upload_id' in locals():
+            if "upload_id" in locals():
                 self.s3_client.abort_multipart_upload(Bucket=self.bucket, Key=name, UploadId=upload_id)
             raise
 
     def upload_part(self, name, part_number, data, upload_id):
-        logging.info(f"Uploading part {part_number} of {name}, {len(data)} bytes")
+        logging.debug(f"Uploading part {part_number} of {name}, {len(data)} bytes")
         response = self.s3_client.upload_part(
             Bucket=self.bucket, Key=name, PartNumber=part_number, UploadId=upload_id, Body=data
         )
         return {"PartNumber": part_number, "ETag": response["ETag"]}
-
 
     def set_bucket_policy(self):
         """
