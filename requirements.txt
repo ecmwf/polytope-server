@@ -24,7 +24,6 @@ pymemcache==3.0.0
 redis==3.4.1
 markdown==3.2.1
 minio==5.0.7
-tiny-kubernetes==1.1.1
 deepmerge==0.1.0
 flask-swagger-ui==3.25.0
 ldap3==2.7
