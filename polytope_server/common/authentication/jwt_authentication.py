@@ -66,6 +66,9 @@ class JWTAuthentication(authentication.Authentication):
             roles = decoded_token.get("resource_access", {}).get(self.client_id, {}).get("roles", [])
             user.roles.extend(roles)
 
+            roles = decoded_token.get("realm_access", {}).get("roles", [])
+            user.roles.extend(roles)
+
             logging.info("Found user {} from decoded JWT".format(user))
         except Exception as e:
             logging.info("Failed to authenticate user from JWT")
