@@ -20,9 +20,9 @@
 
 import logging
 import os
+import re
 import tempfile
 from datetime import datetime, timedelta
-import re
 
 import yaml
 from dateutil.relativedelta import relativedelta
@@ -262,20 +262,19 @@ class MARSDataSource(datasource.DataSource):
 
     def parse_relativedelta(self, time_str):
 
-        pattern = r'(\d+)([dhm])'
-        time_dict = {'d': 0, 'h': 0, 'm': 0}
+        pattern = r"(\d+)([dhm])"
+        time_dict = {"d": 0, "h": 0, "m": 0}
         matches = re.findall(pattern, time_str)
-        
-        for value, unit in matches:
-            if unit == 'd':
-                time_dict['d'] += int(value)
-            elif unit == 'h':
-                time_dict['h'] += int(value)
-            elif unit == 'm':
-                time_dict['m'] += int(value)
-    
-        return relativedelta(days=time_dict['d'], hours=time_dict['h'], minutes=time_dict['m'])
 
+        for value, unit in matches:
+            if unit == "d":
+                time_dict["d"] += int(value)
+            elif unit == "h":
+                time_dict["h"] += int(value)
+            elif unit == "m":
+                time_dict["m"] += int(value)
+
+        return relativedelta(days=time_dict["d"], hours=time_dict["h"], minutes=time_dict["m"])
 
     def date_check(self, date, offsets, after=False):
         """Process special match rules for DATE constraints"""

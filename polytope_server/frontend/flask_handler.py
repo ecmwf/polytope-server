@@ -68,7 +68,7 @@ class FlaskHandler(frontend.FrontendHandler):
             SWAGGER_URL, tmp.name, config={"app_name": "Polytope", "spec": spec}
         )
         handler.register_blueprint(SWAGGERUI_BLUEPRINT, url_prefix=SWAGGER_URL)
-        handler.register_blueprint(SWAGGERUI_BLUEPRINT, url_prefix='/')
+        handler.register_blueprint(SWAGGERUI_BLUEPRINT, url_prefix="/")
 
         data_transfer = DataTransfer(request_store, staging)
 

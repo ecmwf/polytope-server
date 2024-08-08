@@ -131,17 +131,16 @@ class DataTransfer:
 
     def process_download(self, request):
         try:
-            
+
             # TODO: temporary fix for Content-Disposition earthkit issues
-            split = request.url.split('/')[-1].split(".")
+            split = request.url.split("/")[-1].split(".")
             extension = None
             if len(split) > 1:
                 extension = split[-1]
-            
+
             object_id = request.id
             if extension is not None:
                 object_id = request.id + "." + extension
-
 
             request.content_type, request.content_length = self.staging.stat(object_id)
         except Exception:

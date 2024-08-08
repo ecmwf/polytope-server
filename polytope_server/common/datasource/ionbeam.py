@@ -17,47 +17,47 @@
 # granted to it by virtue of its status as an intergovernmental organisation nor
 # does it submit to any jurisdiction.
 #
-import yaml
 import logging
-import requests
+from dataclasses import dataclass
 from urllib.parse import urljoin
 
-from . import datasource
+import requests
+import yaml
 from requests import Request
-from dataclasses import dataclass
+
+from . import datasource
+
 
 @dataclass
 class IonBeamAPI:
-    endpoint : str
+    endpoint: str
 
     def __post_init__(self):
         assert not self.endpoint.endswith("/")
         self.session = requests.Session()
 
-    def get(self, path : str, **kwargs) -> requests.Response:
+    def get(self, path: str, **kwargs) -> requests.Response:
         return self.session.get(f"{self.endpoint}/{path}", stream=True, **kwargs)
-    
-    def get_bytes(self, path : str, **kwargs) -> requests.Response:
-        kwargs["headers"] = kwargs.get("headers", {}) | {
-            'Accept': 'application/octet-stream'
-        }
+
+    def get_bytes(self, path: str, **kwargs) -> requests.Response:
+        kwargs["headers"] = kwargs.get("headers", {}) | {"Accept": "application/octet-stream"}
         return self.get(path, **kwargs)
-    
+
     def get_json(self, path, **kwargs):
         return self.get(path, **kwargs).json()
-    
-    def list(self, request : dict[str, str] = {}):
-        return self.get_json("list", params = request)
-    
-    def head(self, request : dict[str, str] = {}):
-        return self.get_json("head", params = request)
-                
-    def retrieve(self, request : dict[str, str]) -> requests.Response:
-        return self.get_bytes("retrieve", params = request)
+
+    def list(self, request: dict[str, str] = {}):
+        return self.get_json("list", params=request)
+
+    def head(self, request: dict[str, str] = {}):
+        return self.get_json("head", params=request)
+
+    def retrieve(self, request: dict[str, str]) -> requests.Response:
+        return self.get_bytes("retrieve", params=request)
 
     def archive(self, request, file) -> requests.Response:
-        files = {'file': file}
-        return self.session.post(f"{self.endpoint}/archive", files=files, params = request)
+        files = {"file": file}
+        return self.session.post(f"{self.endpoint}/archive", files=files, params=request)
 
 
 class IonBeamDataSource(datasource.DataSource):
@@ -66,6 +66,7 @@ class IonBeamDataSource(datasource.DataSource):
 
 
     """
+
     read_chunk_size = 2 * 1024 * 1024
 
     def __init__(self, config):
@@ -84,32 +85,32 @@ class IonBeamDataSource(datasource.DataSource):
     def get_type(self):
         return self.type
 
-    def archive(self, request : Request):
+    def archive(self, request: Request):
         """Archive data, returns nothing but updates datasource state"""
         r = yaml.safe_load(request.user_request)
         keys = r["keys"]
 
-        with open(r["path"], 'rb') as f:
+        with open(r["path"], "rb") as f:
             return self.api.archive(keys, f)
 
-    def list(self, request : Request) -> list:
+    def list(self, request: Request) -> list:
         request_keys = yaml.safe_load(request.user_request)
         return self.api.list(request_keys)
 
-    def retrieve(self, request : Request) -> bool:
+    def retrieve(self, request: Request) -> bool:
         """Retrieve data, returns nothing but updates datasource state"""
 
         request_keys = yaml.safe_load(request.user_request)
         self.response = self.api.retrieve(request_keys)
         return True
 
-    def result(self, request : Request):
+    def result(self, request: Request):
         """Returns a generator for the resultant data"""
-        return self.response.iter_content(chunk_size = self.read_chunk_size, decode_unicode=False)
+        return self.response.iter_content(chunk_size=self.read_chunk_size, decode_unicode=False)
 
     def destroy(self, request) -> None:
         """A hook to do essential freeing of resources, called upon success or failure"""
-        
+
         # requests response objects with stream=True can remain open indefinitely if not read to completion
         # or closed explicitly
         if self.response:

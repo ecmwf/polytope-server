@@ -40,7 +40,7 @@ class DummyDataSource(datasource.DataSource):
 
         if self.size < 0:
             raise ValueError("Size must be non-negative")
-        
+
         return True
 
     def result(self, request):
@@ -49,7 +49,7 @@ class DummyDataSource(datasource.DataSource):
         while data_generated < self.size:
             remaining_size = self.size - data_generated
             current_chunk_size = min(chunk_size, remaining_size)
-            yield b'x' * current_chunk_size
+            yield b"x" * current_chunk_size
             data_generated += current_chunk_size
 
     def destroy(self, request) -> None:

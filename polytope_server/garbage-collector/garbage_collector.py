@@ -71,7 +71,7 @@ class GarbageCollector:
         )
 
         for r in requests:
-            data_name = r.id + ".grib" # TODO temporary fix
+            data_name = r.id + ".grib"  # TODO temporary fix
             if datetime.fromtimestamp(r.last_modified, tz=timezone.utc) < cutoff:
                 logging.info("Deleting {} because it is too old.".format(r.id))
                 try:
@@ -98,7 +98,7 @@ class GarbageCollector:
             if request is None:
                 logging.info("Deleting {} because it has no matching request.".format(request_id))
                 try:
-                    self.staging.delete(data.name) # TODO temporary fix for content-disposition error
+                    self.staging.delete(data.name)  # TODO temporary fix for content-disposition error
                 except KeyError:
                     # TODO: why does this happen?
                     logging.info("Data {} not found in staging.".format(data.name))
@@ -195,6 +195,7 @@ def parse_bytes(size_str):
         return size * 1024**4
 
     return False
+
 
 def format_bytes(size_bytes):
     if size_bytes == 0:

@@ -95,7 +95,9 @@ class Broker:
 
         # Check collection total limit
         if collection_total_limit is not None and collection_active_requests >= collection_total_limit:
-            logging.debug(f"Collection has {collection_active_requests} of {collection_total_limit} total active requests")
+            logging.debug(
+                f"Collection has {collection_active_requests} of {collection_total_limit} total active requests"
+            )
             return False
 
         # Determine the effective limit based on role or per-user setting
@@ -106,18 +108,23 @@ class Broker:
 
         # Check if user exceeds the effective limit
         if limit > 0:
-            user_active_requests = sum(qr.collection == request.collection and qr.user == request.user for qr in active_requests)
+            user_active_requests = sum(
+                qr.collection == request.collection and qr.user == request.user for qr in active_requests
+            )
             if user_active_requests >= limit:
-                logging.debug(f"User {request.user} has {user_active_requests} of {limit} active requests in collection {request.collection}")
+                logging.debug(
+                    f"User {request.user} has {user_active_requests} of {limit} active requests in collection {request.collection}"
+                )
                 return False
             else:
-                logging.debug(f"User {request.user} has {user_active_requests} of {limit} active requests in collection {request.collection}")
+                logging.debug(
+                    f"User {request.user} has {user_active_requests} of {limit} active requests in collection {request.collection}"
+                )
                 return True
 
         # Allow if no limits are exceeded
         logging.debug(f"No limit for user {request.user} in collection {request.collection}")
         return True
-
 
     def enqueue(self, request):
 
