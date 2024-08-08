@@ -27,18 +27,16 @@
 #
 #######################################################################
 
+import concurrent.futures
 import json
 import logging
-import concurrent.futures
-
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 
+
 class AvailableThreadPoolExecutor(ThreadPoolExecutor):
 
-    def __init__(
-        self, max_workers=None, thread_name_prefix="", initializer=None, initargs=()
-    ):
+    def __init__(self, max_workers=None, thread_name_prefix="", initializer=None, initargs=()):
         super().__init__(max_workers, thread_name_prefix, initializer, initargs)
         self._running_worker_futures: set[Future] = set()
 
@@ -46,7 +44,7 @@ class AvailableThreadPoolExecutor(ThreadPoolExecutor):
     def available_workers(self) -> int:
         return self._max_workers - len(self._running_worker_futures)
 
-    def wait_for_available_worker(self, timeout = None) -> None:
+    def wait_for_available_worker(self, timeout=None) -> None:
         start_time = time.monotonic()
         while True:
             if self.available_workers > 0:
@@ -61,6 +59,10 @@ class AvailableThreadPoolExecutor(ThreadPoolExecutor):
         f.add_done_callback(self._running_worker_futures.remove)
         return f
 
+
+import copy
+import time
+
 import minio
 from minio import Minio
 from minio.definitions import UploadPart
@@ -68,8 +70,6 @@ from minio.error import BucketAlreadyExists, BucketAlreadyOwnedByYou, NoSuchKey
 
 from ..metric_collector import S3StorageMetricCollector
 from . import staging
-import copy
-import time
 
 
 class S3Staging(staging.Staging):
@@ -92,7 +92,7 @@ class S3Staging(staging.Staging):
                 internal_url,
                 secure=secure,
             )
-        
+
         else:
             self.client = Minio(
                 internal_url,
@@ -118,10 +118,9 @@ class S3Staging(staging.Staging):
         )
 
     def upload_part(self, part_number, buf, metadata, name, upload_id):
-        logging.info(f"Uploading part {part_number} ({len(buf)} bytes) of {name}")
+        logging.debug(f"Uploading part {part_number} ({len(buf)} bytes) of {name}")
         etag = self.client._do_put_object(
-            self.bucket, name, buf, len(buf),
-            part_number=part_number, metadata=metadata, upload_id=upload_id
+            self.bucket, name, buf, len(buf), part_number=part_number, metadata=metadata, upload_id=upload_id
         )
         return etag, len(buf)
 
