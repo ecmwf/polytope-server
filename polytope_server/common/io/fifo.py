@@ -19,10 +19,10 @@
 #
 
 import errno
+import logging
 import os
 import select
 import tempfile
-import logging
 
 
 class FIFO:

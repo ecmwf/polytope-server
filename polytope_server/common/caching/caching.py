@@ -201,7 +201,11 @@ class MongoDBCaching(Caching):
         password = cache_config.get("password")
 
         collection = cache_config.get("collection", "cache")
-        self.client = mongo_client_factory.create_client(uri, username, password,)
+        self.client = mongo_client_factory.create_client(
+            uri,
+            username,
+            password,
+        )
 
         self.database = self.client.cache
         self.collection = self.database[collection]

@@ -60,7 +60,6 @@ class JWTAuthentication(authentication.Authentication):
 
             logging.info("Decoded JWT: {}".format(decoded_token))
 
-
             user = User(decoded_token["sub"], self.realm())
 
             roles = decoded_token.get("resource_access", {}).get(self.client_id, {}).get("roles", [])

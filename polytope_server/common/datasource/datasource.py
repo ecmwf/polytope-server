@@ -19,8 +19,8 @@
 #
 
 import logging
-from abc import ABC
 import traceback
+from abc import ABC
 from importlib import import_module
 from typing import Iterator
 
@@ -84,7 +84,9 @@ class DataSource(ABC):
             if hasattr(self, "silent_match") and self.silent_match:
                 pass
             else:
-                request.user_message += "Skipping datasource {} due to match error: {}\n".format(self.get_type(), repr(e))
+                request.user_message += "Skipping datasource {} due to match error: {}\n".format(
+                    self.get_type(), repr(e)
+                )
             tb = traceback.format_exception(None, e, e.__traceback__)
             logging.info(tb)
 
@@ -128,7 +130,7 @@ type_to_class_map = {
     "echo": "EchoDataSource",
     "dummy": "DummyDataSource",
     "raise": "RaiseDataSource",
-    "ionbeam": "IonBeamDataSource"
+    "ionbeam": "IonBeamDataSource",
 }
 
 

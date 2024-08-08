@@ -85,7 +85,6 @@ class Worker:
         signal.signal(signal.SIGINT, self.on_process_terminated)
         signal.signal(signal.SIGTERM, self.on_process_terminated)
 
-
     def update_status(self, new_status, time_spent=None, request_id=None):
         if time_spent is None:
             time_spent = self.poll_interval
@@ -133,7 +132,6 @@ class Worker:
 
         try:
             self.queue = polytope_queue.create_queue(self.config.get("queue"))
-
 
             self.update_status("idle", time_spent=0)
             # self.update_metric()
