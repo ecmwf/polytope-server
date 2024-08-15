@@ -22,6 +22,7 @@ import datetime
 import json
 import logging
 import socket
+
 from .. import version
 
 # Constants for syslog facility and severity
@@ -30,11 +31,11 @@ LOCAL7 = 23
 # Mapping Python logging levels to syslog severity levels
 LOGGING_TO_SYSLOG_SEVERITY = {
     logging.CRITICAL: 2,  # LOG_CRIT
-    logging.ERROR: 3,     # LOG_ERR
-    logging.WARNING: 4,   # LOG_WARNING
-    logging.INFO: 6,      # LOG_INFO
-    logging.DEBUG: 7,     # LOG_DEBUG
-    logging.NOTSET: 7,    # LOG_DEBUG (default)
+    logging.ERROR: 3,  # LOG_ERR
+    logging.WARNING: 4,  # LOG_WARNING
+    logging.INFO: 6,  # LOG_INFO
+    logging.DEBUG: 7,  # LOG_DEBUG
+    logging.NOTSET: 7,  # LOG_DEBUG (default)
 }
 
 # Indexable fields
@@ -137,5 +138,3 @@ def setup(config, source_name):
     logger.setLevel(level)
 
     logger.info("Logging Initialized")
-
-
