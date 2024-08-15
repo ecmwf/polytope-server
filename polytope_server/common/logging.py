@@ -74,7 +74,7 @@ class LogFormatter(logging.Formatter):
     def calculate_syslog_priority(self, logging_level):
         severity = LOGGING_TO_SYSLOG_SEVERITY.get(logging_level, 7)  # Default to LOG_DEBUG if level is not found
         priority = (LOCAL7 << 3) | severity
-        return priority
+        return str(priority)
 
     def format_for_logserver(self, record, result):
         software_info = {
