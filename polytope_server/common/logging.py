@@ -74,7 +74,7 @@ class LogFormatter(logging.Formatter):
     def calculate_syslog_priority(self, logging_level):
         severity = LOGGING_TO_SYSLOG_SEVERITY.get(logging_level, 7)  # Default to LOG_DEBUG if level is not found
         priority = (LOCAL7 << 3) | severity
-        return str(priority)
+        return priority
 
     def format_for_logserver(self, record, result):
         software_info = {
@@ -90,7 +90,10 @@ class LogFormatter(logging.Formatter):
             if field in result:
                 message_content[field] = result[field]
         result["message"] = json.dumps(message_content, indent=None)
-
+        # Add syslog facility
+        result["syslog_facility"] = LOCAL7
+        # Add syslog severity
+        result["syslog_severity"] = LOGGING_TO_SYSLOG_SEVERITY.get(record.levelno, 7)
         # Add syslog priority
         result["syslog_priority"] = self.calculate_syslog_priority(record.levelno)
 
