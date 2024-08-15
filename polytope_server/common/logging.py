@@ -73,6 +73,15 @@ class LogFormatter(logging.Formatter):
                 swVersion = version.__version__
                 # construct the origin for logserver
                 result["origin"] = {"software": software, "swVersion": swVersion, "ip": local_ip}
+                # ensuring indexable fields are in the message
+                message = result["message"]
+                result["message"] = {}
+                result['message']['message'] = message
+                for index in indexable_fields:
+                    if index in result:
+                        result['message'][index] = result[index]
+                # Convert the 'message' dictionary to a JSON string
+                result['message'] = json.dumps(result['message'], indent=None)
                 # Ensuring single line output
                 return json.dumps(result, indent=None)
             elif self.mode == "prettyprint":
