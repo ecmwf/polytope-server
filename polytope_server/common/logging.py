@@ -22,25 +22,84 @@ import datetime
 import json
 import logging
 import socket
-
 from .. import version
 
-indexable_fields = {"request_id": str}
+# Constants for syslog facility and severity
+LOCAL7 = 23
+
+# Mapping Python logging levels to syslog severity levels
+LOGGING_TO_SYSLOG_SEVERITY = {
+    logging.CRITICAL: 2,  # LOG_CRIT
+    logging.ERROR: 3,     # LOG_ERR
+    logging.WARNING: 4,   # LOG_WARNING
+    logging.INFO: 6,      # LOG_INFO
+    logging.DEBUG: 7,     # LOG_DEBUG
+    logging.NOTSET: 7,    # LOG_DEBUG (default)
+}
+
+# Indexable fields
+INDEXABLE_FIELDS = {"request_id": str}
+DEFAULT_LOGGING_MODE = "json"
+DEFAULT_LOGGING_LEVEL = "INFO"
 
 
 class LogFormatter(logging.Formatter):
     def __init__(self, mode):
-        super(LogFormatter, self).__init__()
+        super().__init__()
         self.mode = mode
 
-    def format(self, record):
-        # timezone-aware datetime object
+    def format_time(self, record):
         utc_time = datetime.datetime.fromtimestamp(record.created, datetime.timezone.utc)
-        formatted_time = utc_time.strftime("%Y-%m-%d %H:%M:%S,%f")[:-3]
+        return utc_time.strftime("%Y-%m-%d %H:%M:%S,%f")[:-3]
 
+    def get_hostname(self, record):
+        return getattr(record, "hostname", socket.gethostname())
+
+    def get_local_ip(self):
+        try:
+            return socket.gethostbyname(socket.gethostname())
+        except Exception:
+            return "Unable to get IP"
+
+    def add_indexable_fields(self, record, result):
+        for name, expected_type in INDEXABLE_FIELDS.items():
+            if hasattr(record, name):
+                value = getattr(record, name)
+                if isinstance(value, expected_type):
+                    result[name] = value
+                else:
+                    raise TypeError(f"Extra information with key '{name}' is expected to be of type '{expected_type}'")
+
+    def calculate_syslog_priority(self, logging_level):
+        severity = LOGGING_TO_SYSLOG_SEVERITY.get(logging_level, 7)  # Default to LOG_DEBUG if level is not found
+        priority = (LOCAL7 << 3) | severity
+        return priority
+
+    def format_for_logserver(self, record, result):
+        software_info = {
+            "software": "polytope-server",
+            "swVersion": version.__version__,
+            "ip": self.get_local_ip(),
+        }
+        result["origin"] = software_info
+
+        # Ensure indexable fields are in the message
+        message_content = {"message": result["message"]}
+        for field in INDEXABLE_FIELDS:
+            if field in result:
+                message_content[field] = result[field]
+        result["message"] = json.dumps(message_content, indent=None)
+
+        # Add syslog priority
+        result["syslog_priority"] = self.calculate_syslog_priority(record.levelno)
+
+        return json.dumps(result, indent=None)
+
+    def format(self, record):
+        formatted_time = self.format_time(record)
         result = {
             "asctime": formatted_time,
-            "hostname": getattr(record, "hostname", socket.gethostname()),
+            "hostname": self.get_hostname(record),
             "process": record.process,
             "thread": record.thread,
             "name": record.name,
@@ -51,56 +110,32 @@ class LogFormatter(logging.Formatter):
         }
 
         if self.mode == "console":
-            return result["asctime"] + " | " + result["message"]
+            return f"{result['asctime']} | {result['message']}"
+
+        self.add_indexable_fields(record, result)
+
+        if self.mode == "logserver":
+            return self.format_for_logserver(record, result)
+        elif self.mode == "prettyprint":
+            return json.dumps(result, indent=2)
         else:
-            # following adds extra fields to the log message
-            for name, typ in indexable_fields.items():
-                if hasattr(record, name):
-                    val = getattr(record, name)
-                    if isinstance(val, typ):
-                        result[name] = val
-                    else:
-                        raise TypeError("Extra information with key {} is expected to be of type {}".format(name, typ))
-            if self.mode == "logserver":
-                # Get the local IP address
-                try:
-                    local_ip = socket.gethostbyname(socket.gethostname())
-                except Exception as e:
-                    local_ip = "Unable to get IP"
-                # software name
-                software = "polytope-server"
-                # software version
-                swVersion = version.__version__
-                # construct the origin for logserver
-                result["origin"] = {"software": software, "swVersion": swVersion, "ip": local_ip}
-                # ensuring indexable fields are in the message
-                message = result["message"]
-                result["message"] = {}
-                result['message']['message'] = message
-                for index in indexable_fields:
-                    if index in result:
-                        result['message'][index] = result[index]
-                # Convert the 'message' dictionary to a JSON string
-                result['message'] = json.dumps(result['message'], indent=None)
-                # Ensuring single line output
-                return json.dumps(result, indent=None)
-            elif self.mode == "prettyprint":
-                return json.dumps(result, indent=2)
-            else:
-                return json.dumps(result, indent=0)
+            return json.dumps(result, indent=None)
 
 
 def setup(config, source_name):
     logger = logging.getLogger()
     logger.name = source_name
+
     handler = logging.StreamHandler()
     handler.setLevel(logging.DEBUG)
 
-    mode = config.get("logging", {}).get("mode", "json")
-    level = config.get("logging", {}).get("level", "INFO")
+    mode = config.get("logging", {}).get("mode", DEFAULT_LOGGING_MODE)
+    level = config.get("logging", {}).get("level", DEFAULT_LOGGING_LEVEL)
 
     handler.setFormatter(LogFormatter(mode))
     logger.addHandler(handler)
     logger.setLevel(level)
 
     logger.info("Logging Initialized")
+
+
