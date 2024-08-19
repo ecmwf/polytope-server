@@ -27,10 +27,19 @@
 #
 #######################################################################
 
+import copy
 import json
 import logging
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
+
+import minio
+from minio import Minio
+from minio.definitions import UploadPart
+from minio.error import BucketAlreadyExists, BucketAlreadyOwnedByYou, NoSuchKey
+
+from ..metric_collector import S3StorageMetricCollector
+from . import staging
 
 
 class AvailableThreadPoolExecutor(ThreadPoolExecutor):
@@ -57,18 +66,6 @@ class AvailableThreadPoolExecutor(ThreadPoolExecutor):
         self._running_worker_futures.add(f)
         f.add_done_callback(self._running_worker_futures.remove)
         return f
-
-
-import copy
-import time
-
-import minio
-from minio import Minio
-from minio.definitions import UploadPart
-from minio.error import BucketAlreadyExists, BucketAlreadyOwnedByYou, NoSuchKey
-
-from ..metric_collector import S3StorageMetricCollector
-from . import staging
 
 
 class S3Staging(staging.Staging):
