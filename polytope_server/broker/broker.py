@@ -113,12 +113,14 @@ class Broker:
             )
             if user_active_requests >= limit:
                 logging.debug(
-                    f"User {request.user} has {user_active_requests} of {limit} active requests in collection {request.collection}"
+                    f"User {request.user} has {user_active_requests} of {limit} "
+                    f"active requests in collection {request.collection}"
                 )
                 return False
             else:
                 logging.debug(
-                    f"User {request.user} has {user_active_requests} of {limit} active requests in collection {request.collection}"
+                    f"User {request.user} has {user_active_requests} of {limit} "
+                    f"active requests in collection {request.collection}"
                 )
                 return True
 
