@@ -156,7 +156,7 @@ class S3Staging(staging.Staging):
             logging.info(parts)
             try:
                 self.client._complete_multipart_upload(self.bucket, name, upload_id, parts)
-            except:
+            except Exception:
                 time.sleep(5)
                 self.client._complete_multipart_upload(self.bucket, name, upload_id, parts)
 
