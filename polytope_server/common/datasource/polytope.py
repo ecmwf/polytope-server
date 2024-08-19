@@ -22,15 +22,18 @@ import json
 import logging
 import os
 import subprocess
+
+os.environ["GRIBJUMP_HOME"] = "/opt/fdb-gribjump"
+
 import tempfile
 from pathlib import Path
 
 import yaml
 
+import polytope
+
 from ..caching import cache
 from . import datasource
-
-os.environ["GRIBJUMP_HOME"] = "/opt/fdb-gribjump"
 
 
 class PolytopeDataSource(datasource.DataSource):
