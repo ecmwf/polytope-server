@@ -203,7 +203,7 @@ class Worker:
                     self.update_status("processing")
 
                 # self.update_metric()
-        except:
+        except Exception:
             # We must force threads to shutdown in case of failure, otherwise the worker won't exit
             self.thread_pool.shutdown(wait=False)
             raise
