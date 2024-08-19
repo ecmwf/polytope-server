@@ -17,9 +17,7 @@
 # granted to it by virtue of its status as an intergovernmental organisation nor
 # does it submit to any jurisdiction.
 #
-import logging
 from dataclasses import dataclass
-from urllib.parse import urljoin
 
 import requests
 import yaml
