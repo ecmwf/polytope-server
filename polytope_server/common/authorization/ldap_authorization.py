@@ -19,7 +19,6 @@
 #
 
 import json
-import logging
 
 from ldap3 import SUBTREE, Connection, Server
 

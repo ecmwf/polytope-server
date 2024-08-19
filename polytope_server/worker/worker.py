@@ -31,7 +31,7 @@ import requests
 from ..common import collection, metric_store
 from ..common import queue as polytope_queue
 from ..common import request_store, staging
-from ..common.metric import MetricType, WorkerInfo, WorkerStatusChange
+from ..common.metric import WorkerInfo, WorkerStatusChange
 from ..common.request import Status
 
 
