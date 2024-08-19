@@ -68,13 +68,13 @@ class S3Staging_boto3(staging.Staging):
         self.use_ssl = config.get("use_ssl", False)
         self.max_threads = config.get("max_threads", 10)
         self.buffer_size = config.get("buffer_size", 10 * 1024 * 1024)
+        self.should_set_policy = config.get("should_set_policy", False)
 
         access_key = config.get("access_key", "")
         secret_key = config.get("secret_key", "")
 
         for name in ["boto", "urllib3", "s3transfer", "boto3", "botocore", "nose"]:
             logging.getLogger(name).setLevel(logging.WARNING)
-        logger = logging.getLogger(__name__)
 
         prefix = "https" if self.use_ssl else "http"
 
@@ -111,7 +111,8 @@ class S3Staging_boto3(staging.Staging):
         except ClientError as e:
             logging.error(f"Error creating bucket: {e}")
         # Set bucket policy
-        self.set_bucket_policy()
+        if self.should_set_policy:
+            self.set_bucket_policy()
         self.storage_metric_collector = S3StorageMetricCollector(
             self.host, self.s3_client, self.bucket, self.get_type()
         )
@@ -120,8 +121,8 @@ class S3Staging_boto3(staging.Staging):
 
     def create(self, name, data, content_type):
         name = name + ".grib"
-        # fix for seaweedfs auto-setting Content-Disposition to inline and earthkit
-        # expecting extension, else using content-disposition header
+        # fix for seaweedfs auto-setting Content-Disposition to inline and earthkit expecting extension,
+        # else using content-disposition header
         try:
             multipart_upload = self.s3_client.create_multipart_upload(
                 Bucket=self.bucket, Key=name, ContentType=content_type, ContentDisposition="attachment"
@@ -149,7 +150,7 @@ class S3Staging_boto3(staging.Staging):
             if not parts:
                 logging.warning(f"No parts uploaded for {name}. Aborting upload.")
                 self.s3_client.abort_multipart_upload(Bucket=self.bucket, Key=name, UploadId=upload_id)
-                raise ValueError(f"No data retrieved")
+                raise ValueError("No data retrieved")
 
             self.s3_client.complete_multipart_upload(
                 Bucket=self.bucket, Key=name, UploadId=upload_id, MultipartUpload={"Parts": parts}
@@ -203,7 +204,7 @@ class S3Staging_boto3(staging.Staging):
                 },
             ],
         }
-        # self.s3_client.put_bucket_policy(Bucket=self.bucket, Policy=json.dumps(policy))
+        self.s3_client.put_bucket_policy(Bucket=self.bucket, Policy=json.dumps(policy))
 
     def read(self, name):
         try:
