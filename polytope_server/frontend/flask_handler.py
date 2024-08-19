@@ -216,7 +216,7 @@ class FlaskHandler(frontend.FrontendHandler):
         @handler.route("/api/v1/collections", methods=["GET"])
         def list_collections():
             auth_header = get_auth_header(request)
-            collection_config = authorized_collections = []
+            authorized_collections = []
             for name, collection in collections.items():
                 try:
                     if auth.can_access_collection(auth_header, collection):
