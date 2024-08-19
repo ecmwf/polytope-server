@@ -62,9 +62,8 @@ class IonBeamAPI:
 
 class IonBeamDataSource(datasource.DataSource):
     """
-    Retrieve data from the IonBeam REST backend that lives here: https://github.com/ecmwf/IonBeam-Deployment/tree/main/docker/rest_api
-
-
+    Retrieve data from the IonBeam REST backend that lives here:
+    https://github.com/ecmwf/IonBeam-Deployment/tree/main/docker/rest_api
     """
 
     read_chunk_size = 2 * 1024 * 1024
