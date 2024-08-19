@@ -78,7 +78,7 @@ class S3Staging(staging.Staging):
         access_key = config.get("access_key", "")
         secret_key = config.get("secret_key", "")
         self.bucket = config.get("bucket", "default")
-        secure = config.get("secure", False) == True
+        secure = config.get("secure", False)
         self.url = config.get("url", None)
         internal_url = "{}:{}".format(self.host, self.port)
         secure = config.get("use_ssl", False)
