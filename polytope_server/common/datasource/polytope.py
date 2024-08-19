@@ -28,9 +28,8 @@ os.environ["GRIBJUMP_HOME"] = "/opt/fdb-gribjump"
 import tempfile
 from pathlib import Path
 
-import yaml
-
 import polytope
+import yaml
 
 from ..caching import cache
 from . import datasource
