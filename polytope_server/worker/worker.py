@@ -245,9 +245,9 @@ class Worker:
                 request.url = self.staging.create(id, datasource.result(request), datasource.mime_type())
 
         except Exception as e:
-            request.user_message += "Failed to finalize request"
+            request.user_message += f"Failed to finalize request: {str(e)}"
             logging.info(request.user_message, extra={"request_id": id})
-            logging.exception("Failed to finalize request", extra={"request_id": id})
+            logging.exception("Failed to finalize request", extra={"request_id": id, "exception": str(e)})
             raise
 
         # Guarantee destruction of the datasource
