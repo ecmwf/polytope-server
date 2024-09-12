@@ -68,7 +68,7 @@ class MetricStore(ABC):
         """Collect dictionary of metrics"""
 
 
-type_to_class_map = {"mongodb": "MongoMetricStore"}
+type_to_class_map = {"mongodb": "MongoMetricStore", "dynamodb": "DynamoDBMetricStore"}
 
 
 def create_metric_store(metric_store_config=None):

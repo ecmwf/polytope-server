@@ -39,6 +39,9 @@ from . import MetricStore
 
 class MongoMetricStore(MetricStore):
     def __init__(self, config=None):
+        if config is None:
+            config = {}
+
         uri = config.get("uri", "mongodb://localhost:27017")
         metric_collection = config.get("collection", "metrics")
 
