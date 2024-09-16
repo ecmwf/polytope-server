@@ -79,6 +79,7 @@ type_to_class_map = {
     "federation": "FederationAuthentication",
     "jwt": "JWTAuthentication",
     "openid_offline_access": "OpenIDOfflineAuthentication",
+    "authotron": "AuthotronAuthentication",
 }
 
 
