@@ -20,6 +20,7 @@
 
 import json
 import logging
+import os
 
 from polytope_mars.api import PolytopeMars
 
@@ -36,6 +37,13 @@ class PolytopeDataSource(datasource.DataSource):
         self.match_rules = config.get("match", {})
         self.patch_rules = config.get("patch", {})
         self.output = None
+
+        # Create a temp file to store gribjump config
+        self.config_file = "/tmp/gribjump.yaml"
+        with open(self.config_file, "w") as f:
+            f.write(yaml.dump(self.config["gribjump_config"]))
+        self.config['datacube']['config'] = self.config_file
+        os.environ["GRIBJUMP_CONFIG_FILE"] = self.config_file
 
         self.polytope_options = self.config.get("polytope-options", {})
         self.polytope_mars = PolytopeMars(self.config)
