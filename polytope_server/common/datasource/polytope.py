@@ -157,7 +157,7 @@ class PolytopeDataSource(datasource.DataSource):
         cf = conf.model_dump()
         cf["options"] = self.polytope_options
 
-        p = PolytopeMars(cf)
+        p = PolytopeMars(cf, None)
 
         self.output = p.extract(r)
         self.output = json.dumps(self.output).encode("utf-8")
