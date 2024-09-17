@@ -20,7 +20,6 @@
 
 import json
 import logging
-import random
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 
