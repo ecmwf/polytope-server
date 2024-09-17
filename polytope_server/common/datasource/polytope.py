@@ -23,6 +23,8 @@ import logging
 import os
 import subprocess
 
+from conflator import Conflator
+
 os.environ["GRIBJUMP_HOME"] = "/opt/fdb-gribjump"
 
 import tempfile
@@ -149,8 +151,13 @@ class PolytopeDataSource(datasource.DataSource):
         logging.info(self.polytope_config)
         logging.info(self.polytope_options)
         from polytope_mars.api import PolytopeMars
+        from polytope_mars.config import PolytopeMarsConfig
 
-        p = PolytopeMars(self.polytope_config, self.polytope_options)
+        conf = Conflator(app_name="polytope_mars", model=PolytopeMarsConfig).load()
+        cf = conf.model_dump()
+        cf["options"] = self.polytope_options
+
+        p = PolytopeMars(cf)
 
         self.output = p.extract(r)
         self.output = json.dumps(self.output).encode("utf-8")
