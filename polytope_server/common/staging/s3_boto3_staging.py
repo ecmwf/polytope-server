@@ -77,9 +77,9 @@ class S3Staging_boto3(staging.Staging):
         for name in ["boto", "urllib3", "s3transfer", "boto3", "botocore", "nose"]:
             logging.getLogger(name).setLevel(logging.WARNING)
 
-        prefix = "https" if self.use_ssl else "http"
+        self.prefix = "https" if self.use_ssl else "http"
 
-        self._internal_url = f"{prefix}://{self.host}:{self.port}"
+        self._internal_url = f"http://{self.host}:{self.port}"
 
         # Setup Boto3 client
         self.s3_client = boto3.client(
@@ -258,7 +258,11 @@ class S3Staging_boto3(staging.Staging):
 
     def get_url(self, name):
         if self.url:
-            return f"{self.url}/{self.bucket}/{name}"
+            if self.url.startswith("http"):
+                # This covers both http and https
+                return f"{self.url}/{self.bucket}/{name}"
+            else:
+                return f"{self.prefix}://{self.url}/{self.bucket}/{name}"
         return None
 
     def get_internal_url(self, name):
