@@ -24,8 +24,9 @@ import os
 import subprocess
 
 from conflator import Conflator
-
-os.environ["GRIBJUMP_HOME"] = "/opt/fdb-gribjump"
+from polytope_mars.api import PolytopeMars
+from polytope_mars.config import PolytopeMarsConfig
+# os.environ["GRIBJUMP_HOME"] = "/opt/fdb-gribjump"
 
 import tempfile
 from pathlib import Path
@@ -47,89 +48,33 @@ class PolytopeDataSource(datasource.DataSource):
         self.output = None
 
         # still need to set up fdb
-        self.fdb_config = self.config["fdb-config"]
+        # self.fdb_config = self.config["fdb-config"]
 
-        self.non_sliceable = self.config.get("non-sliceable", None)
-        assert self.non_sliceable is not None
+        # self.non_sliceable = self.config.get("non-sliceable", None)
+        # assert self.non_sliceable is not None
 
-        self.check_schema()
+        self.polytope_options = self.config.get("polytope-options", {})
 
-        os.environ["FDB5_CONFIG"] = json.dumps(self.fdb_config)
-        os.environ["FDB5_HOME"] = self.config.get("fdb_home", "/opt/fdb-gribjump")
-        # forced change
+        # self.check_schema()
 
-        if "spaces" in self.fdb_config:
-            for space in self.fdb_config["spaces"]:
-                for root in space["roots"]:
-                    os.makedirs(root["path"], exist_ok=True)
-
-        # Set up gribjump
-        self.gribjump_config = self.config["gribjump-config"]
-        os.makedirs("/home/polytope/gribjump/", exist_ok=True)
-        with open("/home/polytope/gribjump/config.yaml", "w") as f:
-            json.dump(self.gribjump_config, f)
-        os.environ["GRIBJUMP_CONFIG_FILE"] = "/home/polytope/gribjump/config.yaml"
+        # # Set up gribjump
+        # self.gribjump_config = self.config["gribjump-config"]
+        # os.makedirs("/home/polytope/gribjump/", exist_ok=True)
+        # with open("/home/polytope/gribjump/config.yaml", "w") as f:
+        #     json.dump(self.gribjump_config, f)
+        # os.environ["GRIBJUMP_CONFIG_FILE"] = "/home/polytope/gribjump/config.yaml"
         # self.gj = pygribjump.GribJump()
 
         # Set up polytope feature extraction library
-        self.polytope_options = {
-            "values": {"mapper": {"type": "octahedral", "resolution": 1280, "axes": ["latitude", "longitude"]}},
-            "date": {"merge": {"with": "time", "linkers": ["T", "00"]}},
-            "step": {"type_change": "int"},
-            "number": {"type_change": "int"},
-            "longitude": {"cyclic": [0, 360]},
-        }
+        # self.polytope_options = {
+        #     "values": {"mapper": {"type": "octahedral", "resolution": 1280, "axes": ["latitude", "longitude"]}},
+        #     "date": {"merge": {"with": "time", "linkers": ["T", "00"]}},
+        #     "step": {"type_change": "int"},
+        #     "number": {"type_change": "int"},
+        #     "longitude": {"cyclic": [0, 360]},
+        # }
 
         logging.info("Set up gribjump")
-
-    # todo: remove when we no longer need to set up a valid fdb to use gribjump
-    def check_schema(self):
-
-        schema = self.fdb_config.get("schema", None)
-
-        # If schema is empty, leave it empty
-        if schema is None:
-            return
-
-        # If schema is just a string, then it must be a path already
-        if isinstance(self.fdb_config["schema"], str):
-            return
-
-        # pull schema from git
-        if "git" in schema:
-
-            git_config = schema["git"]
-            git_path = Path(git_config["path"])
-
-            local_path = (
-                Path(tempfile.gettempdir())
-                .joinpath(git_config["remote"].replace(":", ""))
-                .joinpath(git_config["branch"])
-                .joinpath(git_path)
-            )
-
-            Path(local_path.parent).mkdir(parents=True, exist_ok=True)
-
-            with open(local_path, "w+") as f:
-                f.write(
-                    self.git_download_schema(
-                        git_config["remote"],
-                        git_config["branch"],
-                        git_path.parent,
-                        git_path.name,
-                    )
-                )
-
-        self.fdb_config["schema"] = str(local_path)
-
-    @cache(lifetime=5000000)
-    def git_download_schema(self, remote, branch, git_dir, git_file):
-        call = "git archive --remote {} {}:{} {} | tar -xO {}".format(
-            remote, branch, str(git_dir), str(git_file), str(git_file)
-        )
-        logging.debug("Fetching FDB schema from git with call: {}".format(call))
-        output = subprocess.check_output(call, shell=True)
-        return output.decode("utf-8")
 
     def get_type(self):
         return self.type
@@ -141,17 +86,15 @@ class PolytopeDataSource(datasource.DataSource):
         r = yaml.safe_load(request.user_request)
         logging.info(r)
 
-        # We take the static config from the match rules of the datasource
-        self.polytope_config = {}
-        for k in self.non_sliceable:
-            self.polytope_config[k] = r[k]
+        # # We take the static config from the match rules of the datasource
+        # self.polytope_config = {}
+        # for k in self.non_sliceable:
+        #     self.polytope_config[k] = r[k]
 
-        assert len(self.polytope_config) > 0
+        # assert len(self.polytope_config) > 0
 
-        logging.info(self.polytope_config)
-        logging.info(self.polytope_options)
-        from polytope_mars.api import PolytopeMars
-        from polytope_mars.config import PolytopeMarsConfig
+        # logging.info(self.polytope_config)
+        # logging.info(self.polytope_options)
 
         conf = Conflator(app_name="polytope_mars", model=PolytopeMarsConfig).load()
         cf = conf.model_dump()
