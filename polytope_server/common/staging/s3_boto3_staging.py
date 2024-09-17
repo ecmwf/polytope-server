@@ -32,9 +32,7 @@ from . import staging
 
 
 class AvailableThreadPoolExecutor(ThreadPoolExecutor):
-    def __init__(
-        self, max_workers=None, thread_name_prefix="", initializer=None, initargs=()
-    ):
+    def __init__(self, max_workers=None, thread_name_prefix="", initializer=None, initargs=()):
         super().__init__(max_workers, thread_name_prefix, initializer, initargs)
         self._running_worker_futures: set[Future] = set()
 
@@ -109,9 +107,7 @@ class S3Staging_boto3(staging.Staging):
             self.host, self.s3_client, self.bucket, self.get_type()
         )
 
-        logging.info(
-            f"Opened data staging at {self.host}:{self.port} with bucket {self.bucket}"
-        )
+        logging.info(f"Opened data staging at {self.host}:{self.port} with bucket {self.bucket}")
 
     def create(self, name, data, content_type):
         name = name + ".grib"
@@ -133,9 +129,7 @@ class S3Staging_boto3(staging.Staging):
             with AvailableThreadPoolExecutor(max_workers=self.max_threads) as executor:
                 executor.wait_for_available_worker()
                 if not data:
-                    logging.info(
-                        f"No data provided. Uploading a single empty part for {name}."
-                    )
+                    logging.info(f"No data provided. Uploading a single empty part for {name}.")
                 else:
                     for part_data in self.iterator_buffer(data, self.buffer_size):
                         if part_data:
@@ -156,9 +150,7 @@ class S3Staging_boto3(staging.Staging):
 
             if not parts:
                 logging.warning(f"No parts uploaded for {name}. Aborting upload.")
-                self.s3_client.abort_multipart_upload(
-                    Bucket=self.bucket, Key=name, UploadId=upload_id
-                )
+                self.s3_client.abort_multipart_upload(Bucket=self.bucket, Key=name, UploadId=upload_id)
                 raise ValueError("No data retrieved")
 
             self.s3_client.complete_multipart_upload(
@@ -174,9 +166,7 @@ class S3Staging_boto3(staging.Staging):
         except ClientError as e:
             logging.error(f"Failed to upload {name}: {e}")
             if "upload_id" in locals():
-                self.s3_client.abort_multipart_upload(
-                    Bucket=self.bucket, Key=name, UploadId=upload_id
-                )
+                self.s3_client.abort_multipart_upload(Bucket=self.bucket, Key=name, UploadId=upload_id)
             raise
 
     def upload_part(self, name, part_number, data, upload_id):
@@ -273,14 +263,10 @@ class S3Staging_boto3(staging.Staging):
     def list(self):
         try:
             resources = []
-            data = self.s3_client.list_objects_v2(
-                Bucket=self.bucket, MaxKeys=999999999999999
-            )
+            data = self.s3_client.list_objects_v2(Bucket=self.bucket, MaxKeys=999999999999999)
 
             if data.get("contents", {}).get("IsTruncated  ncated", False):
-                logging.warning(
-                    "Truncated list of objects. Some objects may not be listed."
-                )
+                logging.warning("Truncated list of objects. Some objects may not be listed.")
 
             if "Contents" not in data:  # No objects in the bucket
                 return resources
@@ -296,12 +282,8 @@ class S3Staging_boto3(staging.Staging):
         delete_objects = [{"Key": obj} for obj in objects_to_delete]
         if delete_objects:
             try:
-                logging.info(
-                    f"Deleting {len(delete_objects)} : {delete_objects} objects from {self.bucket}"
-                )
-                self.s3_client.delete_objects(
-                    Bucket=self.bucket, Delete={"Objects": delete_objects}
-                )
+                logging.info(f"Deleting {len(delete_objects)} : {delete_objects} objects from {self.bucket}")
+                self.s3_client.delete_objects(Bucket=self.bucket, Delete={"Objects": delete_objects})
             except ClientError as e:
                 logging.error(f"Error deleting objects: {e}")
                 raise
