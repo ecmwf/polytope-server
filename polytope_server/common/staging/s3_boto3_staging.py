@@ -33,7 +33,9 @@ from . import staging
 
 
 class AvailableThreadPoolExecutor(ThreadPoolExecutor):
-    def __init__(self, max_workers=None, thread_name_prefix="", initializer=None, initargs=()):
+    def __init__(
+        self, max_workers=None, thread_name_prefix="", initializer=None, initargs=()
+    ):
         super().__init__(max_workers, thread_name_prefix, initializer, initargs)
         self._running_worker_futures: set[Future] = set()
 
@@ -59,7 +61,6 @@ class AvailableThreadPoolExecutor(ThreadPoolExecutor):
 
 class S3Staging_boto3(staging.Staging):
     def __init__(self, config):
-
         self.bucket = config.get("bucket", "default")
         self.url = config.get("url", None)
 
@@ -77,14 +78,6 @@ class S3Staging_boto3(staging.Staging):
             logging.getLogger(name).setLevel(logging.WARNING)
 
         prefix = "https" if self.use_ssl else "http"
-
-        if config.get("random_host", False):
-            self.host = config.get("random_host", {}).get("host", self.host)
-            index = random.randint(0, config.get("random_host", {}).get("max", 1) - 1)
-            # replace %%ID%% in the host with the index
-            self.host = self.host.replace("%%ID%%", str(index))
-            self.url = self.url + "/" + str(index)
-            logging.info(f"Using random host: {self.host}")
 
         self._internal_url = f"{prefix}://{self.host}:{self.port}"
 
@@ -117,7 +110,9 @@ class S3Staging_boto3(staging.Staging):
             self.host, self.s3_client, self.bucket, self.get_type()
         )
 
-        logging.info(f"Opened data staging at {self.host}:{self.port} with bucket {self.bucket}")
+        logging.info(
+            f"Opened data staging at {self.host}:{self.port} with bucket {self.bucket}"
+        )
 
     def create(self, name, data, content_type):
         name = name + ".grib"
@@ -125,7 +120,10 @@ class S3Staging_boto3(staging.Staging):
         # else using content-disposition header
         try:
             multipart_upload = self.s3_client.create_multipart_upload(
-                Bucket=self.bucket, Key=name, ContentType=content_type, ContentDisposition="attachment"
+                Bucket=self.bucket,
+                Key=name,
+                ContentType=content_type,
+                ContentDisposition="attachment",
             )
             upload_id = multipart_upload["UploadId"]
 
@@ -136,11 +134,21 @@ class S3Staging_boto3(staging.Staging):
             with AvailableThreadPoolExecutor(max_workers=self.max_threads) as executor:
                 executor.wait_for_available_worker()
                 if not data:
-                    logging.info(f"No data provided. Uploading a single empty part for {name}.")
+                    logging.info(
+                        f"No data provided. Uploading a single empty part for {name}."
+                    )
                 else:
                     for part_data in self.iterator_buffer(data, self.buffer_size):
                         if part_data:
-                            futures.append(executor.submit(self.upload_part, name, part_number, part_data, upload_id))
+                            futures.append(
+                                executor.submit(
+                                    self.upload_part,
+                                    name,
+                                    part_number,
+                                    part_data,
+                                    upload_id,
+                                )
+                            )
                             part_number += 1
 
                     for future in futures:
@@ -149,11 +157,16 @@ class S3Staging_boto3(staging.Staging):
 
             if not parts:
                 logging.warning(f"No parts uploaded for {name}. Aborting upload.")
-                self.s3_client.abort_multipart_upload(Bucket=self.bucket, Key=name, UploadId=upload_id)
+                self.s3_client.abort_multipart_upload(
+                    Bucket=self.bucket, Key=name, UploadId=upload_id
+                )
                 raise ValueError("No data retrieved")
 
             self.s3_client.complete_multipart_upload(
-                Bucket=self.bucket, Key=name, UploadId=upload_id, MultipartUpload={"Parts": parts}
+                Bucket=self.bucket,
+                Key=name,
+                UploadId=upload_id,
+                MultipartUpload={"Parts": parts},
             )
 
             logging.info(f"Successfully uploaded {name} in {len(parts)} parts.")
@@ -162,13 +175,19 @@ class S3Staging_boto3(staging.Staging):
         except ClientError as e:
             logging.error(f"Failed to upload {name}: {e}")
             if "upload_id" in locals():
-                self.s3_client.abort_multipart_upload(Bucket=self.bucket, Key=name, UploadId=upload_id)
+                self.s3_client.abort_multipart_upload(
+                    Bucket=self.bucket, Key=name, UploadId=upload_id
+                )
             raise
 
     def upload_part(self, name, part_number, data, upload_id):
         logging.debug(f"Uploading part {part_number} of {name}, {len(data)} bytes")
         response = self.s3_client.upload_part(
-            Bucket=self.bucket, Key=name, PartNumber=part_number, UploadId=upload_id, Body=data
+            Bucket=self.bucket,
+            Key=name,
+            PartNumber=part_number,
+            UploadId=upload_id,
+            Body=data,
         )
         return {"PartNumber": part_number, "ETag": response["ETag"]}
 
@@ -251,10 +270,14 @@ class S3Staging_boto3(staging.Staging):
     def list(self):
         try:
             resources = []
-            data = self.s3_client.list_objects_v2(Bucket=self.bucket, MaxKeys=999999999999999)
+            data = self.s3_client.list_objects_v2(
+                Bucket=self.bucket, MaxKeys=999999999999999
+            )
 
             if data.get("contents", {}).get("IsTruncated  ncated", False):
-                logging.warning("Truncated list of objects. Some objects may not be listed.")
+                logging.warning(
+                    "Truncated list of objects. Some objects may not be listed."
+                )
 
             if "Contents" not in data:  # No objects in the bucket
                 return resources
@@ -270,8 +293,12 @@ class S3Staging_boto3(staging.Staging):
         delete_objects = [{"Key": obj} for obj in objects_to_delete]
         if delete_objects:
             try:
-                logging.info(f"Deleting {len(delete_objects)} : {delete_objects} objects from {self.bucket}")
-                self.s3_client.delete_objects(Bucket=self.bucket, Delete={"Objects": delete_objects})
+                logging.info(
+                    f"Deleting {len(delete_objects)} : {delete_objects} objects from {self.bucket}"
+                )
+                self.s3_client.delete_objects(
+                    Bucket=self.bucket, Delete={"Objects": delete_objects}
+                )
             except ClientError as e:
                 logging.error(f"Error deleting objects: {e}")
                 raise
