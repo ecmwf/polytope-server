@@ -22,7 +22,6 @@ import logging
 
 import gunicorn.app.base
 from gunicorn import glogging
-from gunicorn.six import iteritems
 
 
 class CustomLogger(glogging.Logger):
@@ -46,9 +45,9 @@ class GunicornServer(gunicorn.app.base.BaseApplication):
 
     def load_config(self):
         config = dict(
-            [(key, value) for key, value in iteritems(self.options) if key in self.cfg.settings and value is not None]
+            [(key, value) for key, value in self.options.items() if key in self.cfg.settings and value is not None]
         )
-        for key, value in iteritems(config):
+        for key, value in config.items():
             self.cfg.set(key.lower(), value)
 
         self.cfg.set("logger_class", CustomLogger)
