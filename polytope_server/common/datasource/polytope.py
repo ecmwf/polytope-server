@@ -20,21 +20,11 @@
 
 import json
 import logging
-import os
-import subprocess
 
-from conflator import Conflator
 from polytope_mars.api import PolytopeMars
-from polytope_mars.config import PolytopeMarsConfig
-# os.environ["GRIBJUMP_HOME"] = "/opt/fdb-gribjump"
 
-import tempfile
-from pathlib import Path
-
-import polytope
 import yaml
 
-from ..caching import cache
 from . import datasource
 
 
@@ -47,32 +37,8 @@ class PolytopeDataSource(datasource.DataSource):
         self.patch_rules = config.get("patch", {})
         self.output = None
 
-        # still need to set up fdb
-        # self.fdb_config = self.config["fdb-config"]
-
-        # self.non_sliceable = self.config.get("non-sliceable", None)
-        # assert self.non_sliceable is not None
-
         self.polytope_options = self.config.get("polytope-options", {})
-
-        # self.check_schema()
-
-        # # Set up gribjump
-        # self.gribjump_config = self.config["gribjump-config"]
-        # os.makedirs("/home/polytope/gribjump/", exist_ok=True)
-        # with open("/home/polytope/gribjump/config.yaml", "w") as f:
-        #     json.dump(self.gribjump_config, f)
-        # os.environ["GRIBJUMP_CONFIG_FILE"] = "/home/polytope/gribjump/config.yaml"
-        # self.gj = pygribjump.GribJump()
-
-        # Set up polytope feature extraction library
-        # self.polytope_options = {
-        #     "values": {"mapper": {"type": "octahedral", "resolution": 1280, "axes": ["latitude", "longitude"]}},
-        #     "date": {"merge": {"with": "time", "linkers": ["T", "00"]}},
-        #     "step": {"type_change": "int"},
-        #     "number": {"type_change": "int"},
-        #     "longitude": {"cyclic": [0, 360]},
-        # }
+        self.polytope_mars = PolytopeMars(self.config)
 
         logging.info("Set up gribjump")
 
@@ -86,23 +52,7 @@ class PolytopeDataSource(datasource.DataSource):
         r = yaml.safe_load(request.user_request)
         logging.info(r)
 
-        # # We take the static config from the match rules of the datasource
-        # self.polytope_config = {}
-        # for k in self.non_sliceable:
-        #     self.polytope_config[k] = r[k]
-
-        # assert len(self.polytope_config) > 0
-
-        # logging.info(self.polytope_config)
-        # logging.info(self.polytope_options)
-
-        conf = Conflator(app_name="polytope_mars", model=PolytopeMarsConfig).load()
-        cf = conf.model_dump()
-        cf["options"] = self.polytope_options
-
-        p = PolytopeMars(cf, None)
-
-        self.output = p.extract(r)
+        self.output = self.polytope_mars.extract(r)
         self.output = json.dumps(self.output).encode("utf-8")
         # logging.info(self.output)
         return True
