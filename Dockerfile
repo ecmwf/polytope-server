@@ -191,7 +191,7 @@ RUN set -eux \
 
 RUN set -eux \
     && apt-get update \
-    && apt install -y gribjump-client=0.5.3-gribjump
+    && apt install -y gribjump-client=0.5.4-gribjump
 
 RUN set -eux \
     ls -R /opt
@@ -289,7 +289,7 @@ RUN apt update
 RUN apt-get install -y --no-install-recommends gcc libc6-dev make gnupg2
 COPY ./requirements.txt /requirements.txt
 RUN python -m pip install -r requirements.txt --user
-RUN python -m pip install geopandas --user
+RUN python -m pip install geopandas==1.0.1 --user
 
 COPY . ./polytope
 RUN set -eux \
