@@ -287,14 +287,19 @@ ARG developer_mode
 # contains compilers for building wheels which we don't want in the final image
 RUN apt update
 RUN apt-get install -y --no-install-recommends gcc libc6-dev make gnupg2
+
 COPY ./requirements.txt /requirements.txt
-RUN python -m pip install -r requirements.txt --user
-RUN python -m pip install geopandas --user
+
+RUN pip install uv --user
+ENV PATH="/root/.venv/bin:/root/.local/bin:${PATH}"
+RUN uv venv /root/.venv
+
+RUN uv pip install -r requirements.txt
 
 COPY . ./polytope
 RUN set -eux \
     && if [ $developer_mode = true ]; then \
-        python -m pip install ./polytope/polytope-mars ./polytope/polytope ./polytope/covjsonkit --user; \
+        uv pip install ./polytope/polytope-mars ./polytope/polytope ./polytope/covjsonkit; \
     fi
 
 #######################################################
@@ -316,8 +321,8 @@ RUN set -eux \
     && adduser --system polytope --ingroup polytope --home /home/polytope \
     && mkdir /polytope && chmod -R o+rw /polytope
 
-RUN apt update
-RUN apt install -y curl nano sudo ssh libgomp1 vim
+RUN apt update \
+    && apt install -y curl nano sudo ssh libgomp1 vim
 
 # Add polytope user to passwordless sudo group during build
 RUN usermod -aG sudo polytope
@@ -335,8 +340,9 @@ COPY --chown=polytope --from=mars-cpp-base-final   /opt/ecmwf/mars-client-cpp  /
 COPY --chown=polytope --from=mars-cpp-base-final    /root/.local /home/polytope/.local
 COPY --chown=polytope --from=mars-c-base-final     /opt/ecmwf/mars-client      /opt/ecmwf/mars-client
 COPY --chown=polytope --from=mars-c-base-final     /usr/local/bin/mars      /usr/local/bin/mars
-RUN sudo apt update
-RUN sudo apt install -y libgomp1 git libnetcdf19 liblapack3  libfftw3-bin libproj25
+RUN sudo apt update \
+    && sudo apt install -y libgomp1 git libnetcdf19 liblapack3  libfftw3-bin libproj25 \
+    && sudo rm -rf /var/lib/apt/lists/*
 
 
 # all of this is needed by the C client, would be nice to remove it at some point
@@ -372,7 +378,7 @@ COPY --chown=polytope --from=gribjump-base-final /root/.local /home/polytope/.lo
 # COPY polytope-deployment/common/default_fdb_schema /polytope/config/fdb/default
 
 # Copy python requirements
-COPY --chown=polytope --from=worker-base /root/.local /home/polytope/.local
+COPY --chown=polytope --from=worker-base /root/.venv /home/polytope/.local
 
 
 # Install the server source
