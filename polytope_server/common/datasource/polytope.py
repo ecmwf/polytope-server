@@ -26,6 +26,8 @@ from polytope_mars.api import PolytopeMars
 
 import yaml
 
+from polytope.utility.exceptions import PolytopeError
+
 from . import datasource
 
 
@@ -42,7 +44,7 @@ class PolytopeDataSource(datasource.DataSource):
         self.config_file = "/tmp/gribjump.yaml"
         with open(self.config_file, "w") as f:
             f.write(yaml.dump(self.config["gribjump_config"]))
-        self.config['datacube']['config'] = self.config_file
+        self.config["datacube"]["config"] = self.config_file
         os.environ["GRIBJUMP_CONFIG_FILE"] = self.config_file
 
         self.polytope_options = self.config.get("polytope-options", {})
@@ -60,8 +62,11 @@ class PolytopeDataSource(datasource.DataSource):
         r = yaml.safe_load(request.user_request)
         logging.info(r)
 
-        self.output = self.polytope_mars.extract(r)
-        self.output = json.dumps(self.output).encode("utf-8")
+        try:
+            self.output = self.polytope_mars.extract(r)
+            self.output = json.dumps(self.output).encode("utf-8")
+        except PolytopeError as e:
+            self.output = json.dumps({"error": str(e)}).encode("utf-8")
         # logging.info(self.output)
         return True
 
