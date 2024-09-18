@@ -14,3 +14,6 @@ polytope_server.egg-info
 **/build
 .venv
 skaffold.env
+polytope-mars
+polytope
+covjsonkit

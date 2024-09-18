@@ -26,6 +26,8 @@ build:
   - image: "polytope-common"
     docker:
       target: polytope-common
+      buildArgs:
+        developer_mode: True
 
   # Worker with all clients (FDB, GribJump, MARS C, MARS CPP)
   - image: "worker"
@@ -37,6 +39,7 @@ build:
         mars_config_branch: "{{ .mars_config_branch }}"
         ssh_pub_key: "{{ .ssh_pub_key }}"
         ssh_prv_key: "{{ .ssh_prv_key }}"
+        developer_mode: True
         mars_client_cpp_version: 6.99.3.0
         mars_base_c: mars-base-c
         mars_base_cpp: mars-base-cpp
