@@ -22,11 +22,9 @@ import json
 import logging
 import os
 
-from polytope_mars.api import PolytopeMars
-
 import yaml
-
 from polytope.utility.exceptions import PolytopeError
+from polytope_mars.api import PolytopeMars
 
 from . import datasource
 
