@@ -64,7 +64,7 @@ class PolytopeDataSource(datasource.DataSource):
             self.output = self.polytope_mars.extract(r)
             self.output = json.dumps(self.output).encode("utf-8")
         except PolytopeError as e:
-            self.output = json.dumps({"error": str(e)}).encode("utf-8")
+            self.output = json.dumps({"error": str(e.message)}).encode("utf-8")
             raise e
         # logging.info(self.output)
         return True
