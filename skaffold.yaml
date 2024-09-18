@@ -27,7 +27,7 @@ build:
     docker:
       target: polytope-common
       buildArgs:
-        developer_mode: True
+        developer_mode: False
 
   # Worker with all clients (FDB, GribJump, MARS C, MARS CPP)
   - image: "worker"
