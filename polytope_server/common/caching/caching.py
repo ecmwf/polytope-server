@@ -29,9 +29,9 @@ from abc import ABC, abstractmethod
 from typing import Dict, Union
 
 import pymemcache
-import pymongo
 import redis
 
+from .. import mongo_client_factory
 from ..metric import MetricType
 from ..metric_collector import (
     DictStorageMetricCollector,
@@ -195,17 +195,24 @@ class RedisCaching(Caching):
 class MongoDBCaching(Caching):
     def __init__(self, cache_config):
         super().__init__(cache_config)
-        host = cache_config.get("host", "localhost")
-        port = cache_config.get("port", 27017)
-        endpoint = "{}:{}".format(host, port)
+        uri = cache_config.get("uri", "mongodb://localhost:27017")
+
+        username = cache_config.get("username")
+        password = cache_config.get("password")
+
         collection = cache_config.get("collection", "cache")
-        self.client = pymongo.MongoClient(host + ":" + str(port), journal=False, connect=False)
+        self.client = mongo_client_factory.create_client(
+            uri,
+            username,
+            password,
+        )
+
         self.database = self.client.cache
         self.collection = self.database[collection]
         self.collection.create_index("expire_at", expireAfterSeconds=0)
         self.collection.update_one({"_id": "hits"}, {"$setOnInsert": {"n": 0}}, upsert=True)
         self.collection.update_one({"_id": "misses"}, {"$setOnInsert": {"n": 0}}, upsert=True)
-        self.storage_metric_collector = MongoStorageMetricCollector(endpoint, self.client, "cache", collection)
+        self.storage_metric_collector = MongoStorageMetricCollector(uri, self.client, "cache", collection)
         self.cache_metric_collector = MongoCacheMetricCollector(self.client, "cache", collection)
 
     def get_type(self):
@@ -220,7 +227,6 @@ class MongoDBCaching(Caching):
         return obj["data"]
 
     def set(self, key, object, lifetime):
-
         if lifetime == 0 or lifetime is None:
             expiry = datetime.datetime.max
         else:
@@ -324,7 +330,6 @@ class cache(object):
 
         @functools.wraps(f)
         def wrapper(*args, **kwargs):
-
             cache.cancelled = False
 
             if self.cache is None:

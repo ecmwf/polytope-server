@@ -112,7 +112,7 @@ class MongoStorageMetricCollector(StorageMetricCollector):
         return space_used
 
     def total_entries(self):
-        return self.store.count()
+        return self.store.count_documents({})
 
     def db_name(self):
         return self.database
@@ -125,10 +125,11 @@ class MongoStorageMetricCollector(StorageMetricCollector):
 
 
 class S3StorageMetricCollector(StorageMetricCollector):
-    def __init__(self, host, client, bucket):
+    def __init__(self, host, client, bucket, client_type):
         super().__init__(host, "s3")
         self.client = client
         self.bucket = bucket
+        self.client_type = client_type
 
     def collect(self):
         r = super().collect()
@@ -141,16 +142,26 @@ class S3StorageMetricCollector(StorageMetricCollector):
         return m
 
     def total_entries(self):
-        return len(list(self.client.list_objects(self.bucket)))
+        if self.client_type == "S3DataStaging_boto3":
+            # boto3 only accepts keyword arguments
+            return len(list(self.client.list_objects_v2(Bucket=self.bucket)))
+        else:
+            return len(list(self.client.list_objects(self.bucket)))
 
     def bucket_name(self):
         return self.bucket
 
     def bucket_space_used(self):
         size = 0
-        for o in self.client.list_objects(self.bucket):
-            size += o.size
-        return size
+        if self.client_type == "S3DataStaging_boto3":
+            # boto3 only accepts keyword arguments
+            for o in self.client.list_objects_v2(Bucket=self.bucket)["Contents"]:
+                size += o["Size"]
+            return size
+        else:
+            for o in self.client.list_objects(self.bucket):
+                size += o.size
+            return size
 
     def bucket_space_limit(self):
-        return "not_implemented"
+        return "not implemented"

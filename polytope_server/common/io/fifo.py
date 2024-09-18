@@ -19,13 +19,13 @@
 #
 
 import errno
+import logging
 import os
 import select
 import tempfile
 
 
 class FIFO:
-
     """Creates a named pipe (FIFO) and reads data from it"""
 
     def __init__(self, name, dir=None):
@@ -35,10 +35,9 @@ class FIFO:
 
         self.path = dir + "/" + name
 
-        self.delete()
-
         os.mkfifo(self.path, 0o600)
         self.fifo = os.open(self.path, os.O_RDONLY | os.O_NONBLOCK)
+        logging.info("FIFO created")
 
     def ready(self):
         """Wait until FIFO is ready for reading -- i.e. opened by the writing process (man select)"""
@@ -60,17 +59,20 @@ class FIFO:
         if buffer != b"":
             yield buffer
 
-        self.delete()
+        # self.delete()
 
     def delete(self):
         """Close and delete FIFO"""
+        logging.info("Deleting FIFO.")
         try:
             os.close(self.fifo)
-        except Exception:
+        except Exception as e:
+            logging.info(f"Closing FIFO had an exception {e}")
             pass
         try:
             os.unlink(self.path)
-        except Exception:
+        except Exception as e:
+            logging.info(f"Deleting FIFO had an exception {e}")
             pass
 
     def read_raw(self, max_read=2 * 1024 * 1024):

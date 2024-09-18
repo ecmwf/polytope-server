@@ -23,7 +23,7 @@ import logging
 
 import pymongo
 
-from .. import metric_store
+from .. import metric_store, mongo_client_factory
 from ..metric import MetricType, RequestStatusChange
 from ..metric_collector import (
     MongoRequestStoreMetricCollector,
@@ -35,13 +35,12 @@ from . import request_store
 
 class MongoRequestStore(request_store.RequestStore):
     def __init__(self, config=None, metric_store_config=None):
-        host = config.get("host", "localhost")
-        port = config.get("port", "27017")
+        uri = config.get("uri", "mongodb://localhost:27017")
         request_collection = config.get("collection", "requests")
+        username = config.get("username")
+        password = config.get("password")
 
-        endpoint = "{}:{}".format(host, port)
-
-        self.mongo_client = pymongo.MongoClient(endpoint, journal=True, connect=False)
+        self.mongo_client = mongo_client_factory.create_client(uri, username, password)
         self.database = self.mongo_client.request_store
         self.store = self.database[request_collection]
 
@@ -50,11 +49,11 @@ class MongoRequestStore(request_store.RequestStore):
             self.metric_store = metric_store.create_metric_store(metric_store_config)
 
         self.storage_metric_collector = MongoStorageMetricCollector(
-            endpoint, self.mongo_client, "request_store", request_collection
+            uri, self.mongo_client, "request_store", request_collection
         )
         self.request_store_metric_collector = MongoRequestStoreMetricCollector()
 
-        logging.info("MongoClient configured to open at {}".format(endpoint))
+        logging.info("MongoClient configured to open at {}".format(uri))
 
     def get_type(self):
         return "mongodb"
@@ -87,7 +86,6 @@ class MongoRequestStore(request_store.RequestStore):
             return None
 
     def get_requests(self, ascending=None, descending=None, limit=None, **kwargs):
-
         if ascending:
             if ascending not in Request.__slots__:
                 raise KeyError("Request has no key {}".format(ascending))
@@ -98,7 +96,6 @@ class MongoRequestStore(request_store.RequestStore):
 
         query = {}
         for k, v in kwargs.items():
-
             if k not in Request.__slots__:
                 raise KeyError("Request has no key {}".format(k))
 
@@ -152,7 +149,6 @@ class MongoRequestStore(request_store.RequestStore):
         return res
 
     def wipe(self):
-
         if self.metric_store:
             res = self.get_requests()
             for i in res:

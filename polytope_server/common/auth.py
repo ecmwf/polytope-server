@@ -31,7 +31,6 @@ from .user import User
 
 
 class AuthHelper:
-
     """A helper to encapsulate checking user authentication and authorization"""
 
     def __init__(self, config):
@@ -118,7 +117,7 @@ class AuthHelper:
                 www_authenticate=self.auth_info,
             )
 
-        user.roles = ["default"]
+        user.roles.append("default")
 
         # Visit all authorizers to append additional roles and attributes
         for authorizer in self.authorizers:

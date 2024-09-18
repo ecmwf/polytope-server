@@ -27,48 +27,98 @@
 #
 #######################################################################
 
+import copy
 import json
 import logging
+import time
+from concurrent.futures import Future, ThreadPoolExecutor
 
 import minio
 from minio import Minio
 from minio.definitions import UploadPart
-from minio.error import BucketAlreadyOwnedByYou, NoSuchKey
+from minio.error import BucketAlreadyExists, BucketAlreadyOwnedByYou, NoSuchKey
 
 from ..metric_collector import S3StorageMetricCollector
 from . import staging
+
+
+class AvailableThreadPoolExecutor(ThreadPoolExecutor):
+
+    def __init__(self, max_workers=None, thread_name_prefix="", initializer=None, initargs=()):
+        super().__init__(max_workers, thread_name_prefix, initializer, initargs)
+        self._running_worker_futures: set[Future] = set()
+
+    @property
+    def available_workers(self) -> int:
+        return self._max_workers - len(self._running_worker_futures)
+
+    def wait_for_available_worker(self, timeout=None) -> None:
+        start_time = time.monotonic()
+        while True:
+            if self.available_workers > 0:
+                return
+            if timeout is not None and time.monotonic() - start_time > timeout:
+                raise TimeoutError
+            time.sleep(0.1)
+
+    def submit(self, fn, /, *args, **kwargs):
+        f = super().submit(fn, *args, **kwargs)
+        self._running_worker_futures.add(f)
+        f.add_done_callback(self._running_worker_futures.remove)
+        return f
 
 
 class S3Staging(staging.Staging):
     def __init__(self, config):
         self.host = config.get("host", "0.0.0.0")
         self.port = config.get("port", "8000")
+        self.max_threads = config.get("max_threads", 20)
+        self.buffer_size = config.get("buffer_size", 20 * 1024 * 1024)
         endpoint = "{}:{}".format(self.host, self.port)
         access_key = config.get("access_key", "")
         secret_key = config.get("secret_key", "")
         self.bucket = config.get("bucket", "default")
+        secure = config.get("secure", False)
         self.url = config.get("url", None)
         internal_url = "{}:{}".format(self.host, self.port)
-        self.client = Minio(
-            internal_url,
-            access_key=access_key,
-            secret_key=secret_key,
-            secure=False,
-        )
-        self.internal_url = "http://" + internal_url
+        secure = config.get("use_ssl", False)
+
+        if access_key == "" or secret_key == "":
+            self.client = Minio(
+                internal_url,
+                secure=secure,
+            )
+
+        else:
+            self.client = Minio(
+                internal_url,
+                access_key=access_key,
+                secret_key=secret_key,
+                secure=secure,
+            )
+
+        self.internal_url = ("https://" if secure else "http://") + internal_url
 
         try:
             self.client.make_bucket(self.bucket)
+            self.client.set_bucket_policy(self.bucket, self.bucket_policy())
+        except BucketAlreadyExists:
+            pass
         except BucketAlreadyOwnedByYou:
             pass
 
-        self.client.set_bucket_policy(self.bucket, self.bucket_policy())
-
-        self.storage_metric_collector = S3StorageMetricCollector(endpoint, self.client, self.bucket)
+        self.storage_metric_collector = S3StorageMetricCollector(endpoint, self.client, self.bucket, self.get_type())
 
         logging.info(
             "Opened data staging at {}:{}/{}, locatable from {}".format(self.host, self.port, self.bucket, self.url)
         )
+
+    def upload_part(self, part_number, buf, metadata, name, upload_id):
+        logging.debug(f"Uploading part {part_number} ({len(buf)} bytes) of {name}")
+        etag = self.client._do_put_object(
+            self.bucket, name, buf, len(buf), part_number=part_number, metadata=metadata, upload_id=upload_id
+        )
+        return etag, len(buf)
 
     def create(self, name, data, content_type):
         url = self.get_url(name)
@@ -79,52 +129,39 @@ class S3Staging(staging.Staging):
 
         upload_id = self.client._new_multipart_upload(self.bucket, name, metadata)
 
-        i = 1
         parts = {}
-        total_size = 0
-        for buf in self.iterator_buffer(data, 200 * 1024 * 1024):
-            if len(buf) == 0:
-                break
-            try:
-                logging.info("Uploading part {} ({} bytes) of {}".format(i, len(buf), name))
-                etag = self.client._do_put_object(
-                    self.bucket,
-                    name,
-                    buf,
-                    len(buf),
-                    part_number=i,
-                    metadata=metadata,
-                    upload_id=upload_id,
-                )
-                total_size += len(buf)
-                parts[i] = UploadPart(self.bucket, name, upload_id, i, etag, None, len(buf))
-                i += 1
-            except Exception:
-                self.client._remove_incomplete_upload(self.bucket, name, upload_id)
-                raise
+        part_number = 1
+        futures = []
 
-        if len(parts) == 0:
-            try:
-                logging.info("Uploading single empty part of {}".format(name))
-                etag = self.client._do_put_object(
-                    self.bucket,
-                    name,
-                    b"",
-                    0,
-                    part_number=i,
-                    metadata=metadata,
-                    upload_id=upload_id,
-                )
-                total_size += 0
-                parts[i] = UploadPart(self.bucket, name, upload_id, i, etag, None, 0)
-                i += 1
-            except Exception:
-                self.client._remove_incomplete_upload(self.bucket, name, upload_id)
-                raise
+        with AvailableThreadPoolExecutor(max_workers=self.max_threads) as executor:
+            executor.wait_for_available_worker()
+            for buf in self.iterator_buffer(data, self.buffer_size):
+                if len(buf) == 0:
+                    break
+                future = executor.submit(self.upload_part, copy.copy(part_number), buf, metadata, name, upload_id)
+                futures.append((future, part_number))
+                part_number += 1
 
         try:
-            self.client._complete_multipart_upload(self.bucket, name, upload_id, parts)
-        except Exception:
+            for future, part_number in futures:
+                etag, size = future.result()
+                parts[part_number] = UploadPart(self.bucket, name, upload_id, part_number, etag, None, size)
+        except Exception as e:
+            logging.error(f"Error uploading parts: {str(e)}")
+            self.client._remove_incomplete_upload(self.bucket, name, upload_id)
+            raise
+
+        # Completing upload
+        try:
+            logging.info(parts)
+            try:
+                self.client._complete_multipart_upload(self.bucket, name, upload_id, parts)
+            except Exception:
+                time.sleep(5)
+                self.client._complete_multipart_upload(self.bucket, name, upload_id, parts)
+
+        except Exception as e:
+            logging.error(f"Error completing multipart upload: {str(e)}")
             self.client._remove_incomplete_upload(self.bucket, name, upload_id)
             raise
 
@@ -201,25 +238,25 @@ class S3Staging(staging.Staging):
             "Version": "2012-10-17",
             "Statement": [
                 {
-                    "Sid": "",
-                    "Effect": "Deny",
-                    "Principal": {"AWS": "*"},
-                    "Action": "s3:GetBucketLocation",
-                    "Resource": "arn:aws:s3:::{}".format(self.bucket),
-                },
-                {
-                    "Sid": "",
-                    "Effect": "Deny",
-                    "Principal": {"AWS": "*"},
-                    "Action": "s3:ListBucket",
-                    "Resource": "arn:aws:s3:::{}".format(self.bucket),
-                },
-                {
-                    "Sid": "",
+                    "Sid": "AllowReadAccessToIndividualObjects",
                     "Effect": "Allow",
-                    "Principal": {"AWS": "*"},
+                    "Principal": "*",
                     "Action": "s3:GetObject",
-                    "Resource": "arn:aws:s3:::{}/*".format(self.bucket),
+                    "Resource": f"arn:aws:s3:::{self.bucket}/*",
+                },
+                {
+                    "Sid": "AllowListBucket",
+                    "Effect": "Allow",
+                    "Principal": "*",
+                    "Action": "s3:ListBucket",
+                    "Resource": f"arn:aws:s3:::{self.bucket}",
+                },
+                {
+                    "Sid": "AllowGetBucketLocation",
+                    "Effect": "Allow",
+                    "Principal": "*",
+                    "Action": "s3:GetBucketLocation",
+                    "Resource": f"arn:aws:s3:::{self.bucket}",
                 },
             ],
         }

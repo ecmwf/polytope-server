@@ -37,7 +37,6 @@ class MetricType(enum.Enum):
 
 
 class Metric:
-
     """A sealed class representing a metric"""
 
     __slots__ = ["uuid", "timestamp", "type"]

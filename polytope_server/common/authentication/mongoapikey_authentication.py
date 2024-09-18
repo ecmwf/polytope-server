@@ -20,8 +20,7 @@
 
 from datetime import datetime
 
-import pymongo
-
+from .. import mongo_client_factory
 from ..auth import User
 from ..exceptions import ForbiddenRequest
 from ..metric_collector import MongoStorageMetricCollector
@@ -29,7 +28,6 @@ from . import authentication
 
 
 class ApiKeyMongoAuthentication(authentication.Authentication):
-
     """
     Authenticates a user using a polytope API key. A polytope API key is an alias to a user that was previously
     authenticated. It allows user to authenticate once, retrieve a key, and use that for future authentication.
@@ -40,19 +38,18 @@ class ApiKeyMongoAuthentication(authentication.Authentication):
     """
 
     def __init__(self, name, realm, config):
-
         self.config = config
-        host = config.get("host", "localhost")
-        port = config.get("port", "27017")
+        uri = config.get("uri", "mongodb://localhost:27017")
         collection = config.get("collection", "keys")
+        username = config.get("username")
+        password = config.get("password")
 
-        endpoint = "{}:{}".format(host, port)
-        self.mongo_client = pymongo.MongoClient(endpoint, journal=True, connect=False)
+        self.mongo_client = mongo_client_factory.create_client(uri, username, password)
         self.database = self.mongo_client.keys
         self.keys = self.database[collection]
         assert realm == "polytope"
 
-        self.storage_metric_collector = MongoStorageMetricCollector(endpoint, self.mongo_client, "keys", collection)
+        self.storage_metric_collector = MongoStorageMetricCollector(uri, self.mongo_client, "keys", collection)
 
         super().__init__(name, realm, config)
 
@@ -63,7 +60,6 @@ class ApiKeyMongoAuthentication(authentication.Authentication):
         return "Authenticate with Polytope API Key from ../auth/keys"
 
     def authenticate(self, credentials: str) -> User:
-
         # credentials should be of the form '<ApiKey>'
         res = self.keys.find_one({"key.key": credentials})
         if res is None:

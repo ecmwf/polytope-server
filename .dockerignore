@@ -1,0 +1,10 @@
+.venv
+skaffold.env
+.git
+.github
+./polytope_server.egg-info
+**/.git
+./polytope-mars/tests
+./polytope/tests
+./polytope/examples
+./polytope/performance

@@ -1,0 +1,49 @@
+
+apiVersion: skaffold/v4beta10
+kind: Config
+
+# This Skaffold configuration expects to find a skaffold.env file in the current directory.
+# It should contain the following environment variables:
+# - SKAFFOLD_DEFAULT_REPO: The default repository to use for images
+# - rpm_repo: The URL of the RPM repository for MARS/GribJump/FDB images
+# - mars_config_repo: The URL of the MARS configuration repository
+# - mars_config_branch: The branch of the MARS configuration repository to use
+# - ssh_pub_key: The public SSH key to use for cloning the MARS and MARS configuration repositories
+# - ssh_prv_key: The private SSH key to use for cloning the MARS and MARS configuration repositories
+
+
+build:
+  local:
+    useBuildkit: True
+    concurrency: 1
+
+  tagPolicy:
+    gitCommit:
+      ignoreChanges: true
+
+  artifacts:
+  
+  # Polytope common   
+  - image: "polytope-common"
+    docker:
+      target: polytope-common
+      buildArgs:
+        developer_mode: "{{ .developer_mode }}"
+
+  # Worker with all clients (FDB, GribJump, MARS C, MARS CPP)
+  - image: "worker"
+    docker:
+      target: worker
+      buildArgs:
+        rpm_repo: "{{ .rpm_repo }}"
+        mars_config_repo: "{{ .mars_config_repo }}"
+        mars_config_branch: "{{ .mars_config_branch }}"
+        ssh_pub_key: "{{ .ssh_pub_key }}"
+        ssh_prv_key: "{{ .ssh_prv_key }}"
+        developer_mode: "{{ .developer_mode }}"
+        mars_client_cpp_version: 6.99.3.0
+        mars_base_c: mars-base-c
+        mars_base_cpp: mars-base-cpp
+        fdb_base: blank-base #fdb-base
+        gribjump_base: gribjump-base
+

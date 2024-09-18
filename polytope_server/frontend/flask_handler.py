@@ -20,7 +20,6 @@
 
 import json
 import logging
-import os
 import pathlib
 import tempfile
 
@@ -29,6 +28,7 @@ import yaml
 from flask import Flask, request
 from flask_swagger_ui import get_swaggerui_blueprint
 from werkzeug.exceptions import default_exceptions
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from ..common.exceptions import BadRequest, ForbiddenRequest, HTTPException, NotFound
 from ..version import __version__
@@ -47,8 +47,12 @@ class FlaskHandler(frontend.FrontendHandler):
         collections,
         identity,
         apikeygenerator,
+        proxy_support: bool,
     ):
         handler = Flask(__name__)
+
+        if proxy_support:
+            handler.wsgi_app = ProxyFix(handler.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
         openapi_spec = "static/openapi.yaml"
         spec_path = pathlib.Path(__file__).parent.absolute() / openapi_spec
@@ -62,7 +66,8 @@ class FlaskHandler(frontend.FrontendHandler):
         SWAGGERUI_BLUEPRINT = get_swaggerui_blueprint(
             SWAGGER_URL, tmp.name, config={"app_name": "Polytope", "spec": spec}
         )
-        handler.register_blueprint(SWAGGERUI_BLUEPRINT, url_prefix=SWAGGER_URL)
+        handler.register_blueprint(SWAGGERUI_BLUEPRINT, name="openapi", url_prefix=SWAGGER_URL)
+        handler.register_blueprint(SWAGGERUI_BLUEPRINT, name="home", url_prefix="/")
 
         data_transfer = DataTransfer(request_store, staging)
 
@@ -86,13 +91,6 @@ class FlaskHandler(frontend.FrontendHandler):
 
         for code, ex in default_exceptions.items():
             handler.errorhandler(code)(handle_error)
-
-        @handler.route("/", methods=["GET"])
-        def root():
-            this_dir = os.path.dirname(os.path.abspath(__file__)) + "/"
-            with open(this_dir + "web/index.html") as fh:
-                content = fh.read()
-            return content
 
         def get_auth_header(request):
             return request.headers.get("Authorization", "")
@@ -227,6 +225,19 @@ class FlaskHandler(frontend.FrontendHandler):
                     pass
             return RequestSucceeded(authorized_collections)
 
+        # New handler
+        # @handler.route("/api/v1/collection/<collection>", methods=["GET"])
+        # def describe_collection(collection):
+        #     auth_header = get_auth_header(request)
+        #     authorized_collections = []
+        #     for name, collection in collections.items():
+        #         try:
+        #             if auth.can_access_collection(auth_header, collection):
+        #                 authorized_collections.append(name)
+        #         except ForbiddenRequest:
+        #             pass
+        #     return RequestSucceeded(authorized_collections)
+
         @handler.after_request
         def add_header(response: flask.Response):
             response.cache_control.no_cache = True
@@ -249,7 +260,6 @@ class FlaskHandler(frontend.FrontendHandler):
         return handler
 
     def run_server(self, handler, server_type, host, port):
-
         if server_type == "flask":
             # flask internal server for non-production environments
             # should only be used for testing and debugging

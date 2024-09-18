@@ -18,7 +18,7 @@
 # does it submit to any jurisdiction.
 #
 
-import collections
+import collections.abc
 import json
 
 from flask import Response
@@ -31,13 +31,13 @@ handler_dict = {
 
 
 def RequestSucceeded(response):
-    if not isinstance(response, collections.Mapping):
+    if not isinstance(response, collections.abc.Mapping):
         response = {"message": response}
     return Response(response=json.dumps(response), status=200, mimetype="application/json")
 
 
 def RequestAccepted(response):
-    if not isinstance(response, collections.Mapping):
+    if not isinstance(response, collections.abc.Mapping):
         response = {"message": response}
     if response["message"] == "":
         response["message"] = "Request {}".format(response["status"])

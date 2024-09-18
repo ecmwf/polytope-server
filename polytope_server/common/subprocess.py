@@ -46,7 +46,7 @@ class Subprocess:
     def returncode(self):
         return self.subprocess.poll()
 
-    def finalize(self, request, filter):
+    def finalize(self, request, filter=None):
         """Close subprocess and decode output"""
 
         out, _ = self.subprocess.communicate()
@@ -54,7 +54,7 @@ class Subprocess:
         self.output = out.decode().splitlines()
 
         for line in self.output:
-            if filter in line:
+            if filter and filter in line:
                 request.user_message += line + "\n"
 
         if self.returncode() != 0:

@@ -26,7 +26,6 @@ import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 
-import pyfdb
 import yaml
 from dateutil.relativedelta import relativedelta
 
@@ -47,6 +46,11 @@ class FDBDataSource(datasource.DataSource):
         self.check_schema()
 
         os.environ["FDB5_CONFIG"] = json.dumps(self.fdb_config)
+        os.environ["FDB_CONFIG"] = json.dumps(self.fdb_config)
+        os.environ["FDB5_HOME"] = self.config.get("fdb_home", "/opt/fdb")
+        os.environ["FDB_HOME"] = self.config.get("fdb_home", "/opt/fdb")
+        import pyfdb
+
         self.fdb = pyfdb.FDB()
 
         if "spaces" in self.fdb_config:
@@ -142,14 +146,25 @@ class FDBDataSource(datasource.DataSource):
         r = yaml.safe_load(request.user_request) or {}
 
         for k, v in self.match_rules.items():
+
+            # An empty match rule means that the key must not be present
+            if v is None or len(v) == 0:
+                if k in r:
+                    raise Exception("Request containing key '{}' is not allowed".format(k))
+                else:
+                    continue  # no more checks to do
+
             # Check that all required keys exist
-            if k not in r:
-                raise Exception("Request does not contain expected key {}".format(k))
+            if k not in r and not (v is None or len(v) == 0):
+                raise Exception("Request does not contain expected key '{}'".format(k))
+
             # Process date rules
             if k == "date":
                 self.date_check(r["date"], v)
                 continue
+
             # ... and check the value of other keys
+
             v = [v] if isinstance(v, str) else v
             if r[k] not in v:
                 raise Exception("got {} : {}, but expected one of {}".format(k, r[k], v))

@@ -68,3 +68,6 @@ class User:
             v = self.__getattribute__(k)
             result[k] = v
         return result
+
+    def __str__(self):
+        return f"User({self.realm}:{self.username})"

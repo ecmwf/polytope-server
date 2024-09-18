@@ -20,6 +20,7 @@
 
 import logging
 import os
+import re
 import tempfile
 from datetime import datetime, timedelta
 
@@ -34,6 +35,7 @@ from . import datasource
 class MARSDataSource(datasource.DataSource):
     def __init__(self, config):
         assert config["type"] == "mars"
+        self.config = config
         self.type = config.get("type")
         self.command = config.get("command", "/usr/local/bin/mars")
         self.tmp_dir = config.get("tmp_dir", "/tmp")
@@ -45,20 +47,38 @@ class MARSDataSource(datasource.DataSource):
         self.subprocess = None
         self.fifo = None
 
+        self.silent_match = config.get("silent_match", False)
+
         if self.match_rules is None:
             self.match_rules = {}
 
         self.mars_binary = config.get("binary", "mars")
 
+        self.protocol = config.get("protocol", "dhs")
+
+        # self.fdb_config = None
+        self.fdb_config = config.get("fdb_config", [{}])
+        if self.protocol == "remote":
+            # need to set FDB5 config in a <path>/etc/fdb/config.yaml
+            self.fdb_home = self.tmp_dir + "/fdb-home"
+            # os.makedirs(self.fdb_home + "/etc/fdb/", exist_ok=True)
+            # with open(self.fdb_home + "/etc/fdb/config.yaml", "w") as f:
+            #     yaml.dump(self.fdb_config, f)
+
         # Write the mars config
         if "config" in config:
             self.mars_config = config.get("config", {})
+
+            if self.protocol == "remote":
+                self.mars_config[0]["home"] = self.fdb_home
+
             self.mars_home = self.tmp_dir + "/mars-home"
             os.makedirs(self.mars_home + "/etc/mars-client/", exist_ok=True)
             with open(self.mars_home + "/etc/mars-client/databases.yaml", "w") as f:
                 yaml.dump(self.mars_config, f)
         else:
             self.mars_home = None
+            self.mars_config = None
 
     def get_type(self):
         return self.type
@@ -68,14 +88,31 @@ class MARSDataSource(datasource.DataSource):
         r = yaml.safe_load(request.user_request) or {}
 
         for k, v in self.match_rules.items():
+
+            # An empty match rule means that the key must not be present
+            if v is None or len(v) == 0:
+                if k in r:
+                    raise Exception("Request containing key '{}' is not allowed".format(k))
+                else:
+                    continue  # no more checks to do
+
             # Check that all required keys exist
-            if k not in r:
-                raise Exception("Request does not contain expected key {}".format(k))
+            if k not in r and not (v is None or len(v) == 0):
+                raise Exception("Request does not contain expected key '{}'".format(k))
+
             # Process date rules
             if k == "date":
-                self.date_check(r["date"], v)
+                comp, v = v.split(" ", 1)
+                if comp == "<":
+                    self.date_check(r["date"], v, False)
+                elif comp == ">":
+                    self.date_check(r["date"], v, True)
+                else:
+                    raise Exception("Invalid date comparison")
                 continue
+
             # ... and check the value of other keys
+
             v = [v] if isinstance(v, str) else v
             if r[k] not in v:
                 raise Exception("got {} : {}, but expected one of {}".format(k, r[k], v))
@@ -113,8 +150,10 @@ class MARSDataSource(datasource.DataSource):
                     logging.debug("FIFO is ready for reading.")
                     break
             else:
+                logging.debug("Detected MARS process has exited before opening FIFO.")
                 self.destroy(request)
-        except Exception:
+        except Exception as e:
+            logging.error(f"Error while waiting for MARS process to open FIFO: {e}.")
             self.destroy(request)
             raise
 
@@ -126,20 +165,22 @@ class MARSDataSource(datasource.DataSource):
         for x in self.fifo.data():
             yield x
 
-        self.destroy(request)
+        logging.info("FIFO reached EOF.")
+
         return
 
     def destroy(self, request):
+        try:
+            self.subprocess.finalize(request)  # Will raise if non-zero return
+        except Exception as e:
+            logging.debug("MARS subprocess failed: {}".format(e))
+            pass
         try:
             os.unlink(self.request_file)
         except Exception:
             pass
         try:
             self.fifo.delete()
-        except Exception:
-            pass
-        try:
-            self.subprocess.finalize(request, "mars -")  # Will raise if non-zero return
         except Exception:
             pass
 
@@ -155,32 +196,30 @@ class MARSDataSource(datasource.DataSource):
                 logging.info("Overriding MARS_USER_EMAIL with {}".format(self.override_mars_email))
                 mars_user = self.override_mars_email
             else:
-                mars_user = request.user.attributes["ecmwf-email"]
+                mars_user = request.user.attributes.get("ecmwf-email", "no-email")
 
             if self.override_mars_apikey:
                 logging.info("Overriding MARS_USER_TOKEN with {}".format(self.override_mars_apikey))
                 mars_token = self.override_mars_apikey
             else:
-                mars_token = request.user.attributes["ecmwf-apikey"]
+                mars_token = request.user.attributes.get("ecmwf-apikey", "no-api-key")
 
             env = {
                 **os.environ,
                 "MARS_USER_EMAIL": mars_user,
                 "MARS_USER_TOKEN": mars_token,
-                "ECMWF_MARS_COMMAND": self.mars_binary
+                "ECMWF_MARS_COMMAND": self.mars_binary,
+                "FDB5_CONFIG": yaml.dump(self.fdb_config[0]),
             }
 
             if self.mars_config is not None:
-                env = {
-                    **os.environ,
-                    "MARS_HOME": self.mars_home,
-                }
+                env["MARS_HOME"] = self.mars_home
 
             logging.info("Accessing MARS on behalf of user {} with token {}".format(mars_user, mars_token))
 
-        except Exception:
+        except Exception as e:
             logging.error("MARS request aborted because user does not have associated ECMWF credentials")
-            raise Exception()
+            raise e
 
         return env
 
@@ -195,15 +234,17 @@ class MARSDataSource(datasource.DataSource):
             request_str = request_str + "," + k + "=" + v
         return request_str
 
-    def check_single_date(self, date, offset, offset_fmted):
+    def check_single_date(self, date, offset, offset_fmted, after=False):
 
         # Date is relative (0 = now, -1 = one day ago)
         if str(date)[0] == "0" or str(date)[0] == "-":
             date_offset = int(date)
             dt = datetime.today() + timedelta(days=date_offset)
 
-            if dt >= offset:
+            if after and dt >= offset:
                 raise Exception("Date is too recent, expected < {}".format(offset_fmted))
+            elif not after and dt < offset:
+                raise Exception("Date is too old, expected > {}".format(offset_fmted))
             else:
                 return
 
@@ -212,12 +253,30 @@ class MARSDataSource(datasource.DataSource):
             dt = datetime.strptime(date, "%Y%m%d")
         except ValueError:
             raise Exception("Invalid date, expected real date in YYYYMMDD format")
-        if dt >= offset:
+        if after and dt >= offset:
             raise Exception("Date is too recent, expected < {}".format(offset_fmted))
+        elif not after and dt < offset:
+            raise Exception("Date is too old, expected > {}".format(offset_fmted))
         else:
             return
 
-    def date_check(self, date, offsets):
+    def parse_relativedelta(self, time_str):
+
+        pattern = r"(\d+)([dhm])"
+        time_dict = {"d": 0, "h": 0, "m": 0}
+        matches = re.findall(pattern, time_str)
+
+        for value, unit in matches:
+            if unit == "d":
+                time_dict["d"] += int(value)
+            elif unit == "h":
+                time_dict["h"] += int(value)
+            elif unit == "m":
+                time_dict["m"] += int(value)
+
+        return relativedelta(days=time_dict["d"], hours=time_dict["h"], minutes=time_dict["m"])
+
+    def date_check(self, date, offsets, after=False):
         """Process special match rules for DATE constraints"""
 
         date = str(date)
@@ -227,14 +286,14 @@ class MARSDataSource(datasource.DataSource):
             date = "-1"
 
         now = datetime.today()
-        offset = now + relativedelta(**dict(offsets))
+        offset = now - self.parse_relativedelta(offsets)
         offset_fmted = offset.strftime("%Y%m%d")
 
         split = str(date).split("/")
 
         # YYYYMMDD
         if len(split) == 1:
-            self.check_single_date(split[0], offset, offset_fmted)
+            self.check_single_date(split[0], offset, offset_fmted, after)
             return True
 
         # YYYYMMDD/to/YYYYMMDD -- check end and start date
@@ -246,12 +305,12 @@ class MARSDataSource(datasource.DataSource):
                 if len(split) == 5 and split[3].casefold() != "by".casefold():
                     raise Exception("Invalid date range")
 
-                self.check_single_date(split[0], offset, offset_fmted)
-                self.check_single_date(split[2], offset, offset_fmted)
+                self.check_single_date(split[0], offset, offset_fmted, after)
+                self.check_single_date(split[2], offset, offset_fmted, after)
                 return True
 
         # YYYYMMDD/YYYYMMDD/YYYYMMDD/... -- check each date
         for s in split:
-            self.check_single_date(s, offset, offset_fmted)
+            self.check_single_date(s, offset, offset_fmted, after)
 
         return True

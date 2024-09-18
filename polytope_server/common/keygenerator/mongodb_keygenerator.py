@@ -22,8 +22,7 @@ import logging
 import uuid
 from datetime import datetime, timedelta
 
-import pymongo
-
+from .. import mongo_client_factory
 from ..auth import User
 from ..exceptions import ForbiddenRequest
 from ..metric_collector import MongoStorageMetricCollector
@@ -34,19 +33,19 @@ class MongoKeyGenerator(keygenerator.KeyGenerator):
     def __init__(self, config):
         self.config = config
         assert self.config["type"] == "mongodb"
-        host = config.get("host", "localhost")
-        port = config.get("port", "27017")
+        uri = config.get("uri", "mongodb://localhost:27017")
         collection = config.get("collection", "keys")
-        endpoint = "{}:{}".format(host, port)
-        self.mongo_client = pymongo.MongoClient(endpoint, journal=True, connect=False)
+        username = config.get("username")
+        password = config.get("password")
+
+        self.mongo_client = mongo_client_factory.create_client(uri, username, password)
         self.database = self.mongo_client.keys
         self.keys = self.database[collection]
         self.realms = config.get("allowed_realms")
 
-        self.storage_metric_collector = MongoStorageMetricCollector(endpoint, self.mongo_client, "keys", collection)
+        self.storage_metric_collector = MongoStorageMetricCollector(uri, self.mongo_client, "keys", collection)
 
     def create_key(self, user: User) -> ApiKey:
-
         if user.realm not in self.realms:
             raise ForbiddenRequest("Not allowed to create an API Key for users in realm {}".format(user.realm))
 

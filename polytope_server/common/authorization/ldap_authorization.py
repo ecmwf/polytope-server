@@ -19,7 +19,6 @@
 #
 
 import json
-import logging
 
 from ldap3 import SUBTREE, Connection, Server
 
@@ -48,7 +47,9 @@ class LDAPAuthorization(authorization.Authorization):
             )
         try:
             if self.username_attribute is None:
-                return retrieve_ldap_user_roles(user.username, self.filter, self.url, self.search_base, self.ldap_user, self.ldap_password)
+                return retrieve_ldap_user_roles(
+                    user.username, self.filter, self.url, self.search_base, self.ldap_user, self.ldap_password
+                )
             else:
                 return retrieve_ldap_user_roles(
                     user.attributes[self.username_attribute],
@@ -69,10 +70,12 @@ class LDAPAuthorization(authorization.Authorization):
 #################################################
 
 
-def retrieve_ldap_user_roles(uid: str, filter: str, url: str, search_base: str, ldap_user: str, ldap_password: str) -> list:
+def retrieve_ldap_user_roles(
+    uid: str, filter: str, url: str, search_base: str, ldap_user: str, ldap_password: str
+) -> list:
     """
-        Takes an ECMWF UID and returns all roles matching
-        the provided filter 'filter'.
+    Takes an ECMWF UID and returns all roles matching
+    the provided filter 'filter'.
     """
 
     server = Server(url)
@@ -81,20 +84,20 @@ def retrieve_ldap_user_roles(uid: str, filter: str, url: str, search_base: str, 
         server,
         user="CN={},OU=Connectors,OU=Service Accounts,DC=ecmwf,DC=int".format(ldap_user),
         password=ldap_password,
-        raise_exceptions=True
+        raise_exceptions=True,
     )
 
     with connection as conn:
         conn.search(
             search_base=search_base,
-            search_filter='(&(objectClass=person)(cn={}))'.format(uid),
+            search_filter="(&(objectClass=person)(cn={}))".format(uid),
             search_scope=SUBTREE,
-            attributes=['memberOf']
+            attributes=["memberOf"],
         )
         user_data = json.loads(conn.response_to_json())
-        if len(user_data['entries']) == 0:
-            raise KeyError('User {} not found in LDAP.'.format(uid))
-        roles = user_data['entries'][0]['attributes']['memberOf']
+        if len(user_data["entries"]) == 0:
+            raise KeyError("User {} not found in LDAP.".format(uid))
+        roles = user_data["entries"][0]["attributes"]["memberOf"]
 
     # Filter roles
     matches = []
@@ -104,7 +107,7 @@ def retrieve_ldap_user_roles(uid: str, filter: str, url: str, search_base: str, 
 
     # Parse CN=x,OU=y,OU=z,... into dict and extract 'common name' (CN)
     for i, role in enumerate(matches):
-        d = dict(s.split('=') for s in role.split(','))
-        matches[i] = d['CN']
+        d = dict(s.split("=") for s in role.split(","))
+        matches[i] = d["CN"]
 
     return matches

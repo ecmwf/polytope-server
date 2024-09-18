@@ -40,13 +40,10 @@ class Broker:
 
         self.collections = collection.create_collections(config.get("collections"))
 
-        self.user_limit = self.broker_config.get("user_limit", None)
-
     def run(self):
 
         logging.info("Starting broker...")
         logging.info("Maximum Queue Size: {}".format(self.max_queue_size))
-        logging.info("User Request Limit: {}".format(self.user_limit))
 
         while not time.sleep(self.scheduling_interval):
             self.check_requests()
@@ -87,43 +84,48 @@ class Broker:
 
     def check_limits(self, active_requests, request):
 
-        logging.debug("Checking limits for request {}".format(request.id))
+        logging.debug(f"Checking limits for request {request.id}")
 
-        # User limits
-        if self.user_limit is not None:
-            user_active_requests = sum(qr.user == request.user for qr in active_requests)
-            if user_active_requests >= self.user_limit:
-                logging.debug("User has {} of {} active requests".format(user_active_requests, self.user_limit))
-                return False
+        # Get collection limits and calculate active requests
+        collection = self.collections[request.collection]
+        collection_limits = collection.limits
+        collection_total_limit = collection_limits.get("total")
+        collection_active_requests = sum(qr.collection == request.collection for qr in active_requests)
+        logging.debug(f"Collection {request.collection} has {collection_active_requests} active requests")
 
-        # Collection limits
-        collection_total_limit = self.collections[request.collection].limits.get("total", None)
-        if collection_total_limit is not None:
-            collection_active_requests = sum(qr.collection == request.collection for qr in active_requests)
-            if collection_active_requests >= collection_total_limit:
-                logging.debug(
-                    "Collection has {} of {} total active requests".format(
-                        collection_active_requests, collection_total_limit
-                    )
-                )
-                return False
-
-        # Collection-user limits
-        collection_user_limit = self.collections[request.collection].limits.get("per-user", None)
-        if collection_user_limit is not None:
-            collection_user_active_requests = sum(
-                (qr.collection == request.collection and qr.user == request.user) for qr in active_requests
+        # Check collection total limit
+        if collection_total_limit is not None and collection_active_requests >= collection_total_limit:
+            logging.debug(
+                f"Collection has {collection_active_requests} of {collection_total_limit} total active requests"
             )
-            if collection_user_active_requests >= collection_user_limit:
+            return False
+
+        # Determine the effective limit based on role or per-user setting
+        role_limits = collection_limits.get("per-role", {}).get(request.user.realm, {})
+        limit = max((role_limits.get(role, 0) for role in request.user.roles), default=0)
+        if limit == 0:  # Use collection per-user limit if no role-specific limit
+            limit = collection_limits.get("per-user", 0)
+
+        # Check if user exceeds the effective limit
+        if limit > 0:
+            user_active_requests = sum(
+                qr.collection == request.collection and qr.user == request.user for qr in active_requests
+            )
+            if user_active_requests >= limit:
                 logging.debug(
-                    "User has {} of {} active requests in collection {}".format(
-                        collection_user_active_requests,
-                        collection_user_limit,
-                        request.collection,
-                    )
+                    f"User {request.user} has {user_active_requests} of {limit} "
+                    f"active requests in collection {request.collection}"
                 )
                 return False
+            else:
+                logging.debug(
+                    f"User {request.user} has {user_active_requests} of {limit} "
+                    f"active requests in collection {request.collection}"
+                )
+                return True
 
+        # Allow if no limits are exceeded
+        logging.debug(f"No limit for user {request.user} in collection {request.collection}")
         return True
 
     def enqueue(self, request):

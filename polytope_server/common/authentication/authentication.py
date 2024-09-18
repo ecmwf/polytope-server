@@ -77,6 +77,8 @@ type_to_class_map = {
     "plain": "PlainAuthentication",
     "keycloak": "KeycloakAuthentication",
     "federation": "FederationAuthentication",
+    "jwt": "JWTAuthentication",
+    "openid_offline_access": "OpenIDOfflineAuthentication",
 }
 
 
