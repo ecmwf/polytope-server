@@ -29,20 +29,62 @@ ARG gribjump_base=blank-base
 #######################################################
 
 FROM python:3.11-alpine AS polytope-common
-
-RUN apk add --no-cache --virtual .build-deps gcc musl-dev openldap openldap-dev curl
-
+ 
+ARG HOME_DIR=/home/polytope
+ARG developer_mode
+ 
+# Install build dependencies
+RUN apk add --no-cache --virtual .build-deps gcc musl-dev openldap-dev curl \
+    && apk add --no-cache openldap
+ 
+# Create user and group
 RUN set -eux \
     && addgroup --system polytope --gid 474 \
-    && adduser --system polytope --ingroup polytope --home /home/polytope \
-    && mkdir -p /polytope && chmod -R 777 /polytope \
-    && mkdir -p /data && chmod -R 777 /data
+    && adduser --system polytope --ingroup polytope --home ${HOME_DIR} \
+    && mkdir -p ${HOME_DIR}/polytope-server \
+    && chown -R polytope:polytope ${HOME_DIR}
+ 
+# Switch to user polytope
+USER polytope
+ 
+WORKDIR ${HOME_DIR}/polytope-server
+ 
+# Copy requirements.txt with correct ownership
+COPY --chown=polytope:polytope ./requirements.txt $PWD
+ 
+# Install uv in user space
+RUN pip install --user uv
+ 
+# **Update PATH to include virtual environment and user local bin**
+# This makes sure that the default python and pip commands
+# point to the versions in the virtual environment.
+ENV PATH="${HOME_DIR}/.venv/bin:${HOME_DIR}/.local/bin:${PATH}"
+ 
+# Create a virtual environment
+RUN uv venv ${HOME_DIR}/.venv
+ 
+# Install requirements
+RUN uv pip install -r requirements.txt
+ 
+# Copy the rest of the application code
+COPY --chown=polytope:polytope . $PWD
 
-COPY ./requirements.txt /polytope/
-WORKDIR /polytope
-RUN python -m pip install -r requirements.txt
-COPY . /polytope/
-RUN python -m pip install --upgrade .
+RUN set -eux \
+    && if [ $developer_mode = true ]; then \
+        uv pip install ./polytope-mars ./polytope ./covjsonkit; \
+    fi
+
+# Install the application
+RUN uv pip install --upgrade .
+ 
+# Clean up build dependencies to reduce image size
+USER root
+RUN apk del .build-deps
+
+ 
+# Switch back to polytope user
+USER polytope
+
 
 #######################################################
 #                N O O P   I M A G E
@@ -240,6 +282,7 @@ FROM ${gribjump_base} AS gribjump-base-final
 #           P Y T H O N   R E Q U I R E M E N T S
 #######################################################
 FROM python:3.11-slim-bookworm AS worker-base
+ARG developer_mode
 
 # contains compilers for building wheels which we don't want in the final image
 RUN apt update
@@ -247,6 +290,12 @@ RUN apt-get install -y --no-install-recommends gcc libc6-dev make gnupg2
 COPY ./requirements.txt /requirements.txt
 RUN python -m pip install -r requirements.txt --user
 RUN python -m pip install geopandas --user
+
+COPY . ./polytope
+RUN set -eux \
+    && if [ $developer_mode = true ]; then \
+        python -m pip install ./polytope/polytope-mars ./polytope/polytope ./polytope/covjsonkit --user; \
+    fi
 
 #######################################################
 #                    W O R K E R
