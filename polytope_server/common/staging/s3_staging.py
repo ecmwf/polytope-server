@@ -81,7 +81,7 @@ class S3Staging(staging.Staging):
         secure = config.get("secure", False)
         self.url = config.get("url", None)
         internal_url = "{}:{}".format(self.host, self.port)
-        secure = config.get("use_ssl", False)
+        use_ssl = config.get("use_ssl", False)
 
         if access_key == "" or secret_key == "":
             self.client = Minio(
@@ -97,7 +97,8 @@ class S3Staging(staging.Staging):
                 secure=secure,
             )
 
-        self.internal_url = ("https://" if secure else "http://") + internal_url
+        self.prefix = ("https://" if use_ssl else "http://") + internal_url
+        self.internal_url = f"http://{self.host}:{self.port}"
 
         try:
             self.client.make_bucket(self.bucket)
@@ -213,10 +214,13 @@ class S3Staging(staging.Staging):
         return self.storage_metric_collector.collect().serialize()
 
     def get_url(self, name):
-        if self.url is None:
-            return None
-        url = "{}/{}/{}".format(self.url, self.bucket, name)
-        return url
+        if self.url:
+            if self.url.startswith("http"):
+                # This covers both http and https
+                return f"{self.url}/{self.bucket}/{name}"
+            else:
+                return f"{self.prefix}://{self.url}/{self.bucket}/{name}"
+        return None
 
     def get_internal_url(self, name):
         url = "{}/{}/{}".format(self.internal_url, self.bucket, name)
