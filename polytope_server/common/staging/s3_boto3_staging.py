@@ -20,7 +20,6 @@
 
 import json
 import logging
-import random
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 
@@ -59,7 +58,6 @@ class AvailableThreadPoolExecutor(ThreadPoolExecutor):
 
 class S3Staging_boto3(staging.Staging):
     def __init__(self, config):
-
         self.bucket = config.get("bucket", "default")
         self.url = config.get("url", None)
 
@@ -76,17 +74,9 @@ class S3Staging_boto3(staging.Staging):
         for name in ["boto", "urllib3", "s3transfer", "boto3", "botocore", "nose"]:
             logging.getLogger(name).setLevel(logging.WARNING)
 
-        prefix = "https" if self.use_ssl else "http"
+        self.prefix = "https" if self.use_ssl else "http"
 
-        if config.get("random_host", False):
-            self.host = config.get("random_host", {}).get("host", self.host)
-            index = random.randint(0, config.get("random_host", {}).get("max", 1) - 1)
-            # replace %%ID%% in the host with the index
-            self.host = self.host.replace("%%ID%%", str(index))
-            self.url = self.url + "/" + str(index)
-            logging.info(f"Using random host: {self.host}")
-
-        self._internal_url = f"{prefix}://{self.host}:{self.port}"
+        self._internal_url = f"http://{self.host}:{self.port}"
 
         # Setup Boto3 client
         self.s3_client = boto3.client(
@@ -125,7 +115,10 @@ class S3Staging_boto3(staging.Staging):
         # else using content-disposition header
         try:
             multipart_upload = self.s3_client.create_multipart_upload(
-                Bucket=self.bucket, Key=name, ContentType=content_type, ContentDisposition="attachment"
+                Bucket=self.bucket,
+                Key=name,
+                ContentType=content_type,
+                ContentDisposition="attachment",
             )
             upload_id = multipart_upload["UploadId"]
 
@@ -140,7 +133,15 @@ class S3Staging_boto3(staging.Staging):
                 else:
                     for part_data in self.iterator_buffer(data, self.buffer_size):
                         if part_data:
-                            futures.append(executor.submit(self.upload_part, name, part_number, part_data, upload_id))
+                            futures.append(
+                                executor.submit(
+                                    self.upload_part,
+                                    name,
+                                    part_number,
+                                    part_data,
+                                    upload_id,
+                                )
+                            )
                             part_number += 1
 
                     for future in futures:
@@ -153,7 +154,10 @@ class S3Staging_boto3(staging.Staging):
                 raise ValueError("No data retrieved")
 
             self.s3_client.complete_multipart_upload(
-                Bucket=self.bucket, Key=name, UploadId=upload_id, MultipartUpload={"Parts": parts}
+                Bucket=self.bucket,
+                Key=name,
+                UploadId=upload_id,
+                MultipartUpload={"Parts": parts},
             )
 
             logging.info(f"Successfully uploaded {name} in {len(parts)} parts.")
@@ -168,7 +172,11 @@ class S3Staging_boto3(staging.Staging):
     def upload_part(self, name, part_number, data, upload_id):
         logging.debug(f"Uploading part {part_number} of {name}, {len(data)} bytes")
         response = self.s3_client.upload_part(
-            Bucket=self.bucket, Key=name, PartNumber=part_number, UploadId=upload_id, Body=data
+            Bucket=self.bucket,
+            Key=name,
+            PartNumber=part_number,
+            UploadId=upload_id,
+            Body=data,
         )
         return {"PartNumber": part_number, "ETag": response["ETag"]}
 
@@ -190,14 +198,14 @@ class S3Staging_boto3(staging.Staging):
                 },
                 {
                     "Sid": "AllowListBucket",
-                    "Effect": "Allow",
+                    "Effect": "Deny",
                     "Principal": "*",
                     "Action": "s3:ListBucket",
                     "Resource": f"arn:aws:s3:::{self.bucket}",
                 },
                 {
                     "Sid": "AllowGetBucketLocation",
-                    "Effect": "Allow",
+                    "Effect": "Deny",
                     "Principal": "*",
                     "Action": "s3:GetBucketLocation",
                     "Resource": f"arn:aws:s3:::{self.bucket}",
@@ -239,7 +247,11 @@ class S3Staging_boto3(staging.Staging):
 
     def get_url(self, name):
         if self.url:
-            return f"{self.url}/{self.bucket}/{name}"
+            if self.url.startswith("http"):
+                # This covers both http and https
+                return f"{self.url}/{self.bucket}/{name}"
+            else:
+                return f"{self.prefix}://{self.url}/{self.bucket}/{name}"
         return None
 
     def get_internal_url(self, name):
