@@ -198,14 +198,14 @@ class S3Staging_boto3(staging.Staging):
                 },
                 {
                     "Sid": "AllowListBucket",
-                    "Effect": "Allow",
+                    "Effect": "Deny",
                     "Principal": "*",
                     "Action": "s3:ListBucket",
                     "Resource": f"arn:aws:s3:::{self.bucket}",
                 },
                 {
                     "Sid": "AllowGetBucketLocation",
-                    "Effect": "Allow",
+                    "Effect": "Deny",
                     "Principal": "*",
                     "Action": "s3:GetBucketLocation",
                     "Resource": f"arn:aws:s3:::{self.bucket}",
