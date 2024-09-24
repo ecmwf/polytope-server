@@ -18,10 +18,10 @@
 # does it submit to any jurisdiction.
 #
 
+import copy
 import json
 import logging
 import os
-import copy
 
 import yaml
 from polytope.utility.exceptions import PolytopeError
@@ -61,7 +61,7 @@ class PolytopeDataSource(datasource.DataSource):
 
         # Set the "pre-path" for this request
         pre_path = {}
-        for k,v in r.items():
+        for k, v in r.items():
             if k in self.req_single_keys:
                 if isinstance(v, list):
                     v = v[0]
@@ -81,15 +81,13 @@ class PolytopeDataSource(datasource.DataSource):
 
         polytope_mars_config["options"]["axis_config"] = transforms
 
-
-
         polytope_mars = PolytopeMars(
             polytope_mars_config,
-            log_context= {
-                "user": request.user.realm + ':' + request.user.username,
+            log_context={
+                "user": request.user.realm + ":" + request.user.username,
                 "id": request.id,
-            })
-        
+            },
+        )
 
         try:
             self.output = polytope_mars.extract(r)
@@ -123,7 +121,7 @@ class PolytopeDataSource(datasource.DataSource):
                 raise Exception("got {} : {}, but expected one of {}".format(k, r[k], v))
 
         # Check that there is only one value if required
-        for k, v in r.items():    
+        for k, v in r.items():
             if k in self.req_single_keys:
                 v = [v] if isinstance(v, str) else v
                 if len(v) > 1:
