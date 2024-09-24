@@ -70,6 +70,18 @@ class PolytopeDataSource(datasource.DataSource):
         polytope_mars_config = copy.deepcopy(self.config)
         polytope_mars_config["options"]["pre_path"] = pre_path
 
+        transforms = []
+        for transform in polytope_mars_config["options"]["axis_config"]:
+            if transform["axis_name"] in r.keys():
+                logging.info("Found axis {} in request".format(transform["axis_name"]))
+                transforms.append(transform)
+            if transform["axis_name"] in ("latitude", "longitude", "values"):
+                transforms.append(transform)
+
+
+        polytope_mars_config["options"]["axis_config"] = transforms
+
+
 
         polytope_mars = PolytopeMars(
             polytope_mars_config,
