@@ -95,8 +95,8 @@ class S3Staging(staging.Staging):
         self.internal_url = f"http://{self.host}:{self.port}"
         self.use_ssl = config.get("use_ssl", False)
         self.should_set_policy = config.get("should_set_policy", False)
-        
-        #remove the protocol from the internal_url, both http and https can be removed
+
+        # remove the protocol from the internal_url, both http and https can be removed
         endpoint = self.internal_url.split("://")[-1]
 
         if access_key == "" or secret_key == "":
