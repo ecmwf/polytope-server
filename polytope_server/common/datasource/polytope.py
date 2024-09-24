@@ -78,7 +78,6 @@ class PolytopeDataSource(datasource.DataSource):
             if transform["axis_name"] in ("latitude", "longitude", "values"):
                 transforms.append(transform)
 
-
         polytope_mars_config["options"]["axis_config"] = transforms
 
         polytope_mars = PolytopeMars(
