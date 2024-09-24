@@ -87,42 +87,47 @@ class S3Staging(staging.Staging):
         self.port = config.get("port", "8000")
         self.max_threads = config.get("max_threads", 20)
         self.buffer_size = config.get("buffer_size", 20 * 1024 * 1024)
-        endpoint = "{}:{}".format(self.host, self.port)
         access_key = config.get("access_key", "")
         secret_key = config.get("secret_key", "")
         self.bucket = config.get("bucket", "default")
         secure = config.get("secure", False)
         self.url = config.get("url", None)
-        internal_url = "{}:{}".format(self.host, self.port)
+        self.internal_url = f"http://{self.host}:{self.port}"
         self.use_ssl = config.get("use_ssl", False)
+        self.should_set_policy = config.get("should_set_policy", False)
+        
+        #remove the protocol from the internal_url, both http and https can be removed
+        endpoint = self.internal_url.split("://")[-1]
 
         if access_key == "" or secret_key == "":
             self.client = Minio(
-                internal_url,
+                endpoint,
                 secure=secure,
             )
 
         else:
             self.client = Minio(
-                internal_url,
+                endpoint,
                 access_key=access_key,
                 secret_key=secret_key,
                 secure=secure,
             )
 
         self.prefix = "https" if self.use_ssl else "http"
-        self.internal_url = f"http://{self.host}:{self.port}"
 
         try:
             self.client.make_bucket(self.bucket)
-            self.client.set_bucket_policy(self.bucket, self.bucket_policy())
+            if self.should_set_policy:
+                self.client.set_bucket_policy(self.bucket, self.bucket_policy())
         except S3Error as err:
             if err.code in ("BucketAlreadyOwnedByYou", "BucketAlreadyExists"):
                 pass
             else:
                 raise
 
-        self.storage_metric_collector = S3StorageMetricCollector(endpoint, self.client, self.bucket, self.get_type())
+        self.storage_metric_collector = S3StorageMetricCollector(
+            self.internal_url, self.client, self.bucket, self.get_type()
+        )
 
         logging.info(
             "Opened data staging at {}:{}/{}, locatable from {}".format(self.host, self.port, self.bucket, self.url)
@@ -313,14 +318,14 @@ class S3Staging(staging.Staging):
                 },
                 {
                     "Sid": "AllowListBucket",
-                    "Effect": "Allow",
+                    "Effect": "Deny",
                     "Principal": "*",
                     "Action": "s3:ListBucket",
                     "Resource": f"arn:aws:s3:::{self.bucket}",
                 },
                 {
                     "Sid": "AllowGetBucketLocation",
-                    "Effect": "Allow",
+                    "Effect": "Deny",
                     "Principal": "*",
                     "Action": "s3:GetBucketLocation",
                     "Resource": f"arn:aws:s3:::{self.bucket}",
