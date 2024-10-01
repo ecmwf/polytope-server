@@ -34,7 +34,6 @@ from ..metric import RequestStatusChange
 from ..request import Request
 from . import request_store
 
-
 logger = logging.getLogger(__name__)
 
 

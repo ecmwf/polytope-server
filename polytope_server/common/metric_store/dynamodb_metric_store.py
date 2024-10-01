@@ -27,8 +27,8 @@ from functools import reduce
 
 import boto3
 import botocore
-from boto3.dynamodb.conditions import Attr, Key
 import botocore.exceptions
+from boto3.dynamodb.conditions import Attr, Key
 
 from ..metric import (
     CacheInfo,
@@ -70,6 +70,7 @@ def _make_query(**kwargs):
         key: value.value if isinstance(value, Enum) else value for key, value in kwargs.items() if value is not None
     }
 
+
 def _visit(obj, fn):
     if isinstance(obj, dict):
         return {key: _visit(value, fn) for key, value in obj.items()}
@@ -85,6 +86,7 @@ def _convert_numbers(obj, reverse=False):
         elif reverse and isinstance(item, Decimal):
             return float(item)
         return item
+
     return _visit(obj, fn)
 
 
@@ -195,7 +197,6 @@ class DynamoDBMetricStore(MetricStore):
         if descending is not None:
             return sorted(items, key=lambda item: getattr(item, descending), reverse=True)
         return list(items)
-
 
     def update_metric(self, metric):
         self.table.put_item(Item=_dump(metric))
