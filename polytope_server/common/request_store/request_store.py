@@ -68,7 +68,7 @@ class RequestStore(ABC):
         """Collect dictionary of metrics"""
 
 
-type_to_class_map = {"mongodb": "MongoRequestStore"}
+type_to_class_map = {"mongodb": "MongoRequestStore", "dynamodb": "DynamoDBRequestStore"}
 
 
 def create_request_store(request_store_config=None, metric_store_config=None):
