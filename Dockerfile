@@ -29,59 +29,59 @@ ARG gribjump_base=blank-base
 #######################################################
 
 FROM python:3.11-alpine AS polytope-common
- 
+
 ARG HOME_DIR=/home/polytope
 ARG developer_mode
- 
+
 # Install build dependencies
 RUN apk add --no-cache --virtual .build-deps gcc musl-dev openldap-dev curl \
     && apk add --no-cache openldap
- 
+
 # Create user and group
 RUN set -eux \
     && addgroup --system polytope --gid 474 \
     && adduser --system polytope --ingroup polytope --home ${HOME_DIR} \
     && mkdir -p ${HOME_DIR}/polytope-server \
     && chown -R polytope:polytope ${HOME_DIR}
- 
+
 # Switch to user polytope
 USER polytope
- 
+
 WORKDIR ${HOME_DIR}/polytope-server
- 
+
 # Copy requirements.txt with correct ownership
 COPY --chown=polytope:polytope ./requirements.txt $PWD
- 
+
 # Install uv in user space
 RUN pip install --user uv
- 
+
 # **Update PATH to include virtual environment and user local bin**
 # This makes sure that the default python and pip commands
 # point to the versions in the virtual environment.
 ENV PATH="${HOME_DIR}/.venv/bin:${HOME_DIR}/.local/bin:${PATH}"
- 
+
 # Create a virtual environment
 RUN uv venv ${HOME_DIR}/.venv
- 
+
 # Install requirements
 RUN uv pip install -r requirements.txt
- 
+
 # Copy the rest of the application code
 COPY --chown=polytope:polytope . $PWD
 
 RUN set -eux \
     && if [ $developer_mode = true ]; then \
-        uv pip install ./polytope-mars ./polytope ./covjsonkit; \
+    uv pip install ./polytope-mars ./polytope ./covjsonkit; \
     fi
 
 # Install the application
 RUN uv pip install --upgrade .
- 
+
 # Clean up build dependencies to reduce image size
 USER root
 RUN apk del .build-deps
 
- 
+
 # Switch back to polytope user
 USER polytope
 
@@ -104,6 +104,11 @@ RUN set -eux \
 #                  F D B   B U I L D
 #######################################################
 FROM python:3.11-bookworm AS fdb-base
+ARG ecbuild_version=3.8.2
+ARG eccodes_version=2.33.1
+ARG eckit_version=1.28.0
+ARG fdb_version=5.13.2
+ARG pyfdb_version=0.0.3
 RUN apt update
 # COPY polytope-deployment/common/default_fdb_schema /polytope/config/fdb/default
 
@@ -118,14 +123,14 @@ RUN set -eux && \
 
 # Download ecbuild
 RUN set -eux && \
-    git clone --depth 1 --branch 3.8.2 https://github.com/ecmwf/ecbuild.git /ecbuild
+    git clone --depth 1 --branch ${ecbuild_version} https://github.com/ecmwf/ecbuild.git /ecbuild
 
 ENV PATH=/ecbuild/bin:$PATH
 
 # Install eckit
 RUN set -eux && \
-    git clone --depth 1 --branch develop https://github.com/ecmwf/eckit.git /source/eckit && \
-    cd /source/eckit && git checkout develop && \
+    git clone --depth 1 --branch ${eckit_version} https://github.com/ecmwf/eckit.git /source/eckit && \
+    cd /source/eckit && \
     mkdir -p /build/eckit && \
     cd /build/eckit && \
     ecbuild --prefix=/opt/fdb -- -DCMAKE_PREFIX_PATH=/opt/fdb /source/eckit && \
@@ -134,17 +139,17 @@ RUN set -eux && \
 
 # Install eccodes
 RUN set -eux && \
-    git clone --depth 1 --branch 2.33.1 https://github.com/ecmwf/eccodes.git /source/eccodes && \
+    git clone --depth 1 --branch ${eccodes_version} https://github.com/ecmwf/eccodes.git /source/eccodes && \
     mkdir -p /build/eccodes && \
     cd /build/eccodes && \
-    ecbuild --prefix=/opt/fdb -DENABLE_FORTRAN=OFF -- -DCMAKE_PREFIX_PATH=/opt/fdb /source/eccodes && \
+    ecbuild --prefix=/opt/fdb -- -DENABLE_FORTRAN=OFF -DCMAKE_PREFIX_PATH=/opt/fdb /source/eccodes && \
     make -j4 && \
     make install
 
 # Install metkit
 RUN set -eux && \
     git clone --depth 1 --branch develop https://github.com/ecmwf/metkit.git /source/metkit && \
-    cd /source/metkit && git checkout develop && \
+    cd /source/metkit && \
     mkdir -p /build/metkit && \
     cd /build/metkit && \
     ecbuild --prefix=/opt/fdb -- -DCMAKE_PREFIX_PATH=/opt/fdb /source/metkit && \
@@ -153,8 +158,8 @@ RUN set -eux && \
 
 # Install fdb \
 RUN set -eux && \
-    git clone --depth 1 --branch develop https://github.com/ecmwf/fdb.git /source/fdb && \
-    cd /source/fdb && git checkout develop && \
+    git clone --depth 1 --branch ${fdb_version} https://github.com/ecmwf/fdb.git /source/fdb && \
+    cd /source/fdb && \
     mkdir -p /build/fdb && \
     cd /build/fdb && \
     ecbuild --prefix=/opt/fdb -- -DCMAKE_PREFIX_PATH="/opt/fdb;/opt/fdb/eckit;/opt/fdb/metkit" /source/fdb && \
@@ -165,12 +170,9 @@ RUN set -eux && \
     rm -rf /source && \ 
     rm -rf /build 
 
-ARG ssh_prv_key
-ARG ssh_pub_key
-
 # Install pyfdb \
 RUN set -eux \
-    && git clone --single-branch --branch 0.0.3 https://github.com/ecmwf/pyfdb.git \
+    && git clone --single-branch --branch ${pyfdb_version} https://github.com/ecmwf/pyfdb.git \
     && python -m pip install ./pyfdb --user
 
 #######################################################
@@ -179,6 +181,7 @@ RUN set -eux \
 
 FROM python:3.11-bookworm AS gribjump-base
 ARG rpm_repo
+ARG gribjump_version=0.5.4
 
 RUN response=$(curl -s -w "%{http_code}" ${rpm_repo}) \
     && if [ "$response" = "403" ]; then echo "Unauthorized access to ${rpm_repo} "; fi
@@ -191,58 +194,27 @@ RUN set -eux \
 
 RUN set -eux \
     && apt-get update \
-    && apt install -y gribjump-client=0.5.4-gribjump
+    && apt install -y gribjump-client=${gribjump_version}-gribjump
 
 RUN set -eux \
     ls -R /opt
 
 # gribjump not open source yet, clone it.
 RUN set -eux \
-    && git clone --single-branch --branch develop https://github.com/ecmwf/gribjump.git
+    && git clone --single-branch --branch ${gribjump_version} https://github.com/ecmwf/gribjump.git
 # Install pygribjump
 RUN set -eux \
-&& cd /gribjump \
+    && cd /gribjump \
     && python -m pip install . --user \
     && rm -rf /gribjump
-
-#######################################################
-#             F D B   R E M O T E   B U I L D
-#######################################################
-
-FROM fdb-base AS fdb-remote-base
-
-ARG ssh_prv_key
-ARG ssh_pub_key
-
-# gribjump not open source yet, clone it.
-# COPY fdbremote /source/fdbremote
-# Install fdb from local source (need a private version from internal ECMWF repository)
-RUN apt-get install -y gfortran
-RUN set -eux \
-    # Configure SSH for private repository access
-    && mkdir -p /root/.ssh \
-    && echo "$ssh_prv_key" > /root/.ssh/id_rsa \
-    && echo "$ssh_pub_key" > /root/.ssh/id_rsa.pub \
-    && chmod 600 /root/.ssh/id_rsa \
-    && chmod 600 /root/.ssh/id_rsa.pub \
-    && echo "StrictHostKeyChecking=no" > /root/.ssh/config \
-    && mkdir -p build \
-    && mkdir -p source \
-    && mkdir -p /build/fdb \
-    && cd /build/fdb \
-    && ecbuild --prefix=/opt/fdbremote -- /source/fdbremote \
-    && make -j4 \
-    && make install \
-    && rm -rf /build \
-    && rm -rf /source \
-    && rm -rf /root/.ssh
 
 #######################################################
 #               M A R S    B A S E
 #######################################################
 FROM python:3.11-bookworm AS mars-base
 ARG rpm_repo
-ARG mars_client_cpp_version
+ARG mars_client_cpp_version=6.99.3.0
+ARG mars_client_c_version=6.33.20.2
 
 RUN response=$(curl -s -w "%{http_code}" ${rpm_repo}) \
     && if [ "$response" = "403" ]; then echo "Unauthorized access to ${rpm_repo} "; fi
@@ -255,7 +227,7 @@ RUN set -eux \
     && apt install -y libnetcdf19 liblapack3
 
 FROM mars-base AS mars-base-c
-RUN apt update && apt install -y liblapack3 mars-client=6.33.20.2 mars-client-cloud
+RUN apt update && apt install -y liblapack3 mars-client=${mars_client_c_version} mars-client-cloud
 
 FROM mars-base AS mars-base-cpp
 RUN apt update && apt install -y mars-client-cpp=${mars_client_cpp_version}
@@ -298,7 +270,7 @@ RUN uv pip install geopandas==1.0.1
 COPY . ./polytope
 RUN set -eux \
     && if [ $developer_mode = true ]; then \
-        uv pip install ./polytope/polytope-mars ./polytope/polytope ./polytope/covjsonkit; \
+    uv pip install ./polytope/polytope-mars ./polytope/polytope ./polytope/covjsonkit; \
     fi
 
 #######################################################
@@ -310,8 +282,6 @@ FROM python:3.11-slim-bookworm AS worker
 
 ARG mars_config_branch
 ARG mars_config_repo
-ARG ssh_prv_key
-ARG ssh_pub_key
 ARG rpm_repo
 
 
@@ -349,10 +319,6 @@ RUN set -eux \
     && mkdir -p /home/polytope/.ssh \
     && chmod 0700 /home/polytope/.ssh \
     && ssh-keyscan git.ecmwf.int > /home/polytope/.ssh/known_hosts \
-    && echo "$ssh_prv_key" > /home/polytope/.ssh/id_rsa \
-    && echo "$ssh_pub_key" > /home/polytope/.ssh/id_rsa.pub \
-    && chmod 600 /home/polytope/.ssh/id_rsa \
-    && chmod 600 /home/polytope/.ssh/id_rsa.pub \
     && chmod 755 /polytope/bin/mars-wrapper.py \
     && chmod 755 /polytope/bin/mars-wrapper-docker.py
 
@@ -366,8 +332,6 @@ COPY --chown=polytope ./aux/default_fdb_schema /polytope/config/fdb/default
 RUN mkdir -p /polytope/fdb/ && sudo chmod -R o+rw /polytope/fdb
 ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/opt/fdb/lib:/opt/ecmwf/gribjump-client/lib
 COPY --chown=polytope --from=fdb-base-final /root/.local /home/polytope/.local
-
-# COPY --chown=polytope --from=fdb-remote-base /opt/fdbremote/ /opt/fdbremote/
 
 # Copy gribjump-related artifacts, including python libraries
 # COPY --chown=polytope --from=gribjump-base-final /opt/fdb/ /opt/fdb/
