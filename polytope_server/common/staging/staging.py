@@ -19,16 +19,21 @@
 #
 
 import importlib
+import warnings
 from abc import ABC, abstractmethod
 from typing import AnyStr, Dict, Iterator, List, Tuple, Union
 
 from ..metric import MetricType
 from ..request import Status
 
+deprecated_staging_types = {
+    "s3_boto3": "s3",
+}
+
 type_to_class_map = {
     "polytope": "PolytopeStaging",
     "s3": "S3Staging",
-    "s3_boto3": "S3Staging_boto3",
+    # 's3_boto3' is no longer supported, but we keep it here for backward compatibility
 }
 
 
@@ -110,5 +115,25 @@ def create_staging(staging_config=None):
 
     staging_type = next(iter(staging_config.keys()))
 
-    StagingClass = importlib.import_module("polytope_server.common.staging." + staging_type + "_staging")
-    return getattr(StagingClass, type_to_class_map[staging_type])(staging_config[staging_type])
+    # Check if the staging type is deprecated
+    if staging_type in deprecated_staging_types:
+        new_staging_type = deprecated_staging_types[staging_type]
+        warnings.warn(
+            f"'{staging_type}' is deprecated. Please use '{new_staging_type}' instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        # Replace the deprecated key with the new one in the config
+        staging_config[new_staging_type] = staging_config.pop(staging_type)
+        staging_type = new_staging_type
+
+    # Dynamically import the correct module based on the updated staging_type
+    module_name = f"polytope_server.common.staging.{staging_type}_staging"
+    StagingModule = importlib.import_module(module_name)
+
+    # Retrieve the class name from the type_to_class_map
+    class_name = type_to_class_map[staging_type]
+    StagingClass = getattr(StagingModule, class_name)
+
+    # Instantiate and return the staging object with the appropriate config
+    return StagingClass(staging_config[staging_type])
