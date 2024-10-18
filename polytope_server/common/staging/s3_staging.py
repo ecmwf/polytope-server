@@ -56,7 +56,7 @@ class AvailableThreadPoolExecutor(ThreadPoolExecutor):
         return f
 
 
-class S3Staging_boto3(staging.Staging):
+class S3Staging(staging.Staging):
     def __init__(self, config):
         self.bucket = config.get("bucket", "default")
         self.url = config.get("url", None)
