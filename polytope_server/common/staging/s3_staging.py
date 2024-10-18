@@ -76,7 +76,7 @@ class S3Staging(staging.Staging):
 
         self.prefix = "https" if self.use_ssl else "http"
 
-        self._internal_url = f"http://{self.host}:{self.port}"
+        self._internal_url = f"{self.host}:{self.port}"
 
         # Setup Boto3 client
         self.s3_client = boto3.client(
@@ -88,7 +88,6 @@ class S3Staging(staging.Staging):
                 max_pool_connections=50,
                 s3={"addressing_style ": "path"},
             ),
-            # use_ssl=self.use_ssl,
         )
 
         # Attempt to create the bucket
