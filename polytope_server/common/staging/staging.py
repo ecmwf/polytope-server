@@ -19,7 +19,6 @@
 #
 
 import importlib
-import logging
 import warnings
 from abc import ABC, abstractmethod
 from typing import AnyStr, Dict, Iterator, List, Tuple, Union
