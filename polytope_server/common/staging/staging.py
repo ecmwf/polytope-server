@@ -19,6 +19,7 @@
 #
 
 import importlib
+import warnings
 from abc import ABC, abstractmethod
 from typing import AnyStr, Dict, Iterator, List, Tuple, Union
 
@@ -28,7 +29,7 @@ from ..request import Status
 type_to_class_map = {
     "polytope": "PolytopeStaging",
     "s3": "S3Staging",
-    "s3_boto3": "S3Staging_boto3",
+    "s3_boto3": "S3Staging",
 }
 
 
@@ -109,6 +110,10 @@ def create_staging(staging_config=None):
         staging_config = {"polytope": {}}
 
     staging_type = next(iter(staging_config.keys()))
+
+    # Deprecation warning for 's3_boto3'
+    if staging_type == "s3_boto3":
+        warnings.warn("'s3_boto3' is deprecated. Please use 's3' instead.", DeprecationWarning, stacklevel=2)
 
     StagingClass = importlib.import_module("polytope_server.common.staging." + staging_type + "_staging")
     return getattr(StagingClass, type_to_class_map[staging_type])(staging_config[staging_type])
