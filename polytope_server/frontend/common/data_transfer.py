@@ -169,7 +169,7 @@ class DataTransfer:
 
     def construct_response(self, request):
 
-        location = "../requests/{}".format(request.id)
+        location = "./{}".format(request.id)
 
         response = {}
         # Request is completed
