@@ -24,7 +24,7 @@ import logging
 import os
 
 import yaml
-from polytope.utility.exceptions import PolytopeError
+from polytope_feature.utility.exceptions import PolytopeError
 from polytope_mars.api import PolytopeMars
 
 from . import datasource
