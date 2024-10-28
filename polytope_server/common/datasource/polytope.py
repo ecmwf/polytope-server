@@ -62,10 +62,12 @@ class PolytopeDataSource(datasource.DataSource):
         # Set the "pre-path" for this request
         pre_path = {}
         for k, v in r.items():
+            v = v.split("/") if isinstance(v, str) else v
             if k in self.req_single_keys:
                 if isinstance(v, list):
-                    v = v[0]
-                pre_path[k] = v
+                    if len(v) == 1:
+                        v = v[0]
+                        pre_path[k] = v
 
         polytope_mars_config = copy.deepcopy(self.config)
         polytope_mars_config["options"]["pre_path"] = pre_path
