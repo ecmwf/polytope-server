@@ -31,11 +31,11 @@ LOCAL7 = 23
 # Mapping Python logging levels to syslog severity levels
 LOGGING_TO_SYSLOG_SEVERITY = {
     logging.CRITICAL: 2,  # LOG_CRIT
-    logging.ERROR: 3,     # LOG_ERR
-    logging.WARNING: 4,   # LOG_WARNING
-    logging.INFO: 6,      # LOG_INFO
-    logging.DEBUG: 7,     # LOG_DEBUG
-    logging.NOTSET: 7,    # LOG_DEBUG (default)
+    logging.ERROR: 3,  # LOG_ERR
+    logging.WARNING: 4,  # LOG_WARNING
+    logging.INFO: 6,  # LOG_INFO
+    logging.DEBUG: 7,  # LOG_DEBUG
+    logging.NOTSET: 7,  # LOG_DEBUG (default)
 }
 
 # Indexable fields
@@ -121,9 +121,12 @@ class LogFormatter(logging.Formatter):
         if self.mode == "logserver":
             return self.format_for_logserver(record, result)
         elif self.mode == "prettyprint":
-            return json.dumps(result, indent=2, ensure_ascii=False)  # Added ensure_ascii=False for correct Unicode display
+            return json.dumps(
+                result, indent=2, ensure_ascii=False
+            )  # Added ensure_ascii=False for correct Unicode display
         else:
             return json.dumps(result, indent=None)
+
 
 def setup(config, source_name):
     logger = logging.getLogger()
@@ -140,6 +143,6 @@ def setup(config, source_name):
     logger.setLevel(level)
 
     # Lower the logging level for pymongo
-    logging.getLogger('pymongo').setLevel(logging.WARNING)
+    logging.getLogger("pymongo").setLevel(logging.WARNING)
 
     logger.info("Logging Initialized")
