@@ -173,6 +173,7 @@ RUN set -eux && \
 # Install pyfdb \
 RUN set -eux \
     && git clone --single-branch --branch ${pyfdb_version} https://github.com/ecmwf/pyfdb.git \
+    && python -m pip install "numpy<2.0" --user\
     && python -m pip install ./pyfdb --user
 
 #######################################################
@@ -233,6 +234,7 @@ ARG pyfdb_version=0.1.0
 RUN apt update && apt install -y mars-client-cpp=${mars_client_cpp_version}
 RUN set -eux \
     && git clone --single-branch --branch ${pyfdb_version} https://github.com/ecmwf/pyfdb.git \
+    && python -m pip install "numpy<2.0" --user\
     && python -m pip install ./pyfdb --user
 
 
