@@ -108,7 +108,7 @@ ARG ecbuild_version=3.8.2
 ARG eccodes_version=2.33.1
 ARG eckit_version=1.28.0
 ARG fdb_version=5.13.2
-ARG pyfdb_version=0.0.3
+ARG pyfdb_version=0.1.0
 RUN apt update
 # COPY polytope-deployment/common/default_fdb_schema /polytope/config/fdb/default
 
@@ -229,9 +229,12 @@ FROM mars-base AS mars-base-c
 RUN apt update && apt install -y liblapack3 mars-client=${mars_client_c_version} mars-client-cloud
 
 FROM mars-base AS mars-base-cpp
+ARG pyfdb_version=0.1.0
 RUN apt update && apt install -y mars-client-cpp=${mars_client_cpp_version}
 RUN set -eux \
-    && python3 -m pip install git+https://github.com/ecmwf/pyfdb.git@master --user
+    && git clone --single-branch --branch ${pyfdb_version} https://github.com/ecmwf/pyfdb.git \
+    && python -m pip install ./pyfdb --user
+
 
 FROM blank-base AS blank-base-c
 FROM blank-base AS blank-base-cpp
@@ -341,7 +344,6 @@ COPY --chown=polytope --from=gribjump-base-final /root/.local /home/polytope/.lo
 
 # Copy python requirements
 COPY --chown=polytope --from=worker-base /root/.venv /home/polytope/.local
-
 
 # Install the server source
 COPY --chown=polytope . /polytope/
