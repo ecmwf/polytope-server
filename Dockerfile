@@ -344,6 +344,7 @@ COPY --chown=polytope --from=gribjump-base-final /root/.local /home/polytope/.lo
 
 # Copy python requirements
 COPY --chown=polytope --from=worker-base /root/.venv /home/polytope/.local
+
 # Install the server source
 COPY --chown=polytope . /polytope/
 
