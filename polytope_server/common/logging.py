@@ -40,7 +40,7 @@ LOGGING_TO_SYSLOG_SEVERITY = {
 
 # Indexable fields
 INDEXABLE_FIELDS = {"request_id": str}
-DEFAULT_LOGGING_MODE = "prettyprint"  # Changed from "json" to "prettyprint" or "console"
+DEFAULT_LOGGING_MODE = "json" 
 DEFAULT_LOGGING_LEVEL = "INFO"
 
 
@@ -120,12 +120,14 @@ class LogFormatter(logging.Formatter):
 
         if self.mode == "logserver":
             return self.format_for_logserver(record, result)
-        elif self.mode == "prettyprint":
+        if self.mode == "prettyprint":
             return json.dumps(
                 result, indent=2, ensure_ascii=False
             )  # Added ensure_ascii=False for correct Unicode display
-        else:
+        if self.mode == "json":
             return json.dumps(result, indent=None)
+        # default to json
+        return json.dumps(result, indent=None)
 
 
 def setup(config, source_name):
