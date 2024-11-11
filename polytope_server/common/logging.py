@@ -40,7 +40,7 @@ LOGGING_TO_SYSLOG_SEVERITY = {
 
 # Indexable fields
 INDEXABLE_FIELDS = {"request_id": str}
-DEFAULT_LOGGING_MODE = "json"
+DEFAULT_LOGGING_MODE = "prettyprint"
 DEFAULT_LOGGING_LEVEL = "INFO"
 
 
