@@ -23,6 +23,7 @@ import json
 from ldap3 import SUBTREE, Connection, Server
 
 from ..auth import User
+from ..caching import cache
 from . import authorization
 
 
@@ -40,6 +41,7 @@ class LDAPAuthorization(authorization.Authorization):
         self.username_attribute = config.get("username-attribute", None)
         super().__init__(name, realm, config)
 
+    @cache(lifetime=120)
     def get_roles(self, user: User) -> list:
         if user.realm != self.realm():
             raise ValueError(
