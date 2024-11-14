@@ -133,7 +133,7 @@ class PolytopeDataSource(datasource.DataSource):
             step = r["feature"]["points"][step].max()
         else:
             raise PolytopeError("Step not found in request")
-        SCHEDULE_READER.is_released(
+        SCHEDULE_READER.check_released(
             r["date"],
             r["class"],
             r["stream"],
