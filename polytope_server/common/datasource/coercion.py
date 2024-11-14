@@ -2,6 +2,7 @@ from typing import Any, Dict
 from datetime import datetime, timedelta
 import copy
 
+
 class CoercionError(Exception):
     pass
 
@@ -13,14 +14,7 @@ class Coercion:
         "step",
         "date",
     ]
-    allow_lists = [
-        "class",
-        "stream",
-        "type",
-        "expver",
-        "param"
-    ]
-        
+    allow_lists = ["class", "stream", "type", "expver", "param"]
 
     @staticmethod
     def coerce(request: Dict[str, Any]) -> Dict[str, Any]:
@@ -37,20 +31,20 @@ class Coercion:
             if isinstance(value, list):
                 # Coerce each item in the list
                 coerced_values = [Coercion.coerce_value(key, v) for v in value]
-                return '/'.join(coerced_values)
+                return "/".join(coerced_values)
             elif isinstance(value, str):
-                if '/to/' in value and key in Coercion.allow_ranges:
+                if "/to/" in value and key in Coercion.allow_ranges:
                     # Handle ranges with possible "/by/" suffix
-                    start_value, rest = value.split('/to/', 1)
+                    start_value, rest = value.split("/to/", 1)
                     if not rest:
                         raise CoercionError(f"Invalid range format for key {key}.")
 
-                    if '/by/' in rest:
-                        end_value, suffix = rest.split('/by/', 1)
-                        suffix = '/by/' + suffix  # Add back the '/by/'
+                    if "/by/" in rest:
+                        end_value, suffix = rest.split("/by/", 1)
+                        suffix = "/by/" + suffix  # Add back the '/by/'
                     else:
                         end_value = rest
-                        suffix = ''
+                        suffix = ""
 
                     # Coerce start_value and end_value
                     start_coerced = coercer_func(start_value)
@@ -60,13 +54,13 @@ class Coercion:
                 else:
                     # Single value
                     return coercer_func(value)
-            else: # not list or string
+            else:  # not list or string
                 return coercer_func(value)
         else:
             if isinstance(value, list):
                 # Join list into '/' separated string
                 coerced_values = [str(v) for v in value]
-                return '/'.join(coerced_values)
+                return "/".join(coerced_values)
             else:
                 return value
 
@@ -196,7 +190,6 @@ class Coercion:
         time_str = f"{hour:02d}{minute:02d}"
         return time_str
 
-
         # Validate hour and minute
         if not (0 <= hour <= 23):
             raise CoercionError("Hour must be between 0 and 23.")
@@ -212,18 +205,18 @@ class Coercion:
 
     @staticmethod
     def coerce_expver(value: Any) -> str:
-        
+
         # Integers accepted, converted to 4-length strings
         if isinstance(value, int):
             if 0 <= value <= 9999:
                 return f"{value:0>4d}"
             else:
                 raise CoercionError("expver integer must be between 0 and 9999 inclusive.")
-        
+
         # Strings accepted if they are convertible to integer or exactly 4 characters long
         elif isinstance(value, str):
             if value.isdigit():
-                int_value = int(value.lstrip('0') or '0')
+                int_value = int(value.lstrip("0") or "0")
                 if 0 <= int_value <= 9999:
                     return f"{int_value:0>4d}"
                 else:
@@ -232,10 +225,9 @@ class Coercion:
                 return value
             else:
                 raise CoercionError("expver string length must be 4 characters exactly.")
-        
+
         else:
             raise CoercionError("expver must be an integer or a string.")
-
 
     coercer = {
         "date": coerce_date,
@@ -243,5 +235,5 @@ class Coercion:
         "number": coerce_number,
         "param": coerce_param,
         "time": coerce_time,
-        "expver": coerce_expver
+        "expver": coerce_expver,
     }
