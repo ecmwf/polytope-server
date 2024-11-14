@@ -1,4 +1,3 @@
-import xml.etree.ElementTree as ET
 from datetime import date, timedelta
 
 import pytest
@@ -47,7 +46,7 @@ def mock_schedule_file(tmp_path):
 def test_get_release_time_and_delta_day_match(mock_schedule_file):
     reader = ScheduleReader(str(mock_schedule_file))
     release_time, delta_day = reader.get_release_time_and_delta_day(
-        cclass="od", stream="oper/wave", domain="g", time="00:00", step="0000", diss_type="an"
+        cclass="od", stream="oper/wave", domain="g", time_in="00:00", step="0000", diss_type="an"
     )
     assert release_time == "05:35:00"
     assert delta_day == 1
@@ -56,7 +55,7 @@ def test_get_release_time_and_delta_day_match(mock_schedule_file):
 def test_get_release_time_and_delta_day_no_match(mock_schedule_file):
     reader = ScheduleReader(str(mock_schedule_file))
     release_time, delta_day = reader.get_release_time_and_delta_day(
-        cclass="od", stream="nonexistent", domain="g", time="00:00", step="0000", diss_type="an"
+        cclass="od", stream="nonexistent", domain="g", time_in="00:00", step="0000", diss_type="an"
     )
     assert release_time is None
     assert delta_day is None
@@ -78,37 +77,29 @@ def test_check_released(mock_schedule_file):
 
 
 def test_find_tag():
-    xml_data = """
-    <root>
-        <product>
-            <diss_domain>g</diss_domain>
-            <domain>m</domain>
-        </product>
-    </root>
-    """
-    tree = ET.ElementTree(ET.fromstring(xml_data))
-    product = tree.find("product")
+    # Test case 1: Tag exists as 'diss_{keyword}'
+    product = {"diss_domain": "g", "domain": "m"}
     assert find_tag(product, "domain") == "g"
 
-    xml_data = """
-    <root>
-        <product>
-            <domain>m</domain>
-        </product>
-    </root>
-    """
-    tree = ET.ElementTree(ET.fromstring(xml_data))
-    product = tree.find("product")
+    # Test case 2: Tag exists as '{keyword}'
+    product = {"domain": "m"}
     assert find_tag(product, "domain") == "m"
 
-    xml_data = """
-    <root>
-        <product>
-        </product>
-    </root>
-    """
-    tree = ET.ElementTree(ET.fromstring(xml_data))
-    product = tree.find("product")
+    # Test case 3: Tag does not exist
+    product = {}
+    with pytest.raises(IOError):
+        find_tag(product, "domain")
+
+    # Test case 4: Tag exists as both 'diss_{keyword}' and '{keyword}', should return 'diss_{keyword}'
+    product = {"diss_domain": "g", "domain": "m"}
+    assert find_tag(product, "domain") == "g"
+
+    # Test case 5: Tag exists as 'diss_{keyword}' but is None
+    product = {"diss_domain": None, "domain": "m"}
+    assert find_tag(product, "domain") == "m"
+
+    # Test case 6: Tag exists as '{keyword}' but is None
+    product = {"domain": None}
     with pytest.raises(IOError):
         find_tag(product, "domain")
 
