@@ -27,8 +27,7 @@ import yaml
 from polytope_feature.utility.exceptions import PolytopeError
 from polytope_mars.api import PolytopeMars
 
-from . import datasource
-from . import coercion
+from . import coercion, datasource
 
 
 class PolytopeDataSource(datasource.DataSource):
