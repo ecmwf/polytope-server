@@ -5,7 +5,7 @@ import itertools
 import logging
 import os
 import xml.etree.ElementTree as ET
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from polytope_feature.utility.exceptions import PolytopeError
@@ -159,7 +159,7 @@ class ScheduleReader:
         return None, None
 
 
-def parse_mars_date(mars_date: str) -> datetime:
+def parse_mars_date(mars_date: str) -> date:
     """
     Parse a MARS date string into a datetime object.
     Valid formats are:
@@ -190,6 +190,30 @@ def parse_mars_date(mars_date: str) -> datetime:
             return date.today() - timedelta(days=-delta)
         except ValueError:
             raise PolytopeError(f"Invalid date format: {mars_date}")
+
+
+def parse_mars_time(mars_time: str) -> time:
+    """
+    Parse a MARS time string into a time object.
+    Valid formats are: %H%M, %H:%M, %H
+
+    Parameters
+    ----------
+    mars_time : str
+        The time string to parse.
+
+    Returns
+    -------
+    time
+        The parsed time object.
+    """
+    time_formats = ["%H%M", "%H:%M", "%H"]
+    for time_format in time_formats:
+        try:
+            return datetime.strptime(mars_time, time_format).time()
+        except ValueError:
+            continue
+    raise ValueError(f"Invalid time format: {mars_time}")
 
 
 def split_mars_param(param: str) -> List[str]:
