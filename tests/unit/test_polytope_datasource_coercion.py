@@ -1,4 +1,5 @@
 import pytest
+
 from polytope_server.common.datasource.coercion import Coercion, CoercionError
 
 
