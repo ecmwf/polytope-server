@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, time, timedelta
 
 import pytest
 from polytope_feature.utility.exceptions import PolytopeError
@@ -7,6 +7,7 @@ from polytope_server.common.schedule import (
     ScheduleReader,
     find_tag,
     parse_mars_date,
+    parse_mars_time,
     split_mars_param,
 )
 
@@ -118,3 +119,19 @@ def test_parse_mars_date():
     pytest.raises(PolytopeError, parse_mars_date, "1")
     pytest.raises(PolytopeError, parse_mars_date, "2023274")
     pytest.raises(PolytopeError, parse_mars_date, "January")
+
+
+def test_parse_mars_time():
+    assert parse_mars_time("1230") == time(12, 30)
+    assert parse_mars_time("0000") == time(0, 0)
+    assert parse_mars_time("12:30") == time(12, 30)
+    assert parse_mars_time("12") == time(12, 0)
+
+    with pytest.raises(ValueError):
+        parse_mars_time("invalid_time")
+
+    with pytest.raises(ValueError):
+        parse_mars_time("25:00")
+
+    with pytest.raises(ValueError):
+        parse_mars_time("123456")

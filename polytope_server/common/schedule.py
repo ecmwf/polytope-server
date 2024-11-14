@@ -62,7 +62,7 @@ class ScheduleReader:
         """
         # Get only latest production date and time, last step
         date_in = datetime.strftime(max(map(parse_mars_date, split_mars_param(date_in))), "%Y-%m-%d")
-        time_in = max(map(lambda x: datetime.strptime(x, "%H:%M").time(), split_mars_param(time_in))).strftime("%H:%M")
+        time_in = max(map(parse_mars_time, split_mars_param(time_in))).strftime("%H:%M")
         step = str(max(map(int, split_mars_param(step))))
 
         cclass = split_mars_param(cclass)
@@ -195,7 +195,7 @@ def parse_mars_date(mars_date: str) -> date:
 def parse_mars_time(mars_time: str) -> time:
     """
     Parse a MARS time string into a time object.
-    Valid formats are: %H%M, %H:%M, %H
+    Valid formats are: %H, %H%M, %H:%M
 
     Parameters
     ----------
@@ -207,7 +207,7 @@ def parse_mars_time(mars_time: str) -> time:
     time
         The parsed time object.
     """
-    time_formats = ["%H%M", "%H:%M", "%H"]
+    time_formats = ["%H", "%H%M", "%H:%M"]
     for time_format in time_formats:
         try:
             return datetime.strptime(mars_time, time_format).time()
