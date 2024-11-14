@@ -27,6 +27,7 @@ import yaml
 from polytope_feature.utility.exceptions import PolytopeError
 from polytope_mars.api import PolytopeMars
 
+from ..schedule import SCHEDULE_READER
 from . import datasource
 
 
@@ -119,6 +120,28 @@ class PolytopeDataSource(datasource.DataSource):
                     raise Exception("Expected only one value for key {}".format(k))
                 elif len(v) == 0:
                     raise Exception("Expected a value for key {}".format(k))
+
+        # Check data released
+        # Check if step is in feature
+        if "step" in r:
+            step = r["step"]
+        elif r["feature"]["type"] == "timeseries":
+            step = r["feature"]["range"]["end"]
+        elif r["feature"]["type"] == "trajectory" and "step" in r["feature"]["axes"]:
+            # get index of step in axes, then get max step from trajectory
+            step = r["feature"]["axes"].index("step")
+            step = r["feature"]["points"][step].max()
+        else:
+            raise PolytopeError("Step not found in request")
+        SCHEDULE_READER.is_released(
+            r["date"],
+            r["class"],
+            r["stream"],
+            r.get("domain", "g"),
+            r["time"],
+            step,
+            r["type"],
+        )
 
     def destroy(self, request) -> None:
         pass
