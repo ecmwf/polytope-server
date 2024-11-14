@@ -140,7 +140,7 @@ class PolytopeDataSource(datasource.DataSource):
                 r["stream"],
                 r.get("domain", "g"),
                 r["time"],
-                step,
+                str(step),
                 r["type"],
             )
 
