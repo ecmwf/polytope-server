@@ -1,64 +1,65 @@
 import pytest
-from  polytope_server.common.datasource.coercion import Coercion, CoercionError
+from polytope_server.common.datasource.coercion import Coercion, CoercionError
+
 
 def test_coerce():
 
     # mars-like
     request_mars = {
         "class": "od",
-        "stream" : "enfo",
-        "type" : "pf",
-        "date" : "2024-11-14",
-        "time" : 12,
-        "levtype" : "sfc",
-        "expver" : 1, 
-        "domain" : "g",
-        "param" : "164/166/167/169",
-        "number" : "1/to/33",
+        "stream": "enfo",
+        "type": "pf",
+        "date": "2024-11-14",
+        "time": 12,
+        "levtype": "sfc",
+        "expver": 1,
+        "domain": "g",
+        "param": "164/166/167/169",
+        "number": "1/to/33",
         "step": "0/to/360/by/6",
-        "feature" : { # dict ignored
-            "foo" : "bar",
+        "feature": {  # dict ignored
+            "foo": "bar",
         },
     }
 
     # json-like
     request_json = {
         "class": "od",
-        "stream" : ["enfo"],
-        "type" : "pf",
-        "date" : "2024-11-14",
-        "time" : 12,
-        "levtype" : "sfc",
-        "expver" : [1], 
-        "domain" : "g",
-        "param" : [ 164, 166, 167, "169" ],
-        "number" : "1/to/33",
+        "stream": ["enfo"],
+        "type": "pf",
+        "date": "2024-11-14",
+        "time": 12,
+        "levtype": "sfc",
+        "expver": [1],
+        "domain": "g",
+        "param": [164, 166, 167, "169"],
+        "number": "1/to/33",
         "step": "0/to/360/by/6",
-        "feature" : { # dict ignored
-            "foo" : "bar",
+        "feature": {  # dict ignored
+            "foo": "bar",
         },
     }
 
     request_out = {
         "class": "od",
-        "stream" : "enfo",
-        "type" : "pf",
-        "date" : "20241114",
-        "time" : "1200",
-        "levtype" : "sfc",
-        "expver" : "0001", 
-        "domain" : "g",
-        "param" : "164/166/167/169",
-        "number" : "1/to/33",
+        "stream": "enfo",
+        "type": "pf",
+        "date": "20241114",
+        "time": "1200",
+        "levtype": "sfc",
+        "expver": "0001",
+        "domain": "g",
+        "param": "164/166/167/169",
+        "number": "1/to/33",
         "step": "0/to/360/by/6",
-        "feature" : { # dict ignored
-            "foo" : "bar",
+        "feature": {  # dict ignored
+            "foo": "bar",
         },
     }
 
     assert Coercion.coerce(request_mars) == request_out
     assert Coercion.coerce(request_json) == request_out
-    
+
 
 def test_date_coercion():
 
@@ -110,12 +111,7 @@ def test_step_coercion():
         ("0", "0"),
     ]
 
-    fail = [
-        -1,
-        1.0,
-        [],
-        {}
-    ]
+    fail = [-1, 1.0, [], {}]
 
     for value, expected in ok:
         result = Coercion.coerce_step(value)
@@ -126,23 +122,12 @@ def test_step_coercion():
             Coercion.coerce_step(value)
 
 
-
 def test_number_coercion():
 
     # Should accept integer or string, converted to string
-    ok = [
-        (2, "2"),
-        ("1", "1"),
-        (10, "10")
-    ]
+    ok = [(2, "2"), ("1", "1"), (10, "10")]
 
-    fail = [
-        -1,
-        0,
-        1.0,
-        [],
-        {}
-    ]
+    fail = [-1, 0, 1.0, [], {}]
 
     for value, expected in ok:
         result = Coercion.coerce_number(value)
@@ -153,10 +138,8 @@ def test_number_coercion():
             Coercion.coerce_number(value)
 
 
-
-
 def test_param_coercion():
-    
+
     # OK, but should be converted
     ok = [
         (100, "100"),
@@ -164,23 +147,19 @@ def test_param_coercion():
         ("100.200", "100.200"),
         ("2t", "2t"),
     ]
-    fail = [
-        [],
-        {},
-        1.0
-    ]
+    fail = [[], {}, 1.0]
 
     for value, expected in ok:
         result = Coercion.coerce_param(value)
         assert result == expected
-    
+
     for value in fail:
         with pytest.raises(CoercionError):
             Coercion.coerce_param(value)
 
 
 def test_time_coercion():
-    
+
     # OK, but should be converted
     ok = [
         ("1200", "1200"),
@@ -206,12 +185,10 @@ def test_time_coercion():
     for value, expected in ok:
         result = Coercion.coerce_time(value)
         assert result == expected
-    
+
     for value in fail:
         with pytest.raises(CoercionError):
             Coercion.coerce_time(value)
-
-    
 
 
 def test_expver_coercion():
@@ -230,15 +207,15 @@ def test_expver_coercion():
     assert Coercion.coerce_expver("abcd") == "abcd"
     assert Coercion.coerce_expver(10) == "0010"
     assert Coercion.coerce_expver("1abc") == "1abc"
-    
-    with pytest.raises(CoercionError):
-        Coercion.coerce_expver("abcde") # too long
-    
-    with pytest.raises(CoercionError):
-        Coercion.coerce_expver("abc") # too short
 
     with pytest.raises(CoercionError):
-        Coercion.coerce_expver(1.0) # float
+        Coercion.coerce_expver("abcde")  # too long
+
+    with pytest.raises(CoercionError):
+        Coercion.coerce_expver("abc")  # too short
+
+    with pytest.raises(CoercionError):
+        Coercion.coerce_expver(1.0)  # float
 
     with pytest.raises(CoercionError):
         Coercion.coerce_expver([])
@@ -247,5 +224,4 @@ def test_expver_coercion():
         Coercion.coerce_expver({})
 
     with pytest.raises(CoercionError):
-        Coercion.coerce_expver(['a', 'b', 'c', 'd'])
-
+        Coercion.coerce_expver(["a", "b", "c", "d"])

@@ -58,10 +58,9 @@ class PolytopeDataSource(datasource.DataSource):
 
     def retrieve(self, request):
         r = yaml.safe_load(request.user_request)
-        
+
         r = coercion.Coercion.coerce(r)
 
-        
         logging.info(r)
 
         # Set the "pre-path" for this request
