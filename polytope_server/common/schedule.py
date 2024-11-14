@@ -63,7 +63,7 @@ class ScheduleReader:
         # Get only latest production date and time, last step
         date_in = datetime.strftime(max(map(parse_mars_date, split_mars_param(date_in))), "%Y-%m-%d")
         time_in = max(map(parse_mars_time, split_mars_param(time_in))).strftime("%H:%M")
-        step = str(max(map(int, split_mars_param(step))))
+        step = str(max(map(int, split_mars_param(step)))).zfill(4)
 
         cclass = split_mars_param(cclass)
         stream = split_mars_param(stream)
