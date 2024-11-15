@@ -110,10 +110,7 @@ class S3Staging(staging.Staging):
 
     def create(self, name, data, content_type):
 
-        type_extension_map = {
-            "application/x-grib": "grib",
-            "application/prs.coverage+json" : "covjson"
-        }
+        type_extension_map = {"application/x-grib": "grib", "application/prs.coverage+json": "covjson"}
 
         # seaweedfs does not store content-type, so we need to use an extension to communicate mime-type
         name = name + "." + type_extension_map.get(content_type, ".bin")
