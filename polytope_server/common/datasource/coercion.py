@@ -14,7 +14,16 @@ class Coercion:
         "step",
         "date",
     ]
-    allow_lists = ["class", "stream", "type", "expver", "param"]
+    allow_lists = [
+        "class",
+        "stream",
+        "type",
+        "expver",
+        "param",
+        "number",
+        "date",
+        "step"
+        ]
 
     @staticmethod
     def coerce(request: Dict[str, Any]) -> Dict[str, Any]:
@@ -33,6 +42,7 @@ class Coercion:
                 coerced_values = [Coercion.coerce_value(key, v) for v in value]
                 return "/".join(coerced_values)
             elif isinstance(value, str):
+
                 if "/to/" in value and key in Coercion.allow_ranges:
                     # Handle ranges with possible "/by/" suffix
                     start_value, rest = value.split("/to/", 1)
@@ -51,6 +61,10 @@ class Coercion:
                     end_coerced = coercer_func(end_value)
 
                     return f"{start_coerced}/to/{end_coerced}{suffix}"
+                elif "/" in value and key in Coercion.allow_lists:
+                    # Handle lists
+                    coerced_values = [coercer_func(v) for v in value.split("/")]
+                    return "/".join(coerced_values)
                 else:
                     # Single value
                     return coercer_func(value)
