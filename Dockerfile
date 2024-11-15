@@ -201,7 +201,7 @@ RUN set -eux \
     ls -R /opt
 
 RUN set -eux \
-    && git clone --single-branch --branch develop https://github.com/ecmwf/gribjump.git
+    && git clone --single-branch --branch ${gribjump_version} https://github.com/ecmwf/gribjump.git
 # Install pygribjump
 RUN set -eux \
     && cd /gribjump \
