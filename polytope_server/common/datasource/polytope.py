@@ -28,7 +28,7 @@ from polytope_feature.utility.exceptions import PolytopeError
 from polytope_mars.api import PolytopeMars
 
 from ..schedule import SCHEDULE_READER
-from . import datasource
+from . import coercion, datasource
 
 
 class PolytopeDataSource(datasource.DataSource):
@@ -58,6 +58,9 @@ class PolytopeDataSource(datasource.DataSource):
 
     def retrieve(self, request):
         r = yaml.safe_load(request.user_request)
+
+        r = coercion.Coercion.coerce(r)
+
         logging.info(r)
 
         # Set the "pre-path" for this request
@@ -96,6 +99,8 @@ class PolytopeDataSource(datasource.DataSource):
     def match(self, request):
 
         r = yaml.safe_load(request.user_request) or {}
+
+        r = coercion.Coercion.coerce(r)
 
         # Check that there is a feature specified in the request
         if "feature" not in r:
