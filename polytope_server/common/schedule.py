@@ -21,6 +21,10 @@ class ScheduleReader:
     def load_products(self, schedule_file: str) -> List[Dict[str, Any]]:
         tree = ET.parse(schedule_file)
         products = tree.findall("product")
+        mars_only = tree.findall("mars_only")
+        if mars_only is not None:
+            for mars in mars_only:
+                products.extend(mars.findall("product"))
         product_dicts = []
         for product in products:
             product_dict = {child.tag: child.text for child in product}
@@ -28,7 +32,7 @@ class ScheduleReader:
         return product_dicts
 
     def check_released(
-        self, date_in: str, cclass: str, stream: str, domain: str, time_in: str, step: str, diss_type: str
+        self, date_in: str, cclass: str, stream: str, domain: str, time_in: str, step: str, ttype: str
     ) -> None:
         """
         Checks if the data is released or not. Accepts arrays and ranges.
@@ -48,7 +52,7 @@ class ScheduleReader:
             production time of the data, i.e., 00:00 | 06:00 | 12:00 | 18:00
         step : string
             data time step, e.g., 0 | 1 | .. | 360 | ..
-        diss_type : string
+        ttype : string
             data type, e.g., fc | an | ..
 
         Returns
@@ -68,9 +72,9 @@ class ScheduleReader:
         cclass = split_mars_param(cclass)
         stream = split_mars_param(stream)
         domain = split_mars_param(domain)
-        diss_type = split_mars_param(diss_type)
+        ttype = split_mars_param(ttype)
 
-        for c, s, dom, diss in itertools.product(cclass, stream, domain, diss_type):
+        for c, s, dom, diss in itertools.product(cclass, stream, domain, ttype):
             release_time, delta_day = self.get_release_time_and_delta_day(c, s, dom, time_in, step, diss)
             if release_time is None:
                 raise PolytopeError(
@@ -90,7 +94,7 @@ class ScheduleReader:
                 )
 
     def get_release_time_and_delta_day(
-        self, cclass: str, stream: str, domain: str, time_in: str, step: str, diss_type: str
+        self, cclass: str, stream: str, domain: str, time_in: str, step: str, ttype: str
     ) -> Tuple[Optional[str], Optional[int]]:
         """
         Retrieves dissemination time from the schedule for respective stream etc.
@@ -110,7 +114,7 @@ class ScheduleReader:
             production time of the data, i.e., 00:00 | 06:00 | 12:00 | 18:00
         step : string
             data time step, e.g., 0 | 1 | .. | 360 | ..
-        diss_type : string
+        ttype : string
             data type, e.g., fc | an | ..
 
         Returns
@@ -124,17 +128,24 @@ class ScheduleReader:
         def matches_criteria(product: Dict[str, Any]) -> bool:
             if product.get("class") != cclass:
                 return False
-            if stream.lower() not in product.get("stream", "").lower():
+            if stream.lower() not in product["stream"].lower():
                 return False
-            if domain.lower() != find_tag(product, "domain"):
+            if time_in != product.get("time"):
                 return False
-            if product.get("time") != time_in:
-                return False
-            if find_tag(product, "diss_type") != diss_type.lower():
-                return False
-            if cclass != "ai":
-                tmp_step = find_tag(product, "step")
-                istep = int(tmp_step) if tmp_step is not None else tmp_step
+            prod_domain = find_tag(product, "domain")
+            if prod_domain:
+                if domain.lower() != find_tag(product, "domain"):
+                    return False
+            prod_type = find_tag(product, "type")
+            if prod_type:
+                if ttype.lower() not in find_tag(product, "type"):
+                    return False
+            if cclass == "ai":
+                return True
+
+            prod_step = find_tag(product, "step")
+            if prod_step:
+                istep = int(prod_step) if prod_step is not None else prod_step
                 if istep != int(step):
                     return False
             return True
@@ -146,14 +157,14 @@ class ScheduleReader:
                 logging.info(
                     "release time: {} with delta_day: {} found for class: {}, stream: {}, type: {}, "
                     "domain: {}, time: {}, step: {}".format(
-                        release_time, delta_day, cclass, stream, diss_type, domain, time_in, step
+                        release_time, delta_day, cclass, stream, ttype, domain, time_in, step
                     )
                 )
                 return release_time, delta_day
 
         logging.warning(
             "No release time found for class{}, stream: {}, type: {}, domain: {}, time: {}, step: {}".format(
-                cclass, stream, diss_type, domain, time_in, step
+                cclass, stream, ttype, domain, time_in, step
             )
         )
         return None, None
@@ -256,11 +267,9 @@ def find_tag(product: Dict[str, Any], keyword: str) -> Optional[str]:
     Optional[str]
         The text of the tag if found, otherwise None.
     """
-    tag = product.get(f"diss_{keyword}")
+    tag = product.get(keyword)
     if tag is None:
-        tag = product.get(keyword)
-    if tag is None:
-        raise IOError(f"Couldn't find forecast {keyword} as either 'diss_{keyword}' or '{keyword}'")
+        tag = product.get(f"diss_{keyword}")
     return tag
 
 

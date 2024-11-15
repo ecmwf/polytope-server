@@ -5,7 +5,6 @@ from polytope_feature.utility.exceptions import PolytopeError
 
 from polytope_server.common.schedule import (
     ScheduleReader,
-    find_tag,
     parse_mars_date,
     parse_mars_time,
     split_mars_param,
@@ -27,6 +26,15 @@ def mock_schedule_file(tmp_path):
             <release_time>05:35:00</release_time>
             <release_delta_day>1</release_delta_day>
         </product>
+        <mars_only>
+            <product>
+                <class>od</class>
+                <stream>enfo/waef</stream>
+                <time>00:00</time>
+                <release_time>06:40:00</release_time>
+                <release_delta_day>1</release_delta_day>
+            </product>
+        </mars_only>
         <product>
             <class>ai</class>
             <stream>oper</stream>
@@ -47,16 +55,21 @@ def mock_schedule_file(tmp_path):
 def test_get_release_time_and_delta_day_match(mock_schedule_file):
     reader = ScheduleReader(str(mock_schedule_file))
     release_time, delta_day = reader.get_release_time_and_delta_day(
-        cclass="od", stream="oper/wave", domain="g", time_in="00:00", step="0000", diss_type="an"
+        cclass="od", stream="oper/wave", domain="g", time_in="00:00", step="0000", ttype="an"
     )
     assert release_time == "05:35:00"
+    assert delta_day == 1
+    release_time, delta_day = reader.get_release_time_and_delta_day(
+        cclass="od", stream="enfo", domain="g", time_in="00:00", step="0360", ttype="pf"
+    )
+    assert release_time == "06:40:00"
     assert delta_day == 1
 
 
 def test_get_release_time_and_delta_day_no_match(mock_schedule_file):
     reader = ScheduleReader(str(mock_schedule_file))
     release_time, delta_day = reader.get_release_time_and_delta_day(
-        cclass="od", stream="nonexistent", domain="g", time_in="00:00", step="0000", diss_type="an"
+        cclass="od", stream="nonexistent", domain="g", time_in="00:00", step="0000", ttype="an"
     )
     assert release_time is None
     assert delta_day is None
@@ -73,36 +86,12 @@ def test_check_released(mock_schedule_file):
     diss_type = "an"
     reader.check_released(date_in, cclass, stream, domain, time_in, step, diss_type)
 
+    stream = "enfo"
+    step = "0100"
+    reader.check_released(date_in, cclass, stream, domain, time_in, step, diss_type)
+
     with pytest.raises(Exception):
         reader.check_released(date_in, "od", "nonexistent", "g", "00:00", "0000", "an")
-
-
-def test_find_tag():
-    # Test case 1: Tag exists as 'diss_{keyword}'
-    product = {"diss_domain": "g", "domain": "m"}
-    assert find_tag(product, "domain") == "g"
-
-    # Test case 2: Tag exists as '{keyword}'
-    product = {"domain": "m"}
-    assert find_tag(product, "domain") == "m"
-
-    # Test case 3: Tag does not exist
-    product = {}
-    with pytest.raises(IOError):
-        find_tag(product, "domain")
-
-    # Test case 4: Tag exists as both 'diss_{keyword}' and '{keyword}', should return 'diss_{keyword}'
-    product = {"diss_domain": "g", "domain": "m"}
-    assert find_tag(product, "domain") == "g"
-
-    # Test case 5: Tag exists as 'diss_{keyword}' but is None
-    product = {"diss_domain": None, "domain": "m"}
-    assert find_tag(product, "domain") == "m"
-
-    # Test case 6: Tag exists as '{keyword}' but is None
-    product = {"domain": None}
-    with pytest.raises(IOError):
-        find_tag(product, "domain")
 
 
 def test_split_mars_param():
@@ -135,3 +124,18 @@ def test_parse_mars_time():
 
     with pytest.raises(ValueError):
         parse_mars_time("123456")
+
+
+# needs to schedule.xml file included
+
+# from polytope_server.common.schedule import SCHEDULE_READER
+
+# def test_integration_test():
+#     date_in = "20241113"
+#     cclass = "od"
+#     stream = "enfo"
+#     domain = "g"
+#     time_in = "00:00"
+#     step = "0360"
+#     diss_type = "cf"
+#     SCHEDULE_READER.check_released(date_in, cclass, stream, domain, time_in, step, diss_type)
