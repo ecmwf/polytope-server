@@ -10,8 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from polytope_feature.utility.exceptions import PolytopeError
 
-script_dir = os.path.dirname(os.path.abspath(__file__))
-schedule_file_path = os.path.join(script_dir, "schedule.xml")
+schedule_file_path = os.path.join("/etc/polytope_schedule/schedule.xml")
 
 
 class ScheduleReader:
@@ -273,8 +272,8 @@ def find_tag(product: Dict[str, Any], keyword: str) -> Optional[str]:
     return tag
 
 
-if os.path.exists(schedule_file_path):
-    SCHEDULE_READER = ScheduleReader(schedule_file_path)
-else:
-    logging.warning("schedule.xml file not found. No schedule rules will be applied.")
-    SCHEDULE_READER = None
+if os.environ["SCHEDULE_ENABLED"].lower() == "true":
+    if os.path.exists(schedule_file_path):
+        SCHEDULE_READER = ScheduleReader(schedule_file_path)
+    else:
+        raise FileNotFoundError(f"Schedule is enabled, but schedule file not found at {schedule_file_path}")
