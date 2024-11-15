@@ -14,16 +14,7 @@ class Coercion:
         "step",
         "date",
     ]
-    allow_lists = [
-        "class",
-        "stream",
-        "type",
-        "expver",
-        "param",
-        "number",
-        "date",
-        "step"
-        ]
+    allow_lists = ["class", "stream", "type", "expver", "param", "number", "date", "step"]
 
     @staticmethod
     def coerce(request: Dict[str, Any]) -> Dict[str, Any]:
