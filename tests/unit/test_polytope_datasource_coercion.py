@@ -16,7 +16,7 @@ def test_coerce():
         "expver": 1,
         "domain": "g",
         "param": "164/166/167/169",
-        "number": "1/to/33",
+        "number": "1/2",
         "step": "0/to/360/by/6",
         "feature": {  # dict ignored
             "foo": "bar",
@@ -34,7 +34,7 @@ def test_coerce():
         "expver": [1],
         "domain": "g",
         "param": [164, 166, 167, "169"],
-        "number": "1/to/33",
+        "number": "1/2",
         "step": "0/to/360/by/6",
         "feature": {  # dict ignored
             "foo": "bar",
@@ -51,7 +51,7 @@ def test_coerce():
         "expver": "0001",
         "domain": "g",
         "param": "164/166/167/169",
-        "number": "1/to/33",
+        "number": "1/2",
         "step": "0/to/360/by/6",
         "feature": {  # dict ignored
             "foo": "bar",
