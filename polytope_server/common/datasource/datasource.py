@@ -85,7 +85,7 @@ class DataSource(ABC):
                 pass
             else:
                 request.user_message += "Skipping datasource: {}\n".format(
-                    repr(e)
+                    str(e)
                 )
             tb = traceback.format_exception(None, e, e.__traceback__)
             logging.info(tb)
