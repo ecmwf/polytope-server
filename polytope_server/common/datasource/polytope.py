@@ -186,5 +186,5 @@ class PolytopeDataSource(datasource.DataSource):
         request = copy.deepcopy(request)
         for k, v in self.defaults.items():
             if k not in request:
-                r[k] = v
+                request[k] = v
         return request
