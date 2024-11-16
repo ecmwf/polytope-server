@@ -81,6 +81,8 @@ def test_date_coercion():
         (yyyy_mm_dd, yyyymmdd),
         (-1, yesterday),
         (0, today),
+        ("-1", yesterday),
+        ("0", today),
     ]
 
     fail = [

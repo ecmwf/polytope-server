@@ -71,28 +71,35 @@ class Coercion:
 
     @staticmethod
     def coerce_date(value: Any) -> str:
-        if isinstance(value, int):
-            if value > 0:
-                # Assume it's a date in YYYYMMDD format
-                date_str = str(value)
+        try:
+            # Attempt to convert the value to an integer
+            int_value = int(value)
+            if int_value > 0:
+                # Positive integers are assumed to be dates in YYYYMMDD format
+                date_str = str(int_value)
                 try:
                     datetime.strptime(date_str, "%Y%m%d")
                     return date_str
                 except ValueError:
                     raise CoercionError("Invalid date format, expected YYYYMMDD or YYYY-MM-DD.")
             else:
-                # Negative or zero values: relative days from today
-                target_date = datetime.today() + timedelta(days=value)
+                # Zero or negative integers represent relative days from today
+                target_date = datetime.today() + timedelta(days=int_value)
                 return target_date.strftime("%Y%m%d")
-        elif isinstance(value, str):
+        except (ValueError, TypeError):
+            # The value is not an integer or cannot be converted to an integer
+            pass
+
+        if isinstance(value, str):
+            value_stripped = value.strip()
             # Try parsing as YYYYMMDD
             try:
-                datetime.strptime(value, "%Y%m%d")
-                return value
+                datetime.strptime(value_stripped, "%Y%m%d")
+                return value_stripped
             except ValueError:
                 # Try parsing as YYYY-MM-DD
                 try:
-                    date_obj = datetime.strptime(value, "%Y-%m-%d")
+                    date_obj = datetime.strptime(value_stripped, "%Y-%m-%d")
                     return date_obj.strftime("%Y%m%d")
                 except ValueError:
                     raise CoercionError("Invalid date format, expected YYYYMMDD or YYYY-MM-DD.")
