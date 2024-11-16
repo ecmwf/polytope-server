@@ -41,6 +41,7 @@ class PolytopeDataSource(datasource.DataSource):
         self.patch_rules = config.get("patch", {})
         self.defaults = config.get("defaults", {})
         self.extra_required_role = config.get("extra_required_role", {})
+        self.obey_schedule = config.get("obey_schedule", False)
         self.output = None
 
         # Create a temp file to store gribjump config
@@ -148,7 +149,7 @@ class PolytopeDataSource(datasource.DataSource):
                     raise Exception("Expected a value for key {}".format(k))
 
         # Check data released
-        if SCHEDULE_READER is not None:
+        if SCHEDULE_READER is not None and self.obey_schedule:
             # Check if step is in feature
             if "step" in r:
                 step = r["step"]
