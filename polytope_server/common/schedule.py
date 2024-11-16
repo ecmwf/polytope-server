@@ -274,7 +274,7 @@ def find_tag(product: Dict[str, Any], keyword: str) -> Optional[str]:
     return tag
 
 
-if os.environ["SCHEDULE_ENABLED"].lower() == "true":
+if os.environ.get("SCHEDULE_ENABLED", "false").lower() == "true":
     if os.path.exists(schedule_file_path):
         SCHEDULE_READER = ScheduleReader(schedule_file_path)
     else:
