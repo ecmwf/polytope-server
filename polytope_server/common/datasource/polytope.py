@@ -183,7 +183,7 @@ class PolytopeDataSource(datasource.DataSource):
         return "application/prs.coverage+json"
 
     def apply_defaults(self, request):
-        request = copy.deepcopy(requests)
+        request = copy.deepcopy(request)
         for k, v in self.defaults.items():
             if k not in request:
                 r[k] = v
