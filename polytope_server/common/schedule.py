@@ -88,9 +88,10 @@ class ScheduleReader:
             )
             if datetime.now() < release_date:
                 raise PolytopeError(
-                    f"Data not yet released for date: {date_in}, class: {c}, stream: {s}, "
-                    f"domain: {dom}, time: {time_in}, step: {step}, type {diss}. "
-                    f"Release time is {release_date}."
+                    f"Data not released yet. Release time is {release_date}."
+                    # f"Data not yet released for date: {date_in}, class: {c}, stream: {s}, "
+                    # f"domain: {dom}, time: {time_in}, step: {step}, type {diss}. "
+                    # f"Release time is {release_date}."
                 )
 
     def get_release_time_and_delta_day(
