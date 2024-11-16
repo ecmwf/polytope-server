@@ -39,6 +39,8 @@ class PolytopeDataSource(datasource.DataSource):
         self.match_rules = config.get("match", {})
         self.req_single_keys = config.get("options", {}).pop("req_single_keys", [])
         self.patch_rules = config.get("patch", {})
+        self.defaults = config.get("defaults", {})
+        self.extra_required_role = config.get("extra_required_role", {})
         self.output = None
 
         # Create a temp file to store gribjump config
@@ -56,10 +58,24 @@ class PolytopeDataSource(datasource.DataSource):
     def archive(self, request):
         raise NotImplementedError()
 
+    def check_extra_roles(self, request) -> bool:
+
+        # if the user has any of the extra roles, they are allowed
+        realm = request.user.realm
+        req_extra_roles = self.extra_required_role.get(realm, [])
+        logging.info(f"Checking for user roles in required extra roles: {req_extra_roles}")
+        logging.info(f"User roles: {request.user.roles}")
+        if any(role in req_extra_roles for role in request.user.roles):
+            return True
+        else:
+            return False
+
     def retrieve(self, request):
         r = yaml.safe_load(request.user_request)
 
         r = coercion.Coercion.coerce(r)
+
+        r = self.apply_defaults(r)
 
         logging.info(r)
 
@@ -98,9 +114,14 @@ class PolytopeDataSource(datasource.DataSource):
 
     def match(self, request):
 
+        if not self.check_extra_roles(request):
+            raise Exception("Not authorized to access this data.")
+
         r = yaml.safe_load(request.user_request) or {}
 
         r = coercion.Coercion.coerce(r)
+
+        r = self.apply_defaults(r)
 
         # Check that there is a feature specified in the request
         if "feature" not in r:
@@ -154,3 +175,10 @@ class PolytopeDataSource(datasource.DataSource):
 
     def mime_type(self) -> str:
         return "application/prs.coverage+json"
+
+    def apply_defaults(self, request):
+        request = copy.deepcopy(requests)
+        for k, v in self.defaults.items():
+            if k not in request:
+                r[k] = v
+        return request
