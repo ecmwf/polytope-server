@@ -131,18 +131,18 @@ class PolytopeDataSource(datasource.DataSource):
 
         # Check that there is a feature specified in the request
         if "feature" not in r:
-            raise Exception("Request does not contain expected key 'feature'")
+            raise Exception("Request does not contain key 'feature'")
 
         for k, v in self.match_rules.items():
             # Check that all required keys exist
             if k not in r:
-                raise Exception("Request does not contain expected key {}".format(k))
+                raise Exception("Request does not contain key {}".format(k))
 
             # ... and check the value of other keys
             v = [v] if isinstance(v, str) else v
 
             if r[k] not in v:
-                raise Exception("got {} : {}, but expected one of {}".format(k, r[k], v))
+                raise Exception("got {}: {}, not one of {}".format(k, r[k], v))
 
         # Check that there is only one value if required
         for k, v in r.items():
