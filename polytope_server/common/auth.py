@@ -132,15 +132,15 @@ class AuthHelper:
     def is_authorized(self, user, roles):
         """Checks if the user has any of the provided roles"""
 
-        # roles can be a single value; convert to a list
-        if not isinstance(roles, (tuple, list, set)):
-            roles = [roles]
-
         # roles can be a dict of realm:[roles] mapping; find the relevant realm.
         if isinstance(roles, dict):
             if user.realm not in roles:
                 raise ForbiddenRequest("Not authorized to access this resource.")
             roles = roles[user.realm]
+
+        # roles can be a single value; convert to a list
+        if not isinstance(roles, (tuple, list, set)):
+            roles = [roles]
 
         for required_role in roles:
             if required_role in user.roles:
