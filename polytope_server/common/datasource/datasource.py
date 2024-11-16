@@ -88,9 +88,7 @@ class DataSource(ABC):
             if hasattr(self, "silent_match") and self.silent_match:
                 pass
             else:
-                request.user_message += "Skipping datasource {}: {}\n".format(
-                    self.repr(), str(e)
-                )
+                request.user_message += "Skipping datasource {}: {}\n".format(self.repr(), str(e))
             tb = traceback.format_exception(None, e, e.__traceback__)
             logging.info(tb)
 
