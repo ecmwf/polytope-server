@@ -64,8 +64,13 @@ class PolytopeDataSource(datasource.DataSource):
         # if the user has any of the extra roles, they are allowed
         realm = request.user.realm
         req_extra_roles = self.extra_required_role.get(realm, [])
+
+        if len(req_extra_roles) == 0:
+            return True
+
         logging.info(f"Checking for user roles in required extra roles: {req_extra_roles}")
         logging.info(f"User roles: {request.user.roles}")
+
         if any(role in req_extra_roles for role in request.user.roles):
             return True
         else:
