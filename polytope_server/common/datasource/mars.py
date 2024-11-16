@@ -83,6 +83,9 @@ class MARSDataSource(datasource.DataSource):
     def get_type(self):
         return self.type
 
+    def repr(self):
+        return self.config.get("repr", "mars")
+
     def match(self, request):
 
         r = yaml.safe_load(request.user_request) or {}

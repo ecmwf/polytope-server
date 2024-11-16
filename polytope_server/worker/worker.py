@@ -256,9 +256,9 @@ class Worker:
                 datasource.destroy(request)
 
         if datasource is None:
-            request.user_message += "Failed to process request."
+            # request.user_message += "Failed to process request."
             logging.info(request.user_message, extra={"request_id": id})
-            raise Exception("Failed to process request.")
+            raise Exception("Request was not accepted by any datasources.")
         else:
             request.user_message += "Success"
 

@@ -27,7 +27,8 @@ import yaml
 from polytope_feature.utility.exceptions import PolytopeError
 from polytope_mars.api import PolytopeMars
 
-from . import datasource
+from ..schedule import SCHEDULE_READER
+from . import coercion, datasource
 
 
 class PolytopeDataSource(datasource.DataSource):
@@ -38,6 +39,9 @@ class PolytopeDataSource(datasource.DataSource):
         self.match_rules = config.get("match", {})
         self.req_single_keys = config.get("options", {}).pop("req_single_keys", [])
         self.patch_rules = config.get("patch", {})
+        self.defaults = config.get("defaults", {})
+        self.extra_required_role = config.get("extra_required_role", {})
+        self.obey_schedule = config.get("obey_schedule", False)
         self.output = None
 
         # Create a temp file to store gribjump config
@@ -55,30 +59,44 @@ class PolytopeDataSource(datasource.DataSource):
     def archive(self, request):
         raise NotImplementedError()
 
+    def check_extra_roles(self, request) -> bool:
+
+        # if the user has any of the extra roles, they are allowed
+        realm = request.user.realm
+        req_extra_roles = self.extra_required_role.get(realm, [])
+
+        if len(req_extra_roles) == 0:
+            return True
+
+        logging.info(f"Checking for user roles in required extra roles: {req_extra_roles}")
+        logging.info(f"User roles: {request.user.roles}")
+
+        if any(role in req_extra_roles for role in request.user.roles):
+            return True
+        else:
+            return False
+
     def retrieve(self, request):
         r = yaml.safe_load(request.user_request)
+
+        r = coercion.Coercion.coerce(r)
+
+        r = self.apply_defaults(r)
+
         logging.info(r)
 
         # Set the "pre-path" for this request
         pre_path = {}
         for k, v in r.items():
+            v = v.split("/") if isinstance(v, str) else v
             if k in self.req_single_keys:
                 if isinstance(v, list):
-                    v = v[0]
-                pre_path[k] = v
+                    if len(v) == 1:
+                        v = v[0]
+                        pre_path[k] = v
 
         polytope_mars_config = copy.deepcopy(self.config)
         polytope_mars_config["options"]["pre_path"] = pre_path
-
-        transforms = []
-        for transform in polytope_mars_config["options"]["axis_config"]:
-            if transform["axis_name"] in r.keys():
-                logging.info("Found axis {} in request".format(transform["axis_name"]))
-                transforms.append(transform)
-            if transform["axis_name"] in ("latitude", "longitude", "values"):
-                transforms.append(transform)
-
-        polytope_mars_config["options"]["axis_config"] = transforms
 
         polytope_mars = PolytopeMars(
             polytope_mars_config,
@@ -102,22 +120,29 @@ class PolytopeDataSource(datasource.DataSource):
 
     def match(self, request):
 
+        if not self.check_extra_roles(request):
+            raise Exception("Not authorized to access this data.")
+
         r = yaml.safe_load(request.user_request) or {}
+
+        r = coercion.Coercion.coerce(r)
+
+        r = self.apply_defaults(r)
 
         # Check that there is a feature specified in the request
         if "feature" not in r:
-            raise Exception("Request does not contain expected key 'feature'")
+            raise Exception("Request does not contain key 'feature'")
 
         for k, v in self.match_rules.items():
             # Check that all required keys exist
             if k not in r:
-                raise Exception("Request does not contain expected key {}".format(k))
+                raise Exception("Request does not contain key {}".format(k))
 
             # ... and check the value of other keys
             v = [v] if isinstance(v, str) else v
 
             if r[k] not in v:
-                raise Exception("got {} : {}, but expected one of {}".format(k, r[k], v))
+                raise Exception("got {}: {}, not one of {}".format(k, r[k], v))
 
         # Check that there is only one value if required
         for k, v in r.items():
@@ -128,8 +153,41 @@ class PolytopeDataSource(datasource.DataSource):
                 elif len(v) == 0:
                     raise Exception("Expected a value for key {}".format(k))
 
+        # Check data released
+        if SCHEDULE_READER is not None and self.obey_schedule:
+            # Check if step is in feature
+            if "step" in r:
+                step = r["step"]
+            elif r["feature"]["type"] == "timeseries":
+                step = r["feature"]["range"]["end"]
+            elif r["feature"]["type"] == "trajectory" and "step" in r["feature"]["axes"]:
+                # get index of step in axes, then get max step from trajectory
+                step = r["feature"]["axes"].index("step")
+                step = r["feature"]["points"][step].max()
+            else:
+                raise PolytopeError("Step not found in request")
+            SCHEDULE_READER.check_released(
+                r["date"],
+                r["class"],
+                r["stream"],
+                r.get("domain", "g"),
+                r["time"],
+                str(step),
+                r["type"],
+            )
+
     def destroy(self, request) -> None:
         pass
 
+    def repr(self):
+        return self.config.get("repr", "polytope")
+
     def mime_type(self) -> str:
         return "application/prs.coverage+json"
+
+    def apply_defaults(self, request):
+        request = copy.deepcopy(request)
+        for k, v in self.defaults.items():
+            if k not in request:
+                request[k] = v
+        return request

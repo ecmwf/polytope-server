@@ -40,6 +40,9 @@ class EchoDataSource(datasource.DataSource):
             self.data = request.user_request
         return True
 
+    def repr(self):
+        return self.config.get("repr", "echo")
+
     def result(self, request):
         yield self.data
 

@@ -41,6 +41,9 @@ class IonBeamAPI:
         kwargs["headers"] = kwargs.get("headers", {}) | {"Accept": "application/octet-stream"}
         return self.get(path, **kwargs)
 
+    def repr(self):
+        return self.config.get("repr", "ionbeam")
+
     def get_json(self, path, **kwargs):
         return self.get(path, **kwargs).json()
 
