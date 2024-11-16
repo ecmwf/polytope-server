@@ -84,8 +84,8 @@ class DataSource(ABC):
             if hasattr(self, "silent_match") and self.silent_match:
                 pass
             else:
-                request.user_message += "Skipping datasource {} due to match error: {}\n".format(
-                    self.get_type(), repr(e)
+                request.user_message += "Skipping datasource: {}\n".format(
+                    repr(e)
                 )
             tb = traceback.format_exception(None, e, e.__traceback__)
             logging.info(tb)
@@ -97,7 +97,7 @@ class DataSource(ABC):
             datasource_role_rules = self.config.get("roles", None)
             if datasource_role_rules is not None:
                 if not any(role in request.user.roles for role in datasource_role_rules.get(request.user.realm, [])):
-                    request.user_message += "Skipping datasource {}. User is forbidden.\n".format(self.get_type())
+                    request.user_message += "Skipping datasource {}. User is not authorised.\n".format(self.get_type())
                     return False
 
         # Retrieve/Archive/etc.
@@ -111,7 +111,7 @@ class DataSource(ABC):
                 raise NotImplementedError()
 
         except NotImplementedError as e:
-            request.user_message += "Skipping datasource {}. Verb {} not available: {}\n".format(
+            request.user_message += "Skipping datasource {}. Method '{}' not available: {}\n".format(
                 self.get_type(), request.verb, repr(e)
             )
             return False
