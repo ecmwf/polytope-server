@@ -179,6 +179,9 @@ class PolytopeDataSource(datasource.DataSource):
     def destroy(self, request) -> None:
         pass
 
+    def repr(self):
+        return self.config.get("repr", "polytope")
+
     def mime_type(self) -> str:
         return "application/prs.coverage+json"
 

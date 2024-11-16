@@ -126,6 +126,9 @@ class FDBDataSource(datasource.DataSource):
         self.output = self.fdb.retrieve(r)
         return True
 
+    def repr(self):
+        return self.config.get("repr", "fdb")
+
     def result(self, request):
 
         if not self.output:
