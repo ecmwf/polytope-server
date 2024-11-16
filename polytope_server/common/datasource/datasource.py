@@ -50,6 +50,10 @@ class DataSource(ABC):
         """Checks if the request matches the datasource, raises on failure"""
         raise NotImplementedError()
 
+    def repr(self) -> str:
+        """Returns a string name of the datasource, presented to the user on error"""
+        raise NotImplementedError
+
     def get_type(self) -> str:
         """Returns a string stating the type of this object (e.g. fdb, mars, echo)"""
         raise NotImplementedError()
@@ -84,8 +88,8 @@ class DataSource(ABC):
             if hasattr(self, "silent_match") and self.silent_match:
                 pass
             else:
-                request.user_message += "Skipping datasource: {}\n".format(
-                    str(e)
+                request.user_message += "Skipping datasource {}: {}\n".format(
+                    self.repr(), str(e)
                 )
             tb = traceback.format_exception(None, e, e.__traceback__)
             logging.info(tb)
@@ -97,7 +101,7 @@ class DataSource(ABC):
             datasource_role_rules = self.config.get("roles", None)
             if datasource_role_rules is not None:
                 if not any(role in request.user.roles for role in datasource_role_rules.get(request.user.realm, [])):
-                    request.user_message += "Skipping datasource: user is not authorised.\n".format(self.get_type())
+                    request.user_message += "Skipping datasource {}: user is not authorised.\n".format(self.repr())
                     return False
 
         # Retrieve/Archive/etc.
@@ -111,8 +115,8 @@ class DataSource(ABC):
                 raise NotImplementedError()
 
         except NotImplementedError as e:
-            request.user_message += "Skipping datasource: method '{}' not available: {}\n".format(
-                self.get_type(), request.verb, repr(e)
+            request.user_message += "Skipping datasource {}: method '{}' not available: {}\n".format(
+                self.repr(), request.verb, repr(e)
             )
             return False
 

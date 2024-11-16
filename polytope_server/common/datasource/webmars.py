@@ -88,6 +88,9 @@ class WebMARSDataSource(datasource.DataSource):
     def destroy(self, request) -> None:
         pass
 
+    def repr(self):
+        return self.config.get("repr", "webmars")
+
     def mime_type(self) -> str:
         return "application/x-grib"
 

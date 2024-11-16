@@ -44,6 +44,9 @@ class FederatedDataSource(datasource.DataSource):
     def get_type(self):
         return self.type
 
+    def repr(self):
+        return self.config.get("repr", "federated")
+
     def archive(self, request):
 
         url = "/".join(

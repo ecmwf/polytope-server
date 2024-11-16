@@ -45,6 +45,9 @@ class RaiseDataSource(datasource.DataSource):
     def match(self, request):
         return
 
+    def repr(self):
+        return self.config.get("repr", "raise")
+
     def destroy(self, request) -> None:
         pass
 
