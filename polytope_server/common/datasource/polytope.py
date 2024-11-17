@@ -140,7 +140,6 @@ class PolytopeDataSource(datasource.DataSource):
         if "feature" not in r:
             raise Exception("request does not contain key 'feature'")
 
-
         # Check that there is only one value if required
         for k, v in r.items():
             if k in self.req_single_keys:
@@ -149,7 +148,6 @@ class PolytopeDataSource(datasource.DataSource):
                     raise Exception("key '{}' cannot accept a list yet. This feature is planned.".format(k))
                 elif len(v) == 0:
                     raise Exception("Expected a value for key {}".format(k))
-
 
         for k, v in self.match_rules.items():
             # Check that all required keys exist
@@ -164,7 +162,6 @@ class PolytopeDataSource(datasource.DataSource):
             for req_value in req_value_list:
                 if req_value not in v:
                     raise Exception("got {}: {}, not one of {}".format(k, req_value, v))
-
 
         # Downstream expects MARS-like format of request
         for key in r:
