@@ -134,14 +134,27 @@ class PolytopeDataSource(datasource.DataSource):
 
         r = self.apply_defaults(r)
 
+        logging.info("Coerced and patched request: {}".format(r))
+
         # Check that there is a feature specified in the request
         if "feature" not in r:
             raise Exception("request does not contain key 'feature'")
 
+
+        # Check that there is only one value if required
+        for k, v in r.items():
+            if k in self.req_single_keys:
+                v = [v] if isinstance(v, str) else v
+                if len(v) > 1:
+                    raise Exception("key '{}' cannot accept a list yet. This feature is planned.".format(k))
+                elif len(v) == 0:
+                    raise Exception("Expected a value for key {}".format(k))
+
+
         for k, v in self.match_rules.items():
             # Check that all required keys exist
             if k not in r:
-                raise Exception("request does not contain key {}".format(k))
+                raise Exception("request does not contain key '{}'".format(k))
 
             # ... and check the value of other keys
             v = [v] if isinstance(v, str) else v
@@ -150,16 +163,8 @@ class PolytopeDataSource(datasource.DataSource):
             req_value_list = r[k] if isinstance(r[k], list) else [r[k]]
             for req_value in req_value_list:
                 if req_value not in v:
-                    raise Exception("got {}: {}, not one of {}".format(k, r[k], v))
+                    raise Exception("got {}: {}, not one of {}".format(k, req_value, v))
 
-        # Check that there is only one value if required
-        for k, v in r.items():
-            if k in self.req_single_keys:
-                v = [v] if isinstance(v, str) else v
-                if len(v) > 1:
-                    raise Exception("Expected only one value for key {}".format(k))
-                elif len(v) == 0:
-                    raise Exception("Expected a value for key {}".format(k))
 
         # Downstream expects MARS-like format of request
         for key in r:
@@ -178,7 +183,7 @@ class PolytopeDataSource(datasource.DataSource):
                 step = r["feature"]["axes"].index("step")
                 step = r["feature"]["points"][step].max()
             else:
-                raise PolytopeError("Step not found in request")
+                raise PolytopeError("'step' not found in request")
             SCHEDULE_READER.check_released(
                 r["date"],
                 r["class"],
