@@ -160,7 +160,7 @@ class PolytopeDataSource(datasource.DataSource):
                     raise Exception("Expected only one value for key {}".format(k))
                 elif len(v) == 0:
                     raise Exception("Expected a value for key {}".format(k))
-        
+
         # Downstream expects MARS-like format of request
         for key in r:
             if isinstance(r[key], list):
