@@ -101,6 +101,56 @@ async def all_requests(
     return response_message
 
 
+@router.get("/telemetry/v1/requests/user/{user_id}", summary="Get all requests for a user")
+async def user_requests(
+    user_id: str,
+    status: Optional[StatusEnum] = Query(None, description="Filter requests by status"),
+    id: Optional[str] = Query(None, description="Filter requests by ID"),
+    request_store=Depends(get_request_store),
+    metric_store=Depends(get_metric_store),
+):
+    active_statuses = {
+        StatusEnum.ACTIVE: [
+            StatusEnum.WAITING,
+            StatusEnum.UPLOADING,
+            StatusEnum.QUEUED,
+            StatusEnum.PROCESSING,
+        ]
+    }
+
+    # TODO: implement more robust user fetching
+    # Now we just fetch all requests and filter by user_id
+    # Fetch all requests for the user
+    user_requests = request_store.get_requests(id=id)
+
+    # Apply status filtering
+    if status == StatusEnum.ACTIVE:
+        statuses = active_statuses[status]
+    elif status:
+        statuses = [status]
+    else:
+        statuses = []
+
+    if statuses:
+        user_requests = [request for request in user_requests if request.status in statuses]
+
+    filtered_requests = []
+    for request in user_requests:
+        if request.serialize()["user"]["id"] == user_id:
+            filtered_requests.append(request)
+
+    # Serialize and enrich with metrics
+    response_message = []
+    for request in filtered_requests:
+        serialized_request = request.serialize()
+        metrics = metric_store.get_metrics(type=MetricType.REQUEST_STATUS_CHANGE, request_id=user_id)
+        serialized_request["metrics"] = [metric.serialize() for metric in metrics]
+        serialized_request["user"]["details"] = "**hidden**"
+        response_message.append(serialized_request)
+
+    return response_message
+
+
 @router.get("/telemetry/v1/workers", summary="Get active workers")
 async def active_workers(
     uuid: Optional[str] = Query(None, description="Filter workers by UUID"),
