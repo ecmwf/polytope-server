@@ -34,10 +34,10 @@ components:
       scheme: bearer
       type: http
     ecmwfKey:
-      type: apiKey
-      name: Authorization
-      in: header
       description: Enter your ECMWF credentials as **EmailKey &lt;email&gt;&#58;&lt;apikey&gt;**
+      in: header
+      name: Authorization
+      type: apiKey
 
   schemas:
     collections:
@@ -101,6 +101,7 @@ components:
 paths:
   /api/v1/auth/keys:
     post:
+      tags: [Polytope]
       description: Post user details to receive a key
       summary: null
       security:
@@ -140,6 +141,7 @@ paths:
 
   /api/v1/collections:
     get:
+      tags: [Polytope]
       description: Get collections
       summary: null
       responses:
@@ -187,6 +189,7 @@ paths:
 
   /api/v1/downloads/{request_id}:
     get:
+      tags: [Polytope]
       description: download data
       summary: null
       parameters:
@@ -237,6 +240,7 @@ paths:
 
   /api/v1/requests:
     get:
+      tags: [Polytope]
       description: Get user requests
       summary: null
       responses:
@@ -274,6 +278,7 @@ paths:
 
   /api/v1/requests/{collection_or_request_id}:
     get:
+      tags: [Polytope]
       description: Get specific request or list of requests on collection
       summary: null
       parameters:
@@ -373,6 +378,7 @@ paths:
                     example: Not authorized to access this resource
 
     post:
+      tags: [Polytope]
       description: Get specific request or list of requests on collection
       summary: null
       parameters:
@@ -471,6 +477,7 @@ paths:
                     example: Not authorized to access this resource
 
     delete:
+      tags: [Polytope]
       description: Get specific request or list of requests on collection
       summary: null
       parameters:
@@ -524,6 +531,7 @@ paths:
 
   /api/v1/test:
     get:
+      tags: [Polytope]
       description: Test if the server is alive
       summary: null
       security: []
@@ -541,6 +549,7 @@ paths:
 
   /api/v1/user:
     get:
+      tags: [Polytope]
       description: Get user information
       summary: null
       responses:
