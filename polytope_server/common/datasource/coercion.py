@@ -65,7 +65,7 @@ class Coercion:
             if isinstance(value, list):
                 # Join list into '/' separated string
                 coerced_values = [str(v) for v in value]
-                return "/".join(coerced_values)
+                return coerced_values
             else:
                 return value
 
