@@ -24,6 +24,7 @@ info:
   description: REST API for ECMWF data retrieval
   title: Polytope
   version: "1.0.0"
+
 components:
   securitySchemes:
     basicAuth:
@@ -33,10 +34,11 @@ components:
       scheme: bearer
       type: http
     ecmwfKey:
-      description: Enter your ECMWF credentials as **EmailKey &lt;email&gt;&#58;&lt;apikey&gt;**
-      in: header
-      name: Authorization
       type: apiKey
+      name: Authorization
+      in: header
+      description: Enter your ECMWF credentials as **EmailKey &lt;email&gt;&#58;&lt;apikey&gt;**
+
   schemas:
     collections:
       type: array
@@ -44,40 +46,42 @@ components:
         type: string
         enum:
           - collection1
+
     request:
       type: object
       properties:
         collection:
+          type: string
           example: collection1
-          type: string
         content_length:
+          type: string
           example: "0"
-          type: string
         id:
+          type: string
           example: "1"
-          type: string
         log:
-          example: an error message
           type: string
+          example: an error message
         md5:
           type: string
         status:
+          type: string
           example: queued
-          type: string
         timestamp:
+          type: string
           example: "123"
-          type: string
         url:
-          example: http://localhost:32003/123
           type: string
+          example: http://localhost:32003/123
         user_request:
           type: string
         username:
+          type: string
           example: admin
-          type: string
         verb:
-          example: retrieve
           type: string
+          example: retrieve
+
     response:
       type: object
       properties:
@@ -93,24 +97,14 @@ components:
           type: string
         verb:
           type: string
-    unauthenticated:
-      type: object
-      description: Missing authorization token or Key unrecognized. Please authenticate
-      properties:
-        message:
-          type: string
-          example: Missing authorization token. Please authenticate
-    unauthorized:
-      type: object
-      description: Not authorized to access this resource
-      properties:
-        message:
-          type: string
-          example: Not authorized to access this resource
+
 paths:
   /api/v1/auth/keys:
     post:
       description: Post user details to receive a key
+      summary: null
+      security:
+        - basicAuth: []
       responses:
         '200':
           description: Key with expiry date
@@ -119,9 +113,9 @@ paths:
               schema:
                 type: object
                 properties:
-                  expires:
-                    type: string
                   key:
+                    type: string
+                  expires:
                     type: string
         '400':
           description: Missing authorization header
@@ -131,19 +125,23 @@ paths:
                 type: object
                 properties:
                   message:
-                    example: Missing authorization header
                     type: string
+                    example: Missing authorization header
         '401':
           description: Missing authorization token or Key unrecognized. Please authenticate
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/unauthenticated'
-      security:
-        - basicAuth: []
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Missing authorization token. Please authenticate
+
   /api/v1/collections:
     get:
       description: Get collections
+      summary: null
       responses:
         '200':
           description: List of collections
@@ -164,23 +162,33 @@ paths:
                 type: object
                 properties:
                   message:
-                    example: No user information found for token
                     type: string
+                    example: No user information found for token
         '401':
           description: Missing authorization token or Key unrecognized. Please authenticate
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/unauthenticated'
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Missing authorization token. Please authenticate
         '403':
           description: Not authorized to access this resource
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/unauthorized'
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Not authorized to access this resource
+
   /api/v1/downloads/{request_id}:
     get:
-      description: Download data
+      description: download data
+      summary: null
       parameters:
         - name: request_id
           in: path
@@ -190,7 +198,7 @@ paths:
             type: string
       responses:
         '200':
-          description: Data
+          description: data
           content:
             application/x-grib:
               schema:
@@ -204,23 +212,33 @@ paths:
                 type: object
                 properties:
                   message:
-                    example: Request 123 not ready for download yet
                     type: string
+                    example: Request 123 not ready for download yet
         '401':
           description: Missing authorization token or Key unrecognized. Please authenticate
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/unauthenticated'
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Missing authorization token. Please authenticate
         '403':
           description: Not authorized to access this resource
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/unauthorized'
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Not authorized to access this resource
+
   /api/v1/requests:
     get:
       description: Get user requests
+      summary: null
       responses:
         '200':
           description: List of requests
@@ -238,26 +256,36 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/unauthenticated'
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Missing authorization token. Please authenticate
         '403':
           description: Not authorized to access this resource
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/unauthorized'
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Not authorized to access this resource
+
   /api/v1/requests/{collection_or_request_id}:
     get:
       description: Get specific request or list of requests on collection
+      summary: null
       parameters:
         - name: collection_or_request_id
           in: path
           required: true
-          description: The id of the request or collection to retrieve
+          description: The id of the request to retrieve
           schema:
             type: string
       responses:
         '200':
-          description: List of collection requests OR data
+          description: List of collection requests OR data (click Media type for more information)
           content:
             application/json:
               schema:
@@ -267,20 +295,184 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/request'
+            application/x-grib:
+              schema:
+                type: string
+                format: binary
+                example: Binary ECMWF data
+        '202':
+          description: Specific request
+          headers:
+            content-length:
+              schema:
+                type: string
+                example: "10"
+            content-type:
+              schema:
+                type: string
+                example: application/json
+            location:
+              schema:
+                type: string
+                example: http://127.0.0.1:32002/api/requests/123
+            retry-after:
+              schema:
+                type: string
+                example: "5"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Request queued
+                  status:
+                    type: string
+                    example: queued
+        '303':
+          description: redirects
+          headers:
+            location:
+              description: URI where the client can refresh the expired token.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/response'
+        '400':
+          description: No user information found for token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: No user information found for token
         '401':
           description: Missing authorization token or Key unrecognized. Please authenticate
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/unauthenticated'
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Missing authorization token. Please authenticate
         '403':
           description: Not authorized to access this resource
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/unauthorized'
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Not authorized to access this resource
+
+    post:
+      description: Get specific request or list of requests on collection
+      summary: null
+      parameters:
+        - name: collection_or_request_id
+          in: path
+          required: true
+          description: The collection to post the request to
+          schema:
+            type: string
+            example: collection1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - verb
+                - request
+              properties:
+                verb:
+                  type: string
+                  example: retrieve
+                request:
+                  type: string
+                  example:
+                    class: od
+                    date: '20200101'
+                    expver: '1'
+                    levelist: '500'
+                    levtype: pl
+                    param: t
+                    step: '0'
+                    stream: oper
+                    time: '00'
+                    type: fc
+      responses:
+        '202':
+          description: Message and status of submitted request
+          headers:
+            content-length:
+              schema:
+                type: string
+                example: "10"
+            content-type:
+              schema:
+                type: string
+                example: application/json
+            location:
+              schema:
+                type: string
+                example: http://127.0.0.1:32002/api/requests/123
+            retry-after:
+              schema:
+                type: string
+                example: "5"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Request queued
+                  status:
+                    type: string
+                    example: queued
+        '400':
+          description: No user information found for token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: No user information found for token
+        '401':
+          description: Missing authorization token or Key unrecognized. Please authenticate
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Missing authorization token. Please authenticate
+        '403':
+          description: Not authorized to access this resource
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Not authorized to access this resource
+
     delete:
-      description: Delete specific request
+      description: Get specific request or list of requests on collection
+      summary: null
       parameters:
         - name: collection_or_request_id
           in: path
@@ -290,7 +482,7 @@ paths:
             type: string
       responses:
         '200':
-          description: Successfully deleted request
+          description: Delete specific request
           content:
             application/json:
               schema:
@@ -314,16 +506,27 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/unauthenticated'
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Missing authorization token. Please authenticate
         '403':
           description: Not authorized to access this resource
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/unauthorized'
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Not authorized to access this resource
+
   /api/v1/test:
     get:
       description: Test if the server is alive
+      summary: null
+      security: []
       responses:
         '200':
           description: String saying server is alive
@@ -333,12 +536,60 @@ paths:
                 type: object
                 properties:
                   message:
-                    example: Polytope server is alive
                     type: string
-tags:
-  - name: Polytope
-    description: REST API for ECMWF data retrieval
+                    example: Polytope server is alive
+
+  /api/v1/user:
+    get:
+      description: Get user information
+      summary: null
+      responses:
+        '200':
+          description: User information
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  live requests:
+                    type: string
+                    example: "1"
+        '400':
+          description: No user information found for token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: No user information found for token
+        '401':
+          description: Missing authorization token or Key unrecognized. Please authenticate
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Missing authorization token. Please authenticate
+        '403':
+          description: Not authorized to access this resource
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Not authorized to access this resource
+
 security:
   - bearerAuth: []
   - basicAuth: []
   - ecmwfKey: []
+
+tags:
+  - name: Polytope
+    description: REST API for ECMWF data retrieval
