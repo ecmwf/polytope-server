@@ -111,17 +111,14 @@ class Broker:
             user_active_requests = sum(
                 qr.collection == request.collection and qr.user == request.user for qr in active_requests
             )
+            user_limit_message = (
+                f"User {request.user} has {user_active_requests} of {limit} "
+                f"active requests in collection {request.collection}"
+            )
+            logging.info(user_limit_message)
             if user_active_requests >= limit:
-                logging.debug(
-                    f"User {request.user} has {user_active_requests} of {limit} "
-                    f"active requests in collection {request.collection}"
-                )
                 return False
             else:
-                logging.debug(
-                    f"User {request.user} has {user_active_requests} of {limit} "
-                    f"active requests in collection {request.collection}"
-                )
                 return True
 
         # Allow if no limits are exceeded
