@@ -31,7 +31,7 @@ class Coercion:
             if isinstance(value, list):
                 # Coerce each item in the list
                 coerced_values = [Coercion.coerce_value(key, v) for v in value]
-                return "/".join(coerced_values)
+                return coerced_values
             elif isinstance(value, str):
 
                 if "/to/" in value and key in Coercion.allow_ranges:
@@ -55,7 +55,7 @@ class Coercion:
                 elif "/" in value and key in Coercion.allow_lists:
                     # Handle lists
                     coerced_values = [coercer_func(v) for v in value.split("/")]
-                    return "/".join(coerced_values)
+                    return coerced_values
                 else:
                     # Single value
                     return coercer_func(value)
@@ -65,7 +65,7 @@ class Coercion:
             if isinstance(value, list):
                 # Join list into '/' separated string
                 coerced_values = [str(v) for v in value]
-                return "/".join(coerced_values)
+                return coerced_values
             else:
                 return value
 

@@ -4,6 +4,7 @@ from __future__ import print_function
 import itertools
 import logging
 import os
+import xml
 import xml.etree.ElementTree as ET
 from datetime import date, datetime, time, timedelta
 from typing import Any, Dict, List, Optional, Tuple
@@ -276,6 +277,9 @@ def find_tag(product: Dict[str, Any], keyword: str) -> Optional[str]:
 
 if os.environ.get("SCHEDULE_ENABLED", "false").lower() == "true":
     if os.path.exists(schedule_file_path):
-        SCHEDULE_READER = ScheduleReader(schedule_file_path)
+        try:
+            SCHEDULE_READER = ScheduleReader(schedule_file_path)
+        except xml.etree.ElementTree.ParseError as e:
+            raise IOError(f"Schedule enabled but failed to parse schedule file at {schedule_file_path}: {e}")
     else:
         raise FileNotFoundError(f"Schedule is enabled, but schedule file not found at {schedule_file_path}")
