@@ -163,6 +163,9 @@ class Worker:
                                 extra={"request_id": id},
                             )
                             self.request.set_status(Status.FAILED)
+                            self.request.user_message = (
+                                "Request was not processed due to an unexpected worker crash. Please contact support."
+                            )
                             self.request_store.update_request(self.request)
                             self.update_status("idle")
                             self.queue.ack(self.queue_msg)

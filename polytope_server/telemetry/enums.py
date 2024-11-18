@@ -18,4 +18,14 @@
 # does it submit to any jurisdiction.
 #
 
-"""This is Polytope's Telemetry module."""
+from enum import Enum
+
+
+class StatusEnum(str, Enum):
+    WAITING = "waiting"
+    UPLOADING = "uploading"
+    QUEUED = "queued"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    ACTIVE = "active"

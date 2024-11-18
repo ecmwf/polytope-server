@@ -18,4 +18,17 @@
 # does it submit to any jurisdiction.
 #
 
-"""This is Polytope's Telemetry module."""
+from ..common.config import ConfigParser
+
+
+class Config:
+    def __init__(self):
+        self.config = ConfigParser().read()
+
+    def get(self, section: str, default=None):
+        """Retrieve a section from the config or return a default value."""
+        return self.config.get(section, default)
+
+
+# Create a global config instance
+config = Config()

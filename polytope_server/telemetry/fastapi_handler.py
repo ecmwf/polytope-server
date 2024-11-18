@@ -18,4 +18,20 @@
 # does it submit to any jurisdiction.
 #
 
-"""This is Polytope's Telemetry module."""
+from fastapi import FastAPI
+
+from .handlers import router
+
+
+class FastAPIHandler:
+
+    def create_handler(
+        self,
+        request_store,
+        staging,
+        auth,
+        metric_store,
+    ):
+        app = FastAPI(title="Polytope Telemetry Service")
+        app.include_router(router)
+        return app

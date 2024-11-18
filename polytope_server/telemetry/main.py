@@ -20,14 +20,20 @@
 
 from ..common import logging
 from ..common.caching import cache
-from ..common.config import ConfigParser
-from .telemetry import Telemetry
+from .config import config
+from .telemetry_service import TelemetryService
 
-config = ConfigParser().read()
-
+# Set up logging
 logging.setup(config, source_name=__name__)
 
+# Initialize caching
 cache.init(config.get("caching", {}))
 
-f = Telemetry(config)
-f.run()
+# Initialize the telemetry service
+telemetry_service = TelemetryService(config)
+
+# Create the FastAPI application
+app = telemetry_service.create_app()
+
+if __name__ == "__main__":
+    telemetry_service.run(app)
