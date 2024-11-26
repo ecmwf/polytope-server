@@ -72,6 +72,8 @@ class AuthHelper:
     def authenticate(self, auth_header) -> User:
         """Returns authenticated User, or raises UnauthorizedRequest"""
 
+        logging.info("Authenticating user with header:\n{}".format(auth_header))
+
         headers = auth_header.split(",")
         if len(headers) == 0:
             raise UnauthorizedRequest(
@@ -125,7 +127,7 @@ class AuthHelper:
                 user.roles = list(set.union(set(user.roles), set(authorizer.get_roles(user))))
                 user.attributes.update(authorizer.get_attributes(user))
 
-        logging.debug("User authenticated:\n {}".format(user.serialize()))
+        logging.info("User authenticated:\n {}".format(user.serialize()))
 
         return user
 
