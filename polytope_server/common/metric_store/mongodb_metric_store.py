@@ -45,6 +45,9 @@ class MongoMetricStore(MetricStore):
         uri = config.get("uri", "mongodb://localhost:27017")
         metric_collection = config.get("collection", "metrics")
 
+        log_level = config.get("log_level", logging.WARNING)
+        logging.getLogger("pymongo").setLevel(log_level)
+
         username = config.get("username")
         password = config.get("password")
 
