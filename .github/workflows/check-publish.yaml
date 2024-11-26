@@ -24,7 +24,13 @@ jobs:
       - run: isort --check .
       - run: black --check .
       - run: flake8 .
-
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - run: pip install -r requirements.txt
+      - run: pytest tests/unit
   docs:
     if: |
       (github.event_name == 'push' && contains(github.ref, 'refs/tags/')) || 
