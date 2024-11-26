@@ -26,7 +26,7 @@ jobs:
       - run: flake8 .
   unit-tests:
     name: Unit tests
-    runs-on: ubuntu-latest
+    runs-on: python:3.11-bookworm
     steps:
       - uses: actions/checkout@v2
       - run: pip install .
