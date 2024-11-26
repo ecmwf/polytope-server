@@ -59,8 +59,6 @@ class FIFO:
         if buffer != b"":
             yield buffer
 
-        # self.delete()
-
     def delete(self):
         """Close and delete FIFO"""
         logging.info("Deleting FIFO.")
