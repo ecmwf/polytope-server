@@ -52,7 +52,7 @@ class GarbageCollector:
             )
         )
 
-        self.request_store = create_request_store(config.get("request_store"))
+        self.request_store = create_request_store(config.get("request_store"), config.get("metric_store"))
         self.staging = create_staging(config.get("staging"))
 
     def run(self):
