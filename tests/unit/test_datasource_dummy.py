@@ -71,4 +71,4 @@ class TestDataSourcedummy:
         for x in self.ds.result(self.request):
             data += x
         assert len(data) == 13
-        assert data == b"polytopepolyt"
+        assert data == b"xxxxxxxxxxxxx"

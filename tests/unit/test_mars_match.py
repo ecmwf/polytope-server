@@ -40,7 +40,7 @@ class TestMarsDataSource:
 
         self.mars_config = {
             "name": "mars",
-            "match": {"class": ["od"], "stream": ["oper", "enfo"], "date": {"months": -1}},
+            "match": {"class": ["od"], "stream": ["oper", "enfo"], "date": "> 30d"},
         }
         self.request = Request()
         self.request.user_request = yaml.dump(
@@ -50,7 +50,7 @@ class TestMarsDataSource:
                 "param": "165.128/166.128/167.128",
                 "step": "0",
                 "time": "00",
-                "date": "20200225/to/20200227/by/3",
+                "date": "-32",
                 "type": "an",
                 "class": "od",
                 "expver": "0001",

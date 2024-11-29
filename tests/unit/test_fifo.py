@@ -29,9 +29,9 @@ class Test:
     def setup_method(self, method):
         pass
 
-    def test_fifo(self):
+    def test_fifo(self, tmp_path):
 
-        fifo = FIFO("test-fifo")
+        fifo = FIFO("test-fifo", str(tmp_path))
 
         assert not fifo.ready()
 
@@ -62,9 +62,10 @@ class Test:
 
         assert count == 6
 
-        # the fifo has been deleted because we finished reading it
+        fifo.delete()
+        # the fifo has been deleted
         with pytest.raises(OSError):
-            assert fifo.ready()
+            assert not fifo.ready()
 
     def read_all(self, fifo, result):
         while not fifo.ready():
@@ -72,11 +73,11 @@ class Test:
         for x in fifo.data():
             result[0] += x
 
-    def test_fifo_buffered(self):
+    def test_fifo_buffered(self, tmp_path):
 
         # write 1 MiB of data, we need two threads
 
-        fifo = FIFO("test-fifo")
+        fifo = FIFO("test-fifo", str(tmp_path))
 
         data = [b""]
 
