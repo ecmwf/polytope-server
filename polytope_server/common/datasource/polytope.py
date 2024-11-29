@@ -170,26 +170,7 @@ class PolytopeDataSource(datasource.DataSource):
 
         # Check data released
         if SCHEDULE_READER is not None and self.obey_schedule:
-            # Check if step is in feature
-            if "step" in r:
-                step = r["step"]
-            elif r["feature"]["type"] == "timeseries":
-                step = r["feature"]["range"]["end"]
-            elif r["feature"]["type"] == "trajectory" and "step" in r["feature"]["axes"]:
-                # get index of step in axes, then get max step from trajectory
-                step = r["feature"]["axes"].index("step")
-                step = r["feature"]["points"][step].max()
-            else:
-                raise PolytopeError("'step' not found in request")
-            SCHEDULE_READER.check_released(
-                r["date"],
-                r["class"],
-                r["stream"],
-                r.get("domain", "g"),
-                r["time"],
-                str(step),
-                r["type"],
-            )
+            SCHEDULE_READER.check_released_polytope_request(r)
 
     def destroy(self, request) -> None:
         pass
