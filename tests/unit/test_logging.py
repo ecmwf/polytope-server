@@ -18,8 +18,8 @@
 # does it submit to any jurisdiction.
 #
 
+import json
 import logging
-import re
 
 import pytest
 
@@ -41,33 +41,45 @@ class Test:
         import polytope_server.common.logging as mylogging
 
         formatter = mylogging.LogFormatter(mode="json")
-        record = logging.LogRecord("polytope_server.tests.unit", 10, "/hello/world", 500, "Test Message", None, None)
 
         # Normal record
-        result = formatter.format(record)
-        assert re.match(
-            r'[\s\S]*{[\s\S]*"lvl"[\s\S]*:[\s\S]*"DEBUG"[\s\S]*,[\s\S]*"msg"[\s\S]*:[\s\S]*"Test Message"[\s\S]*,[\s\S]*"pth"[\s\S]*:[\s\S]*"/hello/world:500"[\s\S]*,[\s\S]*"src"[\s\S]*:[\s\S]*"polytope_server.tests.unit"[\s\S]*}[\s\S]*',  # noqa
-            result,
+        log_message = {
+            "name": "polytope_server.tests.unit",
+            "filename": "world",
+            "lineno": 500,
+            "levelname": "DEBUG",
+            "message": "Test Message",
+        }
+        record = logging.LogRecord(
+            log_message["name"],
+            logging.getLevelNamesMapping()[log_message["levelname"]],
+            log_message["filename"],
+            log_message["lineno"],
+            log_message["message"],
+            None,
+            None,
         )
+        result = json.loads(formatter.format(record))
+        for k in log_message.keys():
+            assert result[k] == log_message[k]
 
         # Record with valid extra info
         record.request_id = "hello"
-        result = formatter.format(record)
-        assert re.match(
-            r'[\s\S]*{[\s\S]*"lvl"[\s\S]*:[\s\S]*"DEBUG"[\s\S]*,[\s\S]*"msg"[\s\S]*:[\s\S]*"Test Message"[\s\S]*,[\s\S]*"pth"[\s\S]*:[\s\S]*"/hello/world:500"[\s\S]*,[\s\S]*"request_id"[\s\S]*:[\s\S]*"hello"[\s\S]*,[\s\S]*"src"[\s\S]*:[\s\S]*"polytope_server.tests.unit"[\s\S]*}[\s\S]*',  # noqa
-            result,
-        )
+        log_message["request_id"] = "hello"
+        result = json.loads(formatter.format(record))
+        for k in log_message.keys():
+            assert result[k] == log_message[k]
 
         # Record with invalid extra info (wrong type)
         record.request_id = 1234
         with pytest.raises(TypeError):
             result = formatter.format(record)
         del record.request_id
+        del log_message["request_id"]
 
         # Record with unknown extra info (silently ignores extra)
         record.unknown_extra_arg = "hello"
-        result = formatter.format(record)
-        assert re.match(
-            r'[\s\S]*{[\s\S]*"lvl"[\s\S]*:[\s\S]*"DEBUG"[\s\S]*,[\s\S]*"msg"[\s\S]*:[\s\S]*"Test Message"[\s\S]*,[\s\S]*"pth"[\s\S]*:[\s\S]*"/hello/world:500"[\s\S]*,[\s\S]*"src"[\s\S]*:[\s\S]*"polytope_server.tests.unit"[\s\S]*}[\s\S]*',  # noqa
-            result,
-        )
+        result = json.loads(formatter.format(record))
+        for k in log_message.keys():
+            assert result[k] == log_message[k]
+        assert "unknown_extra_arg" not in result

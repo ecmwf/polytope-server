@@ -95,6 +95,30 @@ class ScheduleReader:
                     # f"Release time is {release_date}."
                 )
 
+    def check_released_polytope_request(self, req):
+        # Check if step is in feature
+        if "step" in req:
+            step = req["step"]
+        elif "feature" not in req:
+            raise PolytopeError("'step' not found in request")
+        elif req["feature"]["type"] == "timeseries":
+            step = req["feature"]["range"]["end"]
+        elif req["feature"]["type"] == "trajectory" and "step" in req["feature"]["axes"]:
+            # get index of step in axes, then get max step from trajectory
+            step = req["feature"]["axes"].index("step")
+            step = max([p[step] for p in req["feature"]["points"]])
+        else:
+            raise PolytopeError("'step' not found in request")
+        self.check_released(
+            req["date"],
+            req["class"],
+            req["stream"],
+            req.get("domain", "g"),
+            req["time"],
+            str(step),
+            req["type"],
+        )
+
     def get_release_time_and_delta_day(
         self, cclass: str, stream: str, domain: str, time_in: str, step: str, ttype: str
     ) -> Tuple[Optional[str], Optional[int]]:

@@ -279,20 +279,20 @@ class MARSDataSource(datasource.DataSource):
 
         return relativedelta(days=time_dict["d"], hours=time_dict["h"], minutes=time_dict["m"])
 
-    def date_check(self, date, offsets, after=False):
+    def date_check(self, date, offset, after=False):
         """Process special match rules for DATE constraints"""
 
         date = str(date)
 
         # Default date is -1
-        if len(str(date)) == 0:
+        if len(date) == 0:
             date = "-1"
 
         now = datetime.today()
-        offset = now - self.parse_relativedelta(offsets)
+        offset = now - self.parse_relativedelta(offset)
         offset_fmted = offset.strftime("%Y%m%d")
 
-        split = str(date).split("/")
+        split = date.split("/")
 
         # YYYYMMDD
         if len(split) == 1:

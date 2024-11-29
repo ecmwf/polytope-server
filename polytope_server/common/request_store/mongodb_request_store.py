@@ -37,6 +37,8 @@ class MongoRequestStore(request_store.RequestStore):
     def __init__(self, config=None, metric_store_config=None):
         uri = config.get("uri", "mongodb://localhost:27017")
         request_collection = config.get("collection", "requests")
+        log_level = config.get("log_level", logging.WARNING)
+        logging.getLogger("pymongo").setLevel(log_level)
         username = config.get("username")
         password = config.get("password")
 

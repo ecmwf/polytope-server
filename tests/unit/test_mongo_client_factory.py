@@ -37,7 +37,7 @@ def _verify(
 ):
     mock_mongo.assert_called_once()
     args, kwargs = mock_mongo.call_args
-    assert args[0] == endpoint
+    assert kwargs["host"] == endpoint
     if username:
         assert kwargs["username"] == username
     if password:
