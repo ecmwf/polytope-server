@@ -103,9 +103,7 @@ class ScheduleReader:
             raise PolytopeError("'step' not found in request")
         elif req["feature"]["type"] == "timeseries":
             step = req["feature"]["range"]["end"]
-        elif (req["feature"]["type"] == "trajectory" or req["feature"]["type"] == "boundingbox") and (
-            "step" in req["feature"]["axes"]  # works for both str and list axes
-        ):
+        elif req["feature"]["type"] == "trajectory" and "step" in req["feature"]["axes"]:
             # get index of step in axes, then get max step from trajectory
             step = req["feature"]["axes"].index("step")
             step = max([p[step] for p in req["feature"]["points"]])

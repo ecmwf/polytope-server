@@ -185,25 +185,6 @@ polytope_requests = [
             "axes": ["latitude", "longitude", "step"],
         },
     },
-    # bounding box with step points
-    {
-        "class": "od",
-        "stream": "enfo",
-        "type": "pf",
-        "date": "-1",  # Note: date must be within the last two days
-        "time": "0000",
-        "expver": "0001",
-        "domain": "g",
-        "param": "164/167/169",
-        "levtype": "sfc",
-        "number": "1",
-        "feature": {
-            "type": "boundingbox",
-            "points": [[-1, -1, 4], [1, 1, 10]],
-            "axes": ["latitude", "longitude", "step"],
-        },
-        "format": "covjson",
-    },
 ]
 
 # mock pygribjump
