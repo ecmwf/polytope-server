@@ -126,6 +126,95 @@ def test_parse_mars_time():
         parse_mars_time("123456")
 
 
+polytope_requests = [
+    # time_request =
+    {
+        "class": "od",
+        "stream": "enfo",
+        "type": "pf",
+        "date": "-1",
+        "time": "0000",
+        "levtype": "sfc",
+        "expver": "0001",
+        "domain": "g",
+        "param": "164/167/169",
+        "number": "1",
+        "step": "0/to/60",
+        "feature": {
+            "type": "timeseries",
+            "points": [[-9.109280931080349, 38.78655345978706]],
+            "axes": "step",
+        },
+    },
+    # timeseries with step range
+    {
+        "class": "od",
+        "stream": "enfo",
+        "type": "pf",
+        "date": "-1",
+        "time": "0000",
+        "levtype": "sfc",
+        "expver": "0001",
+        "domain": "g",
+        "param": "164/167/169",
+        "number": "1",
+        "feature": {
+            "type": "timeseries",
+            "points": [[-9.109280931080349, 38.78655345978706]],
+            "axes": "step",
+            "range": {"start": 0, "end": 60, "step": 6},
+        },
+    },
+    # trajectory with step points
+    {
+        "class": "od",
+        "stream": "enfo",
+        "type": "pf",
+        "date": "-1",
+        "time": "0000",
+        "levtype": "sfc",
+        "expver": "0001",
+        "domain": "g",
+        "param": "167",
+        "number": [1],
+        "feature": {
+            "type": "trajectory",
+            "points": [[0, 0, 1], [10, 10, 2], [20, 20, 3]],
+            "inflation": [5, 5, 1],
+            "inflate": "round",
+            "axes": ["latitude", "longitude", "step"],
+        },
+    },
+    # bounding box with step points
+    {
+        "class": "od",
+        "stream": "enfo",
+        "type": "pf",
+        "date": "-1",  # Note: date must be within the last two days
+        "time": "0000",
+        "expver": "0001",
+        "domain": "g",
+        "param": "164/167/169",
+        "levtype": "sfc",
+        "number": "1",
+        "feature": {
+            "type": "boundingbox",
+            "points": [[-1, -1, 4], [1, 1, 10]],
+            "axes": ["latitude", "longitude", "step"],
+        },
+        "format": "covjson",
+    },
+]
+
+# mock pygribjump
+
+
+def test_polytope_schedule(mock_schedule_file):
+    sr = ScheduleReader(str(mock_schedule_file))
+    for r in polytope_requests:
+        sr.check_released_polytope_request(r)
+
+
 # needs to schedule.xml file included
 
 # from polytope_server.common.schedule import SCHEDULE_READER
