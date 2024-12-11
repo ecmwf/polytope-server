@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from polytope_feature.utility.exceptions import PolytopeError
 
 schedule_file_path = os.path.join("/etc/polytope_schedule/schedule.xml")
+SCHEDULE_READER = None
 
 
 class ScheduleReader:
