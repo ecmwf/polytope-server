@@ -300,10 +300,3 @@ async def usage_metrics(
     except Exception as e:
         logger.error(f"Unexpected error in telemetry usage endpoint: {e}")
         raise HTTPException(status_code=500, detail="An unexpected error occurred")
-    except (TelemetryConfigError, RequestFetchError, MetricCalculationError, OutputFormatError) as e:
-        logger.error(e)
-        raise HTTPException(status_code=500, detail=str(e))
-
-    except Exception as e:
-        logger.error(f"Unexpected error in telemetry usage endpoint: {e}")
-        raise HTTPException(status_code=500, detail="An unexpected error occurred")
