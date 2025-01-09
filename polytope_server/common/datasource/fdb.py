@@ -26,6 +26,7 @@ import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import pyfdb
 import yaml
 from dateutil.relativedelta import relativedelta
 
@@ -49,9 +50,6 @@ class FDBDataSource(datasource.DataSource):
         os.environ["FDB_CONFIG"] = json.dumps(self.fdb_config)
         os.environ["FDB5_HOME"] = self.config.get("fdb_home", "/opt/fdb")
         os.environ["FDB_HOME"] = self.config.get("fdb_home", "/opt/fdb")
-        import pyfdb
-
-        self.fdb = pyfdb.FDB()
 
         if "spaces" in self.fdb_config:
             for space in self.fdb_config["spaces"]:
@@ -114,8 +112,9 @@ class FDBDataSource(datasource.DataSource):
         # could add a check that the request is a singular object (does not contain)
 
         # r = yaml.safe_load(request.user_request)
-        self.fdb.archive(self.input_data)
-        self.fdb.flush()
+        fdb = pyfdb.FDB()
+        fdb.archive(self.input_data)
+        fdb.flush()
         self.output = None
         return True
 
@@ -123,7 +122,8 @@ class FDBDataSource(datasource.DataSource):
 
         r = yaml.safe_load(request.user_request)
         logging.info(r)
-        self.output = self.fdb.retrieve(r)
+        fdb = pyfdb.FDB()
+        self.output = fdb.retrieve(r)
         return True
 
     def repr(self):
