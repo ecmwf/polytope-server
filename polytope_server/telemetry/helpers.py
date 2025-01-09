@@ -1,15 +1,11 @@
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import Response
 from fastapi.responses import JSONResponse
-from prometheus_client import (
-    CONTENT_TYPE_LATEST,
-    CollectorRegistry,
-    Gauge,
-    generate_latest,
-)
+from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, Gauge, generate_latest
 
 from .config import config
 from .enums import StatusEnum
@@ -25,6 +21,21 @@ logger = logging.getLogger(__name__)
 
 # Global cache dictionary for usage metrics
 usage_metrics_cache = {"data": None, "timestamp": None}
+
+# Regular expression for parsing time strings
+regex = re.compile(r"((?P<days>\d+?)d)?((?P<hours>\d+?)h)?((?P<minutes>\d+?)m)?((?P<seconds>\d+?)s)?")
+
+
+def parse_time(time_str):
+    """
+    Parse a time string (e.g., '3d', '12h', '10m') into a timedelta object.
+    """
+    parts = regex.match(time_str)
+    if not parts:
+        raise ValueError(f"Invalid time format: {time_str}")
+    parts = parts.groupdict()
+    time_params = {name: int(value) for name, value in parts.items() if value}
+    return timedelta(**time_params)
 
 
 def obfuscate_apikey(key: str) -> str:
@@ -59,17 +70,17 @@ def get_usage_timeframes_from_config() -> List[Dict[str, Any]]:
             raise TelemetryConfigError("No timeframes defined in telemetry configuration")
 
         timeframes = []
-        for days in raw_timeframes:
-            if not isinstance(days, int) or days <= 0:
-                raise TelemetryConfigError(f"Invalid timeframe value: {days}")
+        for time_str in raw_timeframes:
+            delta = parse_time(time_str)
+            metric_name = time_str.replace(" ", "").lower()  # Normalize the metric name
             timeframes.append(
                 {
-                    "name": f"last_{days}d",
-                    "delta": timedelta(days=days),
-                    "request_metric_name": f"polytope_requests_last_{days}d",
-                    "user_metric_name": f"polytope_unique_users_last_{days}d",
-                    "request_metric_description": f"Number of requests in the last {days} days",
-                    "user_metric_description": f"Number of unique users in the last {days} days",
+                    "name": f"last_{metric_name}",
+                    "delta": delta,
+                    "request_metric_name": f"polytope_requests_last_{metric_name}",
+                    "user_metric_name": f"polytope_unique_users_last_{metric_name}",
+                    "request_metric_description": f"Number of requests in the last {time_str}",
+                    "user_metric_description": f"Number of unique users in the last {time_str}",
                 }
             )
         return timeframes
