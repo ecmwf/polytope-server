@@ -5,7 +5,12 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import Response
 from fastapi.responses import JSONResponse
-from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, Gauge, generate_latest
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    CollectorRegistry,
+    Gauge,
+    generate_latest,
+)
 
 from .config import config
 from .enums import StatusEnum
