@@ -21,23 +21,28 @@
 
 import logging
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from fastapi.responses import JSONResponse
-from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, generate_latest
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ..common.metric import MetricType
 from .config import config
 from .dependencies import get_auth, get_metric_store, get_request_store, get_staging
 from .enums import StatusEnum
+from .exceptions import (
+    MetricCalculationError,
+    OutputFormatError,
+    RequestFetchError,
+    TelemetryConfigError,
+    TelemetryUsageDisabled,
+)
 from .helpers import (
     calculate_usage_metrics,
+    format_output,
     get_cached_usage_user_requests,
     get_usage_timeframes_from_config,
     is_usage_enabled,
-    prepare_usage_json_metrics,
-    set_usage_prometheus_metrics,
+    obfuscate_apikey,
 )
 
 logger = logging.getLogger(__name__)
@@ -108,10 +113,19 @@ async def all_requests(
     response_message = []
     for request in user_requests:
         serialized_request = request.serialize()
+
         if id:
             metrics = metric_store.get_metrics(type=MetricType.REQUEST_STATUS_CHANGE, request_id=id)
             serialized_request["trace"] = [metric.serialize() for metric in metrics]
+
         serialized_request["user"]["details"] = "**hidden**"
+
+        # Check for attributes and API key
+        if config.get("telemetry", {}).get("obfuscate_apikeys", False) and "attributes" in serialized_request["user"]:
+            attributes = serialized_request["user"]["attributes"]
+            if "ecmwf-apikey" in attributes:
+                attributes["ecmwf-apikey"] = obfuscate_apikey(attributes["ecmwf-apikey"])
+
         response_message.append(serialized_request)
 
     return response_message
@@ -162,6 +176,13 @@ async def user_requests(
         metrics = metric_store.get_metrics(type=MetricType.REQUEST_STATUS_CHANGE, request_id=user_id)
         serialized_request["metrics"] = [metric.serialize() for metric in metrics]
         serialized_request["user"]["details"] = "**hidden**"
+
+        # Check for attributes and API key
+        if config.get("telemetry", {}).get("obfuscate_apikeys", False) and "attributes" in serialized_request["user"]:
+            attributes: Dict[str, Any] = serialized_request["user"]["attributes"]
+            if "ecmwf-apikey" in attributes:
+                attributes["ecmwf-apikey"] = obfuscate_apikey(attributes["ecmwf-apikey"])
+
         response_message.append(serialized_request)
 
     return response_message
@@ -241,11 +262,11 @@ async def usage_metrics(
     """
     Endpoint to expose usage metrics in Prometheus or JSON format.
     """
-    if not is_usage_enabled():
-        raise HTTPException(status_code=403, detail="Telemetry usage is disabled")
-
-    # todo: get rid of this try-except block by handling the error properly
     try:
+        # Ensure telemetry usage is enabled
+        if not is_usage_enabled():
+            raise TelemetryUsageDisabled("Telemetry usage is disabled")
+
         now = datetime.now(timezone.utc)
         cache_expiry_seconds = config.get("telemetry", {}).get("usage", {}).get("cache_expiry_seconds", 30)
 
@@ -258,25 +279,31 @@ async def usage_metrics(
             fetch_function=all_requests,
             cache_expiry_seconds=cache_expiry_seconds,
         )
-        print(user_requests)
+
         # Load timeframes from config
         time_frames = get_usage_timeframes_from_config()
 
         # Calculate metrics
         metrics = calculate_usage_metrics(user_requests, time_frames, now)
 
-        # Output in the requested format
-        # JSON format
-        if format == "json":
-            json_metrics = prepare_usage_json_metrics(metrics, time_frames)
-            return JSONResponse(content=json_metrics)
+        # Format and return output
+        return format_output(metrics, time_frames, format)
 
-        # Prometheus format
-        registry = CollectorRegistry()
-        set_usage_prometheus_metrics(registry, metrics, time_frames)
-        metrics_data = generate_latest(registry)
-        return Response(content=metrics_data, media_type=CONTENT_TYPE_LATEST)
+    except TelemetryUsageDisabled as e:
+        logger.warning(e)
+        raise HTTPException(status_code=403, detail=str(e))
+
+    except (TelemetryConfigError, RequestFetchError, MetricCalculationError, OutputFormatError) as e:
+        logger.error(e)
+        raise HTTPException(status_code=500, detail=str(e))
 
     except Exception as e:
-        logger.error(f"Error retrieving usage metrics: {e}")
-        raise HTTPException(status_code=500, detail="Error retrieving usage metrics")
+        logger.error(f"Unexpected error in telemetry usage endpoint: {e}")
+        raise HTTPException(status_code=500, detail="An unexpected error occurred")
+    except (TelemetryConfigError, RequestFetchError, MetricCalculationError, OutputFormatError) as e:
+        logger.error(e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+    except Exception as e:
+        logger.error(f"Unexpected error in telemetry usage endpoint: {e}")
+        raise HTTPException(status_code=500, detail="An unexpected error occurred")
