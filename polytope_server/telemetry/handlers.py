@@ -18,27 +18,31 @@
 # does it submit to any jurisdiction.
 #
 
-import json
+
 import logging
-from datetime import datetime, timedelta, timezone
-from typing import Optional, Set
+from datetime import datetime, timezone
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from prometheus_client import (
-    CONTENT_TYPE_LATEST,
-    CollectorRegistry,
-    Gauge,
-    generate_latest,
-)
+from fastapi.responses import JSONResponse
+from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, generate_latest
 
 from ..common.metric import MetricType
+from .config import config
 from .dependencies import get_auth, get_metric_store, get_request_store, get_staging
 from .enums import StatusEnum
+from .helpers import (
+    calculate_usage_metrics,
+    get_cached_usage_user_requests,
+    get_usage_timeframes_from_config,
+    is_usage_enabled,
+    prepare_usage_json_metrics,
+    set_usage_prometheus_metrics,
+)
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-# Global cache dictionary for usage metrics
-usage_metrics_cache = {"data": None, "timestamp": None}
 
 
 @router.get("/telemetry/v1", summary="List available telemetry endpoints")
@@ -230,114 +234,49 @@ async def all_metrics(
 async def usage_metrics(
     status: Optional[StatusEnum] = Query(None, description="Filter requests by status"),
     id: Optional[str] = Query(None, description="Filter requests by ID"),
+    format: str = Query("prometheus", description="Output format: prometheus or json"),
     request_store=Depends(get_request_store),
     metric_store=Depends(get_metric_store),
 ):
     """
-    Endpoint to expose usage metrics in Prometheus format.
+    Endpoint to expose usage metrics in Prometheus or JSON format.
     """
+    if not is_usage_enabled():
+        raise HTTPException(status_code=403, detail="Telemetry usage is disabled")
+
+    # todo: get rid of this try-except block by handling the error properly
     try:
         now = datetime.now(timezone.utc)
-        cache_expiry = timedelta(seconds=30)
+        cache_expiry_seconds = config.get("telemetry", {}).get("usage", {}).get("cache_expiry_seconds", 30)
 
-        # Check if cached data is available and not expired
-        if usage_metrics_cache["data"] and usage_metrics_cache["timestamp"]:
-            if now - usage_metrics_cache["timestamp"] < cache_expiry:
-                # Use cached data
-                metrics_data = usage_metrics_cache["data"]
-                return Response(content=metrics_data, media_type=CONTENT_TYPE_LATEST)
-
-        # If cache is expired or not available, proceed to fetch data
-        # Call the all_requests function to get request data
-        user_requests = await all_requests(
+        # Fetch user requests
+        user_requests = await get_cached_usage_user_requests(
             status=status,
             id=id,
             request_store=request_store,
             metric_store=metric_store,
+            fetch_function=all_requests,
+            cache_expiry_seconds=cache_expiry_seconds,
         )
+        print(user_requests)
+        # Load timeframes from config
+        time_frames = get_usage_timeframes_from_config()
 
-        # Handle the response from all_requests
-        if isinstance(user_requests, Response):
-            user_requests = json.loads(user_requests.body.decode("utf-8"))
-        elif isinstance(user_requests, list):
-            # Already a list of request dictionaries
-            pass
-        else:
-            # Unexpected format
-            raise Exception("Unexpected data format from all_requests")
+        # Calculate metrics
+        metrics = calculate_usage_metrics(user_requests, time_frames, now)
 
-        # Initialize counts
-        total_requests = len(user_requests)
-        unique_user_ids: Set[str] = set()
-        requests_last_24h = 0
-        requests_last_2d = 0
-        unique_users_last_24h: Set[str] = set()
-        unique_users_last_2d: Set[str] = set()
+        # Output in the requested format
+        # JSON format
+        if format == "json":
+            json_metrics = prepare_usage_json_metrics(metrics, time_frames)
+            return JSONResponse(content=json_metrics)
 
-        # Define time thresholds
-        last_24_hours = now - timedelta(hours=24)
-        last_2_days = now - timedelta(days=2)
-
-        for request_data in user_requests:
-            # Parse the timestamp; assuming it's in UNIX timestamp format (seconds since epoch)
-            request_timestamp = datetime.fromtimestamp(request_data["timestamp"], tz=timezone.utc)
-            user_id = request_data.get("user", {}).get("id")
-
-            # Collect total unique users
-            if user_id:
-                unique_user_ids.add(user_id)
-
-            # Check if the request is within the last 2 days
-            if request_timestamp >= last_2_days:
-                requests_last_2d += 1
-                if user_id:
-                    unique_users_last_2d.add(user_id)
-
-                # Check if the request is within the last 24 hours
-                if request_timestamp >= last_24_hours:
-                    requests_last_24h += 1
-                    if user_id:
-                        unique_users_last_24h.add(user_id)
-
-        total_unique_users = len(unique_user_ids)
-        unique_users_24h = len(unique_users_last_24h)
-        unique_users_2d = len(unique_users_last_2d)
-
-        # Create a new registry for Prometheus metrics
+        # Prometheus format
         registry = CollectorRegistry()
-
-        # Define Prometheus metrics
-        total_requests_metric = Gauge("polytope_total_requests", "Total number of requests", registry=registry)
-        unique_users_metric = Gauge("polytope_unique_users", "Total number of unique users", registry=registry)
-        requests_last_24h_metric = Gauge(
-            "polytope_requests_last_24h", "Number of requests in the last 24 hours", registry=registry
-        )
-        unique_users_last_24h_metric = Gauge(
-            "polytope_unique_users_last_24h", "Number of unique users in the last 24 hours", registry=registry
-        )
-        requests_last_2d_metric = Gauge(
-            "polytope_requests_last_2d", "Number of requests in the last 2 days", registry=registry
-        )
-        unique_users_last_2d_metric = Gauge(
-            "polytope_unique_users_last_2d", "Number of unique users in the last 2 days", registry=registry
-        )
-
-        total_requests_metric.set(total_requests)
-        unique_users_metric.set(total_unique_users)
-        requests_last_24h_metric.set(requests_last_24h)
-        unique_users_last_24h_metric.set(unique_users_24h)
-        requests_last_2d_metric.set(requests_last_2d)
-        unique_users_last_2d_metric.set(unique_users_2d)
-
-        # Generate latest metrics
+        set_usage_prometheus_metrics(registry, metrics, time_frames)
         metrics_data = generate_latest(registry)
-
-        # Update the cache
-        usage_metrics_cache["data"] = metrics_data
-        usage_metrics_cache["timestamp"] = now
-
         return Response(content=metrics_data, media_type=CONTENT_TYPE_LATEST)
 
     except Exception as e:
-        logging.error(f"Error retrieving usage metrics: {e}")
+        logger.error(f"Error retrieving usage metrics: {e}")
         raise HTTPException(status_code=500, detail="Error retrieving usage metrics")
