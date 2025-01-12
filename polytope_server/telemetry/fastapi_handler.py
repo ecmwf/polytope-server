@@ -24,14 +24,7 @@ from .handlers import router
 
 
 class FastAPIHandler:
-
-    def create_handler(
-        self,
-        request_store,
-        staging,
-        auth,
-        metric_store,
-    ):
-        app = FastAPI(title="Polytope Telemetry Service")
+    def create_handler(self, lifespan=None):
+        app = FastAPI(title="Polytope Telemetry Service", lifespan=lifespan)
         app.include_router(router)
         return app
