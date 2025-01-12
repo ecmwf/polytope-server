@@ -23,6 +23,7 @@ import re
 import time
 from datetime import datetime, timedelta, timezone
 
+from ..common.metric_store import create_metric_store
 from ..common.request import Status
 from ..common.request_store import create_request_store
 from ..common.staging import create_staging
@@ -36,9 +37,11 @@ class GarbageCollector:
         s_interval = gc_config.get("interval", "60s")
         s_threshold = gc_config.get("threshold", "10G")
         s_age = gc_config.get("age", "24h")
+        s_metric_age = gc_config.get("metric_age", "24h")
         self.interval = parse_time(s_interval).total_seconds()
         self.threshold = parse_bytes(s_threshold)
         self.age = parse_time(s_age)
+        self.metric_age = parse_time(s_metric_age)
 
         logging.info(
             "Garbage collector initialized:\n Interval: {} ({} secs) \n \
@@ -54,10 +57,12 @@ class GarbageCollector:
 
         self.request_store = create_request_store(config.get("request_store"), config.get("metric_store"))
         self.staging = create_staging(config.get("staging"))
+        self.metric_store = create_metric_store(config.get("metric_store"))
 
     def run(self):
         while not time.sleep(self.interval):
             self.remove_old_requests()
+            self.remove_old_metrics()
             self.remove_dangling_data()
             self.remove_by_size()
 
@@ -79,6 +84,18 @@ class GarbageCollector:
                 except KeyError:
                     logging.info(f"Removing old request but data {data_name} not found in staging.")
                 self.request_store.remove_request(r.id)
+
+    def remove_old_metrics(self):
+        """Removes metrics older than the configured time"""
+        now = datetime.now(timezone.utc)
+        cutoff = now - self.metric_age
+
+        metrics = self.metric_store.get_metrics()
+
+        for m in metrics:
+            if datetime.fromtimestamp(m.timestamp, tz=timezone.utc) < cutoff:
+                logging.info("Deleting metric {} because it is too old.".format(m.uuid))
+                self.metric_store.remove_metric(m.uuid, include_processed=True)
 
     def remove_dangling_data(self):
         """As a failsafe, removes data which has no corresponding request."""
