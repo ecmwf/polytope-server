@@ -21,7 +21,7 @@
 import logging
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from fastapi import Response
 from fastapi.responses import JSONResponse
@@ -33,7 +33,6 @@ from prometheus_client import (
 )
 
 from .config import config
-from .enums import StatusEnum
 from .exceptions import (
     MetricCalculationError,
     OutputFormatError,
@@ -114,12 +113,8 @@ def get_usage_timeframes_from_config() -> List[Dict[str, Any]]:
         raise TelemetryConfigError("An error occurred while reading telemetry timeframes from the config")
 
 
-async def get_cached_usage_user_requests(
-    status: Optional[StatusEnum],
-    id: Optional[str],
-    request_store,
+async def get_cached_usage_metrics(
     metric_store,
-    fetch_function,
     cache_expiry_seconds: int,
 ) -> List[Dict[str, Any]]:
     """
@@ -133,13 +128,12 @@ async def get_cached_usage_user_requests(
             if now - usage_metrics_cache["timestamp"] < cache_expiry:
                 return usage_metrics_cache["data"]
 
-        # Fetch fresh data if cache is expired
-        user_requests = await fetch_function(
-            status=status,
-            id=id,
-            request_store=request_store,
-            metric_store=metric_store,
-        )
+        user_requests = []
+        metrics = metric_store.get_metrics()
+        for u_r in metrics:
+            serialized_u_r = u_r.serialize()
+            if serialized_u_r["type"] == "request_status_change" and serialized_u_r["status"] == "processed":
+                user_requests.append(serialized_u_r)
 
         if not isinstance(user_requests, list):
             raise TelemetryDataError("Fetched data is not in the expected list format")
@@ -164,7 +158,7 @@ def calculate_usage_metrics(
 
         # Collect unique users and calculate time frame metrics
         for request_data in user_requests:
-            user_id = request_data.get("user", {}).get("id")
+            user_id = request_data.get("user_id", {})
             if user_id:
                 metrics["unique_users"].add(user_id)
 
@@ -175,7 +169,7 @@ def calculate_usage_metrics(
 
         for request_data in user_requests:
             request_timestamp = datetime.fromtimestamp(request_data["timestamp"], tz=timezone.utc)
-            user_id = request_data.get("user", {}).get("id")
+            user_id = request_data.get("user_id", {})
 
             for frame in time_frames:
                 frame_name = frame["name"]
@@ -278,11 +272,6 @@ def format_output(metrics, time_frames, format: str):
 
     except OutputFormatError as e:
         logger.error(e)
-        raise e  # Reraise for the main exception handler
-
-    except Exception as e:
-        logger.error(f"Error formatting output: {e}")
-        raise OutputFormatError("An error occurred while formatting the output")
         raise e  # Reraise for the main exception handler
 
     except Exception as e:
