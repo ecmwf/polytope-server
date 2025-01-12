@@ -39,7 +39,7 @@ from .exceptions import (
 from .helpers import (
     calculate_usage_metrics,
     format_output,
-    get_cached_usage_user_requests,
+    get_cached_usage_metrics,
     get_usage_timeframes_from_config,
     is_usage_enabled,
     obfuscate_apikey,
@@ -253,10 +253,7 @@ async def all_metrics(
 
 @router.get("/telemetry/v1/usage", summary="Get usage metrics")
 async def usage_metrics(
-    status: Optional[StatusEnum] = Query(None, description="Filter requests by status"),
-    id: Optional[str] = Query(None, description="Filter requests by ID"),
     format: str = Query("prometheus", description="Output format: prometheus or json"),
-    request_store=Depends(get_request_store),
     metric_store=Depends(get_metric_store),
 ):
     """
@@ -268,15 +265,12 @@ async def usage_metrics(
             raise TelemetryUsageDisabled("Telemetry usage is disabled")
 
         now = datetime.now(timezone.utc)
+        # Intentionally using seconds here as this cache should be short-lived
         cache_expiry_seconds = config.get("telemetry", {}).get("usage", {}).get("cache_expiry_seconds", 30)
 
         # Fetch user requests
-        user_requests = await get_cached_usage_user_requests(
-            status=status,
-            id=id,
-            request_store=request_store,
+        user_requests = await get_cached_usage_metrics(
             metric_store=metric_store,
-            fetch_function=all_requests,
             cache_expiry_seconds=cache_expiry_seconds,
         )
 
@@ -285,7 +279,6 @@ async def usage_metrics(
 
         # Calculate metrics
         metrics = calculate_usage_metrics(user_requests, time_frames, now)
-
         # Format and return output
         return format_output(metrics, time_frames, format)
 
