@@ -18,7 +18,23 @@
 # does it submit to any jurisdiction.
 #
 
+from fastapi import Request
+
+from ..common.auth import AuthHelper
+from ..common.metric_store import create_metric_store
+from ..common.request_store import create_request_store
+from ..common.staging import create_staging
 from .config import config
+
+
+def initialize_resources(config):
+    """Initialize and return all resources."""
+    return {
+        "request_store": create_request_store(config.get("request_store"), config.get("metric_store")),
+        "staging": create_staging(config.get("staging")),
+        "metric_store": create_metric_store(config.get("metric_store")) if config.get("metric_store") else None,
+        "auth": AuthHelper(config.config),
+    }
 
 
 def get_settings():
@@ -31,26 +47,17 @@ def get_settings():
     }
 
 
-def get_request_store():
-    from ..common.request_store import create_request_store
-
-    return create_request_store(config.get("request_store"), config.get("metric_store"))
+def get_request_store(request: Request):
+    return request.app.state.resources["request_store"]
 
 
-def get_staging():
-    from ..common.staging import create_staging
-
-    return create_staging(config.get("staging"))
+def get_staging(request: Request):
+    return request.app.state.resources["staging"]
 
 
-def get_metric_store():
-    from ..common.metric_store import create_metric_store
-
-    metric_store_config = config.get("metric_store")
-    return create_metric_store(metric_store_config) if metric_store_config else None
+def get_metric_store(request: Request):
+    return request.app.state.resources["metric_store"]
 
 
-def get_auth():
-    from ..common.auth import AuthHelper
-
-    return AuthHelper(config.config)
+def get_auth(request: Request):
+    return request.app.state.resources["auth"]
