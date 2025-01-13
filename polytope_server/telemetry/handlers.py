@@ -27,7 +27,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ..common.metric import MetricType
 from .config import config
-from .dependencies import get_auth, get_metric_store, get_request_store, get_staging
+from .dependencies import (
+    get_auth,
+    get_metric_store,
+    get_request_store,
+    get_staging,
+    metrics_auth,
+)
 from .enums import StatusEnum
 from .exceptions import (
     MetricCalculationError,
@@ -271,6 +277,7 @@ async def full_telemetry_report(
 
 @router.get("/metrics", summary="Retrieve usage metrics")
 async def usage_metrics(
+    _=Depends(metrics_auth),
     format: str = Query("prometheus", description="Output format: prometheus or json"),
     metric_store=Depends(get_metric_store),
 ):
