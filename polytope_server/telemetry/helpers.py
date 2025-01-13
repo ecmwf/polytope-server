@@ -20,6 +20,7 @@
 
 import logging
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
@@ -277,3 +278,27 @@ def format_output(metrics, time_frames, format: str):
     except Exception as e:
         logger.error(f"Error formatting output: {e}")
         raise OutputFormatError("An error occurred while formatting the output")
+
+
+class TelemetryLogSuppressor:
+    """
+    Suppresses repeated logs of successful auth for the same user
+    within a given TTL (in seconds).
+    """
+
+    def __init__(self, ttl_seconds: int):
+        self.ttl_seconds = ttl_seconds
+        # Key: user_id (string), Value: last log timestamp (float)
+        self._last_log_time = {}
+
+    def log_if_needed(self, user_id: str):
+        now = time.time()
+        last_time = self._last_log_time.get(user_id)
+
+        # If within TTL window, skip logging
+        if last_time and (now - last_time) < self.ttl_seconds:
+            return
+
+        # Otherwise, log and update timestamp
+        logger.info(f"User '{user_id}' authenticated for telemetry.")
+        self._last_log_time[user_id] = now
