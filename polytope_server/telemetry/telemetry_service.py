@@ -73,7 +73,7 @@ class TelemetryService:
         port = telemetry_config.get("port", 8000)
 
         logging.info("Starting telemetry service on %s:%d...", host, port)
-        uvicorn.run(app, host=host, port=port)
+        uvicorn.run(app, host=host, port=port, log_config=None, log_level=None)
 
     @staticmethod
     def sanitize_config(raw_config):
