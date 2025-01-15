@@ -1,52 +1,28 @@
 name: Check and publish
 
 on:
-
   push:
     branches:
-    - '**'
+    - 'develop'
+    - 'master'
+    - 'main'
     tags:
     - '**'
 
-  # pull_request: ~
+  pull_request:
+    branches:
+    - 'master'
+    - 'main'
 
   workflow_dispatch: ~
 
 jobs:
-
-  quality:
-    name: Code QA
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - run: pip install black flake8 isort
-      - run: black --version
-      - run: isort --check .
-      - run: black --check .
-      - run: flake8 .
-  unit-tests:
-    name: Unit tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-      - name: Run tests
-        run: pytest tests/unit
   docs:
-    if: |
-      (github.event_name == 'push' && contains(github.ref, 'refs/tags/')) || 
-      github.ref == 'refs/heads/master'
     name: Build Readthedocs
     runs-on: ubuntu-latest
     steps:
       - name: Start polytope-docs build
-        uses: actions/github-script@v4
+        uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GH_REPO_READ_TOKEN }}
           script: |-
@@ -64,9 +40,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Start polytope-docs build
-        uses: actions/github-script@v4
+        uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.ECMWF_REPO_ACCESS }}
+          github-token: ${{ secrets.GH_REPO_READ_TOKEN }}
           script: |-
             await github.actions.createWorkflowDispatch({
                 owner: 'ecmwf-projects',
