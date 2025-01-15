@@ -131,7 +131,7 @@ class WorkerInfo(Metric):
 
 class RequestStatusChange(Metric):
 
-    __slots__ = ["host", "status", "request_id"]
+    __slots__ = ["host", "status", "request_id", "user_id"]
 
     def __init__(self, **kwargs):
         super().__init__(type=MetricType.REQUEST_STATUS_CHANGE, host=socket.gethostname(), **kwargs)

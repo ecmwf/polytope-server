@@ -78,7 +78,22 @@ class MongoMetricStore(MetricStore):
             raise ValueError("Metric already exists in metric store")
         self.store.insert_one(metric.serialize())
 
-    def remove_metric(self, uuid):
+    def remove_metric(self, uuid, include_processed=False):
+        """
+        Removes a metric with the given UUID. By default, it skips entries with status 'processed'.
+        """
+        # Find the document
+        metric = self.store.find_one({"uuid": uuid})
+        if metric is None:
+            raise KeyError("Metric does not exist in request store")
+
+        # Skip removal if the status is 'processed' and include_processed is False
+        if metric["status"] == "processed" and not include_processed:
+            # Log skipping for better traceability
+            logging.info(f"Skipping removal of metric with UUID {uuid} as it has status 'processed'")
+            return
+
+        # Delete the metric
         result = self.store.find_one_and_delete({"uuid": uuid})
         if result is None:
             raise KeyError("Metric does not exist in request store")
