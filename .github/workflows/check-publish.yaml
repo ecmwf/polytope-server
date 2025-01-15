@@ -48,7 +48,7 @@ jobs:
       - name: Start polytope-docs build
         uses: actions/github-script@v4
         with:
-          github-token: ${{ secrets.ECMWF_REPO_ACCESS }}
+          github-token: ${{ secrets.GH_REPO_READ_TOKEN }}
           script: |-
             await github.actions.createWorkflowDispatch({
                 owner: 'ecmwf-projects',
