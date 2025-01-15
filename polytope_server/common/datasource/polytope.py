@@ -103,6 +103,8 @@ class PolytopeDataSource(datasource.DataSource):
         polytope_mars_config = copy.deepcopy(self.config)
         polytope_mars_config["options"]["pre_path"] = pre_path
 
+        self.change_grids(r, polytope_mars_config)
+
         polytope_mars = PolytopeMars(
             polytope_mars_config,
             log_context={
@@ -118,6 +120,43 @@ class PolytopeDataSource(datasource.DataSource):
             raise Exception("Polytope Feature Extraction Error: {}".format(e.message))
 
         return True
+
+    def change_grids(self, request, config):
+
+        res = None
+
+        # This only holds for climate dt data
+        if request.get("dataset", None) == "climate-dt":
+            # all resolution=standard have h128
+            if request["resolution"] == "standard":
+                res = 128
+
+            # for activity CMIP6 and experiment hist, all models except ifs-nemo have h512 and ifs-nemo has h1024
+            if request["activity"] == "cmip6" and request["experiment"] == "hist":
+                if request["model"] != "ifs-nemo":
+                    res = 512
+                else:
+                    res = 1024
+
+            # # for activity scenariomip and experiment ssp3-7.0, all models use h1024
+            # if request["activity"] == "scenariomip" and request["experiment"] == "ssp3-7.0":
+            #     res = 1024
+
+            if request["activity"] == "story-nudging":
+                res = 512
+
+            if request["activity"] in ["baseline", "projections", "scenariomip"]:
+                res = 1024
+
+        # Only assign new resolution if it was changed here
+        if res:
+            # Find the mapper transformation
+            for mappings in config["options"]["axis_config"]:
+                for sub_mapping in mappings["transformations"]:
+                    if sub_mapping["name"] == "mapper":
+                        sub_mapping["resolution"] = res
+
+        return config
 
     def result(self, request):
         logging.info("Getting result")
