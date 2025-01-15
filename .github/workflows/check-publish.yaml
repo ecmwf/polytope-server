@@ -26,7 +26,7 @@ jobs:
         with:
           github-token: ${{ secrets.GH_REPO_READ_TOKEN }}
           script: |-
-            await github.rest.repos.createWorkflowDispatch({
+            await github.rest.actions.createWorkflowDispatch({
                 owner: 'ecmwf-projects',
                 repo: 'polytope-docs',
                 workflow_id: 'docs.yaml',
