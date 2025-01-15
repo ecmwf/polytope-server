@@ -36,7 +36,7 @@ jobs:
   publish:
     if: github.event_name == 'push' && contains(github.ref, 'refs/tags/')
     name: Publish on Readthedocs
-    needs: [quality, docs]
+    needs: [docs]
     runs-on: ubuntu-latest
     steps:
       - name: Start polytope-docs build
