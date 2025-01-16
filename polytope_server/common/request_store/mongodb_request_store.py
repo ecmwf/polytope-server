@@ -66,7 +66,9 @@ class MongoRequestStore(request_store.RequestStore):
         self.store.insert_one(request.serialize())
 
         if self.metric_store:
-            self.metric_store.add_metric(RequestStatusChange(request_id=request.id, status=request.status))
+            self.metric_store.add_metric(
+                RequestStatusChange(request_id=request.id, status=request.status, user_id=request.user.id)
+            )
 
         logging.info("Request ID {} status set to {}.".format(request.id, request.status))
 
@@ -144,7 +146,9 @@ class MongoRequestStore(request_store.RequestStore):
         )
 
         if self.metric_store:
-            self.metric_store.add_metric(RequestStatusChange(request_id=request.id, status=request.status))
+            self.metric_store.add_metric(
+                RequestStatusChange(request_id=request.id, status=request.status, user_id=request.user.id)
+            )
 
         logging.info("Request ID {} status set to {}.".format(request.id, request.status))
 
@@ -154,7 +158,9 @@ class MongoRequestStore(request_store.RequestStore):
         if self.metric_store:
             res = self.get_requests()
             for i in res:
-                self.metric_store.remove_metric(type=MetricType.REQUEST_STATUS_CHANGE, request_id=i.id)
+                self.metric_store.remove_metric(
+                    type=MetricType.REQUEST_STATUS_CHANGE, request_id=i.id, include_processed=True
+                )
 
         self.database.drop_collection(self.store.name)
 

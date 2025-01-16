@@ -20,6 +20,7 @@
 
 import importlib
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
@@ -30,6 +31,16 @@ class TelemetryService:
         self.handler_dict = {
             "fastapi": "FastAPIHandler",
         }
+
+    @asynccontextmanager
+    async def lifespan(self, app: FastAPI):
+        from .dependencies import initialize_resources
+
+        resources = initialize_resources(self.config)
+
+        # Attach resources to the app state
+        app.state.resources = resources
+        yield
 
     def load_handler(self):
         handler_type = self.config.get("telemetry", {}).get("handler", "fastapi")
@@ -44,12 +55,7 @@ class TelemetryService:
 
     def create_handler(self):
         handler_class = self.load_handler()
-        return handler_class().create_handler(
-            request_store=None,  # Replace with actual dependency
-            staging=None,  # Replace with actual dependency
-            auth=None,  # Replace with actual dependency
-            metric_store=None,  # Replace with actual dependency
-        )
+        return handler_class().create_handler(lifespan=self.lifespan)
 
     def create_app(self) -> FastAPI:
         # Log the configuration
@@ -67,7 +73,7 @@ class TelemetryService:
         port = telemetry_config.get("port", 8000)
 
         logging.info("Starting telemetry service on %s:%d...", host, port)
-        uvicorn.run(app, host=host, port=port)
+        uvicorn.run(app, host=host, port=port, log_config=None, log_level=None)
 
     @staticmethod
     def sanitize_config(raw_config):
