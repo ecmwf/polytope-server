@@ -130,6 +130,7 @@ class PolytopeDataSource(datasource.DataSource):
             # all resolution=standard have h128
             if request["resolution"] == "standard":
                 res = 128
+                return self.change_config_grid(config, res)
 
             # for activity CMIP6 and experiment hist, all models except ifs-nemo have h512 and ifs-nemo has h1024
             if request["activity"] == "cmip6" and request["experiment"] == "hist":
@@ -151,11 +152,15 @@ class PolytopeDataSource(datasource.DataSource):
         # Only assign new resolution if it was changed here
         if res:
             # Find the mapper transformation
-            for mappings in config["options"]["axis_config"]:
-                for sub_mapping in mappings["transformations"]:
-                    if sub_mapping["name"] == "mapper":
-                        sub_mapping["resolution"] = res
+            self.change_config_grid(config, res)
 
+        return config
+
+    def change_config_grid(self, config, res):
+        for mappings in config["options"]["axis_config"]:
+            for sub_mapping in mappings["transformations"]:
+                if sub_mapping["name"] == "mapper":
+                    sub_mapping["resolution"] = res
         return config
 
     def result(self, request):
