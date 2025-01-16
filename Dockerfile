@@ -25,17 +25,18 @@ ARG gribjump_base=blank-base
 
 #######################################################
 #                     C O M M O N
-#                 based on alpine linux
+#             based on python bookworm slim
 #######################################################
 
-FROM python:3.11-alpine AS polytope-common
+FROM python:3.11-slim-bookworm AS polytope-common
 
 ARG HOME_DIR=/home/polytope
 ARG developer_mode
 
 # Install build dependencies
-RUN apk add --no-cache --virtual .build-deps gcc musl-dev openldap-dev curl \
-    && apk add --no-cache openldap
+RUN apt update && apt install -y --no-install-recommends gcc libc6-dev libldap2-dev curl \
+    && apt clean \
+    && rm -rf /var/lib/apt/lists/*
 
 # Create user and group
 RUN set -eux \
@@ -76,14 +77,6 @@ RUN set -eux \
 
 # Install the application
 RUN uv pip install --upgrade .
-
-# Clean up build dependencies to reduce image size
-USER root
-RUN apk del .build-deps
-
-
-# Switch back to polytope user
-USER polytope
 
 
 #######################################################
