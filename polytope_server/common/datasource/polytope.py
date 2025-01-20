@@ -209,14 +209,14 @@ class PolytopeDataSource(datasource.DataSource):
         if "feature" not in r:
             raise Exception("request does not contain key 'feature'")
 
-        # Check that there is only one value if required
-        for k, v in r.items():
-            if k in self.req_single_keys:
-                v = [v] if isinstance(v, str) else v
-                if len(v) > 1:
-                    raise Exception("key '{}' cannot accept a list yet. This feature is planned.".format(k))
-                elif len(v) == 0:
-                    raise Exception("Expected a value for key {}".format(k))
+        # # Check that there is only one value if required
+        # for k, v in r.items():
+        #     if k in self.req_single_keys:
+        #         v = [v] if isinstance(v, str) else v
+        #         if len(v) > 1:
+        #             raise Exception("key '{}' cannot accept a list yet. This feature is planned.".format(k))
+        #         elif len(v) == 0:
+        #             raise Exception("Expected a value for key {}".format(k))
 
         for k, v in self.match_rules.items():
             # Check that all required keys exist
