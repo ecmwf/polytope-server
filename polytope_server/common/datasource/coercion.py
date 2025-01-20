@@ -9,12 +9,8 @@ class CoercionError(Exception):
 
 class Coercion:
 
-    allow_ranges = [
-        "number",
-        "step",
-        "date",
-    ]
-    allow_lists = ["class", "stream", "type", "expver", "param", "number", "date", "step"]
+    allow_ranges = ["number", "step", "date", "time"]
+    allow_lists = ["class", "stream", "type", "expver", "param", "number", "date", "step", "time"]
 
     @staticmethod
     def coerce(request: Dict[str, Any]) -> Dict[str, Any]:
@@ -198,9 +194,9 @@ class Coercion:
         if minute != 0:
             raise CoercionError("Invalid time format, expected HHMM or HH.")
 
-        # Format time as HHMM
-        time_str = f"{hour:02d}{minute:02d}"
-        return time_str
+        # # Format time as HHMM
+        # time_str = f"{hour:02d}{minute:02d}"
+        # return time_str
 
         # Validate hour and minute
         if not (0 <= hour <= 23):
