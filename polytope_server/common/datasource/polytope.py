@@ -98,6 +98,8 @@ class PolytopeDataSource(datasource.DataSource):
                     if len(v) == 1:
                         v = v[0]
                         pre_path[k] = v
+                    if k == "param":
+                        pre_path[k] = v[0]
 
         polytope_mars_config = copy.deepcopy(self.config)
         polytope_mars_config["options"]["pre_path"] = pre_path
