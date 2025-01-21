@@ -57,6 +57,7 @@ type_to_class_map = {"mongodb": "MongoDBIdentity", "none": "NoneIdentity"}
 
 
 def create_identity(identity_config=None):
+
     if identity_config is None:
         identity_config = {"none": {}}
 

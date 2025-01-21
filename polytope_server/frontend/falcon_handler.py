@@ -232,6 +232,7 @@ class FalconHandler(frontend.FrontendHandler):
         return handler
 
     def run_server(self, handler, server_type, host, port):
+
         if server_type == "gunicorn":
             options = {"bind": "%s:%s" % (host, port), "workers": 1}
             GunicornServer(handler, options).run()

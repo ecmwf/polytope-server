@@ -137,6 +137,7 @@ type_to_class_map = {
 
 
 def create_datasource(config):
+
     # Allows passing in just the name as config
     if isinstance(config, str):
         config = {"name": config}

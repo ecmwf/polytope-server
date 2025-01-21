@@ -35,6 +35,7 @@ class PlainAuthorization(Authorization):
         super().__init__(name, realm, config)
 
     def get_roles(self, user: User) -> list:
+
         if user.realm != self.realm():
             raise ValueError(
                 "Trying to authorize a user in the wrong realm, expected {}, got {}".format(self.realm, user.realm)

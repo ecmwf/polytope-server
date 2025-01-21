@@ -48,6 +48,7 @@ class FederatedDataSource(datasource.DataSource):
         return self.config.get("repr", "federated")
 
     def archive(self, request):
+
         url = "/".join(
             [
                 self.url + ":" + str(self.port),
@@ -130,6 +131,7 @@ class FederatedDataSource(datasource.DataSource):
         return True
 
     def retrieve(self, request):
+
         url = "/".join(
             [
                 self.url + ":" + str(self.port),
@@ -191,6 +193,7 @@ class FederatedDataSource(datasource.DataSource):
         return True
 
     def result(self, request):
+
         response = requests.get(self.result_url, stream=True)
 
         self.mime_type_result = response.headers["Content-Type"]

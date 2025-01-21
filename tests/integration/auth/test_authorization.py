@@ -35,6 +35,7 @@ from polytope_server.common.user import User
 @pytest.mark.authorization_any_type_mongodb
 class TestMongoAuthorization:
     def setup_method(self, method):
+
         config = copy.deepcopy(pytest.polytope_config_auth)
 
         self.authorization_config = [c for c in config.get("authorization") if c["type"] == "mongodb"][0]
@@ -78,6 +79,7 @@ class TestMongoAuthorization:
 @pytest.mark.authorization_any_type_ldap
 class TestLDAPAuthorization(TestMongoAuthorization):
     def setup_method(self, method):
+
         config = copy.deepcopy(pytest.polytope_config_auth)
 
         self.authorization_config = [c for c in config.get("authorization") if c["type"] == "ldap"][0]
@@ -102,6 +104,7 @@ class TestLDAPAuthorization(TestMongoAuthorization):
 @pytest.mark.authorization_any_type_plain
 class TestPlainAuthorization(TestMongoAuthorization):
     def setup_method(self, method):
+
         config = copy.deepcopy(pytest.polytope_config_auth)
         config["authentication"].append(
             {

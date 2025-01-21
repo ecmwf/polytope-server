@@ -60,6 +60,7 @@ class PolytopeDataSource(datasource.DataSource):
         raise NotImplementedError()
 
     def check_extra_roles(self, request) -> bool:
+
         # if the user has any of the extra roles, they are allowed
         realm = request.user.realm
         req_extra_roles = self.extra_required_role.get(realm, [])
@@ -122,6 +123,7 @@ class PolytopeDataSource(datasource.DataSource):
         return True
 
     def change_grids(self, request, config):
+
         res = None
 
         # This only holds for climate dt data
@@ -156,6 +158,7 @@ class PolytopeDataSource(datasource.DataSource):
         return config
 
     def change_hash(self, request, config):
+
         # This only holds for climate dt data
         if request.get("dataset", None) == "extremes-dt":
             # all resolution=standard have h128
@@ -163,7 +166,7 @@ class PolytopeDataSource(datasource.DataSource):
                 hash = "1c409f6b78e87eeaeeb4a7294c28add7"
                 return self.change_config_grid_hash(config, hash)
 
-        if request.get("dataset", None) is None:
+        if request.get("dataset", None) == None:
             if request["levtype"] == "ml":
                 hash = "9fed647cd1c77c03f66d8c74a4e0ad34"
                 return self.change_config_grid_hash(config, hash)
@@ -189,6 +192,7 @@ class PolytopeDataSource(datasource.DataSource):
         yield self.output
 
     def match(self, request):
+
         if not self.check_extra_roles(request):
             raise Exception("not authorized to access this data.")
 

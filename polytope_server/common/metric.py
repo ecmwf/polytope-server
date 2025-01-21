@@ -102,6 +102,7 @@ class Metric:
 
 
 class WorkerStatusChange(Metric):
+
     __slots__ = [
         "host",
         "status",
@@ -112,6 +113,7 @@ class WorkerStatusChange(Metric):
 
 
 class WorkerInfo(Metric):
+
     __slots__ = [
         "host",
         "status",
@@ -128,6 +130,7 @@ class WorkerInfo(Metric):
 
 
 class RequestStatusChange(Metric):
+
     __slots__ = ["host", "status", "request_id", "user_id"]
 
     def __init__(self, **kwargs):
@@ -147,6 +150,7 @@ class RequestStatusChange(Metric):
 
 
 class QueueInfo(Metric):
+
     __slots__ = [
         "queue_host",
         "total_queued",
@@ -157,6 +161,7 @@ class QueueInfo(Metric):
 
 
 class CacheInfo(Metric):
+
     __slots__ = [
         "hits",
         "misses",
@@ -167,6 +172,7 @@ class CacheInfo(Metric):
 
 
 class StorageInfo(Metric):
+
     __slots__ = [
         "storage_host",
         "storage_type",
@@ -182,6 +188,7 @@ class StorageInfo(Metric):
 
 
 class MongoStorageInfo(StorageInfo):
+
     __slots__ = [
         "collection_name",
         "db_space_used",
@@ -191,4 +198,5 @@ class MongoStorageInfo(StorageInfo):
 
 
 class S3StorageInfo(StorageInfo):
+
     __slots__ = ["bucket_space_used", "bucket_space_limit", "bucket_name"]

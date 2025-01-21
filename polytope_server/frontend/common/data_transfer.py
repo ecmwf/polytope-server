@@ -95,6 +95,7 @@ class DataTransfer:
         return RequestAccepted(response)
 
     def download(self, id):
+
         if id.startswith(self.staging.get_url_prefix()):
             id = id.replace(self.staging.get_url_prefix(), "", 1)
 
@@ -130,6 +131,7 @@ class DataTransfer:
 
     def process_download(self, request):
         try:
+
             # TODO: temporary fix for Content-Disposition earthkit issues
             split = request.url.split("/")[-1].split(".")
             extension = None
@@ -166,6 +168,7 @@ class DataTransfer:
         return url
 
     def construct_response(self, request):
+
         location = "./{}".format(request.id)
 
         response = {}

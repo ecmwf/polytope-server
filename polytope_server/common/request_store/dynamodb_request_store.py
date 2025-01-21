@@ -124,6 +124,7 @@ def _create_table(dynamodb, table_name):
 
 
 class DynamoDBRequestStore(request_store.RequestStore):
+
     def __init__(self, config=None, metric_store_config=None):
         if config is None:
             config = {}

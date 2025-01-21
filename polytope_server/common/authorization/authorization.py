@@ -69,6 +69,7 @@ type_to_class_map = {
 
 
 def create_authorization(name, realm, config):
+
     # Find the class matching config.type
     type = config.get("type")
     module = import_module("polytope_server.common.authorization." + type + "_authorization")

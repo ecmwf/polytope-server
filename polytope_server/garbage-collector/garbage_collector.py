@@ -31,6 +31,7 @@ from ..common.staging import create_staging
 
 class GarbageCollector:
     def __init__(self, config):
+
         gc_config = config.get("garbage-collector", {})
 
         s_interval = gc_config.get("interval", "60s")
@@ -100,6 +101,7 @@ class GarbageCollector:
         """As a failsafe, removes data which has no corresponding request."""
         all_objects = self.staging.list()
         for data in all_objects:
+
             # logging.info(f"Checking {data.name}")
 
             # TODO: fix properly
@@ -139,6 +141,7 @@ class GarbageCollector:
         all_objects_by_age = {}
 
         for data in all_objects:
+
             # TODO: fix properly
             # remove file extension if it exists
             if "." in data.name:

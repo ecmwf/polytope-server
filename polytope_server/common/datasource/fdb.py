@@ -59,6 +59,7 @@ class FDBDataSource(datasource.DataSource):
                     os.makedirs(root["path"], exist_ok=True)
 
     def check_schema(self):
+
         schema = self.fdb_config.get("schema", None)
 
         # If schema is empty, leave it empty
@@ -71,6 +72,7 @@ class FDBDataSource(datasource.DataSource):
 
         # pull schema from git
         if "git" in schema:
+
             git_config = schema["git"]
             git_path = Path(git_config["path"])
 
@@ -108,6 +110,7 @@ class FDBDataSource(datasource.DataSource):
         return self.type
 
     def archive(self, request):
+
         # could add a check that the request is a singular object (does not contain)
 
         # r = yaml.safe_load(request.user_request)
@@ -117,6 +120,7 @@ class FDBDataSource(datasource.DataSource):
         return True
 
     def retrieve(self, request):
+
         r = yaml.safe_load(request.user_request)
         logging.info(r)
         self.output = self.fdb.retrieve(r)
@@ -126,6 +130,7 @@ class FDBDataSource(datasource.DataSource):
         return self.config.get("repr", "fdb")
 
     def result(self, request):
+
         if not self.output:
             return
 
@@ -140,9 +145,11 @@ class FDBDataSource(datasource.DataSource):
         return
 
     def match(self, request):
+
         r = yaml.safe_load(request.user_request) or {}
 
         for k, v in self.match_rules.items():
+
             # An empty match rule means that the key must not be present
             if v is None or len(v) == 0:
                 if k in r:
@@ -199,6 +206,7 @@ class FDBDataSource(datasource.DataSource):
         return request_str[:-1]
 
     def check_single_date(self, date, offset, offset_fmted):
+
         # Date is relative (0 = now, -1 = one day ago)
         if str(date)[0] == "0" or str(date)[0] == "-":
             date_offset = int(date)
@@ -242,7 +250,9 @@ class FDBDataSource(datasource.DataSource):
         # YYYYMMDD/to/YYYYMMDD -- check end and start date
         # YYYYMMDD/to/YYYYMMDD/by/N -- check end and start date
         if len(split) == 3 or len(split) == 5:
+
             if split[1].casefold() == "to".casefold():
+
                 if len(split) == 5 and split[3].casefold() != "by".casefold():
                     raise Exception("Invalid date range")
 

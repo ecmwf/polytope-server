@@ -72,7 +72,9 @@ class OpenIDOfflineAuthentication(authentication.Authentication):
 
     @cache(lifetime=120)
     def authenticate(self, credentials: str) -> User:
+
         try:
+
             # Check if this is a valid offline_access token
             if not self.check_offline_access_token(credentials):
                 raise ForbiddenRequest("Not a valid offline_access token")

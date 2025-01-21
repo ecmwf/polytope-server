@@ -30,6 +30,7 @@ from polytope_server.common.request import Request
 
 class TestMarsDataSource:
     def setup_method(self, method):
+
         polytope_config.global_config["datasources"]["mars"] = {
             "type": "mars",
             "command": "mars",
@@ -125,11 +126,13 @@ class TestMarsDataSource:
         self.ds.match(self.request)
 
     def test_mars_match_date(self):
+
         self.set_request_date(-5)
         with pytest.raises(Exception):
             self.ds.match(self.request)
 
     def test_mars_match_date_range(self):
+
         self.set_request_date_range(-60, -40)
         self.ds.match(self.request)
 
@@ -138,6 +141,7 @@ class TestMarsDataSource:
             self.ds.match(self.request)
 
     def test_mars_match_date_range_step(self):
+
         self.set_request_date_range(-60, -40, 4)
         self.ds.match(self.request)
 
@@ -147,6 +151,7 @@ class TestMarsDataSource:
 
     # POLY-171
     def test_mars_match_date_list2(self):
+
         self.set_request_date_list(-60, -40)
         self.ds.match(self.request)
 
@@ -156,6 +161,7 @@ class TestMarsDataSource:
 
     # POLY-171
     def test_mars_match_date_list3(self):
+
         self.set_request_date_list(-60, -40, -35)
         self.ds.match(self.request)
 
@@ -165,6 +171,7 @@ class TestMarsDataSource:
 
     # POLY-171
     def test_mars_match_date_list4(self):
+
         self.set_request_date_list(-60, -40, -35, -36)
         self.ds.match(self.request)
 
@@ -174,6 +181,7 @@ class TestMarsDataSource:
 
     # POLY-171
     def test_mars_match_date_list5(self):
+
         self.set_request_date_list(-60, -40, -35, -36, -37)
         self.ds.match(self.request)
 
@@ -187,6 +195,7 @@ class TestMarsDataSource:
             self.ds.match(self.request)
 
     def test_mars_match_inverse_date_range_step(self):
+
         self.set_request_date_range(-40, -60)
         self.ds.match(self.request)
 

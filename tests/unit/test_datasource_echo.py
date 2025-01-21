@@ -25,6 +25,7 @@ from polytope_server.common.request import Request
 
 class TestDataSourceecho:
     def setup_method(self, method):
+
         polytope_config.global_config["datasources"]["echo"] = {"type": "echo"}
 
         self.echo_config = {"name": "echo"}

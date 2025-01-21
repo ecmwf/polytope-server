@@ -29,6 +29,7 @@ class FIFO:
     """Creates a named pipe (FIFO) and reads data from it"""
 
     def __init__(self, name, dir=None):
+
         if dir is None:
             dir = tempfile.gettempdir()
 

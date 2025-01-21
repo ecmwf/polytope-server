@@ -27,6 +27,7 @@ from polytope_server.common.request import Request
 
 class TestDataSourcedummy:
     def setup_method(self, method):
+
         polytope_config.global_config["datasources"]["dummy"] = {"type": "dummy"}
 
         self.dummy_config = {"name": "dummy"}

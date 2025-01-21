@@ -87,9 +87,11 @@ class MARSDataSource(datasource.DataSource):
         return self.config.get("repr", "mars")
 
     def match(self, request):
+
         r = yaml.safe_load(request.user_request) or {}
 
         for k, v in self.match_rules.items():
+
             # An empty match rule means that the key must not be present
             if v is None or len(v) == 0:
                 if k in r:
@@ -122,6 +124,7 @@ class MARSDataSource(datasource.DataSource):
         raise NotImplementedError("Archiving not implemented for MARS data source")
 
     def retrieve(self, request):
+
         # Open a FIFO for MARS output
         self.fifo = FIFO("MARS-FIFO-" + request.id)
 
@@ -160,6 +163,7 @@ class MARSDataSource(datasource.DataSource):
         return True
 
     def result(self, request):
+
         # The FIFO will get EOF if MARS exits unexpectedly, so we will break out of this loop automatically
         for x in self.fifo.data():
             yield x
@@ -234,6 +238,7 @@ class MARSDataSource(datasource.DataSource):
         return request_str
 
     def check_single_date(self, date, offset, offset_fmted, after=False):
+
         # Date is relative (0 = now, -1 = one day ago)
         if str(date)[0] == "0" or str(date)[0] == "-":
             date_offset = int(date)
@@ -259,6 +264,7 @@ class MARSDataSource(datasource.DataSource):
             return
 
     def parse_relativedelta(self, time_str):
+
         pattern = r"(\d+)([dhm])"
         time_dict = {"d": 0, "h": 0, "m": 0}
         matches = re.findall(pattern, time_str)
@@ -296,7 +302,9 @@ class MARSDataSource(datasource.DataSource):
         # YYYYMMDD/to/YYYYMMDD -- check end and start date
         # YYYYMMDD/to/YYYYMMDD/by/N -- check end and start date
         if len(split) == 3 or len(split) == 5:
+
             if split[1].casefold() == "to".casefold():
+
                 if len(split) == 5 and split[3].casefold() != "by".casefold():
                     raise Exception("Invalid date range")
 
