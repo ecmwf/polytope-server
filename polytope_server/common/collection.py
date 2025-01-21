@@ -24,7 +24,6 @@ from .exceptions import InvalidConfig
 
 class Collection:
     def __init__(self, name, config):
-
         self.config = config
         self.name = name
         self.roles = config.get("roles")

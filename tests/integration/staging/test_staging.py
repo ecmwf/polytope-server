@@ -31,7 +31,6 @@ proxies = {"http": None, "https": None}
 
 
 class TestStaging:
-
     __test__ = False
 
     def setup_method(self, method):
@@ -172,11 +171,9 @@ class TestStaging:
 
 @pytest.mark.staging_s3
 class TestS3Staging(TestStaging):
-
     __test__ = True
 
     def setup_method(self, method):
-
         config = copy.deepcopy(pytest.polytope_config)
 
         self.staging_config = config.get("staging")
@@ -202,11 +199,9 @@ class TestS3Staging(TestStaging):
 
 @pytest.mark.staging_polytope
 class TestPolytopeStaging(TestStaging):
-
     __test__ = True
 
     def setup_method(self, method):
-
         config = copy.deepcopy(pytest.polytope_config)
 
         self.staging_config = config.get("staging")

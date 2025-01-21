@@ -30,7 +30,6 @@ from polytope_server.common.request import Request, Verb
 @pytest.mark.skipif(subprocess.call(["which", "fdb"]) != 0, reason="fdb not in path")
 class TestDataSourceFDB:
     def setup_method(self, method):
-
         self.datasource_config = {"name": "fdb"}
 
         self.request = Request()
@@ -56,7 +55,6 @@ class TestDataSourceFDB:
             self.dummy_data = file.read()
 
     def test_datasource_fdb(self):
-
         # archive
         self.request.verb = Verb.ARCHIVE
         success = self.ds.dispatch(self.request, self.dummy_data)

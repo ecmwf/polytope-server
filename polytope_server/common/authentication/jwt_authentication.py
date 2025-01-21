@@ -50,7 +50,6 @@ class JWTAuthentication(authentication.Authentication):
 
     @cache(lifetime=120)
     def authenticate(self, credentials: str) -> User:
-
         try:
             certs = self.get_certs()
             decoded_token = jwt.decode(

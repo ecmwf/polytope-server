@@ -45,7 +45,6 @@ class FederationAuthentication(authentication.Authentication):
 
     @cache(lifetime=120)
     def authenticate(self, credentials: str) -> User:
-
         # credentials should be of the form 'Federation <secret>:<username>:<realm>'
 
         try:
@@ -70,7 +69,6 @@ class FederationAuthentication(authentication.Authentication):
 
 
 def retrieve_ecmwfapi_user(key, url="https://api.ecmwf.int/v1", proxy=""):
-
     url = url.rstrip("/")
     proxies = {"http": proxy, "https": proxy}
     response = requests.get(url + "/who-am-i?token=" + key, proxies=proxies)

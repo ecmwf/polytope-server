@@ -109,7 +109,6 @@ class Staging(ABC):
 
 
 def create_staging(staging_config=None):
-
     if staging_config is None:
         staging_config = {"polytope": {}}
 

@@ -60,7 +60,6 @@ class Request:
     ]
 
     def __init__(self, from_dict=None, **kwargs):
-
         self.id = str(uuid.uuid4())
         self.timestamp = datetime.datetime.utcnow().timestamp()
         self.last_modified = datetime.datetime.utcnow().timestamp()

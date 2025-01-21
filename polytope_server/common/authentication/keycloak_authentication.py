@@ -63,7 +63,6 @@ class KeycloakAuthentication(authentication.Authentication):
 
     @cache(lifetime=120)
     def authenticate(self, credentials: str) -> User:
-
         # credentials should be of the form 'base64(<username>:<API_key>)'
         try:
             decoded = base64.b64decode(credentials).decode("utf-8")
@@ -81,7 +80,6 @@ class KeycloakAuthentication(authentication.Authentication):
             logging.debug("Setting HTTPS_PROXY to {}".format(os.environ["https_proxy"]))
 
             try:
-
                 # Open a session as a registered client
                 client = KeycloakOpenID(
                     server_url=self.url,

@@ -48,7 +48,6 @@ class WebMARSDataSource(datasource.DataSource):
         raise NotImplementedError("Archiving not implemented for webmars data source")
 
     def retrieve(self, request):
-
         email, key = self.get_user(request)
 
         self.server = ECMWFDataServer(email=email, url=self.url, key=key)
@@ -95,7 +94,6 @@ class WebMARSDataSource(datasource.DataSource):
         return "application/x-grib"
 
     def match(self, request):
-
         r = yaml.safe_load(request.user_request)
         for k, v in self.match_rules.items():
             v = [v] if isinstance(v, str) else v

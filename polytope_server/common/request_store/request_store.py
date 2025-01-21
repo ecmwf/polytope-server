@@ -72,7 +72,6 @@ type_to_class_map = {"mongodb": "MongoRequestStore", "dynamodb": "DynamoDBReques
 
 
 def create_request_store(request_store_config=None, metric_store_config=None):
-
     if request_store_config is None:
         request_store_config = {"mongodb": {}}
 

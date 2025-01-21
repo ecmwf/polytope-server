@@ -39,7 +39,6 @@ from polytope_server.common.identity import identity
 @pytest.mark.authentication_any_type_mongodb
 class TestMongoAuthentication:
     def setup_method(self, method):
-
         config = copy.deepcopy(pytest.polytope_config_auth)
 
         self.authentication_config = [c for c in config.get("authentication") if c["type"] == "mongodb"][0]
@@ -103,7 +102,6 @@ class TestMongoApiKeyAuthentication(TestMongoAuthentication):
 @pytest.mark.authentication_any_type_ecmwfapi
 class TestECMWFAuthentication(TestMongoAuthentication):
     def setup_method(self, method):
-
         config = copy.deepcopy(pytest.polytope_config_auth)
 
         cache.init(config.get("caching", {}))
@@ -141,7 +139,6 @@ class TestECMWFAuthentication(TestMongoAuthentication):
 @pytest.mark.authentication_any_type_plain
 class TestPlainAuthentication(TestMongoAuthentication):
     def setup_method(self, method):
-
         config = copy.deepcopy(pytest.polytope_config_auth)
 
         cache.init(config.get("caching", {}))
@@ -160,7 +157,6 @@ class TestPlainAuthentication(TestMongoAuthentication):
 
 class TestFederationAuthentication:
     def setup_method(self, method):
-
         self.authentication_config = {"type": "federation", "secret": "foobar"}
         self.realm = "polytope"
 
