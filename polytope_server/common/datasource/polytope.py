@@ -161,7 +161,7 @@ class PolytopeDataSource(datasource.DataSource):
 
         # This only holds for extremes dt data
         if request.get("dataset", None) == "extremes-dt":
-            if request["levtype"] == "pl":
+            if request["levtype"] == "pl" and "130" in request["param"]:
                 hash = "1c409f6b78e87eeaeeb4a7294c28add7"
                 return self.change_config_grid_hash(config, hash)
 
