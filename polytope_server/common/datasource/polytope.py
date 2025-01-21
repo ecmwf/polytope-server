@@ -163,7 +163,7 @@ class PolytopeDataSource(datasource.DataSource):
                 hash = "1c409f6b78e87eeaeeb4a7294c28add7"
                 return self.change_config_grid_hash(config, hash)
 
-        if request.get("dataset", None) == None:
+        if request.get("dataset", None) is None:
             if request["levtype"] == "ml":
                 hash = "9fed647cd1c77c03f66d8c74a4e0ad34"
                 return self.change_config_grid_hash(config, hash)
