@@ -104,6 +104,7 @@ class PolytopeDataSource(datasource.DataSource):
         polytope_mars_config["options"]["pre_path"] = pre_path
 
         self.change_grids(r, polytope_mars_config)
+        self.change_hash(r, polytope_mars_config)
 
         polytope_mars = PolytopeMars(
             polytope_mars_config,
@@ -154,6 +155,29 @@ class PolytopeDataSource(datasource.DataSource):
             # Find the mapper transformation
             self.change_config_grid(config, res)
 
+        return config
+
+    def change_hash(self, request, config):
+
+        # This only holds for climate dt data
+        if request.get("dataset", None) == "extremes-dt":
+            # all resolution=standard have h128
+            if request["levtype"] == "pl":
+                hash = "1c409f6b78e87eeaeeb4a7294c28add7"
+                return self.change_config_grid_hash(config, hash)
+
+        if request.get("dataset", None) == None:
+            if request["levtype"] == "ml":
+                hash = "9fed647cd1c77c03f66d8c74a4e0ad34"
+                return self.change_config_grid_hash(config, hash)
+
+        return config
+
+    def change_config_grid_hash(self, config, hash):
+        for mappings in config["options"]["axis_config"]:
+            for sub_mapping in mappings["transformations"]:
+                if sub_mapping["name"] == "mapper":
+                    sub_mapping["md5_hash"] = hash
         return config
 
     def change_config_grid(self, config, res):
