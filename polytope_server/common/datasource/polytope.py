@@ -162,6 +162,8 @@ class PolytopeDataSource(datasource.DataSource):
         # This only holds for extremes dt data
         if request.get("dataset", None) == "extremes-dt":
             if request["levtype"] == "pl" and "130" in request["param"]:
+                if request["param"] != "130":
+                    raise (ValueError("Parameter 130 is on a different grids than other parameters. Please request it separately."))
                 hash = "1c409f6b78e87eeaeeb4a7294c28add7"
                 return self.change_config_grid_hash(config, hash)
 
