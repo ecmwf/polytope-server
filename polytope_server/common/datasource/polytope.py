@@ -159,13 +159,13 @@ class PolytopeDataSource(datasource.DataSource):
 
     def change_hash(self, request, config):
 
-        # This only holds for climate dt data
+        # This only holds for extremes dt data
         if request.get("dataset", None) == "extremes-dt":
-            # all resolution=standard have h128
             if request["levtype"] == "pl":
                 hash = "1c409f6b78e87eeaeeb4a7294c28add7"
                 return self.change_config_grid_hash(config, hash)
 
+        # This only holds for operational data
         if request.get("dataset", None) is None:
             if request["levtype"] == "ml":
                 hash = "9fed647cd1c77c03f66d8c74a4e0ad34"
