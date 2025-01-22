@@ -1,4 +1,3 @@
-
 apiVersion: skaffold/v4beta10
 kind: Config
 
@@ -18,8 +17,15 @@ build:
     concurrency: 1
 
   tagPolicy:
-    gitCommit:
-      ignoreChanges: true
+    customTemplate:
+      template: "{{.PREFIX}}{{.GIT_TAG}}"
+      components:
+      - name: PREFIX
+        envTemplate:
+          template: '{{default "" .PREFIX}}'
+      - name: GIT_TAG
+        gitCommit:
+          ignoreChanges: true
 
   artifacts:
   
@@ -28,19 +34,19 @@ build:
     docker:
       target: polytope-common
       buildArgs:
-        developer_mode: "{{ .developer_mode }}"
+        developer_mode: '{{ default "false" .developer_mode }}'
 
   # Worker with all clients (FDB, GribJump, MARS C, MARS CPP)
   - image: "worker"
     docker:
       target: worker
       buildArgs:
-        rpm_repo: "{{ .rpm_repo }}"
-        mars_config_repo: "{{ .mars_config_repo }}"
-        mars_config_branch: "{{ .mars_config_branch }}"
-        developer_mode: "{{ .developer_mode }}"
+        rpm_repo: '{{ .rpm_repo }}'
+        mars_config_repo: '{{ .mars_config_repo }}'
+        mars_config_branch: '{{ .mars_config_branch }}'
+        developer_mode: '{{ .developer_mode }}'
         # mars_client_c_version: 6.33.20.2
-        gribjump_version: 0.8.0
+        gribjump_version: '{{ default "0.8.0" .gribjump_version }}'
         # mars_client_cpp_version: 6.99.3.0
         # ecbuild_version: 3.8.2
         # eccodes_version: 2.33.1
