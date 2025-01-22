@@ -171,6 +171,9 @@ class PolytopeDataSource(datasource.DataSource):
                     )
                 hash = "1c409f6b78e87eeaeeb4a7294c28add7"
                 return self.change_config_grid_hash(config, hash)
+            if request["stream"] == "wave":
+                hash = "386742a2dd1201b67f2d19ed421353ea"
+                return self.change_config_grid_hash(config, hash)
 
         # This only holds for operational data
         if request.get("dataset", None) is None:
