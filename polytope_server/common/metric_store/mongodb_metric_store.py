@@ -106,9 +106,25 @@ class MongoMetricStore(MetricStore):
         else:
             return None
 
-    def get_metrics(self, ascending=None, descending=None, limit=None, **kwargs):
-        all_slots = []
+    def get_metrics(self, ascending=None, descending=None, limit=None, exclude_fields=None, **kwargs):
+        """
+        Fetch metrics from the store with optional sorting, limiting, and field exclusion.
 
+        Args:
+            ascending (str): Field to sort by ascending order.
+            descending (str): Field to sort by descending order.
+            limit (int): Limit the number of results.
+            exclude_fields (dict): Fields to exclude in the result (default is {"_id": False}).
+            **kwargs: Filters to apply to the query.
+
+        Returns:
+            List of metrics matching the query.
+        """
+        # Default exclude_fields to {"_id": False} if not provided
+        if exclude_fields is None:
+            exclude_fields = {"_id": False}
+
+        all_slots = []
         found_type = None
         for k, v in self.metric_type_class_map.items():
             class_slots = list(set().union(Metric.__slots__, v.__slots__))
@@ -117,46 +133,40 @@ class MongoMetricStore(MetricStore):
             all_slots = list(set().union(all_slots, class_slots))
 
         if not found_type:
-            raise KeyError(
-                "The provided keys must be a subset of slots of any of the ",
-                "available metric types.",
-            )
+            raise KeyError("The provided keys must be a subset of slots of any of the available metric types.")
 
-        if ascending:
-            if ascending not in class_slots:
-                raise KeyError("The identified metric type does not have the key {}".format(ascending))
+        if ascending and ascending not in class_slots:
+            raise KeyError(f"The identified metric type does not have the key {ascending}")
 
-        if descending:
-            if descending not in class_slots:
-                raise KeyError("The identified metric type does not have the key {}".format(descending))
+        if descending and descending not in class_slots:
+            raise KeyError(f"The identified metric type does not have the key {descending}")
 
-        kwargs_to_pop = []
-        for k, v in kwargs.items():
-            if v is None:
-                kwargs_to_pop.append(k)
-                continue
-            kwargs[k] = self.metric_type_class_map[found_type].serialize_slot(k, v)
-        for k in kwargs_to_pop:
-            kwargs.pop(k)
-
-        cursor = self.store.find(kwargs, {"_id": False})
-
-        if ascending is not None and descending is not None:
+        if ascending and descending:
             raise ValueError("Cannot sort by ascending and descending at the same time.")
-        if ascending is not None:
-            cursor.sort(ascending, pymongo.ASCENDING)
-        elif descending is not None:
-            cursor.sort(descending, pymongo.DESCENDING)
-        if limit is not None:
-            cursor.limit(limit)
 
+        # Serialize and clean kwargs
+        kwargs = {
+            k: self.metric_type_class_map[found_type].serialize_slot(k, v) for k, v in kwargs.items() if v is not None
+        }
+
+        # Query the database with filters and exclude_fields
+        cursor = self.store.find(kwargs, exclude_fields)
+
+        # Apply sorting
+        if ascending:
+            cursor = cursor.sort(ascending, pymongo.ASCENDING)
+        elif descending:
+            cursor = cursor.sort(descending, pymongo.DESCENDING)
+
+        # Apply limit
+        if limit:
+            cursor = cursor.limit(limit)
+
+        # Process results
         cursor_list = list(cursor)
         if cursor_list:
-            res = []
-            for i in cursor_list:
-                metric = self.metric_type_class_map[MetricType(i.get("type"))](from_dict=i)
-                res.append(metric)
-            return res
+            return [self.metric_type_class_map[MetricType(i.get("type"))](from_dict=i) for i in cursor_list]
+
         return []
 
     def update_metric(self, metric):
