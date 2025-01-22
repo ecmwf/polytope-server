@@ -17,8 +17,15 @@ build:
     concurrency: 1
 
   tagPolicy:
-    gitCommit:
-      ignoreChanges: true
+    customTemplate:
+      template: "{{.PREFIX}}{{.GIT_TAG}}"
+      components:
+      - name: PREFIX
+        envTemplate:
+          template: '{{default "" .PREFIX}}'
+      - name: GIT_TAG
+        gitCommit:
+          ignoreChanges: true
 
   artifacts:
   
@@ -28,7 +35,6 @@ build:
       target: polytope-common
       buildArgs:
         developer_mode: '{{ default "false" .developer_mode }}'
-        prefix: '{{ default "" .prefix }}'
 
   # Worker with all clients (FDB, GribJump, MARS C, MARS CPP)
   - image: "worker"
