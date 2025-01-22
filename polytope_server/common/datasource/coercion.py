@@ -1,6 +1,7 @@
 import copy
 from datetime import datetime, timedelta
 from typing import Any, Dict
+import re
 
 
 class CoercionError(Exception):
@@ -111,9 +112,18 @@ class Coercion:
             else:
                 return str(value)
         elif isinstance(value, str):
-            if not value.isdigit() or int(value) < 0:
-                raise CoercionError("Step must be greater than or equal to 0.")
-            return value
+            try:
+                if int(value) < 0:
+                    raise CoercionError("Step must be greater than or equal to 0.")
+                else:
+                    return value
+            except ValueError:
+                # value cannot be converted to a digit, but we would like to match step ranges too
+                pattern = r"^\d+-\d+$"
+                if re.match(pattern, value):
+                    return value
+                else:
+                    raise CoercionError("Invalid type, expected integer step or step range.")
         else:
             raise CoercionError("Invalid type, expected integer or string.")
 
