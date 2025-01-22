@@ -41,6 +41,7 @@ class PolytopeDataSource(datasource.DataSource):
         self.patch_rules = config.get("patch", {})
         self.defaults = config.get("defaults", {})
         self.extra_required_role = config.get("extra_required_role", {})
+        self.hacky_fix_destine_dt = config.get("hacky_fix_destine_dt", False)
         self.obey_schedule = config.get("obey_schedule", False)
         self.output = None
 
@@ -95,17 +96,19 @@ class PolytopeDataSource(datasource.DataSource):
             v = v.split("/") if isinstance(v, str) else v
             if k in self.req_single_keys:
                 if isinstance(v, list):
+                    if self.hacky_fix_destine_dt:
+                        if k == "param":
+                            pre_path[k] = v[0]
                     if len(v) == 1:
                         v = v[0]
                         pre_path[k] = v
-                    if k == "param":
-                        pre_path[k] = v[0]
 
         polytope_mars_config = copy.deepcopy(self.config)
         polytope_mars_config["options"]["pre_path"] = pre_path
 
-        self.change_grids(r, polytope_mars_config)
-        self.change_hash(r, polytope_mars_config)
+        if self.hacky_fix_destine_dt:
+            self.change_grids(r, polytope_mars_config)
+            self.change_hash(r, polytope_mars_config)
 
         polytope_mars = PolytopeMars(
             polytope_mars_config,
