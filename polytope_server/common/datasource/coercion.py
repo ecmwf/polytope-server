@@ -1,7 +1,7 @@
 import copy
+import re
 from datetime import datetime, timedelta
 from typing import Any, Dict
-import re
 
 
 class CoercionError(Exception):
