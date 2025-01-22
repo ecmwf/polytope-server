@@ -9,7 +9,6 @@ class CoercionError(Exception):
 
 
 class Coercion:
-
     allow_ranges = ["number", "step", "date", "time"]
     allow_lists = ["class", "stream", "type", "expver", "param", "number", "date", "step", "time"]
 
@@ -30,7 +29,6 @@ class Coercion:
                 coerced_values = [Coercion.coerce_value(key, v) for v in value]
                 return coerced_values
             elif isinstance(value, str):
-
                 if "/to/" in value and key in Coercion.allow_ranges:
                     # Handle ranges with possible "/by/" suffix
                     start_value, rest = value.split("/to/", 1)
@@ -105,7 +103,6 @@ class Coercion:
 
     @staticmethod
     def coerce_step(value: Any) -> str:
-
         if isinstance(value, int):
             if value < 0:
                 raise CoercionError("Step must be greater than or equal to 0.")
@@ -129,7 +126,6 @@ class Coercion:
 
     @staticmethod
     def coerce_number(value: Any) -> str:
-
         if isinstance(value, int):
             if value <= 0:
                 raise CoercionError("Number must be a positive value.")
@@ -223,7 +219,6 @@ class Coercion:
 
     @staticmethod
     def coerce_expver(value: Any) -> str:
-
         # Integers accepted, converted to 4-length strings
         if isinstance(value, int):
             if 0 <= value <= 9999:
