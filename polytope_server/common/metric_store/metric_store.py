@@ -41,7 +41,7 @@ class MetricStore(ABC):
         """Fetch metric from the metric store"""
 
     @abstractmethod
-    def get_metrics(self, ascending=None, descending=None, limit=None, **kwargs) -> List[Metric]:
+    def get_metrics(self, ascending=None, descending=None, limit=None, exclude_fields=None, **kwargs) -> List[Metric]:
         """Returns [limit] metrics which match kwargs, ordered by
         ascending/descenging keys (e.g. ascending = 'timestamp')"""
 

@@ -33,6 +33,7 @@ from prometheus_client import (
     generate_latest,
 )
 
+from ..common.metric import MetricType
 from .config import config
 from .exceptions import (
     MetricCalculationError,
@@ -130,11 +131,14 @@ async def get_cached_usage_metrics(
                 return usage_metrics_cache["data"]
 
         user_requests = []
-        metrics = metric_store.get_metrics()
+        metrics = metric_store.get_metrics(
+            type=MetricType.REQUEST_STATUS_CHANGE,
+            status="processed",
+            exclude_fields={"_id": False, "host": False, "request_id": False, "uuid": False},
+        )
+        user_requests = []
         for u_r in metrics:
-            serialized_u_r = u_r.serialize()
-            if serialized_u_r["type"] == "request_status_change" and serialized_u_r["status"] == "processed":
-                user_requests.append(serialized_u_r)
+            user_requests.append(u_r.serialize())
 
         if not isinstance(user_requests, list):
             raise TelemetryDataError("Fetched data is not in the expected list format")

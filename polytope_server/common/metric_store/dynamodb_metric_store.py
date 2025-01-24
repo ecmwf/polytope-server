@@ -171,9 +171,13 @@ class DynamoDBMetricStore(MetricStore):
         if "Item" in response:
             return _load(response["Item"])
 
-    def get_metrics(self, ascending=None, descending=None, limit=None, request_id=None, **kwargs):
+    def get_metrics(self, ascending=None, descending=None, limit=None, request_id=None, exclude_fields=None, **kwargs):
         if ascending is not None and descending is not None:
             raise ValueError("Cannot sort by ascending and descending at the same time.")
+
+        if exclude_fields:
+            logger.warning(f"exclude_fields parameter is provided but not implemented: {exclude_fields}")
+            raise NotImplementedError("The 'exclude_fields' feature is not implemented yet.")
 
         if request_id is not None:
             fn = self.table.query
