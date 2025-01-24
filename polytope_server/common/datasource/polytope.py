@@ -111,8 +111,6 @@ class PolytopeDataSource(datasource.DataSource):
                     if len(v) == 1:
                         v = v[0]
                         pre_path[k] = v
-                    if k == "param":
-                        pre_path[k] = v[0]
 
         polytope_mars_config = copy.deepcopy(self.config)
         polytope_mars_config["options"]["pre_path"] = pre_path
@@ -137,74 +135,6 @@ class PolytopeDataSource(datasource.DataSource):
             raise Exception("Polytope Feature Extraction Error: {}".format(e.message))
 
         return True
-
-    def change_grids(self, request, config):
-        res = None
-
-        # This only holds for climate dt data
-        if request.get("dataset", None) == "climate-dt":
-            # all resolution=standard have h128
-            if request["resolution"] == "standard":
-                res = 128
-                return self.change_config_grid(config, res)
-
-            # for activity CMIP6 and experiment hist, all models except ifs-nemo have h512 and ifs-nemo has h1024
-            if request["activity"] == "cmip6" and request["experiment"] == "hist":
-                if request["model"] != "ifs-nemo":
-                    res = 512
-                else:
-                    res = 1024
-
-            # # for activity scenariomip and experiment ssp3-7.0, all models use h1024
-            # if request["activity"] == "scenariomip" and request["experiment"] == "ssp3-7.0":
-            #     res = 1024
-
-            if request["activity"] == "story-nudging":
-                res = 512
-
-            if request["activity"] in ["baseline", "projections", "scenariomip"]:
-                res = 1024
-
-        # Only assign new resolution if it was changed here
-        if res:
-            # Find the mapper transformation
-            self.change_config_grid(config, res)
-
-        return config
-
-    def change_hash(self, request, config):
-        # This only holds for extremes dt data
-        if request.get("dataset", None) == "extremes-dt":
-            if request["levtype"] == "pl" and "130" in request["param"]:
-                if request["param"] != "130":
-                    raise ValueError(
-                        """Parameter 130 is on a different grids than other parameters.
-                                      Please request it separately."""
-                    )
-                hash = "1c409f6b78e87eeaeeb4a7294c28add7"
-                return self.change_config_grid_hash(config, hash)
-
-        # This only holds for operational data
-        if request.get("dataset", None) is None:
-            if request["levtype"] == "ml":
-                hash = "9fed647cd1c77c03f66d8c74a4e0ad34"
-                return self.change_config_grid_hash(config, hash)
-
-        return config
-
-    def change_config_grid_hash(self, config, hash):
-        for mappings in config["options"]["axis_config"]:
-            for sub_mapping in mappings["transformations"]:
-                if sub_mapping["name"] == "mapper":
-                    sub_mapping["md5_hash"] = hash
-        return config
-
-    def change_config_grid(self, config, res):
-        for mappings in config["options"]["axis_config"]:
-            for sub_mapping in mappings["transformations"]:
-                if sub_mapping["name"] == "mapper":
-                    sub_mapping["resolution"] = res
-        return config
 
     def result(self, request):
         logging.info("Getting result")
