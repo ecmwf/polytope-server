@@ -22,8 +22,11 @@ import copy
 import json
 import logging
 import os
+import re
+from datetime import datetime, timedelta
 
 import yaml
+from dateutil.relativedelta import relativedelta
 from polytope_feature.utility.exceptions import PolytopeError
 from polytope_mars.api import PolytopeMars
 
@@ -41,6 +44,13 @@ class PolytopeDataSource(datasource.DataSource):
         self.patch_rules = config.get("patch", {})
         self.defaults = config.get("defaults", {})
         self.extra_required_role = config.get("extra_required_role", {})
+        # https://github.com/ecmwf/polytope-server/issues/68
+        self.gh68_fix_hashes = config.get("gh68_fix_hashes", False)
+        # https://github.com/ecmwf/polytope-server/issues/69
+        self.gh69_fix_grids = config.get("gh69_fix_grids", False)
+        # https://github.com/ecmwf/polytope-server/issues/70
+        self.gh70_fix_step_ranges = config.get("gh70_fix_step_ranges", False)
+        self.hacky_fix_oper = config.get("hacky_fix_oper", False)
         self.obey_schedule = config.get("obey_schedule", False)
         self.output = None
 
@@ -95,6 +105,9 @@ class PolytopeDataSource(datasource.DataSource):
             v = v.split("/") if isinstance(v, str) else v
             if k in self.req_single_keys:
                 if isinstance(v, list):
+                    if self.gh70_fix_step_ranges:
+                        if k == "param":
+                            pre_path[k] = v[0]
                     if len(v) == 1:
                         v = v[0]
                         pre_path[k] = v
@@ -104,8 +117,10 @@ class PolytopeDataSource(datasource.DataSource):
         polytope_mars_config = copy.deepcopy(self.config)
         polytope_mars_config["options"]["pre_path"] = pre_path
 
-        self.change_grids(r, polytope_mars_config)
-        self.change_hash(r, polytope_mars_config)
+        if self.gh69_fix_grids:
+            change_grids(r, polytope_mars_config)
+        if self.gh68_fix_hashes:
+            change_hash(r, polytope_mars_config)
 
         polytope_mars = PolytopeMars(
             polytope_mars_config,
@@ -211,19 +226,21 @@ class PolytopeDataSource(datasource.DataSource):
         if "feature" not in r:
             raise Exception("request does not contain key 'feature'")
 
-        # # Check that there is only one value if required
-        # for k, v in r.items():
-        #     if k in self.req_single_keys:
-        #         v = [v] if isinstance(v, str) else v
-        #         if len(v) > 1:
-        #             raise Exception("key '{}' cannot accept a list yet. This feature is planned.".format(k))
-        #         elif len(v) == 0:
-        #             raise Exception("Expected a value for key {}".format(k))
-
         for k, v in self.match_rules.items():
             # Check that all required keys exist
             if k not in r:
                 raise Exception("request does not contain key '{}'".format(k))
+
+            # Process date rules
+            if k == "date":
+                comp, v = v.split(" ", 1)
+                if comp == "<":
+                    self.date_check(r["date"], v, False)
+                elif comp == ">":
+                    self.date_check(r["date"], v, True)
+                else:
+                    raise Exception("Invalid date comparison")
+                continue
 
             # ... and check the value of other keys
             v = [v] if isinstance(v, str) else v
@@ -258,3 +275,172 @@ class PolytopeDataSource(datasource.DataSource):
             if k not in request:
                 request[k] = v
         return request
+
+    def check_single_date(self, date, offset, offset_fmted, after=False):
+
+        # Date is relative (0 = now, -1 = one day ago)
+        if str(date)[0] == "0" or str(date)[0] == "-":
+            date_offset = int(date)
+            dt = datetime.today() + timedelta(days=date_offset)
+
+            if after and dt >= offset:
+                raise Exception("Date is too recent, expected < {}".format(offset_fmted))
+            elif not after and dt < offset:
+                raise Exception("Date is too old, expected > {}".format(offset_fmted))
+            else:
+                return
+
+        # Absolute date YYYMMDD
+        try:
+            dt = datetime.strptime(date, "%Y%m%d")
+        except ValueError:
+            raise Exception("Invalid date, expected real date in YYYYMMDD format")
+        if after and dt >= offset:
+            raise Exception("Date is too recent, expected < {}".format(offset_fmted))
+        elif not after and dt < offset:
+            raise Exception("Date is too old, expected > {}".format(offset_fmted))
+        else:
+            return
+
+    def parse_relativedelta(self, time_str):
+
+        pattern = r"(\d+)([dhm])"
+        time_dict = {"d": 0, "h": 0, "m": 0}
+        matches = re.findall(pattern, time_str)
+
+        for value, unit in matches:
+            if unit == "d":
+                time_dict["d"] += int(value)
+            elif unit == "h":
+                time_dict["h"] += int(value)
+            elif unit == "m":
+                time_dict["m"] += int(value)
+
+        return relativedelta(days=time_dict["d"], hours=time_dict["h"], minutes=time_dict["m"])
+
+    def date_check(self, date, offset, after=False):
+        """Process special match rules for DATE constraints"""
+
+        date = str(date)
+
+        # Default date is -1
+        if len(date) == 0:
+            date = "-1"
+
+        now = datetime.today()
+        offset = now - self.parse_relativedelta(offset)
+        offset_fmted = offset.strftime("%Y%m%d")
+
+        split = date.split("/")
+
+        # YYYYMMDD
+        if len(split) == 1:
+            self.check_single_date(split[0], offset, offset_fmted, after)
+            return True
+
+        # YYYYMMDD/to/YYYYMMDD -- check end and start date
+        # YYYYMMDD/to/YYYYMMDD/by/N -- check end and start date
+        if len(split) == 3 or len(split) == 5:
+
+            if split[1].casefold() == "to".casefold():
+
+                if len(split) == 5 and split[3].casefold() != "by".casefold():
+                    raise Exception("Invalid date range")
+
+                self.check_single_date(split[0], offset, offset_fmted, after)
+                self.check_single_date(split[2], offset, offset_fmted, after)
+                return True
+
+        # YYYYMMDD/YYYYMMDD/YYYYMMDD/... -- check each date
+        for s in split:
+            self.check_single_date(s, offset, offset_fmted, after)
+
+        return True
+
+
+def change_grids(request, config):
+    """
+    Temporary fix for request-dependent grid changes in polytope
+    see https://github.com/ecmwf/polytope-server/issues/69
+    """
+    res = None
+
+    # This only holds for climate dt data
+    if request.get("dataset", None) == "climate-dt":
+        # all resolution=standard have h128
+        if request["resolution"] == "standard":
+            res = 128
+            return change_config_grid(config, res)
+
+        # for activity CMIP6 and experiment hist, all models except ifs-nemo have h512 and ifs-nemo has h1024
+        if request["activity"] == "cmip6" and request["experiment"] == "hist":
+            if request["model"] != "ifs-nemo":
+                res = 512
+            else:
+                res = 1024
+
+        # # for activity scenariomip and experiment ssp3-7.0, all models use h1024
+        # if request["activity"] == "scenariomip" and request["experiment"] == "ssp3-7.0":
+        #     res = 1024
+
+        if request["activity"] == "story-nudging":
+            res = 512
+
+        if request["activity"] in ["baseline", "projections", "scenariomip"]:
+            res = 1024
+
+    if request.get("dataset", None) == "extremes-dt":
+        if request["stream"] == "wave":
+            for mappings in config["options"]["axis_config"]:
+                for sub_mapping in mappings["transformations"]:
+                    if sub_mapping["name"] == "mapper":
+                        sub_mapping["type"] = "reduced_ll"
+                        sub_mapping["resolution"] = 3601
+            return config
+
+    # Only assign new resolution if it was changed here
+    if res:
+        # Find the mapper transformation
+        return change_config_grid(config, res)
+
+    return config
+
+
+def change_hash(request, config):
+    """
+    Temporary fix for grid mismatch in polytope
+    see https://github.com/ecmwf/polytope-server/issues/68
+    """
+    # This only holds for extremes dt data
+    if request.get("dataset", None) == "extremes-dt":
+        if request["levtype"] == "pl" and "130" in request["param"]:
+            if request["param"] != "130":
+                raise ValueError(
+                    """Parameter 130 is on a different grids than other parameters.
+                                Please request it separately."""
+                )
+            hash = "1c409f6b78e87eeaeeb4a7294c28add7"
+            return change_config_grid_hash(config, hash)
+
+    # This only holds for operational data
+    if request.get("dataset", None) is None:
+        if request["levtype"] == "ml":
+            hash = "9fed647cd1c77c03f66d8c74a4e0ad34"
+            return change_config_grid_hash(config, hash)
+    return config
+
+
+def change_config_grid_hash(config, hash):
+    for mappings in config["options"]["axis_config"]:
+        for sub_mapping in mappings["transformations"]:
+            if sub_mapping["name"] == "mapper":
+                sub_mapping["md5_hash"] = hash
+    return config
+
+
+def change_config_grid(config, res):
+    for mappings in config["options"]["axis_config"]:
+        for sub_mapping in mappings["transformations"]:
+            if sub_mapping["name"] == "mapper":
+                sub_mapping["resolution"] = res
+    return config

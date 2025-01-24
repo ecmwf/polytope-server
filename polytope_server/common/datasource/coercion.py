@@ -1,4 +1,5 @@
 import copy
+import re
 from datetime import datetime, timedelta
 from typing import Any, Dict
 
@@ -8,7 +9,6 @@ class CoercionError(Exception):
 
 
 class Coercion:
-
     allow_ranges = ["number", "step", "date", "time"]
     allow_lists = ["class", "stream", "type", "expver", "param", "number", "date", "step", "time"]
 
@@ -29,7 +29,6 @@ class Coercion:
                 coerced_values = [Coercion.coerce_value(key, v) for v in value]
                 return coerced_values
             elif isinstance(value, str):
-
                 if "/to/" in value and key in Coercion.allow_ranges:
                     # Handle ranges with possible "/by/" suffix
                     start_value, rest = value.split("/to/", 1)
@@ -104,22 +103,29 @@ class Coercion:
 
     @staticmethod
     def coerce_step(value: Any) -> str:
-
         if isinstance(value, int):
             if value < 0:
                 raise CoercionError("Step must be greater than or equal to 0.")
             else:
                 return str(value)
         elif isinstance(value, str):
-            if not value.isdigit() or int(value) < 0:
-                raise CoercionError("Step must be greater than or equal to 0.")
-            return value
+            try:
+                if int(value) < 0:
+                    raise CoercionError("Step must be greater than or equal to 0.")
+                else:
+                    return value
+            except ValueError:
+                # value cannot be converted to a digit, but we would like to match step ranges too
+                pattern = r"^\d+-\d+$"
+                if re.match(pattern, value):
+                    return value
+                else:
+                    raise CoercionError("Invalid type, expected integer step or step range.")
         else:
             raise CoercionError("Invalid type, expected integer or string.")
 
     @staticmethod
     def coerce_number(value: Any) -> str:
-
         if isinstance(value, int):
             if value <= 0:
                 raise CoercionError("Number must be a positive value.")
@@ -213,7 +219,6 @@ class Coercion:
 
     @staticmethod
     def coerce_expver(value: Any) -> str:
-
         # Integers accepted, converted to 4-length strings
         if isinstance(value, int):
             if 0 <= value <= 9999:
