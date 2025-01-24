@@ -108,7 +108,8 @@ class PolytopeDataSource(datasource.DataSource):
 
         if self.hacky_fix_destine_dt:
             self.change_grids(r, polytope_mars_config)
-            self.change_hash(r, polytope_mars_config)
+
+        self.change_hash(r, polytope_mars_config)
 
         polytope_mars = PolytopeMars(
             polytope_mars_config,
@@ -153,6 +154,15 @@ class PolytopeDataSource(datasource.DataSource):
             if request["activity"] in ["baseline", "projections", "scenariomip"]:
                 res = 1024
 
+        if request.get("dataset", None) == "extremes-dt":
+            if request["stream"] == "wave":
+                for mappings in config["options"]["axis_config"]:
+                    for sub_mapping in mappings["transformations"]:
+                        if sub_mapping["name"] == "mapper":
+                            sub_mapping["type"] == "reduced_ll"
+                            sub_mapping["resolution"] = 3601
+                return config
+
         # Only assign new resolution if it was changed here
         if res:
             # Find the mapper transformation
@@ -162,18 +172,16 @@ class PolytopeDataSource(datasource.DataSource):
 
     def change_hash(self, request, config):
         # This only holds for extremes dt data
-        if request.get("dataset", None) == "extremes-dt":
-            if request["levtype"] == "pl" and "130" in request["param"]:
-                if request["param"] != "130":
-                    raise ValueError(
-                        """Parameter 130 is on a different grids than other parameters.
-                                      Please request it separately."""
-                    )
-                hash = "1c409f6b78e87eeaeeb4a7294c28add7"
-                return self.change_config_grid_hash(config, hash)
-            if request["stream"] == "wave":
-                hash = "386742a2dd1201b67f2d19ed421353ea"
-                return self.change_config_grid_hash(config, hash)
+        if self.hacky_fix_destine_dt:
+            if request.get("dataset", None) == "extremes-dt":
+                if request["levtype"] == "pl" and "130" in request["param"]:
+                    if request["param"] != "130":
+                        raise ValueError(
+                            """Parameter 130 is on a different grids than other parameters.
+                                        Please request it separately."""
+                        )
+                    hash = "1c409f6b78e87eeaeeb4a7294c28add7"
+                    return self.change_config_grid_hash(config, hash)
 
         # This only holds for operational data
         if request.get("dataset", None) is None:
