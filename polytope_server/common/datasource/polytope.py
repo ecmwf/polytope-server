@@ -324,7 +324,7 @@ def change_grids(request, config):
             for mappings in config["options"]["axis_config"]:
                 for sub_mapping in mappings["transformations"]:
                     if sub_mapping["name"] == "mapper":
-                        sub_mapping["type"] == "reduced_ll"
+                        sub_mapping["type"] = "reduced_ll"
                         sub_mapping["resolution"] = 3601
             return config
 
