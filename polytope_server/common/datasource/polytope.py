@@ -108,7 +108,8 @@ class PolytopeDataSource(datasource.DataSource):
 
         if self.hacky_fix_destine_dt:
             self.change_grids(r, polytope_mars_config)
-            self.change_hash(r, polytope_mars_config)
+
+        self.change_hash(r, polytope_mars_config)
 
         polytope_mars = PolytopeMars(
             polytope_mars_config,
@@ -171,15 +172,16 @@ class PolytopeDataSource(datasource.DataSource):
 
     def change_hash(self, request, config):
         # This only holds for extremes dt data
-        if request.get("dataset", None) == "extremes-dt":
-            if request["levtype"] == "pl" and "130" in request["param"]:
-                if request["param"] != "130":
-                    raise ValueError(
-                        """Parameter 130 is on a different grids than other parameters.
-                                      Please request it separately."""
-                    )
-                hash = "1c409f6b78e87eeaeeb4a7294c28add7"
-                return self.change_config_grid_hash(config, hash)
+        if self.hacky_fix_destine_dt:
+            if request.get("dataset", None) == "extremes-dt":
+                if request["levtype"] == "pl" and "130" in request["param"]:
+                    if request["param"] != "130":
+                        raise ValueError(
+                            """Parameter 130 is on a different grids than other parameters.
+                                        Please request it separately."""
+                        )
+                    hash = "1c409f6b78e87eeaeeb4a7294c28add7"
+                    return self.change_config_grid_hash(config, hash)
 
         # This only holds for operational data
         if request.get("dataset", None) is None:
