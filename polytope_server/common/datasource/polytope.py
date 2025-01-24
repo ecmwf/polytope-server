@@ -40,7 +40,7 @@ class PolytopeDataSource(datasource.DataSource):
         self.type = config["type"]
         assert self.type == "polytope"
         self.match_rules = config.get("match", {})
-        self.req_single_keys = config.get("options", {}).pop("req_single_keys", [])
+        self.pre_path = config.get("options", {}).pop("pre_path", [])
         self.patch_rules = config.get("patch", {})
         self.defaults = config.get("defaults", {})
         self.extra_required_role = config.get("extra_required_role", {})
@@ -103,7 +103,7 @@ class PolytopeDataSource(datasource.DataSource):
         pre_path = {}
         for k, v in r.items():
             v = v.split("/") if isinstance(v, str) else v
-            if k in self.req_single_keys:
+            if k in self.pre_path:
                 if isinstance(v, list):
                     if self.gh70_fix_step_ranges:
                         if k == "param":
