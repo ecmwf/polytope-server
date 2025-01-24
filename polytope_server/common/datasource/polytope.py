@@ -22,8 +22,11 @@ import copy
 import json
 import logging
 import os
+import re
+from datetime import datetime, timedelta
 
 import yaml
+from dateutil.relativedelta import relativedelta
 from polytope_feature.utility.exceptions import PolytopeError
 from polytope_mars.api import PolytopeMars
 
@@ -225,19 +228,21 @@ class PolytopeDataSource(datasource.DataSource):
         if "feature" not in r:
             raise Exception("request does not contain key 'feature'")
 
-        # # Check that there is only one value if required
-        # for k, v in r.items():
-        #     if k in self.req_single_keys:
-        #         v = [v] if isinstance(v, str) else v
-        #         if len(v) > 1:
-        #             raise Exception("key '{}' cannot accept a list yet. This feature is planned.".format(k))
-        #         elif len(v) == 0:
-        #             raise Exception("Expected a value for key {}".format(k))
-
         for k, v in self.match_rules.items():
             # Check that all required keys exist
             if k not in r:
                 raise Exception("request does not contain key '{}'".format(k))
+
+            # Process date rules
+            if k == "date":
+                comp, v = v.split(" ", 1)
+                if comp == "<":
+                    self.date_check(r["date"], v, False)
+                elif comp == ">":
+                    self.date_check(r["date"], v, True)
+                else:
+                    raise Exception("Invalid date comparison")
+                continue
 
             # ... and check the value of other keys
             v = [v] if isinstance(v, str) else v
@@ -272,3 +277,84 @@ class PolytopeDataSource(datasource.DataSource):
             if k not in request:
                 request[k] = v
         return request
+
+    def check_single_date(self, date, offset, offset_fmted, after=False):
+
+        # Date is relative (0 = now, -1 = one day ago)
+        if str(date)[0] == "0" or str(date)[0] == "-":
+            date_offset = int(date)
+            dt = datetime.today() + timedelta(days=date_offset)
+
+            if after and dt >= offset:
+                raise Exception("Date is too recent, expected < {}".format(offset_fmted))
+            elif not after and dt < offset:
+                raise Exception("Date is too old, expected > {}".format(offset_fmted))
+            else:
+                return
+
+        # Absolute date YYYMMDD
+        try:
+            dt = datetime.strptime(date, "%Y%m%d")
+        except ValueError:
+            raise Exception("Invalid date, expected real date in YYYYMMDD format")
+        if after and dt >= offset:
+            raise Exception("Date is too recent, expected < {}".format(offset_fmted))
+        elif not after and dt < offset:
+            raise Exception("Date is too old, expected > {}".format(offset_fmted))
+        else:
+            return
+
+    def parse_relativedelta(self, time_str):
+
+        pattern = r"(\d+)([dhm])"
+        time_dict = {"d": 0, "h": 0, "m": 0}
+        matches = re.findall(pattern, time_str)
+
+        for value, unit in matches:
+            if unit == "d":
+                time_dict["d"] += int(value)
+            elif unit == "h":
+                time_dict["h"] += int(value)
+            elif unit == "m":
+                time_dict["m"] += int(value)
+
+        return relativedelta(days=time_dict["d"], hours=time_dict["h"], minutes=time_dict["m"])
+
+    def date_check(self, date, offset, after=False):
+        """Process special match rules for DATE constraints"""
+
+        date = str(date)
+
+        # Default date is -1
+        if len(date) == 0:
+            date = "-1"
+
+        now = datetime.today()
+        offset = now - self.parse_relativedelta(offset)
+        offset_fmted = offset.strftime("%Y%m%d")
+
+        split = date.split("/")
+
+        # YYYYMMDD
+        if len(split) == 1:
+            self.check_single_date(split[0], offset, offset_fmted, after)
+            return True
+
+        # YYYYMMDD/to/YYYYMMDD -- check end and start date
+        # YYYYMMDD/to/YYYYMMDD/by/N -- check end and start date
+        if len(split) == 3 or len(split) == 5:
+
+            if split[1].casefold() == "to".casefold():
+
+                if len(split) == 5 and split[3].casefold() != "by".casefold():
+                    raise Exception("Invalid date range")
+
+                self.check_single_date(split[0], offset, offset_fmted, after)
+                self.check_single_date(split[2], offset, offset_fmted, after)
+                return True
+
+        # YYYYMMDD/YYYYMMDD/YYYYMMDD/... -- check each date
+        for s in split:
+            self.check_single_date(s, offset, offset_fmted, after)
+
+        return True
