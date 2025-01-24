@@ -153,6 +153,15 @@ class PolytopeDataSource(datasource.DataSource):
             if request["activity"] in ["baseline", "projections", "scenariomip"]:
                 res = 1024
 
+        if request.get("dataset", None) == "extremes-dt":
+            if request["stream"] == "wave":
+                for mappings in config["options"]["axis_config"]:
+                    for sub_mapping in mappings["transformations"]:
+                        if sub_mapping["name"] == "mapper":
+                            sub_mapping["type"] == "reduced_ll"
+                            sub_mapping["resolution"] = 3601
+                return config
+
         # Only assign new resolution if it was changed here
         if res:
             # Find the mapper transformation
@@ -170,9 +179,6 @@ class PolytopeDataSource(datasource.DataSource):
                                       Please request it separately."""
                     )
                 hash = "1c409f6b78e87eeaeeb4a7294c28add7"
-                return self.change_config_grid_hash(config, hash)
-            if request["stream"] == "wave":
-                hash = "386742a2dd1201b67f2d19ed421353ea"
                 return self.change_config_grid_hash(config, hash)
 
         # This only holds for operational data
