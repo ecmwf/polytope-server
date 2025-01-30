@@ -120,6 +120,8 @@ class PolytopeDataSource(datasource.DataSource):
         if self.gh68_fix_hashes:
             change_hash(r, polytope_mars_config)
 
+        unmerge_date_time_options(r, polytope_mars_config)
+
         polytope_mars = PolytopeMars(
             polytope_mars_config,
             log_context={
@@ -373,4 +375,14 @@ def change_config_grid(config, res):
         for sub_mapping in mappings["transformations"]:
             if sub_mapping["name"] == "mapper":
                 sub_mapping["resolution"] = res
+    return config
+
+
+def unmerge_date_time_options(request, config):
+    if request.get("dataset", None) == "climate-dt":
+        for mappings in config["options"]["axis_config"]:
+            if mappings["axis_name"] == "date":
+                mappings["transformations"] = [{"name": "type_change", "type": "date"}]
+        config["options"]["axis_config"].append({"axis_name": "time", "transformations": [
+                                                {"name": "type_change", "type": "time"}]})
     return config
