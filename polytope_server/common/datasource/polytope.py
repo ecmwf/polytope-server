@@ -209,7 +209,6 @@ class PolytopeDataSource(datasource.DataSource):
         return request
 
     def check_single_date(self, date, offset, offset_fmted, after=False):
-
         # Date is relative (0 = now, -1 = one day ago)
         if str(date)[0] == "0" or str(date)[0] == "-":
             date_offset = int(date)
@@ -235,7 +234,6 @@ class PolytopeDataSource(datasource.DataSource):
             return
 
     def parse_relativedelta(self, time_str):
-
         pattern = r"(\d+)([dhm])"
         time_dict = {"d": 0, "h": 0, "m": 0}
         matches = re.findall(pattern, time_str)
@@ -273,9 +271,7 @@ class PolytopeDataSource(datasource.DataSource):
         # YYYYMMDD/to/YYYYMMDD -- check end and start date
         # YYYYMMDD/to/YYYYMMDD/by/N -- check end and start date
         if len(split) == 3 or len(split) == 5:
-
             if split[1].casefold() == "to".casefold():
-
                 if len(split) == 5 and split[3].casefold() != "by".casefold():
                     raise Exception("Invalid date range")
 
@@ -383,6 +379,7 @@ def unmerge_date_time_options(request, config):
         for mappings in config["options"]["axis_config"]:
             if mappings["axis_name"] == "date":
                 mappings["transformations"] = [{"name": "type_change", "type": "date"}]
-        config["options"]["axis_config"].append({"axis_name": "time", "transformations": [
-                                                {"name": "type_change", "type": "time"}]})
+        config["options"]["axis_config"].append(
+            {"axis_name": "time", "transformations": [{"name": "type_change", "type": "time"}]}
+        )
     return config
