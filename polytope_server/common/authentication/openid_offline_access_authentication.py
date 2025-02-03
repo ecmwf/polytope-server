@@ -103,6 +103,9 @@ class OpenIDOfflineAuthentication(authentication.Authentication):
                 raise ForbiddenRequest("Not a valid offline_access token")
 
             token = self.get_token(credentials)
+            if token is None:
+                raise ForbiddenRequest("Not a valid offline_access token")
+
             certs = self.get_certs()
             decoded_token = jwt.decode(token=token, algorithms=jwt.get_unverified_header(token).get("alg"), key=certs)
 
