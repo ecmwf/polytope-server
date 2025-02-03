@@ -39,6 +39,7 @@ class OpenIDOfflineAuthentication(authentication.Authentication):
         self.private_client_secret = config["private_client_secret"]
         self.iam_url = config["iam_url"]
         self.iam_realm = config["iam_realm"]
+        self.disable_check = config.get("disable_check", False)
 
         super().__init__(name, realm, config)
 
@@ -59,6 +60,9 @@ class OpenIDOfflineAuthentication(authentication.Authentication):
         We cannot simply try to get the access token because we would spam the IAM server with invalid tokens, and the
         failure at that point would not be cached.
         """
+        if self.disable_check is True:
+            return True
+
         keycloak_token_introspection = (
             self.iam_url + "/realms/" + self.iam_realm + "/protocol/openid-connect/token/introspect"
         )
@@ -70,25 +74,35 @@ class OpenIDOfflineAuthentication(authentication.Authentication):
         else:
             return False
 
+    @cache(lifetime=120)    
+    def get_token(self, credentials: str) -> str | None:
+        # Generate an access token from the offline_access token (like a refresh token)
+        refresh_data = {
+            "client_id": self.public_client_id,
+            "grant_type": "refresh_token",
+            "refresh_token": credentials,
+        }
+        keycloak_token_endpoint = self.iam_url + "/realms/" + self.iam_realm + "/protocol/openid-connect/token"
+        resp = requests.post(url=keycloak_token_endpoint, data=refresh_data)
+
+        if resp.ok:
+            return resp.json()["access_token"]
+        elif resp.status_code == 400:
+            # see RFC 6749 OAuth 2.0, Oct 12, Sect. 5.2 Error response, page 45
+            logging.info("Failed to authenticate user from openid offline_access token")
+            logging.info(resp.json()["error"])
+            return None
+        else:
+            resp.raise_for_status()
+
     @cache(lifetime=120)
     def authenticate(self, credentials: str) -> User:
-
         try:
-
             # Check if this is a valid offline_access token
             if not self.check_offline_access_token(credentials):
                 raise ForbiddenRequest("Not a valid offline_access token")
 
-            # Generate an access token from the offline_access token (like a refresh token)
-            refresh_data = {
-                "client_id": self.public_client_id,
-                "grant_type": "refresh_token",
-                "refresh_token": credentials,
-            }
-            keycloak_token_endpoint = self.iam_url + "/realms/" + self.iam_realm + "/protocol/openid-connect/token"
-            resp = requests.post(url=keycloak_token_endpoint, data=refresh_data)
-            token = resp.json()["access_token"]
-
+            token = self.get_token(credentials)
             certs = self.get_certs()
             decoded_token = jwt.decode(token=token, algorithms=jwt.get_unverified_header(token).get("alg"), key=certs)
 
