@@ -19,6 +19,7 @@
 #
 
 import logging
+from typing import Any
 
 import requests
 from jose import jwt
@@ -75,7 +76,7 @@ class OpenIDOfflineAuthentication(authentication.Authentication):
             return False
 
     @cache(lifetime=120)    
-    def get_token(self, credentials: str) -> str | None:
+    def get_token(self, credentials: str) -> dict[str, Any] | None:
         # Generate an access token from the offline_access token (like a refresh token)
         refresh_data = {
             "client_id": self.public_client_id,
@@ -86,7 +87,7 @@ class OpenIDOfflineAuthentication(authentication.Authentication):
         resp = requests.post(url=keycloak_token_endpoint, data=refresh_data)
 
         if resp.ok:
-            return resp.json()["access_token"]
+            token = resp.json()["access_token"]
         elif resp.status_code == 400:
             # see RFC 6749 OAuth 2.0, Oct 12, Sect. 5.2 Error response, page 45
             logging.info("Failed to authenticate user from openid offline_access token")
@@ -95,6 +96,13 @@ class OpenIDOfflineAuthentication(authentication.Authentication):
         else:
             resp.raise_for_status()
 
+        certs = self.get_certs()
+        decoded_token = jwt.decode(token=token, algorithms=jwt.get_unverified_header(token).get("alg"), key=certs)
+
+        logging.info("Decoded JWT: {}".format(decoded_token))
+
+        return decoded_token
+        
     @cache(lifetime=120)
     def authenticate(self, credentials: str) -> User:
         try:
@@ -105,17 +113,12 @@ class OpenIDOfflineAuthentication(authentication.Authentication):
             token = self.get_token(credentials)
             if token is None:
                 raise ForbiddenRequest("Not a valid offline_access token")
+            
+            user = User(token["sub"], self.realm())
 
-            certs = self.get_certs()
-            decoded_token = jwt.decode(token=token, algorithms=jwt.get_unverified_header(token).get("alg"), key=certs)
-
-            logging.info("Decoded JWT: {}".format(decoded_token))
-
-            user = User(decoded_token["sub"], self.realm())
-
-            roles = decoded_token.get("resource_access", {}).get(self.public_client_id, {}).get("roles", [])
+            roles = token.get("resource_access", {}).get(self.public_client_id, {}).get("roles", [])
             user.roles.extend(roles)
-            roles = decoded_token.get("realm_access", {}).get("roles", [])
+            roles = token.get("realm_access", {}).get("roles", [])
             user.roles.extend(roles)
 
             logging.info("Found user {} from openid offline_access token".format(user))
