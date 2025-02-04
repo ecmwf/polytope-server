@@ -29,7 +29,10 @@ __version__ = re.search(
 ).group(1)
 
 with open("requirements.txt") as f:
-    requirements = f.read().splitlines()
+    all_requirements = f.read().splitlines()
+
+# Filter out Git-based dependencies
+install_requires = [req for req in all_requirements if not req.startswith("git+")]
 
 setup(
     name="polytope_server",
@@ -39,7 +42,7 @@ setup(
     author="ECMWF",
     author_email="james.hawkes@ecmwf.int",
     packages=find_packages(),
-    install_requires=requirements,
+    install_requires=install_requires,
     zip_safe=False,
     include_package_data=True,
 )
