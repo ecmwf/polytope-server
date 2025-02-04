@@ -34,7 +34,7 @@ ARG HOME_DIR=/home/polytope
 ARG developer_mode
 
 # Install build dependencies
-RUN apt update && apt install -y --no-install-recommends gcc libc6-dev libldap2-dev curl \
+RUN apt update && apt install -y --no-install-recommends gcc libc6-dev libldap2-dev curl git \
     && apt clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -255,11 +255,12 @@ ARG developer_mode
 
 # contains compilers for building wheels which we don't want in the final image
 RUN apt update
-RUN apt-get install -y --no-install-recommends gcc libc6-dev make gnupg2
+RUN apt-get install -y --no-install-recommends gcc libc6-dev make gnupg2 git
 
 COPY ./requirements.txt /requirements.txt
 RUN pip install uv --user
 ENV PATH="/root/.venv/bin:/root/.local/bin:${PATH}"
+ENV VIRTUAL_ENV=/root/.venv
 RUN uv venv /root/.venv
 RUN uv pip install -r requirements.txt
 RUN uv pip install geopandas==1.0.1

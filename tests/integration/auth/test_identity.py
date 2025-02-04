@@ -19,11 +19,11 @@
 #
 
 """
-    Tests the Identity abstraction for adding and removing users.
+Tests the Identity abstraction for adding and removing users.
 
-    Identity objects usually create users which are consumed by authentication and authorization handler.
-    Where possible, we also check that the users can be authenticated and authorized after the identity
-    service has craeted them.
+Identity objects usually create users which are consumed by authentication and authorization handler.
+Where possible, we also check that the users can be authenticated and authorized after the identity
+service has craeted them.
 
 """
 

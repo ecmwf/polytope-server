@@ -19,8 +19,8 @@
 #
 
 """
-    Tests the KeyGenerator abstraction for creating api keys, and the apikey_authentication handler
-    for validating those keys.
+Tests the KeyGenerator abstraction for creating api keys, and the apikey_authentication handler
+for validating those keys.
 
 """
 

@@ -50,6 +50,7 @@ class PolytopeDataSource(datasource.DataSource):
         self.gh69_fix_grids = config.get("gh69_fix_grids", False)
         # https://github.com/ecmwf/polytope-server/issues/70
         self.gh70_fix_step_ranges = config.get("gh70_fix_step_ranges", False)
+        self.separate_datetime = config.get("separate_datetime", False)
         self.hacky_fix_oper = config.get("hacky_fix_oper", False)
         self.obey_schedule = config.get("obey_schedule", False)
         self.output = None
@@ -119,6 +120,8 @@ class PolytopeDataSource(datasource.DataSource):
             change_grids(r, polytope_mars_config)
         if self.gh68_fix_hashes:
             change_hash(r, polytope_mars_config)
+        if self.separate_datetime:
+            unmerge_date_time_options(r, polytope_mars_config)
 
         polytope_mars = PolytopeMars(
             polytope_mars_config,
@@ -207,7 +210,6 @@ class PolytopeDataSource(datasource.DataSource):
         return request
 
     def check_single_date(self, date, offset, offset_fmted, after=False):
-
         # Date is relative (0 = now, -1 = one day ago)
         if str(date)[0] == "0" or str(date)[0] == "-":
             date_offset = int(date)
@@ -233,7 +235,6 @@ class PolytopeDataSource(datasource.DataSource):
             return
 
     def parse_relativedelta(self, time_str):
-
         pattern = r"(\d+)([dhm])"
         time_dict = {"d": 0, "h": 0, "m": 0}
         matches = re.findall(pattern, time_str)
@@ -271,9 +272,7 @@ class PolytopeDataSource(datasource.DataSource):
         # YYYYMMDD/to/YYYYMMDD -- check end and start date
         # YYYYMMDD/to/YYYYMMDD/by/N -- check end and start date
         if len(split) == 3 or len(split) == 5:
-
             if split[1].casefold() == "to".casefold():
-
                 if len(split) == 5 and split[3].casefold() != "by".casefold():
                     raise Exception("Invalid date range")
 
@@ -341,16 +340,6 @@ def change_hash(request, config):
     Temporary fix for grid mismatch in polytope
     see https://github.com/ecmwf/polytope-server/issues/68
     """
-    # This only holds for extremes dt data
-    if request.get("dataset", None) == "extremes-dt":
-        if request["levtype"] == "pl" and "130" in request["param"]:
-            if request["param"] != "130":
-                raise ValueError(
-                    """Parameter 130 is on a different grids than other parameters.
-                                Please request it separately."""
-                )
-            hash = "1c409f6b78e87eeaeeb4a7294c28add7"
-            return change_config_grid_hash(config, hash)
 
     # This only holds for operational data
     if request.get("dataset", None) is None:
@@ -373,4 +362,15 @@ def change_config_grid(config, res):
         for sub_mapping in mappings["transformations"]:
             if sub_mapping["name"] == "mapper":
                 sub_mapping["resolution"] = res
+    return config
+
+
+def unmerge_date_time_options(request, config):
+    if request.get("dataset", None) == "climate-dt" and request["feature"]["type"] == "timeseries":
+        for mappings in config["options"]["axis_config"]:
+            if mappings["axis_name"] == "date":
+                mappings["transformations"] = [{"name": "type_change", "type": "date"}]
+        config["options"]["axis_config"].append(
+            {"axis_name": "time", "transformations": [{"name": "type_change", "type": "time"}]}
+        )
     return config
