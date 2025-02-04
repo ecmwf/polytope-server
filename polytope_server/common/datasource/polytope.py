@@ -50,6 +50,7 @@ class PolytopeDataSource(datasource.DataSource):
         self.gh69_fix_grids = config.get("gh69_fix_grids", False)
         # https://github.com/ecmwf/polytope-server/issues/70
         self.gh70_fix_step_ranges = config.get("gh70_fix_step_ranges", False)
+        self.separate_datetime = config.get("separate_datetime", False)
         self.hacky_fix_oper = config.get("hacky_fix_oper", False)
         self.obey_schedule = config.get("obey_schedule", False)
         self.output = None
@@ -119,8 +120,8 @@ class PolytopeDataSource(datasource.DataSource):
             change_grids(r, polytope_mars_config)
         if self.gh68_fix_hashes:
             change_hash(r, polytope_mars_config)
-
-        unmerge_date_time_options(r, polytope_mars_config)
+        if self.separate_datetime:
+            unmerge_date_time_options(r, polytope_mars_config)
 
         polytope_mars = PolytopeMars(
             polytope_mars_config,
