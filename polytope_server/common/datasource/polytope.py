@@ -365,7 +365,7 @@ def change_config_grid(config, res):
 
 
 def unmerge_date_time_options(request, config):
-    if request.get("dataset", None) == "climate-dt":
+    if request.get("dataset", None) == "climate-dt" and request["feature"]["type"] == "timeseries":
         for mappings in config["options"]["axis_config"]:
             if mappings["axis_name"] == "date":
                 mappings["transformations"] = [{"name": "type_change", "type": "date"}]
