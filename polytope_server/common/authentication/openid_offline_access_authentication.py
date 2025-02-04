@@ -41,6 +41,7 @@ class OpenIDOfflineAuthentication(authentication.Authentication):
         self.iam_url = config["iam_url"]
         self.iam_realm = config["iam_realm"]
         self.jwt_aud = config.get("jwt_aud", None)
+        self.jwt_iss = config.get("jwt_iss", None)
         self.disable_check = config.get("disable_check", False)
 
         super().__init__(name, realm, config)
@@ -103,6 +104,7 @@ class OpenIDOfflineAuthentication(authentication.Authentication):
             algorithms=jwt.get_unverified_header(token).get("alg"),
             key=certs,
             audience=self.jwt_aud,
+            issuer=self.jwt_iss,
         )
 
         logging.info("Decoded JWT: {}".format(decoded_token))
