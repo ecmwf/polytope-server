@@ -90,9 +90,11 @@ def _convert_numbers(obj, reverse=False):
     return _visit(obj, fn)
 
 
-def _load(item):
+def _load(item, exclude_fields=None):
     metric_type = Metric.deserialize_slot("type", item["type"])
     cls = METRIC_TYPE_CLASS_MAP[metric_type]
+    if exclude_fields is not None:
+        item = {key: value for key, value in item.items() if key not in exclude_fields}
     return cls(from_dict=_convert_numbers(item, reverse=True))
 
 
@@ -175,10 +177,6 @@ class DynamoDBMetricStore(MetricStore):
         if ascending is not None and descending is not None:
             raise ValueError("Cannot sort by ascending and descending at the same time.")
 
-        if exclude_fields:
-            logger.warning(f"exclude_fields parameter is provided but not implemented: {exclude_fields}")
-            raise NotImplementedError("The 'exclude_fields' feature is not implemented yet.")
-
         if request_id is not None:
             fn = self.table.query
             params = {
@@ -195,7 +193,7 @@ class DynamoDBMetricStore(MetricStore):
         if query := _make_query(**kwargs):
             params["FilterExpression"] = reduce(operator.__and__, (Attr(key).eq(value) for key, value in query.items()))
 
-        items = (_load(item) for item in _iter_items(fn, **params))
+        items = (_load(item, exclude_fields) for item in _iter_items(fn, **params))
         if ascending is not None:
             return sorted(items, key=lambda item: getattr(item, ascending))
         if descending is not None:
