@@ -21,6 +21,7 @@
 import logging
 import os
 import subprocess
+from subprocess import CalledProcessError
 
 
 class Subprocess:
@@ -49,13 +50,13 @@ class Subprocess:
     def finalize(self, request, filter=None):
         """Close subprocess and decode output"""
 
-        out, _ = self.subprocess.communicate()
+        out, err = self.subprocess.communicate()
         logging.info(out.decode())
         self.output = out.decode().splitlines()
 
         for line in self.output:
             if filter and filter in line:
                 request.user_message += line + "\n"
-
+        self.subprocess.args
         if self.returncode() != 0:
-            raise Exception("Subprocess exited with code {}.".format(self.returncode()))
+            raise CalledProcessError(self.returncode(), self.subprocess.args, out, err)

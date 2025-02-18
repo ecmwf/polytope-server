@@ -23,6 +23,7 @@ import os
 import re
 import tempfile
 from datetime import datetime, timedelta
+from subprocess import CalledProcessError
 
 import yaml
 from dateutil.relativedelta import relativedelta
@@ -171,7 +172,11 @@ class MARSDataSource(datasource.DataSource):
 
         logging.info("FIFO reached EOF.")
 
-        self.subprocess.finalize(request)
+        try:
+            self.subprocess.finalize(request)
+        except CalledProcessError as e:
+            logging.error("MARS subprocess failed: {}".format(e))
+            raise Exception("MARS retrieval failed unexpectedly with error code {}".format(e.returncode))
 
         return
 
