@@ -155,6 +155,7 @@ class MARSDataSource(datasource.DataSource):
             else:
                 logging.debug("Detected MARS process has exited before opening FIFO.")
                 self.destroy(request)
+                raise Exception("MARS process exited before opening FIFO.")
         except Exception as e:
             logging.error(f"Error while waiting for MARS process to open FIFO: {e}.")
             self.destroy(request)
@@ -170,13 +171,15 @@ class MARSDataSource(datasource.DataSource):
 
         logging.info("FIFO reached EOF.")
 
+        self.subprocess.finalize(request)
+
         return
 
     def destroy(self, request):
         try:
             self.subprocess.finalize(request)  # Will raise if non-zero return
         except Exception as e:
-            logging.debug("MARS subprocess failed: {}".format(e))
+            logging.info("MARS subprocess failed: {}".format(e))
             pass
         try:
             os.unlink(self.request_file)
