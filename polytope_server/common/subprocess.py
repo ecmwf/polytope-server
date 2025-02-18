@@ -57,6 +57,6 @@ class Subprocess:
         for line in self.output:
             if filter and filter in line:
                 request.user_message += line + "\n"
-        self.subprocess.args
+
         if self.returncode() != 0:
             raise CalledProcessError(self.returncode(), self.subprocess.args, out, err)
