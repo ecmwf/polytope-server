@@ -167,8 +167,6 @@ class ScheduleReader:
             if prod_type:
                 if ttype.lower() not in find_tag(product, "type"):
                     return False
-            if cclass == "ai":
-                return True
 
             prod_step = find_tag(product, "step")
             if prod_step:
