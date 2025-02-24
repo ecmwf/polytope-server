@@ -77,7 +77,7 @@ class OpenIDOfflineAuthentication(authentication.Authentication):
         else:
             return False
 
-    @cache(lifetime=120)    
+    @cache(lifetime=120)
     def get_token(self, credentials: str) -> dict[str, Any] | None:
         # Generate an access token from the offline_access token (like a refresh token)
         refresh_data = {
@@ -110,7 +110,7 @@ class OpenIDOfflineAuthentication(authentication.Authentication):
         logging.info("Decoded JWT: {}".format(decoded_token))
 
         return decoded_token
-        
+
     @cache(lifetime=120)
     def authenticate(self, credentials: str) -> User:
         try:
@@ -121,7 +121,7 @@ class OpenIDOfflineAuthentication(authentication.Authentication):
             token = self.get_token(credentials)
             if token is None:
                 raise ForbiddenRequest("Not a valid offline_access token")
-            
+
             user = User(token["sub"], self.realm())
 
             roles = token.get("resource_access", {}).get(self.public_client_id, {}).get("roles", [])
