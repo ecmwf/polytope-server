@@ -110,15 +110,20 @@ class ScheduleReader:
             step = max([p[step] for p in req["feature"]["points"]])
         else:
             raise PolytopeError("'step' not found in request")
-        self.check_released(
-            req["date"],
-            req["class"],
-            req["stream"],
-            req.get("domain", "g"),
-            req["time"],
-            str(step),
-            req["type"],
-        )
+        
+        try:
+            return self.check_released(
+                req["date"],
+                req["class"],
+                req["stream"],
+                req.get("domain", "g"),
+                req["time"],
+                str(step),
+                req["type"],
+            )
+        except KeyError as e:
+            missing_key = e.args[0]
+            raise Exception(f"Missing required key in request: '{missing_key}'")
 
     def get_release_time_and_delta_day(
         self, cclass: str, stream: str, domain: str, time_in: str, step: str, ttype: str
