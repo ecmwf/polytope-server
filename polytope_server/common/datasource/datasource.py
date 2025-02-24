@@ -84,7 +84,7 @@ class DataSource(ABC):
         # Match
         try:
             self.match(request)
-            request.user_message += "Matched datasource {}".format(self.repr())
+            request.user_message += "Matched datasource {}\n".format(self.repr())
         except Exception as e:
             if hasattr(self, "silent_match") and self.silent_match:
                 pass
