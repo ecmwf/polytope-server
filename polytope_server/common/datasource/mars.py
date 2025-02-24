@@ -23,6 +23,7 @@ import os
 import re
 import tempfile
 from datetime import datetime, timedelta
+from subprocess import CalledProcessError
 
 import yaml
 from dateutil.relativedelta import relativedelta
@@ -155,6 +156,7 @@ class MARSDataSource(datasource.DataSource):
             else:
                 logging.debug("Detected MARS process has exited before opening FIFO.")
                 self.destroy(request)
+                raise Exception("MARS process exited before opening FIFO.")
         except Exception as e:
             logging.error(f"Error while waiting for MARS process to open FIFO: {e}.")
             self.destroy(request)
@@ -170,13 +172,19 @@ class MARSDataSource(datasource.DataSource):
 
         logging.info("FIFO reached EOF.")
 
+        try:
+            self.subprocess.finalize(request)
+        except CalledProcessError as e:
+            logging.error("MARS subprocess failed: {}".format(e))
+            raise Exception("MARS retrieval failed unexpectedly with error code {}".format(e.returncode))
+
         return
 
     def destroy(self, request):
         try:
             self.subprocess.finalize(request)  # Will raise if non-zero return
         except Exception as e:
-            logging.debug("MARS subprocess failed: {}".format(e))
+            logging.info("MARS subprocess failed: {}".format(e))
             pass
         try:
             os.unlink(self.request_file)

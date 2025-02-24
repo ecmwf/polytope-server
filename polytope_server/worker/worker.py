@@ -234,6 +234,7 @@ class Worker:
             )
             if ds.dispatch(request, input_data):
                 datasource = ds
+                request.user_message += "Datasource {} accepted request.\n".format(ds.repr())
                 break
 
         # Clean up
@@ -248,8 +249,6 @@ class Worker:
                 request.url = self.staging.create(id, datasource.result(request), datasource.mime_type())
 
         except Exception as e:
-            request.user_message += f"Failed to finalize request: [{str(type(e))}] {str(e)}"
-            logging.info(request.user_message, extra={"request_id": id})
             logging.exception("Failed to finalize request", extra={"request_id": id, "exception": str(e)})
             raise
 
