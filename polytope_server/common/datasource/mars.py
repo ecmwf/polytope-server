@@ -158,7 +158,7 @@ class MARSDataSource(datasource.DataSource):
             else:
                 logging.debug("Detected MARS process has exited before opening FIFO.")
                 self.destroy(request)
-                raise Exception("MARS process exited before opening FIFO.")
+                raise Exception("MARS process exited before returning data.")
         except Exception as e:
             logging.error(f"Error while waiting for MARS process to open FIFO: {e}.")
             self.destroy(request)
