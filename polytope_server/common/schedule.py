@@ -168,15 +168,24 @@ class ScheduleReader:
                 if ttype.lower() not in find_tag(product, "type"):
                     return False
 
-            prod_step = find_tag(product, "step")
-            if prod_step:
-                istep = int(prod_step) if prod_step is not None else prod_step
-                if istep != int(step):
-                    return False
             return True
 
-        for product in self.products:
-            if matches_criteria(product):
+        matching_products = [product for product in self.products if matches_criteria(product)]
+        if not matching_products:
+            logging.warning(
+                "No release time found for class{}, stream: {}, type: {}, domain: {}, time: {}, step: {}".format(
+                    cclass, stream, ttype, domain, time_in, step
+                )
+            )
+            return None, None
+        # get max matching step <= request step
+        matching_steps = [int(find_tag(product, "step")) for product in matching_products if find_tag(product, "step")]
+        if not matching_steps:
+            return None, None
+        max_matching_step = max([s for s in matching_steps if s <= int(step)], default=None)
+
+        for product in matching_products:
+            if not find_tag(product, "step") or int(find_tag(product, "step")) == max_matching_step:
                 release_time = product.get("release_time")
                 delta_day = int(product.get("release_delta_day", 0))
                 logging.info(
