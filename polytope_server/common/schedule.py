@@ -180,9 +180,9 @@ class ScheduleReader:
             return None, None
         # get max matching step <= request step
         matching_steps = [int(find_tag(product, "step")) for product in matching_products if find_tag(product, "step")]
-        if not matching_steps:
-            return None, None
-        max_matching_step = max([s for s in matching_steps if s <= int(step)], default=None)
+        max_matching_step = 360
+        if matching_steps:
+            max_matching_step = max([s for s in matching_steps if s <= int(step)], default=None)
 
         for product in matching_products:
             if not find_tag(product, "step") or int(find_tag(product, "step")) == max_matching_step:
