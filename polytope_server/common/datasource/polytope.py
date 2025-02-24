@@ -123,8 +123,6 @@ class PolytopeDataSource(datasource.DataSource):
         if self.separate_datetime:
             unmerge_date_time_options(r, polytope_mars_config)
 
-        change_oper_grids(r, polytope_mars_config)
-
         polytope_mars = PolytopeMars(
             polytope_mars_config,
             log_context={
@@ -289,16 +287,6 @@ class PolytopeDataSource(datasource.DataSource):
         return True
 
 
-def change_oper_grids(request, config):
-    if request.get("class", None) == "ai":
-        for mappings in config["options"]["axis_config"]:
-            for sub_mapping in mappings["transformations"]:
-                if sub_mapping["name"] == "mapper":
-                    sub_mapping["resolution"] = 320
-                    sub_mapping["type"] = "reduced_gaussian"
-    return config
-
-
 def change_grids(request, config):
     """
     Temporary fix for request-dependent grid changes in polytope
@@ -330,7 +318,7 @@ def change_grids(request, config):
         if request["activity"] in ["baseline", "projections", "scenariomip"]:
             res = 1024
 
-    if request.get("dataset", None) == "extremes-dt":
+    elif request.get("dataset", None) == "extremes-dt":
         if request["stream"] == "wave":
             for mappings in config["options"]["axis_config"]:
                 for sub_mapping in mappings["transformations"]:
@@ -338,6 +326,14 @@ def change_grids(request, config):
                         sub_mapping["type"] = "reduced_ll"
                         sub_mapping["resolution"] = 3601
             return config
+
+    elif request.get("class", None) == "ai":
+        for mappings in config["options"]["axis_config"]:
+            for sub_mapping in mappings["transformations"]:
+                if sub_mapping["name"] == "mapper":
+                    sub_mapping["resolution"] = 320
+                    sub_mapping["type"] = "reduced_gaussian"
+        return config
 
     # Only assign new resolution if it was changed here
     if res:
