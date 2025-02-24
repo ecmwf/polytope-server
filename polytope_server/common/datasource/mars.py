@@ -56,6 +56,8 @@ class MARSDataSource(datasource.DataSource):
         self.mars_binary = config.get("binary", "mars")
 
         self.protocol = config.get("protocol", "dhs")
+        
+        self.mars_error_filter = config.get("mars_error_filter", "mars - ERROR")
 
         # self.fdb_config = None
         self.fdb_config = config.get("fdb_config", [{}])
@@ -173,7 +175,7 @@ class MARSDataSource(datasource.DataSource):
         logging.info("FIFO reached EOF.")
 
         try:
-            self.subprocess.finalize(request)
+            self.subprocess.finalize(request, self.mars_error_filter)
         except CalledProcessError as e:
             logging.error("MARS subprocess failed: {}".format(e))
             raise Exception("MARS retrieval failed unexpectedly with error code {}".format(e.returncode))
@@ -182,7 +184,7 @@ class MARSDataSource(datasource.DataSource):
 
     def destroy(self, request):
         try:
-            self.subprocess.finalize(request)  # Will raise if non-zero return
+            self.subprocess.finalize(request, self.mars_error_filter)  # Will raise if non-zero return
         except Exception as e:
             logging.info("MARS subprocess failed: {}".format(e))
             pass
