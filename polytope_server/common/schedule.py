@@ -110,15 +110,20 @@ class ScheduleReader:
             step = max([p[step] for p in req["feature"]["points"]])
         else:
             raise PolytopeError("'step' not found in request")
-        self.check_released(
-            req["date"],
-            req["class"],
-            req["stream"],
-            req.get("domain", "g"),
-            req["time"],
-            str(step),
-            req["type"],
-        )
+
+        try:
+            return self.check_released(
+                req["date"],
+                req["class"],
+                req["stream"],
+                req.get("domain", "g"),
+                req["time"],
+                str(step),
+                req["type"],
+            )
+        except KeyError as e:
+            missing_key = e.args[0]
+            raise Exception(f"Missing required key in request: '{missing_key}'")
 
     def get_release_time_and_delta_day(
         self, cclass: str, stream: str, domain: str, time_in: str, step: str, ttype: str
@@ -167,18 +172,25 @@ class ScheduleReader:
             if prod_type:
                 if ttype.lower() not in find_tag(product, "type"):
                     return False
-            if cclass == "ai":
-                return True
 
-            prod_step = find_tag(product, "step")
-            if prod_step:
-                istep = int(prod_step) if prod_step is not None else prod_step
-                if istep != int(step):
-                    return False
             return True
 
-        for product in self.products:
-            if matches_criteria(product):
+        matching_products = [product for product in self.products if matches_criteria(product)]
+        if not matching_products:
+            logging.warning(
+                "No release time found for class{}, stream: {}, type: {}, domain: {}, time: {}, step: {}".format(
+                    cclass, stream, ttype, domain, time_in, step
+                )
+            )
+            return None, None
+        # get max matching step <= request step
+        matching_steps = [int(find_tag(product, "step")) for product in matching_products if find_tag(product, "step")]
+        max_matching_step = 360
+        if matching_steps:
+            max_matching_step = max([s for s in matching_steps if s <= int(step)], default=None)
+
+        for product in matching_products:
+            if not find_tag(product, "step") or int(find_tag(product, "step")) == max_matching_step:
                 release_time = product.get("release_time")
                 delta_day = int(product.get("release_delta_day", 0))
                 logging.info(

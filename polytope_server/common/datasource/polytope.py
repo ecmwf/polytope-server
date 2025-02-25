@@ -299,7 +299,7 @@ def change_grids(request, config):
         # all resolution=standard have h128
         if request["resolution"] == "standard":
             res = 128
-            return change_config_grid(config, res)
+            return change_config_grid_res(config, res)
 
         # for activity CMIP6 and experiment hist, all models except ifs-nemo have h512 and ifs-nemo has h1024
         if request["activity"] == "cmip6" and request["experiment"] == "hist":
@@ -318,7 +318,7 @@ def change_grids(request, config):
         if request["activity"] in ["baseline", "projections", "scenariomip"]:
             res = 1024
 
-    if request.get("dataset", None) == "extremes-dt":
+    elif request.get("dataset", None) == "extremes-dt":
         if request["stream"] == "wave":
             for mappings in config["options"]["axis_config"]:
                 for sub_mapping in mappings["transformations"]:
@@ -327,10 +327,18 @@ def change_grids(request, config):
                         sub_mapping["resolution"] = 3601
             return config
 
+    elif request.get("class", None) == "ai":
+        for mappings in config["options"]["axis_config"]:
+            for sub_mapping in mappings["transformations"]:
+                if sub_mapping["name"] == "mapper":
+                    sub_mapping["resolution"] = 320
+                    sub_mapping["type"] = "reduced_gaussian"
+        return config
+
     # Only assign new resolution if it was changed here
     if res:
         # Find the mapper transformation
-        return change_config_grid(config, res)
+        return change_config_grid_res(config, res)
 
     return config
 
@@ -357,7 +365,7 @@ def change_config_grid_hash(config, hash):
     return config
 
 
-def change_config_grid(config, res):
+def change_config_grid_res(config, res):
     for mappings in config["options"]["axis_config"]:
         for sub_mapping in mappings["transformations"]:
             if sub_mapping["name"] == "mapper":
