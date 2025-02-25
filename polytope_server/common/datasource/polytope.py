@@ -89,11 +89,11 @@ class PolytopeDataSource(datasource.DataSource):
     def retrieve(self, request):
         r = yaml.safe_load(request.user_request)
 
+        r = coercion.Coercion.coerce(r)
+
         # Check data released
         if SCHEDULE_READER is not None and self.obey_schedule:
             SCHEDULE_READER.check_released_polytope_request(r)
-
-        r = coercion.Coercion.coerce(r)
 
         r = self.apply_defaults(r)
 
