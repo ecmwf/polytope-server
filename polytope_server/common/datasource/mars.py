@@ -56,7 +56,7 @@ class MARSDataSource(datasource.DataSource):
         self.mars_binary = config.get("binary", "mars")
 
         self.protocol = config.get("protocol", "dhs")
-        
+
         self.mars_error_filter = config.get("mars_error_filter", "mars - ERROR")
 
         # self.fdb_config = None
