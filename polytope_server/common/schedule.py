@@ -110,7 +110,7 @@ class ScheduleReader:
             step = max([p[step] for p in req["feature"]["points"]])
         else:
             raise PolytopeError("'step' not found in request")
-        
+
         try:
             return self.check_released(
                 req["date"],
