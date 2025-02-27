@@ -28,16 +28,17 @@ class RaiseDataSourceException(Exception):
 class RaiseDataSource(datasource.DataSource):
     def __init__(self, config):
         self.type = config["type"]
+        self.error_message = config.get("error_message", "Datasource raised an error!")
         assert self.type == "raise"
 
     def get_type(self):
         return self.type
 
     def archive(self, request):
-        raise RaiseDataSourceException("Datasource raised an error!")
+        raise RaiseDataSourceException(self.error_message)
 
     def retrieve(self, request):
-        raise RaiseDataSourceException("Datasource raised an error!")
+        raise RaiseDataSourceException(self.error_message)
 
     def result(self, request):
         yield None
