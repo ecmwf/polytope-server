@@ -27,8 +27,9 @@ class RaiseDataSourceException(Exception):
 
 class RaiseDataSource(datasource.DataSource):
     def __init__(self, config):
+        self.config = config
         self.type = config["type"]
-        self.error_message = config.get("error_message", "Datasource raised an error!")
+        self.error_message = self.config.get("error_message", "Datasource raised an error!")
         assert self.type == "raise"
 
     def get_type(self):
