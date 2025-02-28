@@ -354,6 +354,17 @@ def change_hash(request, config):
         if request["levtype"] == "ml":
             hash = "9fed647cd1c77c03f66d8c74a4e0ad34"
             return change_config_grid_hash(config, hash)
+    if request.get("dataset", None) is None:
+        if request["stream"] == "enfo":
+            if request["class"] == "od":
+                if request["type"] == "pf":
+                    if request["param"] == "261001":
+                        hash = "6101cfb6f4671e41e5cb93fe9596065b"
+                        return change_config_grid_hash(config, hash)
+    if request.get("dataset", None) == "climate-dt":
+        if request.get("model", None) == "icon":
+            hash = "9533855ee8e38314e19aaa0434c310da"
+            return change_config_grid_hash(config, hash)
     return config
 
 
