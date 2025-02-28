@@ -303,10 +303,10 @@ def change_grids(request, config):
 
         # for activity CMIP6 and experiment hist, all models except ifs-nemo have h512 and ifs-nemo has h1024
         if request["activity"] == "cmip6" and request["experiment"] == "hist":
-            if request["model"] != "ifs-nemo":
-                res = 512
-            else:
-                res = 1024
+            # if request["model"] != "ifs-nemo":
+            #     res = 512
+            # else:
+            res = 1024
 
         # # for activity scenariomip and experiment ssp3-7.0, all models use h1024
         # if request["activity"] == "scenariomip" and request["experiment"] == "ssp3-7.0":
