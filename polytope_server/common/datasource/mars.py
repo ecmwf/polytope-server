@@ -93,6 +93,9 @@ class MARSDataSource(datasource.DataSource):
 
         r = yaml.safe_load(request.user_request) or {}
 
+        if "feature" in r:
+            raise Exception("Feature requests are not supported by MARS data source")
+
         for k, v in self.match_rules.items():
 
             # An empty match rule means that the key must not be present
