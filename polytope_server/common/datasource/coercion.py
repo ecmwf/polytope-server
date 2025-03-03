@@ -20,9 +20,8 @@ class Coercion:
         return request
 
     @staticmethod
-    def coerce_value(key: str, value: Any):
+    def coerce_value(key: str, value: Any) -> Any:
         if key in Coercion.coercer:
-            # coercer_func = Coercion.coercer[key]
             coercer_func = Coercion.coercer.get(key, None)
 
             if coercer_func is None:
@@ -203,19 +202,6 @@ class Coercion:
             raise CoercionError("Invalid time format, expected HHMM or HH.")
         if minute != 0:
             raise CoercionError("Invalid time format, expected HHMM or HH.")
-
-        # # Format time as HHMM
-        # time_str = f"{hour:02d}{minute:02d}"
-        # return time_str
-
-        # Validate hour and minute
-        if not (0 <= hour <= 23):
-            raise CoercionError("Hour must be between 0 and 23.")
-        if not (0 <= minute <= 59):
-            raise CoercionError("Minute must be between 0 and 59.")
-        if minute != 0:
-            # In your test cases, minute must be zero
-            raise CoercionError("Minute must be zero.")
 
         # Format time as HHMM
         time_str = f"{hour:02d}{minute:02d}"
