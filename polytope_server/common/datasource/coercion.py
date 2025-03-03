@@ -22,7 +22,11 @@ class Coercion:
     @staticmethod
     def coerce_value(key: str, value: Any):
         if key in Coercion.coercer:
-            coercer_func = Coercion.coercer[key]
+            # coercer_func = Coercion.coercer[key]
+            coercer_func = Coercion.coercer.get(key, None)
+
+            if coercer_func is None:
+                return value
 
             if isinstance(value, list):
                 # Coerce each item in the list
@@ -242,6 +246,10 @@ class Coercion:
         else:
             raise CoercionError("expver must be an integer or a string.")
 
+    @staticmethod
+    def coerce_ignore_cases(value: Any) -> str:
+        return value.lower()
+
     coercer = {
         "date": coerce_date,
         "step": coerce_step,
@@ -249,4 +257,7 @@ class Coercion:
         "param": coerce_param,
         "time": coerce_time,
         "expver": coerce_expver,
+        "model": coerce_ignore_cases,
+        "experiment": coerce_ignore_cases,
+        "activity": coerce_ignore_cases,
     }
