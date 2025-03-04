@@ -90,17 +90,16 @@ class PolytopeDataSource(datasource.DataSource):
         r = yaml.safe_load(request.user_request)
 
         r = coercion.Coercion.coerce(r)
+        # Downstream expects MARS-like format of request
+        for key in r:
+            if isinstance(r[key], list):
+                r[key] = "/".join(r[key])
 
         # Check data released
         if SCHEDULE_READER is not None and self.obey_schedule:
             SCHEDULE_READER.check_released_polytope_request(r)
 
         r = self.apply_defaults(r)
-
-        # Downstream expects MARS-like format of request
-        for key in r:
-            if isinstance(r[key], list):
-                r[key] = "/".join(r[key])
 
         logging.info(r)
 
@@ -188,11 +187,6 @@ class PolytopeDataSource(datasource.DataSource):
                 if req_value not in v:
                     raise Exception("got {}: {}, not one of {}".format(k, req_value, v))
 
-        # Downstream expects MARS-like format of request
-        for key in r:
-            if isinstance(r[key], list):
-                r[key] = "/".join(r[key])
-
     def destroy(self, request) -> None:
         pass
 
@@ -251,7 +245,9 @@ class PolytopeDataSource(datasource.DataSource):
 
     def date_check(self, date, offset, after=False):
         """Process special match rules for DATE constraints"""
-
+        # if type of date is list
+        if isinstance(date, list):
+            date = "/".join(date)
         date = str(date)
 
         # Default date is -1
