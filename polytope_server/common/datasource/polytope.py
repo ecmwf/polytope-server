@@ -245,7 +245,9 @@ class PolytopeDataSource(datasource.DataSource):
 
     def date_check(self, date, offset, after=False):
         """Process special match rules for DATE constraints"""
-
+        # if type of date is list
+        if isinstance(date, list):
+            date = "/".join(date)
         date = str(date)
 
         # Default date is -1
