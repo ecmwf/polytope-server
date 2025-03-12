@@ -57,7 +57,7 @@ class Subprocess:
             if fd == self.subprocess.stdout.fileno():
                 line = self.subprocess.stdout.readline()
                 if line:
-                    if not logging.isEnabledFor(logging.DEBUG):
+                    if not logging.getLogger().isEnabledFor(logging.DEBUG):
                         self.output += line.decode().strip() + "\n"
                     logging.info(line.decode().strip())
             if fd == self.subprocess.stderr.fileno():
