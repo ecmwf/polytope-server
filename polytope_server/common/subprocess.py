@@ -20,6 +20,7 @@
 
 import logging
 import os
+import select
 import subprocess
 from subprocess import CalledProcessError
 
@@ -28,6 +29,7 @@ class Subprocess:
     def __init__(self):
         self.subprocess = None
         self.output = None
+        self.err = None
 
     def run(self, cmd, cwd=None, env=None):
         env = {**os.environ, **(env or None)}
@@ -37,7 +39,7 @@ class Subprocess:
             env=env,
             cwd=cwd,
             shell=False,
-            stderr=subprocess.STDOUT,
+            stderr=subprocess.PIPE,
             stdout=subprocess.PIPE,
         )
 
@@ -47,16 +49,29 @@ class Subprocess:
     def returncode(self):
         return self.subprocess.poll()
 
+    def read_output(self):
+        """Read and log output from the subprocess without blocking"""
+        reads = [self.subprocess.stdout.fileno(), self.subprocess.stderr.fileno()]
+        ret = select.select(reads, [], [], 0.1)
+        for fd in ret[0]:
+            if fd == self.subprocess.stdout.fileno():
+                line = self.subprocess.stdout.readline()
+                if line:
+                    if not logging.isEnabledFor(logging.DEBUG):
+                        self.output += line.decode().strip() + "\n"
+                    logging.info(line.decode().strip())
+            if fd == self.subprocess.stderr.fileno():
+                line = self.subprocess.stderr.readline()
+                if line:
+                    self.err += line.decode().strip() + "\n"
+                    logging.error(line.decode().strip())
+
     def finalize(self, request, filter=None):
         """Close subprocess and decode output"""
+        while self.running():
+            self.read_output()  # Ensure all output is read before finalizing
 
-        out, err = self.subprocess.communicate()
-        logging.info(out.decode())
-        self.output = out.decode().splitlines()
-
-        for line in self.output:
-            if filter and filter in line:
-                request.user_message += line + "\n"
+        request.user_message += self.output
 
         if self.returncode() != 0:
-            raise CalledProcessError(self.returncode(), self.subprocess.args, out, err)
+            raise CalledProcessError(self.returncode(), self.subprocess.args, stderr=self.err)

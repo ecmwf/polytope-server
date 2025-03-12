@@ -155,6 +155,7 @@ class MARSDataSource(datasource.DataSource):
         # Poll until the FIFO has been opened by MARS, watch in case the spawned process dies before opening the FIFO
         try:
             while self.subprocess.running():
+                self.subprocess.read_output()  # Read and log output
                 if self.fifo.ready():
                     logging.debug("FIFO is ready for reading.")
                     break
@@ -170,7 +171,6 @@ class MARSDataSource(datasource.DataSource):
         return True
 
     def result(self, request):
-
         # The FIFO will get EOF if MARS exits unexpectedly, so we will break out of this loop automatically
         for x in self.fifo.data():
             yield x
