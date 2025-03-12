@@ -28,8 +28,8 @@ from subprocess import CalledProcessError
 class Subprocess:
     def __init__(self):
         self.subprocess = None
-        self.output = None
-        self.err = None
+        self.output = ""
+        self.err = ""
 
     def run(self, cmd, cwd=None, env=None):
         env = {**os.environ, **(env or None)}
