@@ -49,13 +49,13 @@ build:
         gribjump_version: '{{ default "0.8.0" .gribjump_version }}'
         mars_client_cpp_version: 7.0.0.7
         # ecbuild_version: 3.8.2
-        # eccodes_version: 2.33.1
-        # eckit_version: 1.28.0
+        eccodes_version: 2.39.4
+        eckit_version: 1.28.5
         # pyfdb_version: 0.1.0
-        # fdb_version: 5.13.2
-        mars_base_c: mars-base-c
-        mars_base_cpp: mars-base-cpp
-        fdb_base: blank-base #fdb-base
+        fdb_version: 5.15.9
+        mars_base_c: blank-base # mars-base-c
+        mars_base_cpp: blank-base # mars-base-cpp
+        fdb_base:  fdb-base
         gribjump_base: gribjump-base
       # cliFlags: 
       #   - --no-cache # for debug purposes
