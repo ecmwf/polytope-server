@@ -53,9 +53,9 @@ build:
         eckit_version: 1.28.5
         # pyfdb_version: 0.1.0
         fdb_version: 5.15.9
-        mars_base_c: blank-base # mars-base-c
-        mars_base_cpp: blank-base # mars-base-cpp
-        fdb_base:  fdb-base
+        mars_base_c: mars-base-c
+        mars_base_cpp: mars-base-cpp
+        fdb_base:  blank-base # fdb-base
         gribjump_base: gribjump-base
       # cliFlags: 
       #   - --no-cache # for debug purposes
