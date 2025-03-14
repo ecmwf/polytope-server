@@ -20,6 +20,7 @@
 
 import logging
 import os
+import select
 import subprocess
 from subprocess import CalledProcessError
 
@@ -27,7 +28,7 @@ from subprocess import CalledProcessError
 class Subprocess:
     def __init__(self):
         self.subprocess = None
-        self.output = None
+        # self.output = None
 
     def run(self, cmd, cwd=None, env=None):
         env = {**os.environ, **(env or None)}
@@ -41,20 +42,45 @@ class Subprocess:
             stdout=subprocess.PIPE,
         )
 
+    def read_output(self, request, filter=None):
+        """Read and log output from the subprocess without blocking"""
+        reads = [self.subprocess.stdout.fileno(), self.subprocess.stderr.fileno()]
+        ret = select.select(reads, [], [], 0)
+        while ret[0]:
+            for fd in ret[0]:
+                if fd == self.subprocess.stdout.fileno():
+                    line = self.subprocess.stdout.readline()
+                    if line:
+                        logging.info(line.decode().strip())
+                        if filter and filter in line.decode():
+                            request.user_message += line.decode() + "\n"
+                if fd == self.subprocess.stderr.fileno():
+                    line = self.subprocess.stderr.readline()
+                    if line:
+                        logging.error(line.decode().strip())
+                        if filter and filter in line.decode():
+                            request.user_message += line.decode() + "\n"
+            ret = select.select(reads, [], [], 0)
+
     def running(self):
         return self.subprocess.poll() is None
 
     def returncode(self):
         return self.subprocess.poll()
 
-    def finalize(self, request, filter=None):
+    def finalize(self, request, filter):
         """Close subprocess and decode output"""
 
         out, err = self.subprocess.communicate()
         logging.info(out.decode())
-        self.output = out.decode().splitlines()
+        logging.error(err.decode())
+        output = out.decode().splitlines()
+        error = err.decode().splitlines()
 
-        for line in self.output:
+        for line in output:
+            if filter and filter in line:
+                request.user_message += line + "\n"
+        for line in error:
             if filter and filter in line:
                 request.user_message += line + "\n"
 
