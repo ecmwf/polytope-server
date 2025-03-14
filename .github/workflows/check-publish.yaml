@@ -24,7 +24,7 @@ jobs:
       - name: Start polytope-docs build
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GH_REPO_READ_TOKEN }}
+          github-token: ${{ secrets.REPO_SYNC_ACTION_PAT }}
           script: |-
             await github.rest.actions.createWorkflowDispatch({
                 owner: 'ecmwf-projects',
@@ -42,7 +42,7 @@ jobs:
       - name: Start polytope-docs build
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GH_REPO_READ_TOKEN }}
+          github-token: ${{ secrets.REPO_SYNC_ACTION_PAT }}
           script: |-
             await github.actions.createWorkflowDispatch({
                 owner: 'ecmwf-projects',
