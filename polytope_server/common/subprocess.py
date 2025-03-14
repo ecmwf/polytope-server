@@ -28,7 +28,6 @@ from subprocess import CalledProcessError
 class Subprocess:
     def __init__(self):
         self.subprocess = None
-        # self.output = None
 
     def run(self, cmd, cwd=None, env=None):
         env = {**os.environ, **(env or None)}
@@ -38,23 +37,23 @@ class Subprocess:
             env=env,
             cwd=cwd,
             shell=False,
-            stderr=subprocess.STDOUT,
-            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            stdout=subprocess.PIPE if not env.get("FDB_DEBUG") == "1" else None,
         )
 
     def read_output(self, request, filter=None):
         """Read and log output from the subprocess without blocking"""
-        reads = [self.subprocess.stdout.fileno(), self.subprocess.stderr.fileno()]
+        reads = [self.subprocess.stdout, self.subprocess.stderr]
         ret = select.select(reads, [], [], 0)
         while ret[0]:
             for fd in ret[0]:
-                if fd == self.subprocess.stdout.fileno():
+                if fd == self.subprocess.stdout:
                     line = self.subprocess.stdout.readline()
                     if line:
                         logging.info(line.decode().strip())
                         if filter and filter in line.decode():
                             request.user_message += line.decode() + "\n"
-                if fd == self.subprocess.stderr.fileno():
+                if fd == self.subprocess.stderr:
                     line = self.subprocess.stderr.readline()
                     if line:
                         logging.error(line.decode().strip())
@@ -71,18 +70,7 @@ class Subprocess:
     def finalize(self, request, filter):
         """Close subprocess and decode output"""
 
-        out, err = self.subprocess.communicate()
-        logging.info(out.decode())
-        logging.error(err.decode())
-        output = out.decode().splitlines()
-        error = err.decode().splitlines()
+        returncode = self.subprocess.wait()
 
-        for line in output:
-            if filter and filter in line:
-                request.user_message += line + "\n"
-        for line in error:
-            if filter and filter in line:
-                request.user_message += line + "\n"
-
-        if self.returncode() != 0:
-            raise CalledProcessError(self.returncode(), self.subprocess.args, out, err)
+        if returncode != 0:
+            raise CalledProcessError(returncode, self.subprocess.args)
