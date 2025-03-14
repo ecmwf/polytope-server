@@ -156,7 +156,7 @@ class MARSDataSource(datasource.DataSource):
         try:
             while self.subprocess.running():
                 self.subprocess.read_output(request, self.mars_error_filter)
-                logging.debug("Checking if MARS process has opened FIFO.")
+                # logging.debug("Checking if MARS process has opened FIFO.") # this floods the logs
                 if self.fifo.ready():
                     logging.debug("FIFO is ready for reading.")
                     break
