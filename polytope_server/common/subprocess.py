@@ -38,14 +38,14 @@ class Subprocess:
             cwd=cwd,
             shell=False,
             stderr=subprocess.PIPE,
-            stdout=subprocess.PIPE if not env.get("FDB_DEBUG") == "1" else None,
+            stdout=subprocess.PIPE,
         )
 
     def read_output(self, request, filter=None):
         """Read and log output from the subprocess without blocking"""
-        reads = [self.subprocess.stdout, self.subprocess.stderr]
+        reads = [i for i in [self.subprocess.stdout, self.subprocess.stderr] if i]
         ret = select.select(reads, [], [], 0)
-        while ret[0]:
+        while self.running() and ret[0]:  # hangs if not running
             for fd in ret[0]:
                 if fd == self.subprocess.stdout:
                     line = self.subprocess.stdout.readline()
