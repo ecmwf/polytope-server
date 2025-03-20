@@ -62,6 +62,13 @@ class PolytopeDataSource(datasource.DataSource):
         self.config["datacube"]["config"] = self.config_file
         os.environ["GRIBJUMP_CONFIG_FILE"] = self.config_file
 
+        # Create a temp file to store FDB config
+        self.fdb_config_file = "/tmp/fdb.yaml"
+        if "fdb_config" in config:
+            with open(self.fdb_config_file, "w") as f:
+                f.write(yaml.dump(self.config.pop("fdb_config")))
+            os.environ["FDB5_CONFIG_FILE"] = self.fdb_config_file
+
         logging.info("Set up gribjump")
 
     def get_type(self):
@@ -188,6 +195,11 @@ class PolytopeDataSource(datasource.DataSource):
                     raise Exception("got {}: {}, not one of {}".format(k, req_value, v))
 
     def destroy(self, request) -> None:
+        # delete temp files
+        if os.path.exists(self.config_file):
+            os.remove(self.config_file)
+        if os.path.exists(self.fdb_config_file):
+            os.remove(self.fdb_config_file)
         pass
 
     def repr(self):
