@@ -46,7 +46,7 @@ build:
         mars_config_branch: '{{ .mars_config_branch }}'
         developer_mode: '{{ default "false" .developer_mode }}'
         # mars_client_c_version: 6.33.20.2
-        gribjump_version: '{{ default "0.8.0" .gribjump_version }}'
+        gribjump_version: '{{ default "0.9.2" .gribjump_version }}'
         mars_client_cpp_version: 7.0.0.7
         # ecbuild_version: 3.8.2
         # eccodes_version: 2.33.1
