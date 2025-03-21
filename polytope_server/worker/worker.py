@@ -196,6 +196,7 @@ class Worker:
 
                     self.update_status("idle")
                     self.request_store.update_request(self.request)
+                    sys.exit(0)
 
                     self.future = None
                     self.queue_msg = None
