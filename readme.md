@@ -45,3 +45,8 @@ Generic integration tests (a deployment is required):
 ```
 python -m pytest tests/integration --config </path/to/config1.yaml> --config </path/to/config2.yaml>
 ```
+
+
+## Acknowledgements
+
+Past and current funding and support is listed in the adjoining [Acknowledgements](./ACKNOWLEDGEMENTS.rst).
