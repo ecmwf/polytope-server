@@ -175,7 +175,7 @@ RUN set -eux \
 
 FROM python:3.11-bookworm AS gribjump-base
 ARG rpm_repo
-ARG gribjump_version=0.5.4
+ARG gribjump_version=0.9.2
 
 RUN response=$(curl -s -w "%{http_code}" ${rpm_repo}) \
     && if [ "$response" = "403" ]; then echo "Unauthorized access to ${rpm_repo} "; fi
@@ -188,7 +188,7 @@ RUN set -eux \
 
 RUN set -eux \
     && apt-get update \
-    && apt install -y gribjump-client=${gribjump_version}-gribjump
+    && apt install -y gribjump-server=${gribjump_version}-gribjumpserver
 
 RUN set -eux \
     ls -R /opt
@@ -328,12 +328,12 @@ ENV PATH="/polytope/bin/:/opt/ecmwf/mars-client/bin:/opt/ecmwf/mars-client-cloud
 COPY --chown=polytope --from=fdb-base-final /opt/fdb/ /opt/fdb/
 COPY --chown=polytope ./aux/default_fdb_schema /polytope/config/fdb/default
 RUN mkdir -p /polytope/fdb/ && sudo chmod -R o+rw /polytope/fdb
-ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/opt/fdb/lib:/opt/ecmwf/gribjump-client/lib
+ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/opt/fdb/lib:/opt/ecmwf/gribjump-server/lib
 COPY --chown=polytope --from=fdb-base-final /root/.local /home/polytope/.local
 
 # Copy gribjump-related artifacts, including python libraries
 # COPY --chown=polytope --from=gribjump-base-final /opt/fdb/ /opt/fdb/
-COPY --chown=polytope --from=gribjump-base-final /opt/ecmwf/gribjump-client/ /opt/ecmwf/gribjump-client/
+COPY --chown=polytope --from=gribjump-base-final /opt/ecmwf/gribjump-server/ /opt/ecmwf/gribjump-server/
 COPY --chown=polytope --from=gribjump-base-final /root/.local /home/polytope/.local
 # RUN sudo apt install -y libopenjp2-7
 # COPY polytope-deployment/common/default_fdb_schema /polytope/config/fdb/default

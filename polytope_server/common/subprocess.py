@@ -20,6 +20,7 @@
 
 import logging
 import os
+import select
 import subprocess
 from subprocess import CalledProcessError
 
@@ -27,7 +28,6 @@ from subprocess import CalledProcessError
 class Subprocess:
     def __init__(self):
         self.subprocess = None
-        self.output = None
 
     def run(self, cmd, cwd=None, env=None):
         env = {**os.environ, **(env or None)}
@@ -37,9 +37,29 @@ class Subprocess:
             env=env,
             cwd=cwd,
             shell=False,
-            stderr=subprocess.STDOUT,
+            stderr=subprocess.PIPE,
             stdout=subprocess.PIPE,
         )
+
+    def read_output(self, request, filter=None):
+        """Read and log output from the subprocess without blocking"""
+        reads = [i for i in [self.subprocess.stdout, self.subprocess.stderr] if i]
+        ret = select.select(reads, [], [], 0)
+        while self.running() and ret[0]:  # hangs if not running
+            for fd in ret[0]:
+                if fd == self.subprocess.stdout:
+                    line = self.subprocess.stdout.readline()
+                    if line:
+                        logging.info(line.decode().strip())
+                        if filter and filter in line.decode():
+                            request.user_message += line.decode() + "\n"
+                if fd == self.subprocess.stderr:
+                    line = self.subprocess.stderr.readline()
+                    if line:
+                        logging.error(line.decode().strip())
+                        if filter and filter in line.decode():
+                            request.user_message += line.decode() + "\n"
+            ret = select.select(reads, [], [], 0)
 
     def running(self):
         return self.subprocess.poll() is None
@@ -47,16 +67,10 @@ class Subprocess:
     def returncode(self):
         return self.subprocess.poll()
 
-    def finalize(self, request, filter=None):
+    def finalize(self, request, filter):
         """Close subprocess and decode output"""
 
-        out, err = self.subprocess.communicate()
-        logging.info(out.decode())
-        self.output = out.decode().splitlines()
+        returncode = self.subprocess.wait()
 
-        for line in self.output:
-            if filter and filter in line:
-                request.user_message += line + "\n"
-
-        if self.returncode() != 0:
-            raise CalledProcessError(self.returncode(), self.subprocess.args, out, err)
+        if returncode != 0:
+            raise CalledProcessError(returncode, self.subprocess.args)
