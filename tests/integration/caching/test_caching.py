@@ -118,7 +118,7 @@ class Test:
         cache.wipe()
 
     def test_cache(self):
-        global executions
+        # global executions
         c = child()
         c.do_stuff(1)
         c.do_stuff(1)
@@ -129,7 +129,7 @@ class Test:
         assert executions == 2
 
     def test_cache_two_objects(self):
-        global executions
+        # global executions
         c1 = child()
         c2 = child()
         c1.do_stuff(1)
@@ -143,7 +143,7 @@ class Test:
         assert executions == 2
 
     def test_cache_no_cache_inherited(self):
-        global executions
+        # global executions
         b = base()
         b.do_stuff_base(1)
         b.do_stuff_base(1)
@@ -156,7 +156,7 @@ class Test:
         assert executions == 3
 
     def test_cache_cancelled(self):
-        global executions
+        # global executions
         c = child()
         c.do_stuff_cancel(1)
         assert executions == 1
@@ -164,7 +164,7 @@ class Test:
         assert executions == 2
 
     def test_cache_raised(self):
-        global executions
+        # global executions
         c = child()
 
         with pytest.raises(NotImplementedError):
@@ -176,7 +176,7 @@ class Test:
         assert executions == 2
 
     def test_cache_function(self):
-        global executions
+        # global executions
         do_stuff()
         assert executions == 1
         do_stuff()
@@ -193,7 +193,7 @@ class Test:
         assert executions == 4
 
     def test_cache_function_none(self):
-        global executions
+        # global executions
         do_stuff_no_return()
         assert executions == 1
         do_stuff_no_return()

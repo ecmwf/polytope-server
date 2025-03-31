@@ -41,24 +41,23 @@ class Subprocess:
             stdout=subprocess.PIPE,
         )
 
-    def read_output(self, request, filter=None):
+    def read_output(self, request, err_filter=None):
         """Read and log output from the subprocess without blocking"""
         reads = [i for i in [self.subprocess.stdout, self.subprocess.stderr] if i]
         ret = select.select(reads, [], [], 0)
-        while self.running() and ret[0]:  # hangs if not running
+        while ret[0]:
             for fd in ret[0]:
-                if fd == self.subprocess.stdout:
-                    line = self.subprocess.stdout.readline()
-                    if line:
-                        logging.info(line.decode().strip())
-                        if filter and filter in line.decode():
-                            request.user_message += line.decode() + "\n"
-                if fd == self.subprocess.stderr:
-                    line = self.subprocess.stderr.readline()
-                    if line:
-                        logging.error(line.decode().strip())
-                        if filter and filter in line.decode():
-                            request.user_message += line.decode() + "\n"
+                line = fd.readline()
+                if line:
+                    line = line.decode().strip()
+                    if fd == self.subprocess.stdout:
+                        logging.info(line)
+                    elif fd == self.subprocess.stderr:
+                        logging.error(line)
+                    if err_filter and err_filter in line:
+                        request.user_message += line + "\n"
+            if not self.running():
+                break
             ret = select.select(reads, [], [], 0)
 
     def running(self):
@@ -67,10 +66,11 @@ class Subprocess:
     def returncode(self):
         return self.subprocess.poll()
 
-    def finalize(self, request, filter):
+    def finalize(self, request, err_filter):
         """Close subprocess and decode output"""
 
         returncode = self.subprocess.wait()
+        self.read_output(request, err_filter)
 
         if returncode != 0:
             raise CalledProcessError(returncode, self.subprocess.args)
