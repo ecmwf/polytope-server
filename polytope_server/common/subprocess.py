@@ -70,7 +70,18 @@ class Subprocess:
         """Close subprocess and decode output"""
 
         returncode = self.subprocess.wait()
-        self.read_output(request, err_filter)
+        for line in self.subprocess.stdout:
+            line = line.decode().strip()
+            if err_filter and err_filter in line:
+                request.user_message += line + "\n"
+                logging.error(line)
+            else:
+                logging.info(line)
+        for line in self.subprocess.stderr:
+            line = line.decode().strip()
+            if err_filter and err_filter in line:
+                request.user_message += line + "\n"
+            logging.error(line)
 
         if returncode != 0:
             raise CalledProcessError(returncode, self.subprocess.args)
