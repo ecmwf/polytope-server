@@ -33,7 +33,7 @@ python-keycloak==4.4.0
 PyYAML==6.0.2
 redis==5.0.8
 requests==2.32.3
-Werkzeug==3.0.4
+Werkzeug==3.0.6
 uvicorn==0.32.0
 fastapi==0.115.5
 pydantic==2.9.2
