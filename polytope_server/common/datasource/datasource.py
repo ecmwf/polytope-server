@@ -19,7 +19,8 @@
 #
 
 import logging
-import traceback
+
+# import traceback
 from abc import ABC
 from importlib import import_module
 from typing import Iterator
@@ -46,8 +47,8 @@ class DataSource(ABC):
         """Retrieve data, returns nothing but updates datasource state"""
         raise NotImplementedError()
 
-    def match(self, request: str) -> None:
-        """Checks if the request matches the datasource, raises on failure"""
+    def match(self, request: str) -> tuple[bool, str]:
+        """Checks if the request matches the datasource, returns a tuple (match: bool, message: str)"""
         raise NotImplementedError()
 
     def repr(self) -> str:
@@ -70,38 +71,34 @@ class DataSource(ABC):
         """Returns the mimetype of the result"""
         raise NotImplementedError()
 
-    def dispatch(self, request, input_data) -> bool:
+    def dispatch(self, request, input_data) -> tuple[bool, bool, str]:
         """
         Dispatch to match, retrieve and archive.
-        Returns a tuple ( success, data, details )
+        Returns a tuple ( match, success, details )
+            match: bool
             success: bool
-            data: None or result
-            log: Messages to be passed back to user
+            details: Messages to be passed back to user. Empty string if success.
+        This is the main entry point for the datasource.
         """
 
         self.input_data = input_data
 
         # Match
+        ds_match = False
         try:
-            self.match(request)
-            request.user_message += "Matched datasource {}\n".format(self.repr())
+            ds_match, message = self.match(request)
+            logging.info(f"Datasource {self.repr()} match: {ds_match}, message: {message}")
+            if not ds_match:
+                return (False, False, f"Skipping datasource {self.repr()}: {message}\n")
         except Exception as e:
-            if hasattr(self, "silent_match") and self.silent_match:
-                pass
-            else:
-                request.user_message += "Skipping datasource {}: {}\n".format(self.repr(), str(e))
-            tb = traceback.format_exception(None, e, e.__traceback__)
-            logging.info(tb)
-
-            return False
-
+            logging.exception(f"Error matching datasource {self.repr()}: {repr(e)}", exc_info=True, stack_info=True)
+            return (False, f"Skipping datasource {self.repr()}: error matching: {repr(e)}\n")
         # Check for datasource-specific roles
         if hasattr(self, "config"):
             datasource_role_rules = self.config.get("roles", None)
             if datasource_role_rules is not None:
                 if not any(role in request.user.roles for role in datasource_role_rules.get(request.user.realm, [])):
-                    request.user_message += "Skipping datasource {}: user is not authorised.\n".format(self.repr())
-                    return False
+                    return (ds_match, False, f"Skipping datasource {self.repr()}: user is not authorised.\n")
 
         # Retrieve/Archive/etc.
         success = False
@@ -111,15 +108,24 @@ class DataSource(ABC):
             elif request.verb == Verb.ARCHIVE:
                 success = self.archive(request)
             else:
-                raise NotImplementedError()
-
-        except NotImplementedError as e:
-            request.user_message += "Skipping datasource {}: method '{}' not available: {}\n".format(
-                self.repr(), request.verb, repr(e)
+                return (
+                    ds_match,
+                    success,
+                    f" Datasource {self.repr()} matched, but method '{request.verb}' not available. \n",
+                )
+        except Exception as e:
+            logging.exception(
+                f"Error while sending {request.verb} request with datasource {self.repr()}: {repr(e)}",
+                exc_info=True,
+                stack_info=True,
             )
-            return False
+            return (
+                ds_match,
+                success,
+                f"Datasource {self.repr()} matched, but ran into an error while sending data request: {repr(e)}\n",
+            )
 
-        return success
+        return (ds_match, success, "Successfully retrieved data from datasource {}\n".format(self.repr()))
 
 
 #######################################################
@@ -137,7 +143,7 @@ type_to_class_map = {
 }
 
 
-def create_datasource(config):
+def create_datasource(config) -> type[DataSource]:
 
     # Allows passing in just the name as config
     if isinstance(config, str):

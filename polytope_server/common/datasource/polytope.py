@@ -155,44 +155,44 @@ class PolytopeDataSource(datasource.DataSource):
 
     def match(self, request):
         if not self.check_extra_roles(request):
-            raise Exception("not authorized to access this data.")
+            return False, "Not authorized to access this data."
 
         r = yaml.safe_load(request.user_request) or {}
-
         r = coercion.Coercion.coerce(r)
-
         r = self.apply_defaults(r)
 
         logging.info("Coerced and patched request: {}".format(r))
 
-        # Check that there is a feature specified in the request
         if "feature" not in r:
-            raise Exception("request does not contain key 'feature'")
+            return False, "Request does not contain key 'feature'"
 
         for k, v in self.match_rules.items():
             # Check that all required keys exist
             if k not in r:
-                raise Exception("request does not contain key '{}'".format(k))
+                return False, f"Request does not contain expected key '{k}'"
 
             # Process date rules
             if k == "date":
-                comp, v = v.split(" ", 1)
-                if comp == "<":
-                    self.date_check(r["date"], v, False)
-                elif comp == ">":
-                    self.date_check(r["date"], v, True)
-                else:
-                    raise Exception("Invalid date comparison")
+                try:
+                    comp, v = v.split(" ", 1)
+                    if comp == "<":
+                        self.date_check(r["date"], v, False)
+                    elif comp == ">":
+                        self.date_check(r["date"], v, True)
+                    else:
+                        return False, "Invalid date comparison"
+                except Exception as e:
+                    return False, str(e)
                 continue
 
-            # ... and check the value of other keys
+            # Check the value of other keys
             v = [v] if isinstance(v, str) else v
-
-            # Check if all values in the request match the required values
             req_value_list = r[k] if isinstance(r[k], list) else [r[k]]
             for req_value in req_value_list:
                 if req_value not in v:
-                    raise Exception("got {}: {}, not one of {}".format(k, req_value, v))
+                    return False, f"Got {k}: {req_value}, but expected one of {v}"
+
+        return True, "Match successful"
 
     def destroy(self, request) -> None:
         # delete temp files

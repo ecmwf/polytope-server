@@ -90,41 +90,42 @@ class MARSDataSource(datasource.DataSource):
         return self.config.get("repr", "mars")
 
     def match(self, request):
-
         r = yaml.safe_load(request.user_request) or {}
 
         if "feature" in r:
-            raise Exception("Feature requests are not supported by MARS data source")
+            return False, "Feature requests are not supported by MARS data source"
 
         for k, v in self.match_rules.items():
-
             # An empty match rule means that the key must not be present
             if v is None or len(v) == 0:
                 if k in r:
-                    raise Exception("Request containing key '{}' is not allowed".format(k))
-                else:
-                    continue  # no more checks to do
+                    return False, f"Request containing key '{k}' is not allowed"
+                continue
 
             # Check that all required keys exist
-            if k not in r and not (v is None or len(v) == 0):
-                raise Exception("Request does not contain expected key '{}'".format(k))
+            if k not in r:
+                return False, f"Request does not contain expected key '{k}'"
 
             # Process date rules
             if k == "date":
-                comp, v = v.split(" ", 1)
-                if comp == "<":
-                    self.date_check(r["date"], v, False)
-                elif comp == ">":
-                    self.date_check(r["date"], v, True)
-                else:
-                    raise Exception("Invalid date comparison")
+                try:
+                    comp, v = v.split(" ", 1)
+                    if comp == "<":
+                        self.date_check(r["date"], v, False)
+                    elif comp == ">":
+                        self.date_check(r["date"], v, True)
+                    else:
+                        return False, "Invalid date comparison"
+                except Exception as e:
+                    return False, str(e)
                 continue
 
-            # ... and check the value of other keys
-
+            # Check the value of other keys
             v = [v] if isinstance(v, str) else v
             if r[k] not in v:
-                raise Exception("got {} : {}, but expected one of {}".format(k, r[k], v))
+                return False, f"Got {k}: {r[k]}, but expected one of {v}"
+
+        return True, "Match successful"
 
     def archive(self, request):
         raise NotImplementedError("Archiving not implemented for MARS data source")
