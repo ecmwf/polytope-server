@@ -60,6 +60,7 @@ class S3Staging(staging.Staging):
     def __init__(self, config):
         self.bucket = config.get("bucket", "default")
         self.url = config.get("url", None)
+        self.use_presigned_url = config.get("use_presigned_url", False)
 
         self.host = config.get("host", "0.0.0.0")
         self.port = config.get("port", "8333")
@@ -67,7 +68,6 @@ class S3Staging(staging.Staging):
         self.max_threads = config.get("max_threads", 10)
         self.buffer_size = config.get("buffer_size", 10 * 1024 * 1024)
         self.should_set_policy = config.get("should_set_policy", False)
-        self.use_presigned_url = config.get("use_presigned_url", False)
 
         access_key = config.get("access_key", "")
         secret_key = config.get("secret_key", "")
@@ -253,7 +253,7 @@ class S3Staging(staging.Staging):
             return self.s3_client.generate_presigned_url(
                 "get_object", Params={"Bucket": self.bucket, "Key": name}, ExpiresIn=86400
             )
-        if self.url:
+        elif self.url:
             if self.url.startswith("http"):
                 # This covers both http and https
                 return f"{self.url}/{self.bucket}/{name}"
