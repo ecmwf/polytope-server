@@ -67,6 +67,7 @@ class S3Staging(staging.Staging):
         self.max_threads = config.get("max_threads", 10)
         self.buffer_size = config.get("buffer_size", 10 * 1024 * 1024)
         self.should_set_policy = config.get("should_set_policy", False)
+        self.use_presigned_url = config.get("use_presigned_url", False)
 
         access_key = config.get("access_key", "")
         secret_key = config.get("secret_key", "")
@@ -248,6 +249,10 @@ class S3Staging(staging.Staging):
             raise KeyError(name)
 
     def get_url(self, name):
+        if self.use_presigned_url:
+            return self.s3_client.generate_presigned_url(
+                "get_object", Params={"Bucket": self.bucket, "Key": name}, ExpiresIn=86400
+            )
         if self.url:
             if self.url.startswith("http"):
                 # This covers both http and https
