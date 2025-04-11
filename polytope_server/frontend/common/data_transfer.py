@@ -136,7 +136,8 @@ class DataTransfer:
             split = request.url.split("/")[-1].split(".")
             extension = None
             if len(split) > 1:
-                extension = split[-1]
+                # Strip off any potential parameters.
+                extension = split[-1].split("?")[0]
 
             object_id = request.id
             if extension is not None:
