@@ -17,9 +17,11 @@ def aws_credentials():
         "AWS_SECURITY_TOKEN": "testing",
         "AWS_SESSION_TOKEN": "testing",
         "AWS_DEFAULT_REGION": "us-east-1",
+        "AWS_ENDPOINT_URL_DYNAMODB": "https://dynamodb.us-east-1.amazonaws.com",
     }
     with mock.patch.dict(os.environ, values):
         yield
+
 
 
 @pytest.fixture(scope="function")
