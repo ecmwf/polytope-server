@@ -44,10 +44,9 @@ def test_create_with_presigned_url(s3_config):
     data = [b"test data"]
     name = "mydata"
 
-    url, obj_id = s3_staging.create(name, data, "text/html")
-    assert obj_id == name + ".bin"
+    url = s3_staging.create(name, data, "text/html")
     assert "AWSAccessKeyId" in url
-    assert "http://localhost:8088/test/" + obj_id in url
+    assert "http://localhost:8088/test/" + name + ".bin" in url
 
 
 def test_create(s3_config):
@@ -56,6 +55,5 @@ def test_create(s3_config):
     data = [b"test data"]
     name = "mydata"
 
-    url, obj_id = s3_staging.create(name, data, "text/html")
-    assert obj_id == name + ".bin"
-    assert "http://localhost:8088/test/" + obj_id == url
+    url = s3_staging.create(name, data, "text/html")
+    assert "http://localhost:8088/test/" + name + ".bin" == url
