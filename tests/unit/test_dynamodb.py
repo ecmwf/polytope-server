@@ -23,7 +23,6 @@ def aws_credentials():
         yield
 
 
-
 @pytest.fixture(scope="function")
 def mocked_aws(aws_credentials):
     with mock_aws():
