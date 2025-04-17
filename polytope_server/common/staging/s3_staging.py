@@ -61,6 +61,7 @@ class S3Staging(staging.Staging):
         self.bucket = config.get("bucket", "default")
         self.url = config.get("url", None)
         self.use_presigned_url = config.get("use_presigned_url", False)
+        self.presigned_url_expiry = min(config.get("presigned_url_expiry", 86400), 604800)
 
         self.host = config.get("host", "0.0.0.0")
         self.port = config.get("port", "8333")
@@ -88,6 +89,7 @@ class S3Staging(staging.Staging):
             config=botocore.config.Config(
                 max_pool_connections=50,
                 s3={"addressing_style ": "path"},
+                signature_version="s3v4",
             ),
         )
 
@@ -251,7 +253,7 @@ class S3Staging(staging.Staging):
     def get_url(self, name):
         if self.use_presigned_url:
             return self.s3_client.generate_presigned_url(
-                "get_object", Params={"Bucket": self.bucket, "Key": name}, ExpiresIn=86400
+                "get_object", Params={"Bucket": self.bucket, "Key": name}, ExpiresIn=self.presigned_url_expiry
             )
         elif self.url:
             if self.url.startswith("http"):

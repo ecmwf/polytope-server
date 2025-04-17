@@ -45,7 +45,7 @@ def test_create_with_presigned_url(s3_config):
     name = "mydata"
 
     url = s3_staging.create(name, data, "text/html")
-    assert "AWSAccessKeyId" in url
+    assert "X-Amz-Credential" in url
     assert "http://localhost:8088/test/" + name + ".bin" in url
 
 
