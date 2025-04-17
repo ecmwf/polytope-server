@@ -20,6 +20,8 @@
 
 import hashlib
 import sys
+from pathlib import PurePosixPath
+from urllib.parse import urlparse
 
 # TODO: Remove flask from this module, it should be agnostic
 from flask import Response
@@ -133,15 +135,12 @@ class DataTransfer:
         try:
 
             # TODO: temporary fix for Content-Disposition earthkit issues
-            split = request.url.split("/")[-1].split(".")
-            extension = None
-            if len(split) > 1:
-                # Strip off any potential parameters.
-                extension = split[-1].split("?")[0]
+            url_path = PurePosixPath(urlparse(request.url).path)
+            extension = url_path.suffix
 
             object_id = request.id
-            if extension is not None:
-                object_id = request.id + "." + extension
+            if extension is not None and len(extension) > 0:
+                object_id = request.id + extension
 
             request.content_type, request.content_length = self.staging.stat(object_id)
         except Exception:
