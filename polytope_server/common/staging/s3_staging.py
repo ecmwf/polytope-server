@@ -61,6 +61,10 @@ class S3Staging(staging.Staging):
         self.bucket = config.get("bucket", "default")
         self.url = config.get("url", None)
         self.use_presigned_url = config.get("use_presigned_url", False)
+        signature_version = None
+        if self.use_presigned_url:
+            signature_version = "s3v4"
+        # Presigned URLs using V4 can be valid for a maximum of 7 days.
         self.presigned_url_expiry = min(config.get("presigned_url_expiry", 86400), 604800)
 
         self.host = config.get("host", "0.0.0.0")
@@ -89,7 +93,7 @@ class S3Staging(staging.Staging):
             config=botocore.config.Config(
                 max_pool_connections=50,
                 s3={"addressing_style ": "path"},
-                signature_version="s3v4",
+                signature_version=signature_version,
             ),
         )
 
