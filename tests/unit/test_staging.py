@@ -1,11 +1,9 @@
-import logging
 import os
 from unittest import mock
 
 import pytest
 from moto import mock_aws
 
-import polytope_server.common.config as polytope_config
 from polytope_server.common.staging import staging
 
 
