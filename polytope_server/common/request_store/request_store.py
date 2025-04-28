@@ -18,12 +18,13 @@
 # does it submit to any jurisdiction.
 #
 
-import importlib
 from abc import ABC, abstractmethod
 from typing import Dict, List, Union
 
 from ..metric import MetricType
 from ..request import Request, Status
+from .dynamodb_request_store import DynamoDBRequestStore
+from .mongodb_request_store import MongoRequestStore
 
 
 class RequestStore(ABC):
@@ -68,10 +69,13 @@ class RequestStore(ABC):
         """Collect dictionary of metrics"""
 
 
-type_to_class_map = {"mongodb": "MongoRequestStore", "dynamodb": "DynamoDBRequestStore"}
+type_to_class_map: dict[str : type[RequestStore]] = {  # noqa: E203
+    "mongodb": MongoRequestStore,
+    "dynamodb": DynamoDBRequestStore,
+}
 
 
-def create_request_store(request_store_config=None, metric_store_config=None):
+def create_request_store(request_store_config=None, metric_store_config=None) -> type[RequestStore]:
 
     if request_store_config is None:
         request_store_config = {"mongodb": {}}
@@ -80,7 +84,4 @@ def create_request_store(request_store_config=None, metric_store_config=None):
 
     assert db_type in type_to_class_map.keys()
 
-    RequestStoreClass = importlib.import_module("polytope_server.common.request_store." + db_type + "_request_store")
-    return getattr(RequestStoreClass, type_to_class_map[db_type])(
-        request_store_config.get(db_type), metric_store_config
-    )
+    return type_to_class_map[db_type](request_store_config.get(db_type), metric_store_config)
