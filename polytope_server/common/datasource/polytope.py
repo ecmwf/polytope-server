@@ -141,11 +141,8 @@ class PolytopeDataSource(datasource.DataSource):
             },
         )
 
-        try:
-            self.output = polytope_mars.extract(r)
-            self.output = json.dumps(self.output).encode("utf-8")
-        except PolytopeError as e:
-            raise Exception("Polytope Feature Extraction Error: {}".format(e.message))
+        self.output = polytope_mars.extract(r)
+        self.output = json.dumps(self.output).encode("utf-8")
 
         return True
 

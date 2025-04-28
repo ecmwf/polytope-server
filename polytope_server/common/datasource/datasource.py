@@ -78,7 +78,7 @@ class DataSource(ABC):
             match: bool
             success: bool
             details: Messages to be passed back to user. Empty string if success.
-        This is the main entry point for the datasource.
+        This is the main entry point for the datasource. It should handle exceptions.
         """
 
         self.input_data = input_data
@@ -111,7 +111,7 @@ class DataSource(ABC):
                 return (
                     ds_match,
                     success,
-                    f" Datasource {self.repr()} matched, but method '{request.verb}' not available. \n",
+                    f"Datasource {self.repr()} matched, but method '{request.verb}' not available. \n",
                 )
         except Exception as e:
             logging.exception(
@@ -125,7 +125,9 @@ class DataSource(ABC):
                 f"Datasource {self.repr()} matched, but ran into an error while sending data request: {repr(e)}\n",
             )
 
-        return (ds_match, success, "Successfully retrieved data from datasource {}\n".format(self.repr()))
+        success_message = "Successfully retrieved data from datasource {}\n".format(self.repr())
+        logging.info(success_message)
+        return (ds_match, success, success_message)
 
 
 #######################################################
