@@ -113,8 +113,13 @@ class LogFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
 
+        # Add exception info if present
+        if record.exc_info:
+            result["exception"] = self.formatException(record.exc_info)
+        if record.stack_info:
+            result["stack_info"] = self.formatStack(record.stack_info)
         if self.mode == "console":
-            return f"{result['asctime']} | {result['message']}"
+            return f"{result['asctime']} | {result['message']}{result['exception'] if 'exception' in result else ''}"
 
         self.add_indexable_fields(record, result)
 

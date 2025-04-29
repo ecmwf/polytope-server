@@ -116,20 +116,17 @@ class IonBeamDataSource(datasource.DataSource):
         if self.response:
             self.response.close()
 
-    def match(self, request: Request) -> None:
-        """Checks if the request matches the datasource, raises on failure"""
-
+    def match(self, request):
         r = yaml.safe_load(request.user_request) or {}
 
         for k, v in self.match_rules.items():
             # Check that all required keys exist
             if k not in r:
-                raise Exception("Request does not contain expected key {}".format(k))
-            # Process date rules
-            if k == "date":
-                # self.date_check(r["date"], v)
-                continue
-            # ... and check the value of other keys
+                return False, f"Request does not contain expected key '{k}'"
+
+            # Check the value of other keys
             v = [v] if isinstance(v, str) else v
             if r[k] not in v:
-                raise Exception("got {} : {}, but expected one of {}".format(k, r[k], v))
+                return False, f"Got {k}: {r[k]}, but expected one of {v}"
+
+        return True, "Match successful"

@@ -18,7 +18,9 @@
 # does it submit to any jurisdiction.
 #
 
-from .datasource import create_datasource
+from typing import Generator
+
+from .datasource import DataSource, create_datasource
 from .exceptions import InvalidConfig
 
 
@@ -33,12 +35,12 @@ class Collection:
         if len(self.config.get("datasources", [])) == 0:
             raise InvalidConfig("No datasources configured for collection {}".format(self.name))
 
-    def datasources(self):
+    def datasources(self) -> Generator[type[DataSource], None, None]:
         for ds in self.config.get("datasources", []):
             yield create_datasource(ds)
 
 
-def create_collections(config):
+def create_collections(config) -> dict[str, Collection]:
     collections = {}
     for k, v in config.items():
         collections[k] = Collection(k, v)

@@ -95,14 +95,16 @@ class WebMARSDataSource(datasource.DataSource):
         return "application/x-grib"
 
     def match(self, request):
+        r = yaml.safe_load(request.user_request) or {}
 
-        r = yaml.safe_load(request.user_request)
         for k, v in self.match_rules.items():
             v = [v] if isinstance(v, str) else v
             if k not in r:
-                raise Exception("Request does not contain expected key {}".format(k))
+                return False, f"Request does not contain expected key '{k}'"
             elif r[k] not in v:
-                raise Exception("got {} : {}, but expected one of {}".format(k, r[k], v))
+                return False, f"Got {k}: {r[k]}, but expected one of {v}"
+
+        return True, "Match successful"
 
     def convert_to_mars_request(self, request):
         request_str = ""
