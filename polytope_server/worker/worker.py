@@ -197,11 +197,11 @@ class Worker:
                         success = self.future.result(0)
                     except Exception as e:
                         self.on_request_fail(self.request, e)
-
-                    if success:
-                        self.on_request_complete(self.request)
                     else:
-                        self.on_request_fail(self.request, None)
+                        if success:
+                            self.on_request_complete(self.request)
+                        else:
+                            self.on_request_fail(self.request, None)
 
                     self.queue.ack(self.queue_msg)
 
@@ -298,9 +298,7 @@ class Worker:
                 request.url = self.staging.create(id, datasource.result(request), datasource.mime_type())
 
         except Exception as e:
-            logging.exception(
-                "Failed to finalize request", extra={"request_id": id, "exception": str(e)}, stack_info=True
-            )
+            logging.exception(f"Failed to finalize request: {repr(e)} {e.message}", extra={"request_id": id})
             request.user_message += f"Failed to upload result data to staging. {e}\n"
             success = False
 
@@ -346,8 +344,7 @@ class Worker:
         """Called when the future thread raises an exception"""
 
         if exception:
-            request.user_message += f"Request failed unexpectedly {str(exception)}\n"
-        request.user_message += "Please contact support if this persists.\n"
+            request.user_message += f"Request failed unexpectedly with error {repr(exception)}: {str(exception)}\n"
         request.set_status(Status.FAILED)
         self.requests_failed += 1
 

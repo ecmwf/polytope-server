@@ -91,8 +91,8 @@ class DataSource(ABC):
             if not ds_match:
                 return (False, False, f"Skipping datasource {self.repr()}: {message}\n")
         except Exception as e:
-            logging.exception(f"Error matching datasource {self.repr()}: {repr(e)}", exc_info=True, stack_info=True)
-            return (False, f"Skipping datasource {self.repr()}: error matching: {repr(e)}\n")
+            logging.exception(f"Error matching datasource {self.repr()}: {str(e)}", exc_info=True, stack_info=True)
+            return (False, f"Skipping datasource {self.repr()}: error matching: {str(e)}\n")
         # Check for datasource-specific roles
         if hasattr(self, "config"):
             datasource_role_rules = self.config.get("roles", None)
@@ -115,14 +115,12 @@ class DataSource(ABC):
                 )
         except Exception as e:
             logging.exception(
-                f"Error while sending {request.verb} request with datasource {self.repr()}: {repr(e)}",
-                exc_info=True,
-                stack_info=True,
+                f"Error while sending {request.verb} request with datasource {self.repr()}: {str(e)}",
             )
             return (
                 ds_match,
                 success,
-                f"Datasource {self.repr()} matched, but ran into an error while sending data request: {repr(e)}\n",
+                f"Datasource {self.repr()} matched, but ran into an error while sending data request: {str(e)}\n",
             )
 
         success_message = "Successfully retrieved data from datasource {}\n".format(self.repr())
