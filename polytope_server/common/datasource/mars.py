@@ -30,7 +30,7 @@ from dateutil.relativedelta import relativedelta
 
 from ..io.fifo import FIFO
 from ..subprocess import Subprocess
-from . import datasource
+from . import coercion, datasource
 
 
 class MARSDataSource(datasource.DataSource):
@@ -95,6 +95,10 @@ class MARSDataSource(datasource.DataSource):
 
         if "feature" in r:
             raise Exception("Feature requests are not supported by MARS data source")
+
+        r = coercion.Coercion.coerce(r)
+
+        logging.info("Coerced request: {}".format(r))
 
         for k, v in self.match_rules.items():
 
