@@ -30,7 +30,7 @@ import yaml
 from dateutil.relativedelta import relativedelta
 
 from ..caching import cache
-from . import datasource
+from . import coercion, datasource
 
 
 class FDBDataSource(datasource.DataSource):
@@ -147,6 +147,10 @@ class FDBDataSource(datasource.DataSource):
     def match(self, request):
 
         r = yaml.safe_load(request.user_request) or {}
+
+        r = coercion.Coercion.coerce(r)
+
+        logging.info("Coerced request: {}".format(r))
 
         for k, v in self.match_rules.items():
 
