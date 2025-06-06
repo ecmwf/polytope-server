@@ -18,4 +18,21 @@
 # does it submit to any jurisdiction.
 #
 
-from .request_store import *
+from . import dynamodb_request_store, mongodb_request_store, request_store
+
+type_to_class_map: dict[str : type[request_store.RequestStore]] = {  # noqa: E203
+    "mongodb": mongodb_request_store.MongoRequestStore,
+    "dynamodb": dynamodb_request_store.DynamoDBRequestStore,
+}
+
+
+def create_request_store(request_store_config=None, metric_store_config=None) -> type[request_store.RequestStore]:
+
+    if request_store_config is None:
+        request_store_config = {"mongodb": {}}
+
+    db_type = next(iter(request_store_config.keys()))
+
+    assert db_type in type_to_class_map.keys()
+
+    return type_to_class_map[db_type](request_store_config.get(db_type), metric_store_config)

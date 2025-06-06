@@ -18,7 +18,6 @@
 # does it submit to any jurisdiction.
 #
 
-import importlib
 from abc import ABC, abstractmethod
 from typing import Dict, List, Union
 
@@ -66,21 +65,3 @@ class RequestStore(ABC):
         self,
     ) -> Dict[str, Union[None, int, float, str, Status, MetricType]]:
         """Collect dictionary of metrics"""
-
-
-type_to_class_map = {"mongodb": "MongoRequestStore", "dynamodb": "DynamoDBRequestStore"}
-
-
-def create_request_store(request_store_config=None, metric_store_config=None):
-
-    if request_store_config is None:
-        request_store_config = {"mongodb": {}}
-
-    db_type = next(iter(request_store_config.keys()))
-
-    assert db_type in type_to_class_map.keys()
-
-    RequestStoreClass = importlib.import_module("polytope_server.common.request_store." + db_type + "_request_store")
-    return getattr(RequestStoreClass, type_to_class_map[db_type])(
-        request_store_config.get(db_type), metric_store_config
-    )

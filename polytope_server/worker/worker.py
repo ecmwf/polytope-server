@@ -23,7 +23,7 @@ import os
 import signal
 import sys
 import time
-import traceback
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
@@ -127,6 +127,10 @@ class Worker:
             self.metric_store.update_metric(self.metric)
 
     def run(self):
+        """
+        Entrypoint for the worker.
+        This method will run until the worker is terminated.
+        """
 
         self.thread_pool = ThreadPoolExecutor(1)
 
@@ -141,11 +145,15 @@ class Worker:
 
                 # No active request: try to pop from queue and process request in future thread
                 if self.future is None:
+                    # logging.debug("No active request, checking queue") # floods the logs
                     self.queue_msg = self.queue.dequeue()
                     if self.queue_msg is not None:
                         id = self.queue_msg.body["id"]
                         self.request = self.request_store.get_request(id)
-
+                        logging.debug(
+                            "Got request from queue: \n {}".format(self.request.serialize()),
+                            extra={"request_id": id},
+                        )
                         # This occurs when a request has been revoked while it was on the queue
                         if self.request is None:
                             logging.info(
@@ -186,16 +194,21 @@ class Worker:
                 # Future completed: do callback, ack message and reset state
                 elif self.future.done():
                     try:
-                        self.future.result(0)
+                        success = self.future.result(0)
                     except Exception as e:
                         self.on_request_fail(self.request, e)
                     else:
-                        self.on_request_complete(self.request)
+                        if success:
+                            self.on_request_complete(self.request)
+                        else:
+                            self.on_request_fail(self.request, None)
 
                     self.queue.ack(self.queue_msg)
 
-                    self.update_status("idle")
                     self.request_store.update_request(self.request)
+                    self.update_status("idle")
+
+                    # Temporary fix: the worker exits on completion
                     sys.exit(0)
 
                     self.future = None
@@ -212,8 +225,17 @@ class Worker:
             self.thread_pool.shutdown(wait=False)
             raise
 
-    def process_request(self, request):
-        """Entrypoint for the worker thread."""
+    def process_request(self, request) -> bool:
+        """
+        Iterate over the datasources in the collection and try to process the request.
+
+        Dispatch the request to each datasource in the request collection until one matches and
+        succesfully submits a request. Get the result and upload to staging.
+
+        If a datasource matches but fails to submit a request, we will try the next datasource.
+
+        Returns True if successful, False otherwise.
+        """
 
         id = request.id
         collection = self.collections[request.collection]
@@ -228,44 +250,64 @@ class Worker:
 
         # Dispatch to listed datasources for this collection until we find one that handles the request
         datasource = None
+        success = True
+        datasource_matches = OrderedDict()
         for ds in collection.datasources():
-            logging.info(
-                "Processing request using datasource {}".format(ds.get_type()),
+            logging.debug(
+                "Attempting to process request using datasource {}".format(ds.get_type()),
                 extra={"request_id": id},
             )
-            if ds.dispatch(request, input_data):
+            datasource_matches[ds.repr()] = ds.dispatch(request, input_data)
+            if datasource_matches[ds.repr()][0]:
+                logging.info(f"Using datasource {ds.get_type()} to process request", extra={"request_id": id})
                 datasource = ds
-                request.user_message += "Datasource {} accepted request.\n".format(ds.repr())
                 break
+            else:
+                logging.info(
+                    "Datasource {} did not match request, continuing to next datasource".format(ds.get_type()),
+                    extra={"request_id": id},
+                )
+                ds.destroy(request)
 
-        # Clean up
+        # If no datasource is found, or if the datasource is not able to process the request, set the request to failed
+        if not any([v[0] for k, v in datasource_matches.items()]):  # no datasource matched
+            logging.info("No datasource matched request, setting to failed", extra={"request_id": id})
+            request.user_message += "Failed to process request, no matching datasource found.\n"
+            for k, v in datasource_matches.items():
+                request.user_message += v[2]
+            success = False
+        elif not any([v[1] for k, v in datasource_matches.items()]):  # no datasource submitted request successfully
+            logging.info("Datasource matched but request was not successful", extra={"request_id": id})
+            request.user_message += "Request was matched to a datasource but was unsuccessful.\n"
+            # add all matched datasource messages
+            for k, v in datasource_matches.items():
+                if v[0]:
+                    request.user_message += v[2]
+            success = False
+        else:
+            request.user_message += datasource_matches[datasource.repr()][2]
+
+        # delete input data if it exists in staging (input data can come from external URLs too)
+        if input_data is not None:
+            if self.staging.query(id):
+                self.staging.delete(id)
         try:
-            # delete input data if it exists in staging (input data can come from external URLs too)
-            if input_data is not None:
-                if self.staging.query(id):
-                    self.staging.delete(id)
-
-            # upload result data
-            if datasource is not None:
+            # upload result data (it may be streamed so this may still fail)
+            if datasource is not None and datasource_matches[datasource.repr()][1]:
+                logging.info("Uploading result data to staging", extra={"request_id": id})
                 request.url = self.staging.create(id, datasource.result(request), datasource.mime_type())
 
         except Exception as e:
-            logging.exception("Failed to finalize request", extra={"request_id": id, "exception": str(e)})
-            raise
+            logging.exception(f"Failed to finalize request: {repr(e)} {e.message}", extra={"request_id": id})
+            request.user_message += f"Failed to upload result data to staging. {e}\n"
+            success = False
 
-        # Guarantee destruction of the datasource
+        # Guarantee destruction of the datasource resources
         finally:
             if datasource is not None:
                 datasource.destroy(request)
 
-        if datasource is None:
-            # request.user_message += "Failed to process request."
-            logging.info(request.user_message, extra={"request_id": id})
-            raise Exception("Request was not accepted by any datasources.")
-        else:
-            request.user_message += "Success"
-
-        return
+        return success
 
     def fetch_input_data(self, url):
         """Downloads input data from external URL or staging"""
@@ -293,7 +335,7 @@ class Worker:
     def on_request_complete(self, request):
         """Called when the future exits cleanly"""
 
-        request.user_message = "Success"  # Do not report log history on successful request
+        # request.user_message = "Success"  # Do not report log history on successful request
         logging.info("Request completed successfully.", extra={"request_id": request.id})
         request.set_status(Status.PROCESSED)
         self.requests_processed += 1
@@ -301,13 +343,9 @@ class Worker:
     def on_request_fail(self, request, exception):
         """Called when the future thread raises an exception"""
 
-        _, v, _ = sys.exc_info()
-        tb = traceback.format_exception(None, exception, exception.__traceback__)
-        logging.info(tb, extra={"request_id": request.id})
-        error_message = request.user_message + "\n" + str(v)
+        if exception:
+            request.user_message += f"Request failed unexpectedly with error {repr(exception)}: {str(exception)}\n"
         request.set_status(Status.FAILED)
-        request.user_message = error_message
-        logging.exception("Request failed with exception.", extra={"request_id": request.id})
         self.requests_failed += 1
 
     def on_process_terminated(self, signumm=None, frame=None):
