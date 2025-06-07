@@ -23,14 +23,12 @@ import logging
 import os
 import subprocess
 import tempfile
-from datetime import datetime, timedelta
 from pathlib import Path
 
 import yaml
-from dateutil.relativedelta import relativedelta
 
 from ..caching import cache
-from . import coercion, datasource
+from . import datasource
 
 
 class FDBDataSource(datasource.DataSource):
@@ -144,38 +142,6 @@ class FDBDataSource(datasource.DataSource):
         self.output.close()
         return
 
-    def match(self, request):
-
-        r = yaml.safe_load(request.user_request) or {}
-
-        r = coercion.Coercion.coerce(r)
-
-        logging.info("Coerced request: {}".format(r))
-
-        for k, v in self.match_rules.items():
-
-            # An empty match rule means that the key must not be present
-            if v is None or len(v) == 0:
-                if k in r:
-                    raise Exception("Request containing key '{}' is not allowed".format(k))
-                else:
-                    continue  # no more checks to do
-
-            # Check that all required keys exist
-            if k not in r and not (v is None or len(v) == 0):
-                raise Exception("Request does not contain expected key '{}'".format(k))
-
-            # Process date rules
-            if k == "date":
-                self.date_check(r["date"], v)
-                continue
-
-            # ... and check the value of other keys
-
-            v = [v] if isinstance(v, str) else v
-            if r[k] not in v:
-                raise Exception("got {} : {}, but expected one of {}".format(k, r[k], v))
-
     def destroy(self, request) -> None:
         pass
 
@@ -208,64 +174,3 @@ class FDBDataSource(datasource.DataSource):
                 v = str(v)
             request_str = request_str + k + "=" + v + ","
         return request_str[:-1]
-
-    def check_single_date(self, date, offset, offset_fmted):
-
-        # Date is relative (0 = now, -1 = one day ago)
-        if str(date)[0] == "0" or str(date)[0] == "-":
-            date_offset = int(date)
-            dt = datetime.today() + timedelta(days=date_offset)
-
-            if dt >= offset:
-                raise Exception("Date is too recent, expected < {}".format(offset_fmted))
-            else:
-                return
-
-        # Absolute date YYYMMDD
-        try:
-            dt = datetime.strptime(date, "%Y%m%d")
-        except ValueError:
-            raise Exception("Invalid date, expected real date in YYYYMMDD format")
-        if dt >= offset:
-            raise Exception("Date is too recent, expected < {}".format(offset_fmted))
-        else:
-            return
-
-    def date_check(self, date, offsets):
-        """Process special match rules for DATE constraints"""
-
-        date = str(date)
-
-        # Default date is -1
-        if len(str(date)) == 0:
-            date = "-1"
-
-        now = datetime.today()
-        offset = now + relativedelta(**dict(offsets))
-        offset_fmted = offset.strftime("%Y%m%d")
-
-        split = str(date).split("/")
-
-        # YYYYMMDD
-        if len(split) == 1:
-            self.check_single_date(split[0], offset, offset_fmted)
-            return True
-
-        # YYYYMMDD/to/YYYYMMDD -- check end and start date
-        # YYYYMMDD/to/YYYYMMDD/by/N -- check end and start date
-        if len(split) == 3 or len(split) == 5:
-
-            if split[1].casefold() == "to".casefold():
-
-                if len(split) == 5 and split[3].casefold() != "by".casefold():
-                    raise Exception("Invalid date range")
-
-                self.check_single_date(split[0], offset, offset_fmted)
-                self.check_single_date(split[2], offset, offset_fmted)
-                return True
-
-        # YYYYMMDD/YYYYMMDD/YYYYMMDD/... -- check each date
-        for s in split:
-            self.check_single_date(s, offset, offset_fmted)
-
-        return True
