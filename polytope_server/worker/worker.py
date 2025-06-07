@@ -27,10 +27,12 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
+import yaml
 
 from ..common import collection, metric_store
 from ..common import queue as polytope_queue
 from ..common import request_store, staging
+from ..common.datasource.coercion import Coercion
 from ..common.metric import WorkerInfo, WorkerStatusChange
 from ..common.request import Status
 
@@ -228,6 +230,7 @@ class Worker:
 
         # Dispatch to listed datasources for this collection until we find one that handles the request
         datasource = None
+        request.user_request = Coercion.coerce(yaml.safe_load(request.user_request))
         for ds in collection.datasources():
             logging.info(
                 "Processing request using datasource {}".format(ds.get_type()),

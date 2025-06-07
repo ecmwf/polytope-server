@@ -131,25 +131,6 @@ class AuthHelper:
 
         return user
 
-    def is_authorized(self, user, roles):
-        """Checks if the user has any of the provided roles"""
-
-        # roles can be a dict of realm:[roles] mapping; find the relevant realm.
-        if isinstance(roles, dict):
-            if user.realm not in roles:
-                raise ForbiddenRequest("Not authorized to access this resource.")
-            roles = roles[user.realm]
-
-        # roles can be a single value; convert to a list
-        if not isinstance(roles, (tuple, list, set)):
-            roles = [roles]
-
-        for required_role in roles:
-            if required_role in user.roles:
-                return True
-
-        raise ForbiddenRequest("Not authorized to access this resource.")
-
     def has_admin_access(self, auth_header):
         """Authenticate and authorize user, testing if they have admin rights"""
         user = self.authenticate(auth_header)
@@ -181,3 +162,23 @@ class AuthHelper:
         for a in self.authenticators:
             metrics["authenticator-" + a.realm() + "-" + a.name()] = a.collect_metric_info()
         return metrics
+
+    @staticmethod
+    def is_authorized(user, roles):
+        """Checks if the user has any of the provided roles"""
+
+        # roles can be a dict of realm:[roles] mapping; find the relevant realm.
+        if isinstance(roles, dict):
+            if user.realm not in roles:
+                raise ForbiddenRequest("Not authorized to access this resource.")
+            roles = roles[user.realm]
+
+        # roles can be a single value; convert to a list
+        if not isinstance(roles, (tuple, list, set)):
+            roles = [roles]
+
+        for required_role in roles:
+            if required_role in user.roles:
+                return True
+
+        raise ForbiddenRequest("Not authorized to access this resource.")
