@@ -25,95 +25,103 @@ import pytest  # noqa: F401
 from polytope_server.common.datasource import DataSource
 
 
+@pytest.fixture
+def user_request():
+    return {
+        "stream": "oper",
+        "levtype": "sfc",
+        "param": "165.128/166.128/167.128",
+        "step": "0",
+        "time": "00",
+        "date": "-32",
+        "type": "an",
+        "class": "od",
+        "expver": "0001",
+        "domain": "g",
+    }
+
+
 class TestDataSourceMatching:
     def setup_method(self):
-        self.user_request = {
-            "stream": "oper",
-            "levtype": "sfc",
-            "param": "165.128/166.128/167.128",
-            "step": "0",
-            "time": "00",
-            "date": "-32",
-            "type": "an",
-            "class": "od",
-            "expver": "0001",
-            "domain": "g",
-        }
 
         self.mars_config = {
             "type": "mars",
             "command": "mars",
             "tmp_dir": "/home/polytope/data",
             "name": "mars",
-            "match": {"class": ["od"], "stream": ["oper", "enfo"], "date": "> 30d"},
+            "match": {"class": ["od"], "stream": ["oper", "enfo", "something"], "date": "> 30d"},
         }
 
     def _mock_auth(self, monkeypatch):
         monkeypatch.setattr("polytope_server.common.datasource.AuthHelper.is_authorized", lambda *args, **kwargs: True)
 
-    def test_mars_created_correctly(self, monkeypatch):
+    def test_mars_created_correctly(self, monkeypatch, user_request):
         self._mock_auth(monkeypatch)
-        assert "success" == DataSource.match(self.mars_config, self.user_request, None)
+        assert "success" == DataSource.match(self.mars_config, user_request, None)
 
-    def test_mars_match_date(self, monkeypatch):
+    def test_mars_match_date(self, monkeypatch, user_request):
         self._mock_auth(monkeypatch)
-        assert "success" != DataSource.match(self.mars_config, set_request_date(self.user_request, -5), None)
+        req = set_request_date(user_request, -5)
+        assert "success" != DataSource.match(self.mars_config, req, None)
 
-    def test_mars_match_date_range(self, monkeypatch):
+    def test_mars_match_date_range(self, monkeypatch, user_request):
         self._mock_auth(monkeypatch)
-        set_request_date_range(self.user_request, -60, -40)
-        assert "success" == DataSource.match(self.mars_config, self.user_request, None)
+        req = set_request_date_range(user_request, -60, -40)
+        assert "success" == DataSource.match(self.mars_config, req, None)
+        req = set_request_date_range(user_request, -60, -25)
+        assert "success" != DataSource.match(self.mars_config, req, None)
 
-        set_request_date_range(self.user_request, -60, -25)
-        assert "success" != DataSource.match(self.mars_config, self.user_request, None)
-
-    def test_mars_match_date_list2(self, monkeypatch):
+    def test_mars_match_date_list2(self, monkeypatch, user_request):
         self._mock_auth(monkeypatch)
-        set_request_date_list(self.user_request, -60, -40)
-        assert "success" == DataSource.match(self.mars_config, self.user_request, None)
+        req = set_request_date_list(user_request, -60, -40)
+        assert "success" == DataSource.match(self.mars_config, req, None)
+        req = set_request_date_list(user_request, -60, -25)
+        assert "success" != DataSource.match(self.mars_config, req, None)
 
-        set_request_date_list(self.user_request, -60, -25)
-        assert "success" != DataSource.match(self.mars_config, self.user_request, None)
-
-    def test_mars_match_date_list3(self, monkeypatch):
+    def test_mars_match_date_list3(self, monkeypatch, user_request):
         self._mock_auth(monkeypatch)
-        set_request_date_list(self.user_request, -60, -40, -35)
-        assert "success" == DataSource.match(self.mars_config, self.user_request, None)
+        req = set_request_date_list(user_request, -60, -40, -35)
+        assert "success" == DataSource.match(self.mars_config, req, None)
+        req = set_request_date_list(user_request, -60, -25, -35)
+        assert "success" != DataSource.match(self.mars_config, req, None)
 
-        set_request_date_list(self.user_request, -60, -25, -35)
-        assert "success" != DataSource.match(self.mars_config, self.user_request, None)
-
-    def test_mars_match_date_list4(self, monkeypatch):
+    def test_mars_match_date_list4(self, monkeypatch, user_request):
         self._mock_auth(monkeypatch)
-        set_request_date_list(self.user_request, -60, -40, -35, -36)
-        assert "success" == DataSource.match(self.mars_config, self.user_request, None)
+        req = set_request_date_list(user_request, -60, -40, -35, -36)
+        assert "success" == DataSource.match(self.mars_config, req, None)
+        req = set_request_date_list(user_request, -60, -25, -35, -36)
+        assert "success" != DataSource.match(self.mars_config, req, None)
 
-        set_request_date_list(self.user_request, -60, -25, -35, -36)
-        assert "success" != DataSource.match(self.mars_config, self.user_request, None)
-
-    def test_mars_match_date_list5(self, monkeypatch):
+    def test_mars_match_date_list5(self, monkeypatch, user_request):
         self._mock_auth(monkeypatch)
-        set_request_date_list(self.user_request, -60, -40, -35, -36, -37)
-        assert "success" == DataSource.match(self.mars_config, self.user_request, None)
+        req = set_request_date_list(user_request, -60, -40, -35, -36, -37)
+        assert "success" == DataSource.match(self.mars_config, req, None)
+        req = set_request_date_list(user_request, -60, -25, -35, -36, -37)
+        assert "success" != DataSource.match(self.mars_config, req, None)
 
-        set_request_date_list(self.user_request, -60, -25, -35, -36, -37)
-        assert "success" != DataSource.match(self.mars_config, self.user_request, None)
-
-    def test_mars_match_date_future(self, monkeypatch):
+    def test_mars_match_date_future(self, monkeypatch, user_request):
         self._mock_auth(monkeypatch)
-        set_request_date(
-            self.user_request,
-            365 * 1000,
-        )
-        assert "success" != DataSource.match(self.mars_config, self.user_request, None)
+        req = set_request_date(user_request, 365 * 1000)
+        assert "success" != DataSource.match(self.mars_config, req, None)
 
-    def test_mars_match_inverse_date_range_step(self, monkeypatch):
+    def test_mars_match_inverse_date_range_step(self, monkeypatch, user_request):
         self._mock_auth(monkeypatch)
-        set_request_date_range(self.user_request, -40, -60)
-        assert "success" == DataSource.match(self.mars_config, self.user_request, None)
+        req = set_request_date_range(user_request, -40, -60)
+        assert "success" == DataSource.match(self.mars_config, req, None)
+        req = set_request_date_range(user_request, -10, -45)
+        assert "success" != DataSource.match(self.mars_config, req, None)
 
-        set_request_date_range(self.user_request, -10, -45)
-        assert "success" != DataSource.match(self.mars_config, self.user_request, None)
+    def test_mars_match_two_lists(self, monkeypatch, user_request):
+        self._mock_auth(monkeypatch)
+        req = user_request
+        req["stream"] = ["oper"]
+        assert "success" == DataSource.match(self.mars_config, req, None)
+        req = user_request
+        req["stream"] = ["oper", "enfo"]
+        assert "success" == DataSource.match(self.mars_config, req, None)
+        req = user_request
+        req["stream"] = ["oper", "enfo", "something_else"]
+        assert "success" != DataSource.match(self.mars_config, req, None)
 
 
 def set_request_date(user_request, days_offset):
