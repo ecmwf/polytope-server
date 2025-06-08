@@ -57,7 +57,6 @@ class WebMARSDataSource(datasource.DataSource):
         self.data = tempfile.NamedTemporaryFile(delete=False, dir=self.tmp_dir)
         r = copy.deepcopy(request.user_request)
         r["target"] = self.data.name
-        # mars_req = convert_to_mars_request(r)
         _environ = dict(os.environ)
         try:
             os.environ["http_proxy"] = os.getenv("POLYTOPE_PROXY", "")
