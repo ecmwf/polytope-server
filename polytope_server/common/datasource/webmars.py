@@ -18,14 +18,16 @@
 # does it submit to any jurisdiction.
 #
 
+import copy
 import logging
 import os
 import tempfile
 
-import yaml
 from ecmwfapi import ECMWFDataServer
 
 from . import datasource
+
+# from .datasource import convert_to_mars_request
 
 
 class WebMARSDataSource(datasource.DataSource):
@@ -53,9 +55,9 @@ class WebMARSDataSource(datasource.DataSource):
         self.server = ECMWFDataServer(email=email, url=self.url, key=key)
 
         self.data = tempfile.NamedTemporaryFile(delete=False, dir=self.tmp_dir)
-        r = yaml.safe_load(request.user_request)
+        r = copy.deepcopy(request.user_request)
         r["target"] = self.data.name
-        # mars_req = self.convert_to_mars_request(r)
+        # mars_req = convert_to_mars_request(r)
         _environ = dict(os.environ)
         try:
             os.environ["http_proxy"] = os.getenv("POLYTOPE_PROXY", "")
@@ -89,16 +91,6 @@ class WebMARSDataSource(datasource.DataSource):
 
     def mime_type(self) -> str:
         return "application/x-grib"
-
-    def convert_to_mars_request(self, request):
-        request_str = ""
-        for k, v in request.items():
-            if isinstance(v, (list, tuple)):
-                v = "/".join(str(x) for x in v)
-            else:
-                v = str(v)
-            request_str = request_str + "," + k + "=" + v
-        return request_str
 
     def get_user(self, request):
         try:

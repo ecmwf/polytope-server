@@ -18,6 +18,7 @@
 # does it submit to any jurisdiction.
 #
 
+import copy
 import json
 import logging
 import os
@@ -25,10 +26,10 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-import yaml
-
 from ..caching import cache
 from . import datasource
+
+# from .datasource import convert_to_mars_request
 
 
 class FDBDataSource(datasource.DataSource):
@@ -117,7 +118,7 @@ class FDBDataSource(datasource.DataSource):
 
     def retrieve(self, request):
 
-        r = yaml.safe_load(request.user_request)
+        r = copy.deepcopy(request.user_request)
         logging.info(r)
         self.output = self.fdb.retrieve(r)
         return True
@@ -146,7 +147,7 @@ class FDBDataSource(datasource.DataSource):
     # def fdb_list ( self, loaded_request ):
     #     try:
     #         output = subprocess.check_output(
-    #        "FDB5_CONFIG={} fdb-list --json {}".format( self.fdb_config,self.convert_to_mars_request(loaded_request)),
+    #        "FDB5_CONFIG={} fdb-list --json {}".format( self.fdb_config,convert_to_mars_request(loaded_request)),
     #             shell=True,
     #             stderr=subprocess.STDOUT,
     #             executable="/bin/bash"
@@ -159,13 +160,3 @@ class FDBDataSource(datasource.DataSource):
     #     return len(result) > 0
 
     #######################################################
-
-    def convert_to_mars_request(self, loaded_request):
-        request_str = ""
-        for k, v in loaded_request.items():
-            if isinstance(v, (list, tuple)):
-                v = "/".join(str(x) for x in v)
-            else:
-                v = str(v)
-            request_str = request_str + k + "=" + v + ","
-        return request_str[:-1]
