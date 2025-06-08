@@ -127,6 +127,10 @@ class DataSource(ABC):
                     f"got {rule_key} : {coerced_ur[rule_key]}, but expected one of {allowed_values}"
                 )
         # If we reach here, the request matches the datasource
+        # Downstream expects MARS-like format of request
+        for key in coerced_ur:
+            if isinstance(coerced_ur[key], list):
+                coerced_ur[key] = "/".join(coerced_ur[key])
         return "success"
 
     @staticmethod
@@ -209,3 +213,20 @@ def create_datasource(config) -> DataSource:
     logging.info("Datasource {} initialized [{}].".format(type, datasource_class))
 
     return datasource
+
+
+def convert_to_mars_request(request, verb=None):
+    """
+    Converts a Python dictionary to a MARS request string.
+    If verb is provided, it is prepended to the request string (e.g., 'retrieve').
+    """
+    parts = []
+    if verb:
+        parts.append(verb)
+    for k, v in request.items():
+        if isinstance(v, (list, tuple)):
+            v = "/".join(str(x) for x in v)
+        else:
+            v = str(v)
+        parts.append(f"{k}={v}")
+    return ",".join(parts)

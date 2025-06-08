@@ -17,10 +17,10 @@
 # granted to it by virtue of its status as an intergovernmental organisation nor
 # does it submit to any jurisdiction.
 #
+import copy
 from dataclasses import dataclass
 
 import requests
-import yaml
 from requests import Request
 
 from . import datasource
@@ -86,20 +86,20 @@ class IonBeamDataSource(datasource.DataSource):
 
     def archive(self, request: Request):
         """Archive data, returns nothing but updates datasource state"""
-        r = yaml.safe_load(request.user_request)
+        r = copy.deepcopy(request.user_request)
         keys = r["keys"]
 
         with open(r["path"], "rb") as f:
             return self.api.archive(keys, f)
 
     def list(self, request: Request) -> list:
-        request_keys = yaml.safe_load(request.user_request)
+        request_keys = copy.deepcopy(request.user_request)
         return self.api.list(request_keys)
 
     def retrieve(self, request: Request) -> bool:
         """Retrieve data, returns nothing but updates datasource state"""
 
-        request_keys = yaml.safe_load(request.user_request)
+        request_keys = copy.deepcopy(request.user_request)
         self.response = self.api.retrieve(request_keys)
         return True
 

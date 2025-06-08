@@ -29,6 +29,7 @@ import yaml
 from ..io.fifo import FIFO
 from ..subprocess import Subprocess
 from . import datasource
+from .datasource import convert_to_mars_request
 
 
 class MARSDataSource(datasource.DataSource):
@@ -94,7 +95,7 @@ class MARSDataSource(datasource.DataSource):
         with tempfile.NamedTemporaryFile(delete=False) as tmp:
             self.request_file = tmp.name
             logging.info("Writing request to tempfile {}".format(self.request_file))
-            tmp.write(self.convert_to_mars_request("retrieve", r).encode())
+            tmp.write(convert_to_mars_request(r, "retrieve").encode())
 
         # Call MARS
         self.subprocess = Subprocess()
@@ -194,14 +195,3 @@ class MARSDataSource(datasource.DataSource):
             raise e
 
         return env
-
-    def convert_to_mars_request(self, verb, user_request):
-        """Converts Python dictionary to a MARS request string"""
-        request_str = verb
-        for k, v in user_request.items():
-            if isinstance(v, (list, tuple)):
-                v = "/".join(str(x) for x in v)
-            else:
-                v = str(v)
-            request_str = request_str + "," + k + "=" + v
-        return request_str
