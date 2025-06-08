@@ -37,7 +37,6 @@ class WebMARSDataSource(datasource.DataSource):
         self.url = config.get("url", "https://api.ecmwf.int/v1")
         self.key = config.get("key", "")
         self.tmp_dir = config.get("tmp_dir", None)
-        self.match_rules = config.get("match", {})
         self.override_mars_email = config.get("override_email")
         self.override_mars_apikey = config.get("override_apikey")
 
@@ -88,21 +87,8 @@ class WebMARSDataSource(datasource.DataSource):
     def destroy(self, request) -> None:
         pass
 
-    def repr(self):
-        return self.config.get("repr", "webmars")
-
     def mime_type(self) -> str:
         return "application/x-grib"
-
-    def match(self, request):
-
-        r = yaml.safe_load(request.user_request)
-        for k, v in self.match_rules.items():
-            v = [v] if isinstance(v, str) else v
-            if k not in r:
-                raise Exception("Request does not contain expected key {}".format(k))
-            elif r[k] not in v:
-                raise Exception("got {} : {}, but expected one of {}".format(k, r[k], v))
 
     def convert_to_mars_request(self, request):
         request_str = ""

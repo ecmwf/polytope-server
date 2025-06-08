@@ -18,6 +18,7 @@
 # does it submit to any jurisdiction.
 #
 import logging
+from typing import Dict
 
 import yaml
 
@@ -54,35 +55,36 @@ class Collection:
                 ds_config = polytope_config.merge(datasource_configs.get(name, None), ds_config)
             self.ds_configs.append(ds_config)
 
-    def dispatch(self, request: Request) -> DataSource:
+    def dispatch(self, request: Request, input_data: bytes | None) -> DataSource:
         """
         Match the request against the collection's datasources.
-        Instantiates and returns the first matching datasource.
+        Instantiates, dispatches and returns the first matching datasource.
         """
         coerced_ur = coercion.coerce(yaml.safe_load(request.user_request))
         match_errors = []
         for ds_config in self.ds_configs:
-            match_result = DataSource.match_ds(ds_config, coerced_ur, request.user)
+            match_result = DataSource.match(ds_config, coerced_ur, request.user)
             if match_result == "success":
                 try:
-                    message = f"Matched datasource {ds_config.get('repr', 'unknown')}\n"
-                    request.user_message += message
-                    logging.info(message.strip())
+                    message = f"Matched datasource {DataSource.repr(ds_config)}"
+                    request.user_message += message + "\n"
+                    logging.info(message)
                     request.user_request = coerced_ur
                     logging.info("Final user request: {}".format(request.user_request))
                     ds = create_datasource(ds_config)
-                    ds.dispatch(request, request.input_data)
+                    ds.dispatch(request, input_data)
                     return ds
                 except Exception as e:
-                    request.user_message += "Error creating datasource {}: {}\n".format(
-                        ds_config.get("repr", "unknown"), str(e)
-                    )
+                    message = f"Error creating datasource {DataSource.repr(ds_config)}: {repr(e)}"
+                    logging.error(message)
+                    request.user_message += message
             else:
                 match_errors.append(match_result)
-        raise Exception("No matching datasource found for request {}".format(request.user_request))
+        message = "\n".join(match_errors)
+        raise Exception(f"No matching datasource found for request:\n{message}")
 
 
-def create_collections(config):
+def create_collections(config) -> Dict[str, Collection]:
     collections = {}
     for k, v in config.items():
         collections[k] = Collection(k, v)

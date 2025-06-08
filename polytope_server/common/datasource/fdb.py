@@ -37,8 +37,6 @@ class FDBDataSource(datasource.DataSource):
         self.fdb_config = self.config["config"]
         self.type = config["type"]
         assert self.type == "fdb"
-        self.match_rules = config.get("match", {})
-        self.patch_rules = config.get("patch", {})
         self.output = None
 
         self.check_schema()
@@ -123,9 +121,6 @@ class FDBDataSource(datasource.DataSource):
         logging.info(r)
         self.output = self.fdb.retrieve(r)
         return True
-
-    def repr(self):
-        return self.config.get("repr", "fdb")
 
     def result(self, request):
 

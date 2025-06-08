@@ -37,11 +37,8 @@ class PolytopeDataSource(datasource.DataSource):
         self.config = config
         self.type = config["type"]
         assert self.type == "polytope"
-        self.match_rules = config.get("match", {})
         self.pre_path = config.get("options", {}).pop("pre_path", [])
-        self.patch_rules = config.get("patch", {})
         self.defaults = config.get("defaults", {})
-        self.extra_required_role = config.get("extra_required_role", {})
         # https://github.com/ecmwf/polytope-server/issues/68
         self.gh68_fix_hashes = config.get("gh68_fix_hashes", False)
         # https://github.com/ecmwf/polytope-server/issues/69
@@ -156,18 +153,8 @@ class PolytopeDataSource(datasource.DataSource):
             os.remove(self.fdb_config_file)
         pass
 
-    def repr(self):
-        return self.config.get("repr", "polytope")
-
     def mime_type(self) -> str:
         return "application/prs.coverage+json"
-
-    def apply_defaults(self, request):
-        request = copy.deepcopy(request)
-        for k, v in self.defaults.items():
-            if k not in request:
-                request[k] = v
-        return request
 
 
 def change_grids(request, config):

@@ -74,7 +74,6 @@ class IonBeamDataSource(datasource.DataSource):
         self.type = config["type"]
         assert self.type == "ionbeam"
 
-        self.match_rules = config.get("match", {})
         endpoint = config.get("api_endpoint", "http://iotdev-001:18201/api/v1/")
         self.api = IonBeamAPI(endpoint)
 
