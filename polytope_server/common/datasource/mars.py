@@ -38,18 +38,12 @@ class MARSDataSource(datasource.DataSource):
         self.type = config.get("type")
         self.command = config.get("command", "/usr/local/bin/mars")
         self.tmp_dir = config.get("tmp_dir", "/tmp")
-        self.match_rules = config.get("match", {})
 
         self.override_mars_email = config.get("override_email")
         self.override_mars_apikey = config.get("override_apikey")
 
         self.subprocess = None
         self.fifo = None
-
-        self.silent_match = config.get("silent_match", False)
-
-        if self.match_rules is None:
-            self.match_rules = {}
 
         self.mars_binary = config.get("binary", "mars")
 
@@ -83,9 +77,6 @@ class MARSDataSource(datasource.DataSource):
 
     def get_type(self):
         return self.type
-
-    def repr(self):
-        return self.config.get("repr", "mars")
 
     def archive(self, request):
         raise NotImplementedError("Archiving not implemented for MARS data source")

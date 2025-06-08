@@ -25,6 +25,7 @@ from typing import Any, Dict, Iterator
 
 from ..auth import AuthHelper
 from ..date_check import DateError, date_check
+from ..exceptions import ForbiddenRequest
 from ..request import Request, Verb
 from ..user import User
 
@@ -53,6 +54,7 @@ class DataSource(ABC):
         Match the request against a specific datasource configuration.
 
         Checks if the user is authorized, applies defaults, and checks match rules.
+        Includes datasource-specific checks based on the type of datasource in the config.
 
         :param ds_config: The datasource configuration to match against.
         :param coerced_ur: The coerced user request. This may be modified by applying defaults.
@@ -61,8 +63,13 @@ class DataSource(ABC):
         """
         # check datasource specific roles
         roles = ds_config.get("roles", [])
-        if not AuthHelper.is_authorized((user, roles)):
-            return f"Skipping datasource {ds_config.get('repr', 'unknown')}: user not authorized.\n"
+        try:
+            if roles and not AuthHelper.is_authorized(user, roles):
+                return f"Skipping datasource {DataSource.repr(ds_config)}: user not authorized."
+        except ForbiddenRequest as e:
+            message = f"Skipping datasource {DataSource.repr(ds_config)}: {repr(e)}"
+            logging.warning(message)
+            return message
 
         # apply defaults
         defaults = ds_config.get("defaults", {})
@@ -73,6 +80,12 @@ class DataSource(ABC):
                 coerced_ur[k] = v
 
         # check match rules
+        if ds_config.get("type") == "polytope":
+            if "feature" not in coerced_ur:
+                return (
+                    f"Skipping datasource {DataSource.repr(ds_config)}: "
+                    "request does not contain expected key 'feature'"
+                )
         match_rules = ds_config.get("match", {})
         for rule_key, allowed_values in match_rules.items():
 
@@ -80,8 +93,8 @@ class DataSource(ABC):
             if allowed_values is None or len(allowed_values) == 0:
                 if rule_key in coerced_ur:
                     return (
-                        f"Skipping datasource {ds_config.get('repr', 'unknown')}: "
-                        f"request containing key '{rule_key}' is not allowed.\n"
+                        f"Skipping datasource {DataSource.repr(ds_config)}: "
+                        f"request containing key '{rule_key}' is not allowed."
                     )
                 else:
                     continue  # no more checks to do
@@ -89,36 +102,37 @@ class DataSource(ABC):
             # Check that the required key exists
             if rule_key not in coerced_ur:
                 return (
-                    f"Skipping datasource {ds_config.get('repr', 'unknown')}: "
+                    f"Skipping datasource {DataSource.repr(ds_config)}: "
                     f"request does not contain expected key '{rule_key}'"
                 )
 
             # Process date rules
-            if rule_key == "age":
+            if rule_key == "date":
                 try:
                     date_check(coerced_ur["date"], allowed_values)
                 except DateError as e:
-                    return f"Skipping datasource {ds_config.get('repr', 'unknown')}: {e}.\n"
+                    return f"Skipping datasource {DataSource.repr(ds_config)}: {e}."
                 except Exception as e:
-                    return (
-                        f"Skipping datasource {ds_config.get('repr', 'unknown')}: error processing date check: {e}.\n"
-                    )
+                    return f"Skipping datasource {DataSource.repr(ds_config)}: error processing date check: {e}."
                 continue
 
             # check that all values in request are allowed
-            allowed_values = [allowed_values] if isinstance(allowed_values, str) else allowed_values
-
-            if not set(coerced_ur[rule_key]).issubset(set(allowed_values)):
+            allowed_values = [allowed_values] if not isinstance(allowed_values, (list, tuple)) else allowed_values
+            request_values = (
+                [coerced_ur[rule_key]] if not isinstance(coerced_ur[rule_key], (list, tuple)) else coerced_ur[rule_key]
+            )
+            if not set(request_values).issubset(set(allowed_values)):
                 return (
-                    f"Skipping datasource {ds_config.get('repr', 'unknown')}: "
+                    f"Skipping datasource {DataSource.repr(ds_config)}: "
                     f"got {rule_key} : {coerced_ur[rule_key]}, but expected one of {allowed_values}"
                 )
         # If we reach here, the request matches the datasource
         return "success"
 
-    def repr(self) -> str:
+    @staticmethod
+    def repr(config) -> str:
         """Returns a string name of the datasource, presented to the user on error"""
-        raise NotImplementedError
+        return config.get("repr", config.get("name", config.get("type", "unknown")))
 
     def get_type(self) -> str:
         """Returns a string stating the type of this object (e.g. fdb, mars, echo)"""
@@ -158,8 +172,8 @@ class DataSource(ABC):
                 raise NotImplementedError()
 
         except NotImplementedError as e:
-            request.user_message += "Skipping datasource {}: method '{}' not available: {}\n".format(
-                self.repr(), request.verb, repr(e)
+            request.user_message += "Skipping datasource {}: method '{}' not available: {}".format(
+                self.repr(self.config), request.verb, repr(e)
             )
             return False
 
@@ -181,7 +195,7 @@ type_to_class_map = {
 }
 
 
-def create_datasource(config):
+def create_datasource(config) -> DataSource:
 
     # Find the class matching config.type
     type = config.get("type")

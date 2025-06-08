@@ -166,10 +166,14 @@ class AuthHelper:
     @staticmethod
     def is_authorized(user, roles):
         """Checks if the user has any of the provided roles"""
-
+        logging.debug(f"User roles: {user.roles}")
+        logging.debug(f"Allowed roles {roles}")
         # roles can be a dict of realm:[roles] mapping; find the relevant realm.
         if isinstance(roles, dict):
             if user.realm not in roles:
+                logging.debug(
+                    "User {} does not have access to realm {}, roles: {}".format(user.username, user.realm, roles)
+                )
                 raise ForbiddenRequest("Not authorized to access this resource.")
             roles = roles[user.realm]
 
