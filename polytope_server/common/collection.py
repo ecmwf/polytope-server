@@ -65,19 +65,14 @@ class Collection:
         for ds_config in self.ds_configs:
             match_result = DataSource.match(ds_config, coerced_ur, request.user)
             if match_result == "success":
-                try:
-                    message = f"Matched datasource {DataSource.repr(ds_config)}"
-                    request.user_message += message + "\n"
-                    logging.info(message)
-                    request.user_request = coerced_ur
-                    logging.info("Final user request: {}".format(request.user_request))
-                    ds = create_datasource(ds_config)
-                    ds.dispatch(request, input_data)
-                    return ds
-                except Exception as e:
-                    message = f"Error creating datasource {DataSource.repr(ds_config)}: {repr(e)}"
-                    logging.error(message)
-                    request.user_message += message
+                message = f"Matched datasource {DataSource.repr(ds_config)}"
+                request.user_message += message + "\n"
+                logging.info(message)
+                request.user_request = coerced_ur
+                logging.info("Final user request: {}".format(request.user_request))
+                ds = create_datasource(ds_config)
+                ds.dispatch(request, input_data)
+                return ds
             else:
                 match_errors.append(match_result)
         message = "\n".join(match_errors)

@@ -86,6 +86,11 @@ class DataSource(ABC):
                     f"Skipping datasource {DataSource.repr(ds_config)}: "
                     "request does not contain expected key 'feature'"
                 )
+        elif "feature" in coerced_ur:
+            return (
+                f"Skipping datasource {DataSource.repr(ds_config)}: "
+                "request contains key 'feature', but this is not expected by the datasource."
+            )
         match_rules = ds_config.get("match", {})
         for rule_key, allowed_values in match_rules.items():
 
@@ -176,7 +181,7 @@ class DataSource(ABC):
                 raise NotImplementedError()
 
         except NotImplementedError as e:
-            request.user_message += "Skipping datasource {}: method '{}' not available: {}".format(
+            request.user_message += "Skipping datasource {}: method '{}' not available: {}\n".format(
                 self.repr(self.config), request.verb, repr(e)
             )
             return False
