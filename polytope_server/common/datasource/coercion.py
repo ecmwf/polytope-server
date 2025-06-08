@@ -19,7 +19,7 @@ def coerce(request: Dict[str, Any]) -> Dict[str, Any]:
         try:
             request[key] = coerce_value(key, value)
         except CoercionError as e:
-            errors.append(f"\n {str(e.args[0])} for key '{key}' with value '{value}'")
+            errors += f"\n {str(e.args[0])} for key '{key}' with value '{value}'"
             continue
         # check that lists don't have duplicates
         if isinstance(request[key], list):

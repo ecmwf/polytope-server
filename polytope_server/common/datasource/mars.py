@@ -118,7 +118,7 @@ class MARSDataSource(datasource.DataSource):
                 self.destroy(request)
                 raise Exception("MARS process exited before returning data.")
         except Exception as e:
-            logging.error(f"Error while waiting for MARS process to open FIFO: {e}.")
+            logging.exception(f"Error while waiting for MARS process to open FIFO: {e}.")
             self.destroy(request)
             raise
 
@@ -137,7 +137,7 @@ class MARSDataSource(datasource.DataSource):
         try:
             self.subprocess.finalize(request, self.mars_error_filter)
         except CalledProcessError as e:
-            logging.error("MARS subprocess failed: {}".format(e))
+            logging.exception("MARS subprocess failed: {}".format(e))
             raise Exception("MARS retrieval failed unexpectedly with error code {}".format(e.returncode))
 
         return

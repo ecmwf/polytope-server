@@ -89,18 +89,10 @@ class PolytopeDataSource(datasource.DataSource):
 
     def retrieve(self, request):
         r = copy.deepcopy(request.user_request)
-        # Downstream expects MARS-like format of request
-        for key in r:
-            if isinstance(r[key], list):
-                r[key] = "/".join(r[key])
 
         # Check data released
         if SCHEDULE_READER is not None and self.obey_schedule:
             SCHEDULE_READER.check_released_polytope_request(r)
-
-        r = self.apply_defaults(r)
-
-        logging.info(r)
 
         # Set the "pre-path" for this request
         pre_path = {}
