@@ -132,7 +132,7 @@ polytope_requests = [
         "class": "od",
         "stream": "enfo",
         "type": "pf",
-        "date": "-1",
+        "date": "-2",
         "time": "0000",
         "levtype": "sfc",
         "expver": "0001",
@@ -151,7 +151,7 @@ polytope_requests = [
         "class": "od",
         "stream": "enfo",
         "type": "pf",
-        "date": "-1",
+        "date": "-2",
         "time": "0000",
         "levtype": "sfc",
         "expver": "0001",
@@ -170,7 +170,7 @@ polytope_requests = [
         "class": "od",
         "stream": "enfo",
         "type": "pf",
-        "date": "-1",
+        "date": "-2",
         "time": "0000",
         "levtype": "sfc",
         "expver": "0001",
@@ -186,8 +186,6 @@ polytope_requests = [
         },
     },
 ]
-
-# mock pygribjump
 
 
 def test_polytope_schedule(mock_schedule_file):
