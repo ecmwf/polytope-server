@@ -52,23 +52,26 @@ def parse_relativedelta(time_str):
     return relativedelta(days=time_dict["d"], hours=time_dict["h"], minutes=time_dict["m"])
 
 
-def date_check(date, offset, after=False):
+def date_check(date, allowed_values: str):
     """
     Process special match rules for DATE constraints
 
     :param date: Date to check, can be a string or list of strings
-    :param offset: Offset date as relative time string (e.g., "1d", "2h")
-    :param after: If True, checks if the date is after the offset, otherwise checks if it is before
+    :param allowed_values: Allowed values for the date in the format >1d, <2d, >1m, <2h, r"(\\d+)([dhm])".
     """
     # if type of date is list
     if isinstance(date, list):
         date = "/".join(date)
     date = str(date)
 
-    # Default date is -1
-    if len(date) == 0:
-        date = "-1"
-
+    # Parse allowed values
+    comp, offset = allowed_values.split(" ", 1)
+    if comp == "<":
+        after = False
+    elif comp == ">":
+        after = True
+    else:
+        raise DateError("Invalid date comparison")
     now = datetime.today()
     offset = now - parse_relativedelta(offset)
     offset_fmted = offset.strftime("%Y%m%d")

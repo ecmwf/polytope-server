@@ -18,17 +18,13 @@
 # does it submit to any jurisdiction.
 #
 
-import polytope_server.common.config as polytope_config
 from polytope_server.common.datasource import create_datasource
 from polytope_server.common.request import Request
 
 
 class TestDataSourceecho:
     def setup_method(self, method):
-
-        polytope_config.global_config["datasources"]["echo"] = {"type": "echo"}
-
-        self.echo_config = {"name": "echo"}
+        self.echo_config = {"name": "echo", "type": "echo"}
 
         self.request = Request()
         self.request.user_request = "Hello World!" * 1000
