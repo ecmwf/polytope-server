@@ -24,10 +24,10 @@ from importlib import import_module
 from typing import Any, Dict, Iterator
 
 from ..auth import AuthHelper
-from ..date_check import DateError, date_check
 from ..exceptions import ForbiddenRequest
 from ..request import Request, Verb
 from ..user import User
+from .date_check import DateError, date_check
 
 #######################################################
 
