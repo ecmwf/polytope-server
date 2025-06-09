@@ -22,8 +22,9 @@ from typing import Dict
 
 import yaml
 
+from . import coercion
 from . import config as polytope_config
-from .datasource import DataSource, coercion, create_datasource
+from .datasource import DataSource, create_datasource
 from .exceptions import InvalidConfig
 from .request import Request
 
@@ -59,6 +60,7 @@ class Collection:
         """
         Match the request against the collection's datasources.
         Instantiates, dispatches and returns the first matching datasource.
+        Raises a BadRequest exception if no datasource matches.
         """
         coerced_ur = coercion.coerce(yaml.safe_load(request.user_request))
         match_errors = []
