@@ -1,6 +1,15 @@
 import pytest
 
-from polytope_server.common.datasource.coercion import Coercion, CoercionError
+from polytope_server.common.coercion import (
+    CoercionError,
+    coerce,
+    coerce_date,
+    coerce_expver,
+    coerce_number,
+    coerce_param,
+    coerce_step,
+    coerce_time,
+)
 
 
 def test_coerce():
@@ -58,7 +67,7 @@ def test_coerce():
         },
     }
     for r in [request_json, request_mars]:
-        r = Coercion.coerce(r)
+        r = coerce(r)
         for key in r:
             if isinstance(r[key], list):
                 r[key] = "/".join(r[key])
@@ -98,12 +107,12 @@ def test_date_coercion():
     ]
 
     for value, expected in ok:
-        result = Coercion.coerce_date(value)
+        result = coerce_date(value)
         assert result == expected
 
     for value in fail:
         with pytest.raises(CoercionError):
-            Coercion.coerce_date(value)
+            coerce_date(value)
 
 
 def test_step_coercion():
@@ -120,12 +129,12 @@ def test_step_coercion():
     fail = [-1, 1.0, [], {}]
 
     for value, expected in ok:
-        result = Coercion.coerce_step(value)
+        result = coerce_step(value)
         assert result == expected
 
     for value in fail:
         with pytest.raises(CoercionError):
-            Coercion.coerce_step(value)
+            coerce_step(value)
 
 
 def test_number_coercion():
@@ -136,12 +145,12 @@ def test_number_coercion():
     fail = [-1, 0, 1.0, [], {}]
 
     for value, expected in ok:
-        result = Coercion.coerce_number(value)
+        result = coerce_number(value)
         assert result == expected
 
     for value in fail:
         with pytest.raises(CoercionError):
-            Coercion.coerce_number(value)
+            coerce_number(value)
 
 
 def test_param_coercion():
@@ -156,12 +165,12 @@ def test_param_coercion():
     fail = [[], {}, 1.0]
 
     for value, expected in ok:
-        result = Coercion.coerce_param(value)
+        result = coerce_param(value)
         assert result == expected
 
     for value in fail:
         with pytest.raises(CoercionError):
-            Coercion.coerce_param(value)
+            coerce_param(value)
 
 
 def test_time_coercion():
@@ -189,12 +198,12 @@ def test_time_coercion():
     ]
 
     for value, expected in ok:
-        result = Coercion.coerce_time(value)
+        result = coerce_time(value)
         assert result == expected
 
     for value in fail:
         with pytest.raises(CoercionError):
-            Coercion.coerce_time(value)
+            coerce_time(value)
 
 
 def test_expver_coercion():
@@ -207,27 +216,27 @@ def test_expver_coercion():
     ]
 
     for expver in expvers:
-        result = Coercion.coerce_expver(expver)
+        result = coerce_expver(expver)
         assert result == "0001"
 
-    assert Coercion.coerce_expver("abcd") == "abcd"
-    assert Coercion.coerce_expver(10) == "0010"
-    assert Coercion.coerce_expver("1abc") == "1abc"
+    assert coerce_expver("abcd") == "abcd"
+    assert coerce_expver(10) == "0010"
+    assert coerce_expver("1abc") == "1abc"
 
     with pytest.raises(CoercionError):
-        Coercion.coerce_expver("abcde")  # too long
+        coerce_expver("abcde")  # too long
 
     with pytest.raises(CoercionError):
-        Coercion.coerce_expver("abc")  # too short
+        coerce_expver("abc")  # too short
 
     with pytest.raises(CoercionError):
-        Coercion.coerce_expver(1.0)  # float
+        coerce_expver(1.0)  # float
 
     with pytest.raises(CoercionError):
-        Coercion.coerce_expver([])
+        coerce_expver([])
 
     with pytest.raises(CoercionError):
-        Coercion.coerce_expver({})
+        coerce_expver({})
 
     with pytest.raises(CoercionError):
-        Coercion.coerce_expver(["a", "b", "c", "d"])
+        coerce_expver(["a", "b", "c", "d"])

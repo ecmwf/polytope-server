@@ -17,9 +17,16 @@
 # granted to it by virtue of its status as an intergovernmental organisation nor
 # does it submit to any jurisdiction.
 #
+import logging
+from typing import Dict
 
-from .datasource import create_datasource
+import yaml
+
+from . import coercion
+from . import config as polytope_config
+from .datasource import DataSource, create_datasource
 from .exceptions import InvalidConfig
+from .request import Request
 
 
 class Collection:
@@ -29,16 +36,52 @@ class Collection:
         self.name = name
         self.roles = config.get("roles")
         self.limits = config.get("limits", {})
+        self.ds_configs = []
 
         if len(self.config.get("datasources", [])) == 0:
             raise InvalidConfig("No datasources configured for collection {}".format(self.name))
 
-    def datasources(self):
-        for ds in self.config.get("datasources", []):
-            yield create_datasource(ds)
+        for ds_config in self.config.get("datasources"):
+            # Allows passing in just the name as config
+            if isinstance(ds_config, str):
+                ds_config = {"name": ds_config}
+
+            # 'name' means we are linking to a datasource defined in global_config.datasources
+            if "name" in ds_config:
+                name = ds_config["name"]
+                datasource_configs = polytope_config.global_config.get("datasources")
+                if name not in datasource_configs:
+                    raise KeyError("Could not find config for datasource {}".format(name))
+                # Merge with supplied config
+                ds_config = polytope_config.merge(datasource_configs.get(name, None), ds_config)
+            self.ds_configs.append(ds_config)
+
+    def dispatch(self, request: Request, input_data: bytes | None) -> DataSource:
+        """
+        Match the request against the collection's datasources.
+        Instantiates, dispatches and returns the first matching datasource.
+        Raises a BadRequest exception if no datasource matches.
+        """
+        coerced_ur = coercion.coerce(yaml.safe_load(request.user_request))
+        match_errors = []
+        for ds_config in self.ds_configs:
+            match_result = DataSource.match(ds_config, coerced_ur, request.user)
+            if match_result == "success":
+                message = f"Matched datasource {DataSource.repr(ds_config)}"
+                request.user_message += message + "\n"
+                logging.info(message)
+                request.user_request = coerced_ur
+                logging.info("Final user request: {}".format(request.user_request))
+                ds = create_datasource(ds_config)
+                ds.dispatch(request, input_data)
+                return ds
+            else:
+                match_errors.append(match_result)
+        message = "\n".join(match_errors)
+        raise Exception(f"No matching datasource found for request:\n{message}")
 
 
-def create_collections(config):
+def create_collections(config) -> Dict[str, Collection]:
     collections = {}
     for k, v in config.items():
         collections[k] = Collection(k, v)
