@@ -1,6 +1,6 @@
 import pytest
 
-from polytope_server.common.datasource.coercion import (
+from polytope_server.common.coercion import (
     CoercionError,
     coerce,
     coerce_date,
