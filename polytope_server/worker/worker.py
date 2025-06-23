@@ -19,6 +19,7 @@
 #
 
 import asyncio as aio
+import functools
 import logging
 import os
 import signal
@@ -81,13 +82,9 @@ class Worker:
             self.config.get("request_store"), self.config.get("metric_store")
         )
 
-        self.future = None
         self.queue_msg = None
         self.request = None
         self.queue = None
-
-        signal.signal(signal.SIGINT, self.on_process_terminated)
-        signal.signal(signal.SIGTERM, self.on_process_terminated)
 
     def update_status(self, new_status, time_spent=None, request_id=None):
         if time_spent is None:
@@ -135,7 +132,7 @@ class Worker:
             raise RuntimeError("queue was not initialised")
 
         while True:
-            if self.future is not None:
+            if self.request is not None:
                 self.queue.keep_alive()
 
             await aio.sleep(self.poll_interval)
@@ -149,6 +146,7 @@ class Worker:
         while True:
             self.queue_msg = self.queue.dequeue()
             if self.queue_msg is None:
+                # Only sleep if system is idling
                 await aio.sleep(self.poll_interval)
                 continue
 
@@ -201,27 +199,37 @@ class Worker:
             self.request_store.update_request(self.request)
             sys.exit(0)
 
-            self.future = None
             self.queue_msg = None
             self.request = None
 
-    async def handle_termination(self):
-        def terminate():
-            raise TaskGroupTermination
-        loop = aio.get_running_loop()
-        loop.add_signal_handler(signal.SIGINT, terminate)
-        loop.add_signal_handler(signal.SIGTERM, terminate)
+    async def terminate(self):
+        if timeout := self.config.get("timeout"):
+            await aio.sleep(timeout)
+        raise TaskGroupTermination()
 
     async def schedule(self, executor):
+
+        def handle_termination(group):
+            logging.info("Termination signal received, exiting...")
+            group.create_task(self.terminate())
+
+        loop = aio.get_running_loop()
+
         try:
             async with aio.TaskGroup() as group:
                 group.create_task(self.keep_alive())
                 group.create_task(self.listen_queue(executor))
-                group.create_task(self.handle_termination())
+                cbk = functools.partial(handle_termination, group)
+                loop.add_signal_handler(signal.SIGINT, cbk)
+                loop.add_signal_handler(signal.SIGTERM, cbk)
+
         except* TaskGroupTermination:
             # We must force threads to shutdown in case of failure, otherwise the worker won't exit
             executor.shutdown(wait=False)
             self.on_process_terminated()
+        finally:
+            loop.remove_signal_handler(signal.SIGINT)
+            loop.remove_signal_handler(signal.SIGTERM)
 
     def run(self):
         self.queue = polytope_queue.create_queue(self.config.get("queue"))
@@ -342,5 +350,3 @@ class Worker:
             self.request.set_status(Status.QUEUED)
             self.request_store.update_request(self.request)
             self.queue.nack(self.queue_msg)
-
-        exit(0)
