@@ -143,7 +143,7 @@ class Worker:
 
         loop = aio.get_running_loop()
 
-        while True:
+        while self.status != "draining":
             self.queue_msg = self.queue.dequeue()
             if self.queue_msg is None:
                 # Only sleep if system is idling
@@ -204,6 +204,7 @@ class Worker:
 
     async def terminate(self):
         if timeout := self.config.get("timeout"):
+            self.update_status("draining")
             await aio.sleep(timeout)
         raise TaskGroupTermination()
 
@@ -318,7 +319,7 @@ class Worker:
         return None
 
     def on_request_complete(self, request):
-        """Called when the future exits cleanly"""
+        """Called when the request processing exits cleanly"""
 
         request.user_message = "Success"  # Do not report log history on successful request
         logging.info("Request completed successfully.", extra={"request_id": request.id})
@@ -326,7 +327,7 @@ class Worker:
         self.requests_processed += 1
 
     def on_request_fail(self, request, exception):
-        """Called when the future thread raises an exception"""
+        """Called when the request processing raises an exception"""
 
         _, v, _ = sys.exc_info()
         tb = traceback.format_exception(None, exception, exception.__traceback__)
