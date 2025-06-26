@@ -3,13 +3,23 @@ import re
 from datetime import datetime, timedelta
 from typing import Any, Dict
 
+from .config.config import ConfigParser
+
 
 class CoercionError(Exception):
     pass
 
 
-allow_ranges = ["number", "step", "date", "time"]
-allow_lists = ["class", "stream", "type", "expver", "param", "number", "date", "step", "time"]
+default_config = {
+    "allow_ranges": ["number", "step", "date", "time"],
+    "allow_lists": ["class", "stream", "type", "expver", "param", "number", "date", "step", "time"],
+    "number_allow_zero": False,
+}
+
+config = ConfigParser().read().get("coercion", {})
+allow_ranges = config.get("allow_ranges", default_config["allow_ranges"])
+allow_lists = config.get("allow_lists", default_config["allow_lists"])
+number_allow_zero = config.get("number_allow_zero", default_config["number_allow_zero"])
 
 
 def coerce(request: Dict[str, Any]) -> Dict[str, Any]:
@@ -141,14 +151,15 @@ def coerce_step(value: Any) -> str:
 
 
 def coerce_number(value: Any) -> str:
+    min_value = 0 if number_allow_zero else 1
     if isinstance(value, int):
-        if value <= 0:
-            raise CoercionError("Number must be a positive value.")
+        if value < min_value:
+            raise CoercionError(f"Number must be >= {min_value}.")
         else:
             return str(value)
     elif isinstance(value, str):
-        if not value.isdigit() or int(value) <= 0:
-            raise CoercionError("Number must be a positive integer.")
+        if not value.isdigit() or int(value) < min_value:
+            raise CoercionError(f"Number must be >= {min_value}.")
         return value
     else:
         raise CoercionError("Invalid type, expected integer or string.")
