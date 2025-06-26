@@ -24,6 +24,7 @@ from importlib import import_module
 from typing import Any, Dict, Iterator
 
 from ..auth import AuthHelper
+from ..coercion import coerce_value
 from ..exceptions import ForbiddenRequest
 from ..request import Request, Verb
 from ..user import User
@@ -77,7 +78,7 @@ class DataSource(ABC):
             defaults["date"] = "-1"  # today, default for mars
         for k, v in defaults.items():
             if k not in coerced_ur:
-                coerced_ur[k] = v
+                coerced_ur[k] = coerce_value(k, v)
 
         # check match rules
         if ds_config.get("type") == "polytope":
