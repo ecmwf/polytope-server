@@ -3,7 +3,7 @@ import re
 from datetime import datetime, timedelta
 from typing import Any, Dict
 
-from .config.config import ConfigParser
+from . import config as polytope_config
 
 
 class CoercionError(Exception):
@@ -16,7 +16,7 @@ default_config = {
     "number_allow_zero": False,
 }
 
-config = ConfigParser().read().get("coercion", {})
+config = polytope_config.global_config.get("coercion", {})
 allow_ranges = config.get("allow_ranges", default_config["allow_ranges"])
 allow_lists = config.get("allow_lists", default_config["allow_lists"])
 number_allow_zero = config.get("number_allow_zero", default_config["number_allow_zero"])
