@@ -311,6 +311,10 @@ def change_grids(request, config):
 
         # for activity CMIP6 and experiment hist, all models except ifs-nemo have h512 and ifs-nemo has h1024
         if request["activity"] == "cmip6" and request["experiment"] == "hist":
+            # if request["model"] == "ifs-nemo":
+            #     res = 1024
+            # else:
+            #     res = 512
             res = 1024
 
         if request["activity"] == "story-nudging":
@@ -318,6 +322,9 @@ def change_grids(request, config):
 
         if request["activity"] in ["baseline", "projections", "scenariomip"]:
             res = 1024
+
+        if request["realization"] == "2" and request["model"] == "ifs-fesom":
+            res = 512
 
     elif request.get("dataset", None) == "extremes-dt":
         if request["stream"] == "wave":
@@ -366,9 +373,6 @@ def change_hash(request, config):
         if request.get("resolution", None) == "high":
             if request.get("model", None) == "icon":
                 hash = "9533855ee8e38314e19aaa0434c310da"
-                return change_config_grid_hash(config, hash)
-            elif request.get("model", None) == "ifs-fesom":
-                hash = "47efaa0853e70948a41d5225e7653194"
                 return change_config_grid_hash(config, hash)
     return config
 
