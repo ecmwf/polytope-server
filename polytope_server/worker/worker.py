@@ -226,18 +226,8 @@ class Worker:
 
         input_data = self.fetch_input_data(request.url)
 
-        # Dispatch to listed datasources for this collection until we find one that handles the request
-        datasource = None
-        for ds in collection.datasources():
-            logging.info(
-                "Processing request using datasource {}".format(ds.get_type()),
-                extra={"request_id": id},
-            )
-            if ds.dispatch(request, input_data):
-                datasource = ds
-                request.user_message += "Datasource {} accepted request.\n".format(ds.repr())
-                break
-
+        # Dispatch to collection
+        datasource = collection.dispatch(request, input_data)
         # Clean up
         try:
             # delete input data if it exists in staging (input data can come from external URLs too)
@@ -250,7 +240,7 @@ class Worker:
                 request.url = self.staging.create(id, datasource.result(request), datasource.mime_type())
 
         except Exception as e:
-            logging.exception("Failed to finalize request", extra={"request_id": id, "exception": str(e)})
+            logging.exception("Failed to finalize request", extra={"request_id": id, "exception": repr(e)})
             raise
 
         # Guarantee destruction of the datasource

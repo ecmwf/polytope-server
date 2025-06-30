@@ -18,19 +18,18 @@
 # does it submit to any jurisdiction.
 #
 
+import copy
 import json
 import logging
 import os
 import subprocess
 import tempfile
-from datetime import datetime, timedelta
 from pathlib import Path
-
-import yaml
-from dateutil.relativedelta import relativedelta
 
 from ..caching import cache
 from . import datasource
+
+# from .datasource import convert_to_mars_request
 
 
 class FDBDataSource(datasource.DataSource):
@@ -39,8 +38,6 @@ class FDBDataSource(datasource.DataSource):
         self.fdb_config = self.config["config"]
         self.type = config["type"]
         assert self.type == "fdb"
-        self.match_rules = config.get("match", {})
-        self.patch_rules = config.get("patch", {})
         self.output = None
 
         self.check_schema()
@@ -121,13 +118,10 @@ class FDBDataSource(datasource.DataSource):
 
     def retrieve(self, request):
 
-        r = yaml.safe_load(request.user_request)
+        r = copy.deepcopy(request.user_request)
         logging.info(r)
         self.output = self.fdb.retrieve(r)
         return True
-
-    def repr(self):
-        return self.config.get("repr", "fdb")
 
     def result(self, request):
 
@@ -144,34 +138,6 @@ class FDBDataSource(datasource.DataSource):
         self.output.close()
         return
 
-    def match(self, request):
-
-        r = yaml.safe_load(request.user_request) or {}
-
-        for k, v in self.match_rules.items():
-
-            # An empty match rule means that the key must not be present
-            if v is None or len(v) == 0:
-                if k in r:
-                    raise Exception("Request containing key '{}' is not allowed".format(k))
-                else:
-                    continue  # no more checks to do
-
-            # Check that all required keys exist
-            if k not in r and not (v is None or len(v) == 0):
-                raise Exception("Request does not contain expected key '{}'".format(k))
-
-            # Process date rules
-            if k == "date":
-                self.date_check(r["date"], v)
-                continue
-
-            # ... and check the value of other keys
-
-            v = [v] if isinstance(v, str) else v
-            if r[k] not in v:
-                raise Exception("got {} : {}, but expected one of {}".format(k, r[k], v))
-
     def destroy(self, request) -> None:
         pass
 
@@ -181,7 +147,7 @@ class FDBDataSource(datasource.DataSource):
     # def fdb_list ( self, loaded_request ):
     #     try:
     #         output = subprocess.check_output(
-    #        "FDB5_CONFIG={} fdb-list --json {}".format( self.fdb_config,self.convert_to_mars_request(loaded_request)),
+    #        "FDB5_CONFIG={} fdb-list --json {}".format( self.fdb_config,convert_to_mars_request(loaded_request)),
     #             shell=True,
     #             stderr=subprocess.STDOUT,
     #             executable="/bin/bash"
@@ -194,74 +160,3 @@ class FDBDataSource(datasource.DataSource):
     #     return len(result) > 0
 
     #######################################################
-
-    def convert_to_mars_request(self, loaded_request):
-        request_str = ""
-        for k, v in loaded_request.items():
-            if isinstance(v, (list, tuple)):
-                v = "/".join(str(x) for x in v)
-            else:
-                v = str(v)
-            request_str = request_str + k + "=" + v + ","
-        return request_str[:-1]
-
-    def check_single_date(self, date, offset, offset_fmted):
-
-        # Date is relative (0 = now, -1 = one day ago)
-        if str(date)[0] == "0" or str(date)[0] == "-":
-            date_offset = int(date)
-            dt = datetime.today() + timedelta(days=date_offset)
-
-            if dt >= offset:
-                raise Exception("Date is too recent, expected < {}".format(offset_fmted))
-            else:
-                return
-
-        # Absolute date YYYMMDD
-        try:
-            dt = datetime.strptime(date, "%Y%m%d")
-        except ValueError:
-            raise Exception("Invalid date, expected real date in YYYYMMDD format")
-        if dt >= offset:
-            raise Exception("Date is too recent, expected < {}".format(offset_fmted))
-        else:
-            return
-
-    def date_check(self, date, offsets):
-        """Process special match rules for DATE constraints"""
-
-        date = str(date)
-
-        # Default date is -1
-        if len(str(date)) == 0:
-            date = "-1"
-
-        now = datetime.today()
-        offset = now + relativedelta(**dict(offsets))
-        offset_fmted = offset.strftime("%Y%m%d")
-
-        split = str(date).split("/")
-
-        # YYYYMMDD
-        if len(split) == 1:
-            self.check_single_date(split[0], offset, offset_fmted)
-            return True
-
-        # YYYYMMDD/to/YYYYMMDD -- check end and start date
-        # YYYYMMDD/to/YYYYMMDD/by/N -- check end and start date
-        if len(split) == 3 or len(split) == 5:
-
-            if split[1].casefold() == "to".casefold():
-
-                if len(split) == 5 and split[3].casefold() != "by".casefold():
-                    raise Exception("Invalid date range")
-
-                self.check_single_date(split[0], offset, offset_fmted)
-                self.check_single_date(split[2], offset, offset_fmted)
-                return True
-
-        # YYYYMMDD/YYYYMMDD/YYYYMMDD/... -- check each date
-        for s in split:
-            self.check_single_date(s, offset, offset_fmted)
-
-        return True

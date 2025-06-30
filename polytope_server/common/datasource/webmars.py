@@ -18,14 +18,16 @@
 # does it submit to any jurisdiction.
 #
 
+import copy
 import logging
 import os
 import tempfile
 
-import yaml
 from ecmwfapi import ECMWFDataServer
 
 from . import datasource
+
+# from .datasource import convert_to_mars_request
 
 
 class WebMARSDataSource(datasource.DataSource):
@@ -37,7 +39,6 @@ class WebMARSDataSource(datasource.DataSource):
         self.url = config.get("url", "https://api.ecmwf.int/v1")
         self.key = config.get("key", "")
         self.tmp_dir = config.get("tmp_dir", None)
-        self.match_rules = config.get("match", {})
         self.override_mars_email = config.get("override_email")
         self.override_mars_apikey = config.get("override_apikey")
 
@@ -54,9 +55,8 @@ class WebMARSDataSource(datasource.DataSource):
         self.server = ECMWFDataServer(email=email, url=self.url, key=key)
 
         self.data = tempfile.NamedTemporaryFile(delete=False, dir=self.tmp_dir)
-        r = yaml.safe_load(request.user_request)
+        r = copy.deepcopy(request.user_request)
         r["target"] = self.data.name
-        # mars_req = self.convert_to_mars_request(r)
         _environ = dict(os.environ)
         try:
             os.environ["http_proxy"] = os.getenv("POLYTOPE_PROXY", "")
@@ -88,31 +88,8 @@ class WebMARSDataSource(datasource.DataSource):
     def destroy(self, request) -> None:
         pass
 
-    def repr(self):
-        return self.config.get("repr", "webmars")
-
     def mime_type(self) -> str:
         return "application/x-grib"
-
-    def match(self, request):
-
-        r = yaml.safe_load(request.user_request)
-        for k, v in self.match_rules.items():
-            v = [v] if isinstance(v, str) else v
-            if k not in r:
-                raise Exception("Request does not contain expected key {}".format(k))
-            elif r[k] not in v:
-                raise Exception("got {} : {}, but expected one of {}".format(k, r[k], v))
-
-    def convert_to_mars_request(self, request):
-        request_str = ""
-        for k, v in request.items():
-            if isinstance(v, (list, tuple)):
-                v = "/".join(str(x) for x in v)
-            else:
-                v = str(v)
-            request_str = request_str + "," + k + "=" + v
-        return request_str
 
     def get_user(self, request):
         try:
