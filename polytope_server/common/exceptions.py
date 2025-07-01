@@ -35,6 +35,9 @@ class HTTPException(Exception):
             self.description = description
         self.response = response
 
+    def __repr__(self):
+        return f"{self.__class__.__name__}: {self.description}"
+
 
 class BadRequest(HTTPException):
     code = 400
