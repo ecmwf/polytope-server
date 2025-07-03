@@ -16,7 +16,7 @@ default_config = {
     "number_allow_zero": False,
 }
 
-config = polytope_config.global_config.get("coercion", {})
+config = polytope_config.global_config.get("coercion", {}) if polytope_config.global_config else {}
 allow_ranges = config.get("allow_ranges", default_config["allow_ranges"])
 allow_lists = config.get("allow_lists", default_config["allow_lists"])
 number_allow_zero = config.get("number_allow_zero", default_config["number_allow_zero"])
