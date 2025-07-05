@@ -28,6 +28,7 @@ from flask import Response
 
 from ...common.exceptions import BadRequest, NotFound, ServerError
 from ...common.request import Request, Status, Verb
+from ...common.user import User
 from .flask_decorators import RequestAccepted, RequestRedirected, RequestSucceeded
 
 
@@ -197,27 +198,8 @@ class DataTransfer:
             response["status"] = "queued"
         return response
 
-    def delete_request(self, user, id):
-        request = self.get_request(id)
-
-        if not request:
-            raise NotFound("Request {} not found".format(id))
-
-        if request.user != user:
-            raise NotFound("Request {} not found".format(id))
-
-        if request.verb != Verb.ARCHIVE:
-            try:
-                self.staging.delete(id)
-            except KeyError:
-                pass
-            except Exception:
-                raise ServerError("Error accessing data staging for deletion")
-
-        try:
-            self.request_store.remove_request(id)
-        except Exception:
-            raise ServerError("Error removing request {} from the request store".format(id))
+    def revoke_request(self, user: User, id: str):
+        self.request_store.revoke_request(user, id)
 
         return RequestSucceeded("Successfully deleted request")
 

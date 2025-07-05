@@ -30,8 +30,10 @@ import botocore.exceptions
 from boto3.dynamodb.conditions import Attr, Key
 
 from .. import metric_store
+from ..exceptions import ForbiddenRequest, NotFound, UnauthorizedRequest
 from ..metric import RequestStatusChange
-from ..request import Request
+from ..request import Request, Status
+from ..user import User
 from . import request_store
 
 logger = logging.getLogger(__name__)
@@ -168,18 +170,51 @@ class DynamoDBRequestStore(request_store.RequestStore):
 
     def remove_request(self, id):
         try:
-            self.table.delete_item(Key={"id": id}, ConditionExpression=Attr("id").exists())
+            self.table.delete_item(
+                Key={"id": id},
+                ConditionExpression=Attr("id").exists()
+                & Attr("status").is_in([Status.WAITING.value, Status.QUEUED.value]),
+            )
         except botocore.exceptions.ClientError as e:
             if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
                 raise KeyError("Request does not exist in request store") from e
             raise
 
+        self.remove_request_metrics(id)
+
+        logger.info("Request ID %s removed.", id)
+
+    def revoke_request(self, user: User, id: str):
+        try:
+            self.table.delete_item(
+                Key={"id": id},
+                ConditionExpression=Attr("id").exists()
+                & Attr("status").exists()
+                & Attr("status").is_in([Status.WAITING.value, Status.QUEUED.value])
+                & Attr("user_id").eq(str(user.id)),
+            )
+        except botocore.exceptions.ClientError as e:
+            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                # Check if the request exists to distinguish error cause
+                response = self.get_request(id)
+                if response is None:
+                    raise NotFound("Request does not exist in request store")
+                elif response.user != user:
+                    raise UnauthorizedRequest("Only the user who created the request can revoke it", None)
+                else:
+                    raise ForbiddenRequest("Request can only be revoked before it starts processing.")
+            raise
+
+        self.remove_request_metrics(id)
+
+        logger.info("Request ID %s removed.", id)
+
+    def remove_request_metrics(self, id):
         if self.metric_store:
             items = self.metric_store.get_metrics(request_id=id)
             for item in items:
                 self.metric_store.remove_metric(item.uuid)
-
-        logger.info("Request ID %s removed.", id)
+        logger.info("Metrics for request ID %s removed.", id)
 
     def get_request(self, id):
         response = self.table.get_item(Key={"id": id})

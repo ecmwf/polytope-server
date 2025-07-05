@@ -24,6 +24,7 @@ from typing import Dict, List, Union
 
 from ..metric import MetricType
 from ..request import Request, Status
+from ..user import User
 
 
 class RequestStore(ABC):
@@ -47,7 +48,30 @@ class RequestStore(ABC):
 
     @abstractmethod
     def remove_request(self, id: str) -> None:
-        """Remove a request from the request store"""
+        """Remove a request from the request store."""
+
+    @abstractmethod
+    def revoke_request(self, user: User, id: str) -> None:
+        """
+        Revoke a queued but unstarted request (and related metrics) from the request store.
+
+        Only the user who created the request can revoke it.
+
+        Only requests with status 'waiting' or 'queued' can be removed.
+
+        Args:
+            user: User who is revoking the request
+            id: ID of the request to be revoked
+
+        Raises:
+            NotFound: if the request is not in the request store
+            UnauthorizedRequest: if the request belongs to a different user
+            ForbiddenRequest: if the request has started processing.
+        """
+
+    @abstractmethod
+    def remove_request_metrics(self, id: str) -> None:
+        """Remove all metrics related to a request from the metric store"""
 
     @abstractmethod
     def update_request(self, request: Request) -> None:
