@@ -7,6 +7,8 @@ from moto import mock_aws
 from polytope_server.common import request, user
 from polytope_server.common.request_store import dynamodb_request_store
 
+from .test_request_store import _test_revoke_request
+
 
 @pytest.fixture(scope="function")
 def aws_credentials():
@@ -63,6 +65,11 @@ def test_remove_request(mocked_aws):
     assert store.get_request(req.id) is not None
     store.remove_request(req.id)
     assert store.get_request(req.id) is None
+
+
+def test_revoke_request(mocked_aws):
+    store = dynamodb_request_store.DynamoDBRequestStore()
+    _test_revoke_request(store)
 
 
 @pytest.fixture(scope="function")
