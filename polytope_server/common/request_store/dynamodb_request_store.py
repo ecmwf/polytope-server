@@ -197,10 +197,22 @@ class DynamoDBRequestStore(request_store.RequestStore):
             if not response["Items"]:
                 return 0  # No requests to revoke
 
+            deleted = 0
             for item in response["Items"]:
-                self.table.delete_item(Key={"id": item["id"]})
+                try:
+                    self._revoke_single_request(user, item["id"])
+                    deleted += 1
+                except Exception as e:
+                    logger.error("Failed to revoke request %s: %s", item["id"], e)
+                    continue
 
-            return len(response["Items"])
+            return deleted
+        else:
+            # Revoke a single request by ID
+            return self._revoke_single_request(user, id)
+
+    def _revoke_single_request(self, user, id):
+        # Revoke a single request by ID
         try:
             self.table.delete_item(
                 Key={"id": id},
