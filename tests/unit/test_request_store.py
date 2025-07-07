@@ -1,3 +1,5 @@
+import datetime
+
 import pytest
 
 from polytope_server.common import exceptions, request, user
@@ -65,3 +67,29 @@ def _test_update_request(store):
     non_existing_req = request.Request(id="non-existing-id", user=test_user)
     with pytest.raises(exceptions.NotFound):
         store.update_request(non_existing_req)
+
+
+def _test_remove_old_requests(store):
+    # Create a test user
+    test_user = user.User("test-user", "test-realm")
+    # Create requests with different statuses and timestamps
+    old_failed_req = request.Request(
+        user=test_user, status=request.Status.FAILED, last_modified=datetime.datetime(2000, 1, 1).timestamp()
+    )
+    store.add_request(old_failed_req)
+    old_processing_req = request.Request(
+        user=test_user, status=request.Status.PROCESSING, last_modified=datetime.datetime(2000, 1, 1).timestamp()
+    )
+    store.add_request(old_processing_req)
+    recent_processed_req = request.Request(
+        user=test_user, status=request.Status.PROCESSED, last_modified=datetime.datetime.now().timestamp()
+    )
+    store.add_request(recent_processed_req)
+    # Remove old requests
+    cutoff = datetime.datetime(2001, 1, 1)  # Cutoff date for old requests
+    removed_count = store.remove_old_requests(cutoff)
+    # Check that only the old requests were removed
+    assert removed_count == 1
+    assert store.get_request(old_failed_req.id) is None
+    assert store.get_request(old_processing_req.id) is not None
+    assert store.get_request(recent_processed_req.id) is not None

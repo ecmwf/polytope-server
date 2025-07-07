@@ -300,3 +300,19 @@ class DynamoDBRequestStore(request_store.RequestStore):
 
     def collect_metric_info(self):
         return {}
+
+    def remove_old_requests(self, cutoff: dt.datetime):
+        cutoff_timestamp = cutoff.timestamp()
+        deleted_count = 0
+
+        to_delete = self.table.scan(
+            FilterExpression=Attr("status").is_in([Status.FAILED.value, Status.PROCESSED.value])
+            & Attr("last_modified").lt(_convert_numbers(cutoff_timestamp))
+        )
+
+        with self.table.batch_writer() as batch:
+            for item in to_delete.get("Items", []):
+                batch.delete_item(Key={"id": item["id"]})
+                logger.info("Deleting request %s because it is older than cutoff.", item["id"])
+                deleted_count += 1
+        return deleted_count
