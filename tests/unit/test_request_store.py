@@ -16,6 +16,7 @@ def _test_revoke_request(store):
     # test processed request does not get removed and raises KeyError about status
     req_processed = request.Request(status=request.Status.PROCESSED, user=test_user)
     store.add_request(req_processed)
+
     assert store.get_request(req_processed.id) is not None
     with pytest.raises(exceptions.ForbiddenRequest):
         store.revoke_request(test_user, req_processed.id)
@@ -43,3 +44,24 @@ def _test_revoke_request(store):
     deleted_count = store.revoke_request(test_user, "all")
     assert deleted_count == 2
     assert store.get_request(req_processed.id) is not None
+
+
+def _test_update_request(store):
+    # Create a test user
+    test_user = user.User("test-user", "test-realm")
+    # Create a request
+    req = request.Request(user=test_user, collection="test-collection", status=request.Status.WAITING)
+    store.add_request(req)
+
+    # Update the request
+    req.status = request.Status.PROCESSED
+    store.update_request(req)
+
+    # Retrieve the updated request and check its status
+    updated_req = store.get_request(req.id)
+    assert updated_req.status == request.Status.PROCESSED
+
+    # Test updating a non-existing request raises NotFound
+    non_existing_req = request.Request(id="non-existing-id", user=test_user)
+    with pytest.raises(exceptions.NotFound):
+        store.update_request(non_existing_req)

@@ -287,7 +287,12 @@ class DynamoDBRequestStore(request_store.RequestStore):
     def update_request(self, request):
         now = dt.datetime.now(dt.timezone.utc)
         request.last_modified = now.timestamp()
-        self.table.put_item(Item=_dump(request))
+        try:
+            self.table.put_item(Item=_dump(request), ConditionExpression=Attr("id").eq(request.id))
+        except botocore.exceptions.ClientError as e:
+            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                raise NotFound("Request {} not found in request store".format(request.id)) from e
+            raise
 
         if self.metric_store:
             self.metric_store.add_metric(RequestStatusChange(request_id=request.id, status=request.status))

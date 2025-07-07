@@ -2,7 +2,7 @@ import mongomock
 
 from polytope_server.common.request_store.mongodb_request_store import MongoRequestStore
 
-from .test_request_store import _test_revoke_request
+from .test_request_store import _test_revoke_request, _test_update_request
 
 
 def test_revoke_request():
@@ -11,3 +11,11 @@ def test_revoke_request():
     store.store = mongomock.MongoClient().db.requests
 
     _test_revoke_request(store)
+
+
+def test_update_request():
+    # Create a mocked MongoRequestStore
+    store = MongoRequestStore({})
+    store.store = mongomock.MongoClient().db.requests
+
+    _test_update_request(store)

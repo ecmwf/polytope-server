@@ -169,6 +169,9 @@ class MongoRequestStore(request_store.RequestStore):
             return_document=pymongo.ReturnDocument.AFTER,
         )
 
+        if res is None:
+            raise NotFound("Request {} not found in request store".format(request.id))
+
         if self.metric_store:
             self.metric_store.add_metric(
                 RequestStatusChange(request_id=request.id, status=request.status, user_id=request.user.id)

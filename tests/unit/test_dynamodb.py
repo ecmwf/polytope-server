@@ -7,7 +7,7 @@ from moto import mock_aws
 from polytope_server.common import request, user
 from polytope_server.common.request_store import dynamodb_request_store
 
-from .test_request_store import _test_revoke_request
+from .test_request_store import _test_revoke_request, _test_update_request
 
 
 @pytest.fixture(scope="function")
@@ -119,6 +119,8 @@ def test_update(mocked_aws):
     r3 = store.get_request(r1.id)
     assert r3.id == r1.id
     assert r3.user.attributes["test"] == "updated"
+
+    _test_update_request(store)
 
 
 def test_metric_store(mocked_aws):
