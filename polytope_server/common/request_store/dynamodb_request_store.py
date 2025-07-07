@@ -189,23 +189,33 @@ class DynamoDBRequestStore(request_store.RequestStore):
 
     def revoke_request(self, user: User, id: str):
         if id == "all":
-            # Revoke all requests of the user that are waiting or queued
-            response = self.table.scan(
-                FilterExpression=Attr("status").is_in([Status.WAITING.value, Status.QUEUED.value])
-                & Attr("user_id").eq(str(user.id)),
-            )
-            if not response["Items"]:
-                return 0  # No requests to revoke
-
+            # Query the status index for WAITING and QUEUED requests for this user
             deleted = 0
-            for item in response["Items"]:
-                try:
-                    self._revoke_single_request(user, item["id"])
-                    deleted += 1
-                except Exception as e:
-                    logger.error("Failed to revoke request %s: %s", item["id"], e)
-                    continue
-
+            items_to_delete = []
+            for status in [Status.WAITING.value, Status.QUEUED.value]:
+                response = self.table.query(
+                    IndexName="status-index",
+                    KeyConditionExpression=Key("status").eq(status),
+                    FilterExpression=Attr("user_id").eq(str(user.id)),
+                )
+                for item in response.get("Items", []):
+                    items_to_delete.append(item["id"])
+            # Use batch_writer for efficient deletion
+            with self.table.batch_writer() as batch:
+                for req_id in items_to_delete:
+                    try:
+                        # Try to delete using the same logic as _revoke_single_request
+                        batch.delete_item(
+                            Key={"id": req_id},
+                            ConditionExpression=Attr("id").exists()
+                            & Attr("status").is_in(
+                                [Status.WAITING.value, Status.QUEUED.value]
+                            ),  # in case the status changes between query and delete
+                        )
+                        deleted += 1
+                    except Exception as e:
+                        logger.error("Failed to revoke request %s: %s", req_id, e)
+                        continue
             return deleted
         else:
             # Revoke a single request by ID
