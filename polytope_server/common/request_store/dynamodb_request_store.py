@@ -205,13 +205,7 @@ class DynamoDBRequestStore(request_store.RequestStore):
                 for req_id in items_to_delete:
                     try:
                         # Try to delete using the same logic as _revoke_single_request
-                        batch.delete_item(
-                            Key={"id": req_id},
-                            ConditionExpression=Attr("id").exists()
-                            & Attr("status").is_in(
-                                [Status.WAITING.value, Status.QUEUED.value]
-                            ),  # in case the status changes between query and delete
-                        )
+                        batch.delete_item(Key={"id": req_id})
                         deleted += 1
                     except Exception as e:
                         logger.error("Failed to revoke request %s: %s", req_id, e)
