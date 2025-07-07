@@ -180,11 +180,28 @@ class DynamoDBRequestStore(request_store.RequestStore):
                 raise KeyError("Request does not exist in request store") from e
             raise
 
-        self.remove_request_metrics(id)
+        if self.metric_store:
+            items = self.metric_store.get_metrics(request_id=id)
+            for item in items:
+                self.metric_store.remove_metric(item.uuid)
+        logger.info("Metrics for request ID %s removed.", id)
 
         logger.info("Request ID %s removed.", id)
 
     def revoke_request(self, user: User, id: str):
+        if id == "all":
+            # Revoke all requests of the user that are waiting or queued
+            response = self.table.scan(
+                FilterExpression=Attr("status").is_in([Status.WAITING.value, Status.QUEUED.value])
+                & Attr("user_id").eq(str(user.id)),
+            )
+            if not response["Items"]:
+                return 0  # No requests to revoke
+
+            for item in response["Items"]:
+                self.table.delete_item(Key={"id": item["id"]})
+
+            return len(response["Items"])
         try:
             self.table.delete_item(
                 Key={"id": id},
@@ -205,16 +222,8 @@ class DynamoDBRequestStore(request_store.RequestStore):
                     raise ForbiddenRequest("Request can only be revoked before it starts processing.")
             raise
 
-        self.remove_request_metrics(id)
-
-        logger.info("Request ID %s removed.", id)
-
-    def remove_request_metrics(self, id):
-        if self.metric_store:
-            items = self.metric_store.get_metrics(request_id=id)
-            for item in items:
-                self.metric_store.remove_metric(item.uuid)
-        logger.info("Metrics for request ID %s removed.", id)
+        logger.info("Request ID %s revoked.", id)
+        return 1  # Successfully revoked one request
 
     def get_request(self, id):
         response = self.table.get_item(Key={"id": id})

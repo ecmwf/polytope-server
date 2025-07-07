@@ -51,9 +51,9 @@ class RequestStore(ABC):
         """Remove a request from the request store."""
 
     @abstractmethod
-    def revoke_request(self, user: User, id: str) -> None:
+    def revoke_request(self, user: User, id: str) -> int:
         """
-        Revoke a queued but unstarted request (and related metrics) from the request store.
+        Revoke a queued but unstarted request from the request store.
 
         Only the user who created the request can revoke it.
 
@@ -61,17 +61,17 @@ class RequestStore(ABC):
 
         Args:
             user: User who is revoking the request
-            id: ID of the request to be revoked
+            id: ID of the request to be revoked. Alternatively "all" can be used to
+                revoke all revokeable requests of the user.
+
+        Returns:
+            int: Number of requests revoked.
 
         Raises:
             NotFound: if the request is not in the request store
             UnauthorizedRequest: if the request belongs to a different user
             ForbiddenRequest: if the request has started processing.
         """
-
-    @abstractmethod
-    def remove_request_metrics(self, id: str) -> None:
-        """Remove all metrics related to a request from the metric store"""
 
     @abstractmethod
     def update_request(self, request: Request) -> None:

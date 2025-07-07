@@ -199,9 +199,9 @@ class DataTransfer:
         return response
 
     def revoke_request(self, user: User, id: str):
-        self.request_store.revoke_request(user, id)
+        n = self.request_store.revoke_request(user, id)
 
-        return RequestSucceeded("Successfully deleted request")
+        return RequestSucceeded(f"Successfully revoked {n} requests")
 
     def get_request(self, id):
         try:
