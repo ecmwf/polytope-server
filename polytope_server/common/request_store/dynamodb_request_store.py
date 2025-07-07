@@ -184,7 +184,6 @@ class DynamoDBRequestStore(request_store.RequestStore):
             items = self.metric_store.get_metrics(request_id=id)
             for item in items:
                 self.metric_store.remove_metric(item.uuid)
-        logger.info("Metrics for request ID %s removed.", id)
 
         logger.info("Request ID %s removed.", id)
 
