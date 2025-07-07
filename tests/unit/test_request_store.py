@@ -28,6 +28,18 @@ def _test_revoke_request(store):
     assert store.get_request(req_other.id) is not None
     with pytest.raises(exceptions.UnauthorizedRequest):
         store.revoke_request(test_user, req_other.id)
+
     # test non-existing request raises KeyError
     with pytest.raises(exceptions.NotFound):
         store.revoke_request(test_user, "non-existing-id")
+
+    # test revoking all requests of the user
+    req1 = request.Request(status=request.Status.WAITING, user=test_user)
+    req2 = request.Request(status=request.Status.QUEUED, user=test_user)
+    store.add_request(req1)
+    store.add_request(req2)
+    assert store.get_request(req1.id) is not None
+    assert store.get_request(req2.id) is not None
+    deleted_count = store.revoke_request(test_user, "all")
+    assert deleted_count == 2
+    assert store.get_request(req_processed.id) is not None
