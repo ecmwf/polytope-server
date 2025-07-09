@@ -170,11 +170,7 @@ class DynamoDBRequestStore(request_store.RequestStore):
 
     def remove_request(self, id):
         try:
-            self.table.delete_item(
-                Key={"id": id},
-                ConditionExpression=Attr("id").exists()
-                & Attr("status").is_in([Status.WAITING.value, Status.QUEUED.value]),
-            )
+            self.table.delete_item(Key={"id": id}, ConditionExpression=Attr("id").exists())
         except botocore.exceptions.ClientError as e:
             if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
                 raise KeyError("Request does not exist in request store") from e
