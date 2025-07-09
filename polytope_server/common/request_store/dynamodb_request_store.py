@@ -224,13 +224,15 @@ class DynamoDBRequestStore(request_store.RequestStore):
         except botocore.exceptions.ClientError as e:
             if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
                 # Check if the request exists to distinguish error cause
-                response = self.get_request(id)
-                if response is None:
+                request = self.get_request(id)
+                if request is None:
                     raise NotFound("Request does not exist in request store")
-                elif response.user != user:
+                elif request.user != user:
                     raise UnauthorizedRequest("Only the user who created the request can revoke it", None)
-                else:
+                elif request.status not in [Status.WAITING, Status.QUEUED]:
                     raise ForbiddenRequest("Request can only be revoked before it starts processing.")
+                else:
+                    raise
             raise
 
         logger.info("Request ID %s revoked.", id)
