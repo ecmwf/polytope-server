@@ -67,19 +67,15 @@ class GarbageCollector:
 
     def remove_old_requests(self):
         """Removes requests that are FAILED or PROCESSED after the configured time"""
+        logging.info("Removing requests older than {}".format(self.age))
         self.request_store.remove_old_requests(datetime.now(timezone.utc) - self.age)
 
     def remove_old_metrics(self):
         """Removes metrics older than the configured time"""
         now = datetime.now(timezone.utc)
         cutoff = now - self.metric_age
-
-        metrics = self.metric_store.get_metrics()
-
-        for m in metrics:
-            if datetime.fromtimestamp(m.timestamp, tz=timezone.utc) < cutoff:
-                logging.info("Deleting metric {} because it is too old.".format(m.uuid))
-                self.metric_store.remove_metric(m.uuid, include_processed=True)
+        logging.info("Removing metrics older than {}".format(cutoff))
+        self.metric_store.remove_old_metrics(cutoff)
 
     def remove_dangling_data(self):
         """As a failsafe, removes data which has no corresponding request."""

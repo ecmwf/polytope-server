@@ -7,6 +7,7 @@ from moto import mock_aws
 from polytope_server.common import request, user
 from polytope_server.common.request_store import dynamodb_request_store
 
+from .test_metric_store import _test_remove_old_metrics
 from .test_request_store import (
     _test_remove_old_requests,
     _test_revoke_request,
@@ -138,3 +139,10 @@ def test_metric_store(mocked_aws):
 def test_remove_old_requests(mocked_aws):
     store = dynamodb_request_store.DynamoDBRequestStore()
     _test_remove_old_requests(store)
+
+
+def test_remove_old_metrics(mocked_aws):
+    store = dynamodb_request_store.DynamoDBRequestStore(
+        metric_store_config={"dynamodb": {"table_name": "metrics"}}
+    ).metric_store
+    _test_remove_old_metrics(store)
