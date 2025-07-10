@@ -46,6 +46,9 @@ def _test_revoke_request(store):
     deleted_count = store.revoke_request(test_user, "all")
     assert deleted_count == 2
     assert store.get_request(req_processed.id) is not None
+    assert store.get_request(req_other.id) is not None
+    assert store.get_request(req1.id) is None
+    assert store.get_request(req2.id) is None
 
 
 def _test_update_request(store):
