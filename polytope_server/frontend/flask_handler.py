@@ -187,7 +187,7 @@ class FlaskHandler(frontend.FrontendHandler):
             elif request.method == "POST":
                 raise NotFound("Unsupported collection type: %s" % request_id)
             elif request.method == "DELETE":
-                return data_transfer.delete_request(user, request_id)
+                return data_transfer.revoke_request(user, request_id)
 
         @handler.route(
             "/api/v1/requests/<collection_or_request_id>",

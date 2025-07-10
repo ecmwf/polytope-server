@@ -30,8 +30,10 @@ import botocore.exceptions
 from boto3.dynamodb.conditions import Attr, Key
 
 from .. import metric_store
+from ..exceptions import ForbiddenRequest, NotFound, UnauthorizedRequest
 from ..metric import RequestStatusChange
-from ..request import Request
+from ..request import Request, Status
+from ..user import User
 from . import request_store
 
 logger = logging.getLogger(__name__)
@@ -181,6 +183,59 @@ class DynamoDBRequestStore(request_store.RequestStore):
 
         logger.info("Request ID %s removed.", id)
 
+    def revoke_request(self, user: User, id: str):
+        if id == "all":
+            # Query the status index for WAITING and QUEUED requests for this user
+            deleted = 0
+            items_to_delete = []
+            for status in [Status.WAITING.value, Status.QUEUED.value]:
+                response = self.table.query(
+                    IndexName="status-index",
+                    KeyConditionExpression=Key("status").eq(status),
+                    FilterExpression=Attr("user_id").eq(str(user.id)),
+                )
+                for item in response.get("Items", []):
+                    items_to_delete.append(item["id"])
+            # Use batch_writer for efficient deletion
+            with self.table.batch_writer() as batch:
+                for req_id in items_to_delete:
+                    try:
+                        # Try to delete using the same logic as _revoke_single_request
+                        batch.delete_item(Key={"id": req_id})
+                        deleted += 1
+                    except Exception as e:
+                        logger.error("Failed to revoke request %s: %s", req_id, e)
+                        continue
+            return deleted
+        else:
+            # Revoke a single request by ID
+            return self._revoke_single_request(user, id)
+
+    def _revoke_single_request(self, user, id):
+        # Revoke a single request by ID
+        try:
+            self.table.delete_item(
+                Key={"id": id},
+                ConditionExpression=Attr("id").exists()
+                & Attr("status").exists()
+                & Attr("status").is_in([Status.WAITING.value, Status.QUEUED.value])
+                & Attr("user_id").eq(str(user.id)),
+            )
+        except botocore.exceptions.ClientError as e:
+            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                # Check if the request exists to distinguish error cause
+                response = self.get_request(id)
+                if response is None:
+                    raise NotFound("Request does not exist in request store")
+                elif response.user != user:
+                    raise UnauthorizedRequest("Only the user who created the request can revoke it", None)
+                else:
+                    raise ForbiddenRequest("Request can only be revoked before it starts processing.")
+            raise
+
+        logger.info("Request ID %s revoked.", id)
+        return 1  # Successfully revoked one request
+
     def get_request(self, id):
         response = self.table.get_item(Key={"id": id})
         if "Item" in response:
@@ -228,7 +283,12 @@ class DynamoDBRequestStore(request_store.RequestStore):
     def update_request(self, request):
         now = dt.datetime.now(dt.timezone.utc)
         request.last_modified = now.timestamp()
-        self.table.put_item(Item=_dump(request))
+        try:
+            self.table.put_item(Item=_dump(request), ConditionExpression=Attr("id").eq(request.id))
+        except botocore.exceptions.ClientError as e:
+            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                raise NotFound("Request {} not found in request store".format(request.id)) from e
+            raise
 
         if self.metric_store:
             self.metric_store.add_metric(RequestStatusChange(request_id=request.id, status=request.status))

@@ -24,12 +24,13 @@ import logging
 import pymongo
 
 from .. import metric_store, mongo_client_factory
+from ..exceptions import ForbiddenRequest, NotFound, UnauthorizedRequest
 from ..metric import MetricType, RequestStatusChange
 from ..metric_collector import (
     MongoRequestStoreMetricCollector,
     MongoStorageMetricCollector,
 )
-from ..request import Request
+from ..request import Request, Status
 from . import request_store
 
 
@@ -80,6 +81,29 @@ class MongoRequestStore(request_store.RequestStore):
             res = self.metric_store.get_metrics(type=MetricType.REQUEST_STATUS_CHANGE, request_id=id)
             for i in res:
                 self.metric_store.remove_metric(i.uuid)
+        logging.info("Request ID %s removed.", id)
+
+    def revoke_request(self, user, id):
+        if id == "all":
+            # Revoke all requests of the user that are waiting or queued
+            result = self.store.delete_many(
+                {"status": {"$in": [Status.WAITING.value, Status.QUEUED.value]}, "user.id": user.id}
+            )
+            return result.deleted_count
+
+        result = self.store.find_one_and_delete(
+            {"id": id, "status": {"$in": [Status.WAITING.value, Status.QUEUED.value]}, "user.id": user.id}
+        )
+        if result is None:
+            # Check if the request exists to distinguish error cause
+            request = self.get_request(id)
+            if request is None:
+                raise NotFound("Request does not exist in request store")
+            elif request.user != user:
+                raise UnauthorizedRequest("Request belongs to a different user", None)
+            else:
+                raise ForbiddenRequest("Request has started processing and can no longer be revoked.", None)
+        return 1  # Successfully revoked one request
 
     def get_request(self, id):
         result = self.store.find_one({"id": id}, {"_id": False})
@@ -144,6 +168,9 @@ class MongoRequestStore(request_store.RequestStore):
             {"$set": request.serialize()},
             return_document=pymongo.ReturnDocument.AFTER,
         )
+
+        if res is None:
+            raise NotFound("Request {} not found in request store".format(request.id))
 
         if self.metric_store:
             self.metric_store.add_metric(
