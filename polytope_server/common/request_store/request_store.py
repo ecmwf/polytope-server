@@ -18,6 +18,7 @@
 # does it submit to any jurisdiction.
 #
 
+import datetime
 import importlib
 from abc import ABC, abstractmethod
 from typing import Dict, List, Union
@@ -90,6 +91,14 @@ class RequestStore(ABC):
         self,
     ) -> Dict[str, Union[None, int, float, str, Status, MetricType]]:
         """Collect dictionary of metrics"""
+
+    @abstractmethod
+    def remove_old_requests(cutoff: datetime.datetime) -> int:
+        """Remove FAILED and PROCESSED requests older than cutoff date.
+
+        Returns:
+            int: Number of removed requests.
+        """
 
 
 type_to_class_map = {"mongodb": "MongoRequestStore", "dynamodb": "DynamoDBRequestStore"}

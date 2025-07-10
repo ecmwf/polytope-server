@@ -18,6 +18,7 @@
 # does it submit to any jurisdiction.
 #
 
+import datetime
 import importlib
 from abc import ABC, abstractmethod
 from typing import Dict, List, Union
@@ -66,6 +67,17 @@ class MetricStore(ABC):
         self,
     ) -> Dict[str, Union[None, int, float, str, Status, MetricType]]:
         """Collect dictionary of metrics"""
+
+    @abstractmethod
+    def remove_old_metrics(self, cutoff: datetime.datetime) -> int:
+        """Remove metrics older than cutoff date.
+
+        Args:
+            cutoff: datetime object representing the cutoff date.
+
+        Returns:
+            int: Number of removed metrics.
+        """
 
 
 type_to_class_map = {"mongodb": "MongoMetricStore", "dynamodb": "DynamoDBMetricStore"}

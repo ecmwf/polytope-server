@@ -208,3 +208,21 @@ class DynamoDBMetricStore(MetricStore):
 
     def collect_metric_info(self):
         return {}
+
+    def remove_old_metrics(self, cutoff):
+        cutoff_timestamp = cutoff.timestamp()
+        response = self.table.scan(
+            FilterExpression=Attr("timestamp").lt(_convert_numbers(cutoff_timestamp)),
+            ProjectionExpression="#u",
+            ExpressionAttributeNames={"#u": "uuid"},
+        )
+        items_to_delete = [item["uuid"] for item in response.get("Items", [])]
+
+        if not items_to_delete:
+            return 0
+
+        with self.table.batch_writer() as batch:
+            for uuid in items_to_delete:
+                batch.delete_item(Key={"uuid": str(uuid)})
+
+        return len(items_to_delete)

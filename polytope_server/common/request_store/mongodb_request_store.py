@@ -197,3 +197,10 @@ class MongoRequestStore(request_store.RequestStore):
         metric = self.request_store_metric_collector.collect().serialize()
         metric["storage"] = self.storage_metric_collector.collect().serialize()
         return metric
+
+    def remove_old_requests(self, cutoff):
+        cutoff = cutoff.timestamp()
+        result = self.store.delete_many(
+            {"status": {"$in": [Status.FAILED.value, Status.PROCESSED.value]}, "last_modified": {"$lt": cutoff}}
+        )
+        return result.deleted_count
