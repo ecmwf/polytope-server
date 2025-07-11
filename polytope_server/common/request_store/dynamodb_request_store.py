@@ -74,7 +74,7 @@ def _visit(obj, fn):
 def _convert_numbers(obj, reverse=False):
     def fn(item):
         if not reverse and isinstance(item, float):
-            return Decimal(item)
+            return Decimal(str(item))
         elif reverse and isinstance(item, Decimal):
             return float(item)
         return item
