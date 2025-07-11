@@ -39,7 +39,7 @@ class RequestStore(ABC):
         """Add a request to the request store"""
 
     @abstractmethod
-    def get_request(self, id: str) -> Request:
+    def get_request(self, id: str) -> Request | None:
         """Fetch request from the request store"""
 
     @abstractmethod
