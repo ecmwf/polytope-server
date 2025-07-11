@@ -93,7 +93,7 @@ class RequestStore(ABC):
         """Collect dictionary of metrics"""
 
     @abstractmethod
-    def remove_old_requests(cutoff: datetime.datetime) -> int:
+    def remove_old_requests(self, cutoff: datetime.datetime) -> int:
         """Remove FAILED and PROCESSED requests older than cutoff date.
 
         Returns:
