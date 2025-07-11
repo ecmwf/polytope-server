@@ -74,7 +74,7 @@ def _visit(obj, fn):
 def _convert_numbers(obj, reverse=False):
     def fn(item):
         if not reverse and isinstance(item, float):
-            return Decimal(item)
+            return Decimal(str(item))
         elif reverse and isinstance(item, Decimal):
             return float(item)
         return item
@@ -189,12 +189,13 @@ class DynamoDBRequestStore(request_store.RequestStore):
             deleted = 0
             items_to_delete = []
             for status in [Status.WAITING.value, Status.QUEUED.value]:
-                response = self.table.query(
+                items = _iter_items(
+                    self.table.query,
                     IndexName="status-index",
                     KeyConditionExpression=Key("status").eq(status),
                     FilterExpression=Attr("user_id").eq(str(user.id)),
                 )
-                for item in response.get("Items", []):
+                for item in items:
                     items_to_delete.append(item["id"])
             # Use batch_writer for efficient deletion
             with self.table.batch_writer() as batch:
@@ -242,6 +243,7 @@ class DynamoDBRequestStore(request_store.RequestStore):
         response = self.table.get_item(Key={"id": id})
         if "Item" in response:
             return _load(response["Item"])
+        raise NotFound()
 
     def get_requests(self, ascending=None, descending=None, limit=None, status=None, user=None, **kwargs):
         if ascending is not None and descending is not None:
@@ -306,11 +308,12 @@ class DynamoDBRequestStore(request_store.RequestStore):
     def remove_old_requests(self, cutoff: dt.datetime):
         cutoff_timestamp = cutoff.timestamp()
 
-        to_delete = self.table.scan(
+        to_delete = _iter_items(
+            self.table.scan,
             FilterExpression=Attr("status").is_in([Status.FAILED.value, Status.PROCESSED.value])
             & Attr("last_modified").lt(_convert_numbers(cutoff_timestamp))
         )
-        items_to_delete = [item["id"] for item in to_delete.get("Items", [])]
+        items_to_delete = [item["id"] for item in to_delete]
 
         if not items_to_delete:
             logger.info("No requests older than cutoff found.")

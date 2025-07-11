@@ -146,3 +146,14 @@ def test_remove_old_metrics(mocked_aws):
         metric_store_config={"dynamodb": {"table_name": "metrics"}}
     ).metric_store
     _test_remove_old_metrics(store)
+
+
+def test_inexact(mocked_aws):
+    u1 = user.User("user1", "realm1")
+    r1 = request.Request(user=u1, user_request={"some_key": 0.3})
+    store = dynamodb_request_store.DynamoDBRequestStore()
+    store.add_request(r1)
+    r2 = store.get_request(r1.id)
+
+    assert r2 is not None
+    assert r1.user_request == r2.user_request
