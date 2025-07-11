@@ -86,20 +86,20 @@ class IonBeamDataSource(datasource.DataSource):
 
     def archive(self, request: Request):
         """Archive data, returns nothing but updates datasource state"""
-        r = copy.deepcopy(request.user_request)
+        r = copy.deepcopy(request.coerced_request)
         keys = r["keys"]
 
         with open(r["path"], "rb") as f:
             return self.api.archive(keys, f)
 
     def list(self, request: Request) -> list:
-        request_keys = copy.deepcopy(request.user_request)
+        request_keys = copy.deepcopy(request.coerced_request)
         return self.api.list(request_keys)
 
     def retrieve(self, request: Request) -> bool:
         """Retrieve data, returns nothing but updates datasource state"""
 
-        request_keys = copy.deepcopy(request.user_request)
+        request_keys = copy.deepcopy(request.coerced_request)
         self.response = self.api.retrieve(request_keys)
         return True
 

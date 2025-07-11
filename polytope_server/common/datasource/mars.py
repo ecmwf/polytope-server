@@ -88,7 +88,7 @@ class MARSDataSource(datasource.DataSource):
         self.fifo = FIFO("MARS-FIFO-" + request.id)
 
         # Parse the user request as YAML, and add the FIFO as target
-        r = copy.deepcopy(request.user_request) or {}
+        r = copy.deepcopy(request.coerced_request) or {}
         r["target"] = '"' + self.fifo.path + '"'
 
         # Make a temporary file for the request

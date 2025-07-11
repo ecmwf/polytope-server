@@ -19,11 +19,21 @@
 ##
 
 
-openapi: 3.0.2
+openapi: 3.0.3
 info:
   description: REST API for ECMWF data retrieval
-  title: Polytope
-  version: "1.0.0"
+  title: Polytope Server API
+  version: "1.1.0"
+  contact:
+    name: ECMWF
+    email: software.support@ecmwf.int
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+servers:
+  - url: /api/v1
+    description: API v1
 
 components:
   securitySchemes:
@@ -33,6 +43,7 @@ components:
     bearerAuth:
       scheme: bearer
       type: http
+      bearerFormat: JWT
     ecmwfKey:
       description: Enter your ECMWF credentials as **EmailKey &lt;email&gt;&#58;&lt;apikey&gt;**
       in: header
@@ -40,6 +51,14 @@ components:
       type: apiKey
 
   schemas:
+    Error:
+      type: object
+      properties:
+        message:
+          type: string
+      required:
+        - message
+
     collections:
       type: array
       items:
@@ -50,6 +69,9 @@ components:
     request:
       type: object
       properties:
+        coerced_request:
+          type: object
+          description: The coerced request object, which is a dictionary of the request parameters.
         collection:
           type: string
           example: collection1
@@ -98,12 +120,41 @@ components:
         verb:
           type: string
 
+  responses:
+    BadRequest:
+      description: Bad request - invalid parameters or request format
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    
+    Unauthorized:
+      description: Missing authorization token or Key unrecognized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    
+    Forbidden:
+      description: Not authorized to access this resource
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
 paths:
   /api/v1/auth/keys:
     post:
-      tags: [Polytope]
+      tags: [Authentication]
       description: Post user details to receive a key
-      summary: null
+      summary: Generate API key
       security:
         - basicAuth: []
       responses:
@@ -119,31 +170,15 @@ paths:
                   expires:
                     type: string
         '400':
-          description: Missing authorization header
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: Missing authorization header
+          $ref: '#/components/responses/BadRequest'
         '401':
-          description: Missing authorization token or Key unrecognized. Please authenticate
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: Missing authorization token. Please authenticate
+          $ref: '#/components/responses/Unauthorized'
 
   /api/v1/collections:
     get:
-      tags: [Polytope]
+      tags: [Collections]
       description: Get collections
-      summary: null
+      summary: List available collections
       responses:
         '200':
           description: List of collections
@@ -157,41 +192,17 @@ paths:
                     items:
                       $ref: '#/components/schemas/collections'
         '400':
-          description: No user information found for token
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: No user information found for token
+          $ref: '#/components/responses/BadRequest'
         '401':
-          description: Missing authorization token or Key unrecognized. Please authenticate
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: Missing authorization token. Please authenticate
+          $ref: '#/components/responses/Unauthorized'
         '403':
-          description: Not authorized to access this resource
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: Not authorized to access this resource
+          $ref: '#/components/responses/Forbidden'
 
   /api/v1/downloads/{request_id}:
     get:
-      tags: [Polytope]
-      description: download data
-      summary: null
+      tags: [Downloads]
+      description: Download data for a completed request
+      summary: Download request data
       parameters:
         - name: request_id
           in: path
@@ -207,42 +218,30 @@ paths:
               schema:
                 type: string
                 format: binary
+            application/netcdf:
+              schema:
+                type: string
+                format: binary
+            application/prs.coverage+json:
+              schema:
+                type: string
+                format: binary
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
         '400':
-          description: Request not ready for download yet
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: Request 123 not ready for download yet
+          $ref: '#/components/responses/BadRequest'
         '401':
-          description: Missing authorization token or Key unrecognized. Please authenticate
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: Missing authorization token. Please authenticate
+          $ref: '#/components/responses/Unauthorized'
         '403':
-          description: Not authorized to access this resource
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: Not authorized to access this resource
+          $ref: '#/components/responses/Forbidden'
 
   /api/v1/requests:
     get:
-      tags: [Polytope]
+      tags: [Requests]
       description: Get user requests
-      summary: null
+      summary: List user requests
       responses:
         '200':
           description: List of requests
@@ -256,31 +255,15 @@ paths:
                     items:
                       $ref: '#/components/schemas/request'
         '401':
-          description: Missing authorization token or Key unrecognized. Please authenticate
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: Missing authorization token. Please authenticate
+          $ref: '#/components/responses/Unauthorized'
         '403':
-          description: Not authorized to access this resource
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: Not authorized to access this resource
+          $ref: '#/components/responses/Forbidden'
 
   /api/v1/requests/{collection_or_request_id}:
     get:
-      tags: [Polytope]
+      tags: [Requests]
       description: Get specific request or list of requests on collection
-      summary: null
+      summary: Get request status or collection requests
       parameters:
         - name: collection_or_request_id
           in: path
@@ -347,40 +330,16 @@ paths:
               schema:
                 $ref: '#/components/schemas/response'
         '400':
-          description: No user information found for token
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: No user information found for token
+          $ref: '#/components/responses/BadRequest'
         '401':
-          description: Missing authorization token or Key unrecognized. Please authenticate
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: Missing authorization token. Please authenticate
+          $ref: '#/components/responses/Unauthorized'
         '403':
-          description: Not authorized to access this resource
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: Not authorized to access this resource
+          $ref: '#/components/responses/Forbidden'
 
     post:
-      tags: [Polytope]
-      description: Get specific request or list of requests on collection
-      summary: null
+      tags: [Requests]
+      description: Submit a data retrieval request to a collection
+      summary: Submit data request
       parameters:
         - name: collection_or_request_id
           in: path
@@ -446,40 +405,16 @@ paths:
                     type: string
                     example: queued
         '400':
-          description: No user information found for token
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: No user information found for token
+          $ref: '#/components/responses/BadRequest'
         '401':
-          description: Missing authorization token or Key unrecognized. Please authenticate
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: Missing authorization token. Please authenticate
+          $ref: '#/components/responses/Unauthorized'
         '403':
-          description: Not authorized to access this resource
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: Not authorized to access this resource
+          $ref: '#/components/responses/Forbidden'
 
     delete:
-      tags: [Polytope]
-      description: Get specific request or list of requests on collection
-      summary: null
+      tags: [Requests]
+      description: Revoke a specific unprocessed request or all unprocessed requests
+      summary: Revoke requests
       parameters:
         - name: collection_or_request_id
           in: path
@@ -489,7 +424,7 @@ paths:
             type: string
       responses:
         '200':
-          description: Delete specific request
+          description: Revoke unprocessed request
           content:
             application/json:
               schema:
@@ -499,41 +434,20 @@ paths:
                     type: string
                     example: Successfully deleted request
         '400':
-          description: No user information found for token
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: No user information found for token
+          $ref: '#/components/responses/BadRequest'
         '401':
-          description: Missing authorization token or Key unrecognized. Please authenticate
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: Missing authorization token. Please authenticate
+          $ref: '#/components/responses/Unauthorized'
         '403':
-          description: Not authorized to access this resource
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: Not authorized to access this resource
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        
 
   /api/v1/test:
     get:
-      tags: [Polytope]
+      tags: [Health]
       description: Test if the server is alive
-      summary: null
+      summary: Health check
       security: []
       responses:
         '200':
@@ -549,9 +463,9 @@ paths:
 
   /api/v1/user:
     get:
-      tags: [Polytope]
+      tags: [User]
       description: Get user information
-      summary: null
+      summary: Get current user info
       responses:
         '200':
           description: User information
@@ -564,35 +478,11 @@ paths:
                     type: string
                     example: "1"
         '400':
-          description: No user information found for token
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: No user information found for token
+          $ref: '#/components/responses/BadRequest'
         '401':
-          description: Missing authorization token or Key unrecognized. Please authenticate
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: Missing authorization token. Please authenticate
+          $ref: '#/components/responses/Unauthorized'
         '403':
-          description: Not authorized to access this resource
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  message:
-                    type: string
-                    example: Not authorized to access this resource
+          $ref: '#/components/responses/Forbidden'
 
 security:
   - bearerAuth: []
@@ -600,5 +490,15 @@ security:
   - ecmwfKey: []
 
 tags:
-  - name: Polytope
-    description: REST API for ECMWF data retrieval
+  - name: Authentication
+    description: API key generation and authentication
+  - name: Collections
+    description: Available data collections
+  - name: Downloads
+    description: Download processed data
+  - name: Requests
+    description: Data retrieval requests management
+  - name: User
+    description: User information and limits
+  - name: Health
+    description: Server health and status checks

@@ -118,7 +118,7 @@ class FDBDataSource(datasource.DataSource):
 
     def retrieve(self, request):
 
-        r = copy.deepcopy(request.user_request)
+        r = copy.deepcopy(request.coerced_request)
         logging.info(r)
         self.output = self.fdb.retrieve(r)
         return True

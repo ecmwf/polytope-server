@@ -243,7 +243,7 @@ class DynamoDBRequestStore(request_store.RequestStore):
         response = self.table.get_item(Key={"id": id})
         if "Item" in response:
             return _load(response["Item"])
-        raise NotFound()
+        return None
 
     def get_requests(self, ascending=None, descending=None, limit=None, status=None, user=None, **kwargs):
         if ascending is not None and descending is not None:
@@ -311,7 +311,7 @@ class DynamoDBRequestStore(request_store.RequestStore):
         to_delete = _iter_items(
             self.table.scan,
             FilterExpression=Attr("status").is_in([Status.FAILED.value, Status.PROCESSED.value])
-            & Attr("last_modified").lt(_convert_numbers(cutoff_timestamp))
+            & Attr("last_modified").lt(_convert_numbers(cutoff_timestamp)),
         )
         items_to_delete = [item["id"] for item in to_delete]
 
