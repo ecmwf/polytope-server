@@ -55,6 +55,7 @@ class Request:
         "status",
         "user_message",
         "user_request",
+        "coerced_request",
         "content_length",
         "content_type",
     ]
@@ -72,6 +73,7 @@ class Request:
         self.md5 = None
         self.user_message = ""
         self.user_request = ""
+        self.coerced_request = {}
         self.content_length = None
         self.content_type = "application/octet-stream"
 

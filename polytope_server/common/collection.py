@@ -70,8 +70,8 @@ class Collection:
                 message = f"Matched datasource {DataSource.repr(ds_config)}"
                 request.user_message += message + "\n"
                 logging.info(message)
-                request.user_request = coerced_ur
-                logging.info("Final user request: {}".format(request.user_request))
+                request.coerced_request = coerced_ur
+                logging.info("Coerced user request: {}".format(request.coerced_request))
                 ds = create_datasource(ds_config)
                 ds.dispatch(request, input_data)
                 return ds

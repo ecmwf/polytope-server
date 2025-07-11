@@ -88,7 +88,7 @@ class PolytopeDataSource(datasource.DataSource):
             return False
 
     def retrieve(self, request):
-        r = copy.deepcopy(request.user_request)
+        r = copy.deepcopy(request.coerced_request)
 
         # Check data released
         if SCHEDULE_READER is not None and self.obey_schedule:

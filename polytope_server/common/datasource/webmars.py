@@ -55,7 +55,7 @@ class WebMARSDataSource(datasource.DataSource):
         self.server = ECMWFDataServer(email=email, url=self.url, key=key)
 
         self.data = tempfile.NamedTemporaryFile(delete=False, dir=self.tmp_dir)
-        r = copy.deepcopy(request.user_request)
+        r = copy.deepcopy(request.coerced_request)
         r["target"] = self.data.name
         _environ = dict(os.environ)
         try:
