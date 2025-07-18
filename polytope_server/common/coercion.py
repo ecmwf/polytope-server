@@ -2,6 +2,7 @@ import copy
 import re
 from datetime import datetime, timedelta
 from typing import Any, Dict
+import pandas as pd
 
 from . import config as polytope_config
 
@@ -134,20 +135,39 @@ def coerce_step(value: Any) -> str:
         if value < 0:
             raise CoercionError("Step must be greater than or equal to 0.")
         else:
-            return str(value)
+            return pd.Timedelta(hours=value)
     elif isinstance(value, str):
-        try:
-            if int(value) < 0:
-                raise CoercionError("Step must be greater than or equal to 0.")
-            else:
-                return value
-        except ValueError:
-            # value cannot be converted to a digit, but we would like to match step ranges too
-            pattern = r"^\d+-\d+$"
-            if re.match(pattern, value):
-                return value
-            else:
-                raise CoercionError("Invalid type, expected integer step or step range.")
+        if re.match(r"^\d+-\d+$", value):
+            # step range
+            return value
+
+        if re.match(r"^-", value):
+            raise ValueError("Step must be greater than or equal to 0.")
+
+        if value.isdigit():
+            # integer step
+            hours = int(value)
+            if hours < 0:
+                raise ValueError("Step must be greater than or equal to 0.")
+            return pd.Timedelta(hours=hours)
+
+        # hours and/or minutes like '1h15m'
+        h_match = re.search(r'(\d+)\s*h', value)
+        m_match = re.search(r'(\d+)\s*m', value)
+
+        if not h_match and not m_match:
+            raise ValueError("Invalid type, expected subhourly step (in hours or minutes), integer step or step range.")
+
+        hours = int(h_match.group(1)) if h_match else 0
+        minutes = int(m_match.group(1)) if m_match else 0
+
+        if hours < 0 or minutes < 0:
+            raise ValueError("Step must be greater than or equal to 0.")
+
+        if hours == 0 and minutes == 0:
+            return pd.Timedelta(0)
+
+        return pd.Timedelta(hours=hours, minutes=minutes)
     else:
         raise CoercionError("Invalid type, expected integer or string.")
 
