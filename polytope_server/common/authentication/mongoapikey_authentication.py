@@ -18,7 +18,7 @@
 # does it submit to any jurisdiction.
 #
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from .. import mongo_client_factory
 from ..auth import User
@@ -73,7 +73,7 @@ class ApiKeyMongoAuthentication(authentication.Authentication):
         if "expiry" not in key:
             raise ForbiddenRequest("Key has no expiry, please generate a new key")
 
-        now = datetime.utcnow().replace(second=0, microsecond=0)
+        now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
         expires = datetime.fromisoformat(key["expiry"].rstrip("Z"))
 
         if now > expires:

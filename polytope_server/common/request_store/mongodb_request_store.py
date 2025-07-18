@@ -164,7 +164,7 @@ class MongoRequestStore(request_store.RequestStore):
         return []
 
     def update_request(self, request):
-        request.last_modified = datetime.datetime.utcnow().timestamp()
+        request.last_modified = datetime.datetime.now(datetime.timezone.utc).timestamp()
         res = self.store.find_one_and_update(
             {"id": request.id},
             {"$set": request.serialize()},

@@ -53,7 +53,7 @@ class MongoKeyGenerator(keygenerator.KeyGenerator):
         if res:
             logging.debug("Removed {} previously issued keys for user {}".format(res.deleted_count, user.username))
 
-        now = datetime.utcnow().replace(second=0, microsecond=0)
+        now = datetime.now().replace(second=0, microsecond=0)
         expires = now + timedelta(days=365)
         expires_RFC3339 = expires.isoformat("T") + "Z"
 
