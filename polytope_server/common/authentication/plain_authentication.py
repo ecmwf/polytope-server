@@ -39,7 +39,6 @@ class PlainAuthentication(authentication.Authentication):
         return "Authenticate with username and password"
 
     def authenticate(self, credentials: str) -> User:
-
         # credentials should be of the form 'base64(<username>:<API_key>)'
         try:
             decoded = base64.b64decode(credentials).decode("utf-8")

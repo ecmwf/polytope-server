@@ -29,7 +29,6 @@ from . import queue
 
 class RabbitmqQueue(queue.Queue):
     def __init__(self, config):
-
         self.host = config.get("host", "localhost")
         self.port = config.get("port", "5672")
         endpoint = "{}:{}".format(self.host, self.port)

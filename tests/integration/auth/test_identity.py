@@ -45,7 +45,6 @@ from polytope_server.common.identity import identity, mongodb_identity, none_ide
 @pytest.mark.identity_mongodb
 class TestMongoDBIdentity:
     def setup_method(self, method):
-
         config = copy.deepcopy(pytest.polytope_config_auth)
 
         # Read identity config

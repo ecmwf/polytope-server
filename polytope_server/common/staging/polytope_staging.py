@@ -42,7 +42,6 @@ class PolytopeStaging(staging.Staging):
         logging.info("Opened data staging at {}".format(self.internal_url))
 
     def create(self, name, data, content_type):
-
         headers = {"Content-Type": content_type}
         buffer = b""
         for d in data:
