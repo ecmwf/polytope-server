@@ -46,7 +46,6 @@ from polytope_server.common.user import User
 @pytest.mark.api_keys_generator_type_mongodb
 class TestMongoKeyGenerator:
     def setup_method(self, method):
-
         config = copy.deepcopy(pytest.polytope_config_auth)
 
         self.keygen = keygenerator.create_keygenerator(config.get("api-keys").get("generator"))
@@ -68,7 +67,6 @@ class TestMongoKeyGenerator:
         pass
 
     def test_keygenerator_create_key(self):
-
         # Usually a user can only create a key if they are already authenticated,
         # here we can just invent a user
 
@@ -89,7 +87,6 @@ class TestMongoKeyGenerator:
             self.keygen.create_key(user)
 
     def test_keygenerator_authenticate_with_key(self):
-
         user = User("some_username", self.realm)
         key = self.keygen.create_key(user)
         auth_header = "Bearer {}".format(key.key)
@@ -114,7 +111,6 @@ class TestMongoKeyGenerator:
 @pytest.mark.basic
 class TestNoneGenerator(TestMongoKeyGenerator):
     def setup_method(self, method):
-
         config = copy.deepcopy(pytest.polytope_config_auth)
 
         self.keygen = keygenerator.create_keygenerator()  # defaults to none

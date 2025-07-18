@@ -116,7 +116,6 @@ class S3Staging(staging.Staging):
         logging.info(f"Opened data staging at {self.host}:{self.port} with bucket {self.bucket}")
 
     def create(self, name, data, content_type):
-
         type_extension_map = {"application/x-grib": "grib", "application/prs.coverage+json": "covjson"}
 
         # seaweedfs does not store content-type, so we need to use an extension to communicate mime-type

@@ -2,6 +2,7 @@ import copy
 import re
 from datetime import datetime, timedelta
 from typing import Any, Dict
+
 import pandas as pd
 
 from . import config as polytope_config
@@ -150,8 +151,8 @@ def coerce_step(value: Any) -> str:
             return pd.Timedelta(hours=hours)
 
         # hours and/or minutes like '1h15m'
-        h_match = re.search(r'(\d+)\s*h', value)
-        m_match = re.search(r'(\d+)\s*m', value)
+        h_match = re.search(r"(\d+)\s*h", value)
+        m_match = re.search(r"(\d+)\s*m", value)
 
         if not h_match and not m_match:
             raise ValueError("Invalid type, expected subhourly step (in hours or minutes), integer step or step range.")

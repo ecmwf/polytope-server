@@ -22,11 +22,9 @@ import uuid
 
 
 class User:
-
     __slots__ = ["id", "username", "realm", "roles", "attributes"]
 
     def __init__(self, username=None, realm=None, from_dict=None):
-
         self.username = username
         self.realm = realm
         self.roles = []
