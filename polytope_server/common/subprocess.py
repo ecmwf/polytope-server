@@ -68,8 +68,10 @@ class Subprocess:
 
     def finalize(self, request, err_filter):
         """Close subprocess and decode output"""
-
+        logging.info("Finalizing subprocess")
         returncode = self.subprocess.wait()
+        logging.info("Subprocess finished with return code: {}".format(returncode))
+        logging.info("Subprocess stdout:")
         for line in self.subprocess.stdout:
             line = line.decode().strip()
             if err_filter and err_filter in line:
@@ -77,6 +79,7 @@ class Subprocess:
                 logging.error(line)
             else:
                 logging.info(line)
+        logging.info("Subprocess stderr:")
         for line in self.subprocess.stderr:
             line = line.decode().strip()
             if err_filter and err_filter in line:
