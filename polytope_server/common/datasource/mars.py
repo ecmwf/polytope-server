@@ -105,14 +105,16 @@ class MARSDataSource(datasource.DataSource):
             env=self.make_env(request),
         )
 
+        logging.info("MARS subprocess started with PID {}".format(self.subprocess.subprocess.pid))
         # Poll until the FIFO has been opened by MARS, watch in case the spawned process dies before opening the FIFO
         try:
             while self.subprocess.running():
-                self.subprocess.read_output(request, self.mars_error_filter)
                 # logging.debug("Checking if MARS process has opened FIFO.")  # this floods the logs
                 if self.fifo.ready():
                     logging.info("FIFO is ready for reading.")
                     break
+
+                self.subprocess.read_output(request, self.mars_error_filter)
             else:
                 logging.info("Detected MARS process has exited before opening FIFO.")
                 self.destroy(request)
@@ -139,8 +141,6 @@ class MARSDataSource(datasource.DataSource):
         except CalledProcessError as e:
             logging.exception("MARS subprocess failed: {}".format(e))
             raise Exception("MARS retrieval failed unexpectedly with error code {}".format(e.returncode))
-
-        return
 
     def destroy(self, request):
         try:
