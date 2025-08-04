@@ -32,7 +32,6 @@ from polytope_server.common.request import Request
 @pytest.mark.skipif(subprocess.call(["which", "mars"]) != 0, reason="MARS not in path")
 class TestDataSourceMars:
     def setup_method(self, method):
-
         polytope_config.global_config["datasources"]["mars"] = {
             "type": "mars",
             "command": "mars",
@@ -63,7 +62,6 @@ class TestDataSourceMars:
         assert not os.path.isfile(self.ds.fifo.path)
 
     def test_datasource_mars_raises(self):
-
         self.request.user_request = b"213124141"
 
         with pytest.raises(Exception):

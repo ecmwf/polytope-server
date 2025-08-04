@@ -127,7 +127,6 @@ class Worker:
             self.metric_store.update_metric(self.metric)
 
     def run(self):
-
         self.thread_pool = ThreadPoolExecutor(1)
 
         try:

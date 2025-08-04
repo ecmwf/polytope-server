@@ -30,7 +30,6 @@ from polytope_server.common.user import User
 @pytest.mark.basic
 class Test:
     def setup_method(self, method):
-
         self.config = copy.deepcopy(pytest.polytope_config)
 
         self.config["request_store"]["mongodb"]["collection"] = "test_requests"

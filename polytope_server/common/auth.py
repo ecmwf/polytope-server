@@ -40,7 +40,6 @@ class AuthHelper:
         self.authorizers = []
 
         for realm in config.get("authentication", {}):
-
             logging.debug("Loading authenticators and authorizers for realm {}".format(realm))
 
             for name, authentication_config in config["authentication"][realm].get("authenticators", {}).items():

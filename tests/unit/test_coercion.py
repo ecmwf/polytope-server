@@ -13,7 +13,6 @@ from polytope_server.common.coercion import (
 
 
 def test_coerce():
-
     # mars-like
     request_mars = {
         "class": "od",
@@ -75,7 +74,6 @@ def test_coerce():
 
 
 def test_date_coercion():
-
     from datetime import datetime, timedelta
 
     today = datetime.today()
@@ -116,7 +114,6 @@ def test_date_coercion():
 
 
 def test_step_coercion():
-
     # Should accept integer or string, converted to string
     ok = [
         (2, "2"),
@@ -138,7 +135,6 @@ def test_step_coercion():
 
 
 def test_number_coercion():
-
     # Should accept integer or string, converted to string
     ok = [(2, "2"), ("1", "1"), (10, "10")]
 
@@ -154,7 +150,6 @@ def test_number_coercion():
 
 
 def test_param_coercion():
-
     # OK, but should be converted
     ok = [
         (100, "100"),
@@ -174,7 +169,6 @@ def test_param_coercion():
 
 
 def test_time_coercion():
-
     # OK, but should be converted
     ok = [
         ("1200", "1200"),
