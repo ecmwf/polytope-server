@@ -257,7 +257,7 @@ def change_config_grid_res(config, res):
 
 
 def unmerge_date_time_options(request, config):
-    if request.get("dataset", None) == "climate-dt" and (
+    if (request.get("dataset", None) == "climate-dt" or request.get("class",None)=="ng") and (
         request["feature"]["type"] == "timeseries" or request["feature"]["type"] == "polygon"
     ):
         for mappings in config["options"]["axis_config"]:
