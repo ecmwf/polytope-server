@@ -32,10 +32,12 @@ class Test:
         pass
 
     def test_logging_name(self):
+
         logger = logging.getLogger()
         assert logger.name == "polytope_server.tests.unit"
 
     def test_logging_format(self):
+
         import polytope_server.common.logging as mylogging
 
         formatter = mylogging.LogFormatter(mode="json")

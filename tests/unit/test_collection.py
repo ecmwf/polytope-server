@@ -24,6 +24,7 @@ import polytope_server.common.config as polytope_config
 
 class Test:
     def setup_method(self, method):
+
         self.config = {
             "datasources": {"a_datasource": {"type": "echo"}},
             "authentication": {"an_authentication": {"type": "none"}},

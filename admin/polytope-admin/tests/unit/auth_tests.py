@@ -28,6 +28,7 @@ from .conftest import ValueStorage
 
 
 class TestAuth:
+
     # def __init__(self):
     #    self.address = None
     #    self.port = None
@@ -35,6 +36,7 @@ class TestAuth:
     #    self.admin_password = None
 
     def setup_method(self, method):
+
         # Cache environment variables and remove them so they are not used to authenticate
         os.environ["POLYTOPE_USER_KEY"] = ""
         os.environ["POLYTOPE_USER_EMAIL"] = ""
@@ -49,6 +51,7 @@ class TestAuth:
             self.c.ping()
 
     def teardown_method(self, method):
+
         # Log in and delete old test data
         self.c.set_config("username", ValueStorage.admin_username)
         self.c.set_config("password", ValueStorage.admin_password)

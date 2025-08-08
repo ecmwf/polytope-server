@@ -30,6 +30,7 @@ class Test:
         pass
 
     def test_fifo(self, tmp_path):
+
         fifo = FIFO("test-fifo", str(tmp_path))
 
         assert not fifo.ready()
@@ -73,6 +74,7 @@ class Test:
             result[0] += x
 
     def test_fifo_buffered(self, tmp_path):
+
         # write 1 MiB of data, we need two threads
 
         fifo = FIFO("test-fifo", str(tmp_path))

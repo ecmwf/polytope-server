@@ -25,6 +25,7 @@ import polytope_server.common.config as polytope_config
 
 class Test:
     def setup_method(self, method):
+
         parser = polytope_config.ConfigParser()
         self.config = parser.read(pytest.basic_config)
         self.unused = parser.unused_cli_args()
@@ -55,6 +56,7 @@ class Test:
             assert self.config.authentication is None
 
     def test_config_get_non_existant_key_fails(self):
+
         with pytest.raises(KeyError):
             assert self.config["_i_do_not_exist_"]
 

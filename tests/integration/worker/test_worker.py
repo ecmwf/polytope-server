@@ -27,12 +27,14 @@ from polytope_server.common.request import Request
 
 class TestWorker:
     def setup_method(self, method):
+
         self.request = Request()
         self.request.collection = "debug"
         self.request.user_request = "hello_world"  # all default
         self.worker = worker.Worker(polytope_config.global_config)
 
     def test_worker(self):
+
         self.worker.process_request(self.request)
 
         data = self.worker.staging.read(self.request.id)
@@ -40,6 +42,7 @@ class TestWorker:
         assert len(data) == 11
 
     def test_worker_failed(self):
+
         self.request.user_request = {"abcdef": 789}
 
         try:

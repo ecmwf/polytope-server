@@ -27,10 +27,12 @@ from polytope_server.common.config import ConfigParser
 
 
 def pytest_addoption(parser):
+
     parser.addoption("--config")
 
 
 def pytest_configure(config):
+
     # reading in configuration
     pytest.polytope_config = ConfigParser().read()
 
