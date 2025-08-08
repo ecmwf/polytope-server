@@ -43,7 +43,6 @@ def user_request():
 
 class TestDataSourceMatching:
     def setup_method(self):
-
         self.mars_config = {
             "type": "mars",
             "command": "mars",

@@ -30,7 +30,6 @@ from polytope_server.common.request import Request, Verb
 
 class TestDataSourcePolytope:
     def setup_method(self, method):
-
         # Make a request to a local polytope datasource
         # ... which makes a request to a remote polytope (actually the currently deployed polytope, for testing)
         # The request is made with a service account, telling the remote polytope that it has already
@@ -60,7 +59,6 @@ class TestDataSourcePolytope:
         self.ds_raises = create_datasource(self.datasource_config_raises)
 
     def test_datasource_polytope_retrieve(self):
-
         dummy_data = "this message will be echo'd"
 
         self.request = Request()
@@ -78,7 +76,6 @@ class TestDataSourcePolytope:
         assert data.decode() == dummy_data
 
     def test_datasource_polytope_archive(self):
-
         dummy_data = "this message will be echo'd"
         self.request = Request()
         self.request.user_request = dummy_data
@@ -88,7 +85,6 @@ class TestDataSourcePolytope:
         assert success
 
     def test_datasource_polytope_retrieve_error(self):
-
         dummy_data = "this message will be echo'd"
 
         self.request = Request()
@@ -100,7 +96,6 @@ class TestDataSourcePolytope:
             self.ds_raises.dispatch(self.request, None)
 
     def test_datasource_polytope_archive_error(self):
-
         dummy_data = "this message will be echo'd"
         self.request = Request()
         self.request.user_request = dummy_data

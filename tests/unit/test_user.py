@@ -49,14 +49,12 @@ class Test:
         assert user1 == user2
 
     def test_user_must_have_username_realm(self):
-
         with pytest.raises(AttributeError):
             User("bill")
         with pytest.raises(AttributeError):
             User(realm="earth")
 
     def test_user_immutable(self):
-
         # Username and realm are immutable
         user = User("jane", "realm_a")
         with pytest.raises(AttributeError):

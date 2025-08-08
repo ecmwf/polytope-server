@@ -34,7 +34,6 @@ from polytope_server.common.identity import identity
 @pytest.mark.authentication_any_type_mongodb
 class TestMongoAuthentication:
     def setup_method(self, method):
-
         config = copy.deepcopy(pytest.polytope_config_auth)
         config["authentication"].append(
             {
@@ -166,7 +165,6 @@ class TestMongoAuthentication:
             self.auth.is_authorized(user, "testrealm-admin")
 
     def test_authhelper_has_admin_access(self):
-
         # The mongodb user has role 'polytope-admin', which matches the 'admin' section of the config
         assert self.auth.has_admin_access(self.mongo_basic_header)
 
@@ -176,7 +174,6 @@ class TestMongoAuthentication:
             assert self.auth.has_admin_access(header)
 
     def test_authhelper_has_collection_access(self):
-
         collections = collection.create_collections(self.config.get("collections"))
 
         # The mongodb user has role 'polytope-admin', which matches the collection requirements
@@ -188,7 +185,6 @@ class TestMongoAuthentication:
             assert self.auth.can_access_collection(header, collections.get("debug"))
 
     def test_authhelper_has_roles(self):
-
         # The mongodb user has role 'polytope-admin'
         assert self.auth.has_roles(self.mongo_basic_header, "polytope-admin")
         assert self.auth.has_roles(self.mongo_basic_header, ["polytope-admin"])
