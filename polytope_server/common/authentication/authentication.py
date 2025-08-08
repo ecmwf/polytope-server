@@ -83,7 +83,6 @@ type_to_class_map = {
 
 
 def create_authentication(name, realm, config):
-
     # Find the class matching config.type
     type = config.get("type")
     assert type is not None

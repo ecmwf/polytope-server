@@ -83,7 +83,6 @@ class MARSDataSource(datasource.DataSource):
         raise NotImplementedError("Archiving not implemented for MARS data source")
 
     def retrieve(self, request):
-
         # Open a FIFO for MARS output
         self.fifo = FIFO("MARS-FIFO-" + request.id)
 
@@ -127,7 +126,6 @@ class MARSDataSource(datasource.DataSource):
         return True
 
     def result(self, request):
-
         # The FIFO will get EOF if MARS exits unexpectedly, so we will break out of this loop automatically
         for x in self.fifo.data():
             # logging.debug("Yielding data from FIFO.")  # this floods the logs

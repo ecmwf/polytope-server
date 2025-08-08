@@ -51,7 +51,6 @@ class ECMWFAuthentication(authentication.Authentication):
 
     @cache(lifetime=120)
     def authenticate(self, credentials: str) -> User:
-
         # credentials should be of the form '<email>:<API_key>'
         try:
             auth_email, auth_key = credentials.split(":", 1)
@@ -79,7 +78,6 @@ class ECMWFAuthentication(authentication.Authentication):
 
 
 def retrieve_ecmwfapi_user(key, url, status_url, proxy=""):
-
     url = url.rstrip("/")
     proxies = {"http": proxy, "https": proxy}
     response = requests.get(url + "/who-am-i?token=" + key, proxies=proxies)

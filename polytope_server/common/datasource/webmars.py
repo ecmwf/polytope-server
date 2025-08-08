@@ -49,7 +49,6 @@ class WebMARSDataSource(datasource.DataSource):
         raise NotImplementedError("Archiving not implemented for webmars data source")
 
     def retrieve(self, request):
-
         email, key = self.get_user(request)
 
         self.server = ECMWFDataServer(email=email, url=self.url, key=key)
