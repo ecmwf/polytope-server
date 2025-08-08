@@ -27,6 +27,7 @@ from ..common.request import Status
 
 class Broker:
     def __init__(self, config):
+
         queue_config = config.get("queue")
         self.queue = queue.create_queue(queue_config)
 
@@ -40,6 +41,7 @@ class Broker:
         self.collections = collection.create_collections(config.get("collections"))
 
     def run(self):
+
         logging.info("Starting broker...")
         logging.info("Maximum Queue Size: {}".format(self.max_queue_size))
 
@@ -47,6 +49,7 @@ class Broker:
             self.check_requests()
 
     def check_requests(self):
+
         self.queue.keep_alive()
 
         # Don't queue if full. We don't need to query request_store.
@@ -69,6 +72,7 @@ class Broker:
 
         # Loop through requests queuing anything that meets QoS requirements
         for wr in waiting_requests:  # should break if queue full
+
             if self.check_limits(active_requests, wr):
                 assert wr.status == Status.WAITING
                 active_requests.add(wr)
@@ -79,6 +83,7 @@ class Broker:
                 return
 
     def check_limits(self, active_requests, request):
+
         logging.debug(f"Checking limits for request {request.id}")
 
         # Get collection limits and calculate active requests
@@ -121,6 +126,7 @@ class Broker:
         return True
 
     def enqueue(self, request):
+
         logging.info("Queuing request", extra={"request_id": request.id})
 
         try:

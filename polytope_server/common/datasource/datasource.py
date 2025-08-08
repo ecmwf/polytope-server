@@ -94,6 +94,7 @@ class DataSource(ABC):
             )
         match_rules = ds_config.get("match", {})
         for rule_key, allowed_values in match_rules.items():
+
             # An empty match rule means that the key must not be present
             if allowed_values is None or len(allowed_values) == 0:
                 if rule_key in coerced_ur:
@@ -205,6 +206,7 @@ type_to_class_map = {
 
 
 def create_datasource(config) -> DataSource:
+
     # Find the class matching config.type
     type = config.get("type")
     module = import_module("polytope_server.common.datasource." + type)

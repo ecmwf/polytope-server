@@ -84,6 +84,7 @@ type_to_class_map = {"mongodb": "MongoMetricStore", "dynamodb": "DynamoDBMetricS
 
 
 def create_metric_store(metric_store_config=None):
+
     if metric_store_config is None:
         metric_store_config = {"mongodb": {}}
 

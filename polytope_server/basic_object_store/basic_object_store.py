@@ -203,6 +203,7 @@ class HTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
 
 class BasicObjectStore:
     def __init__(self, config):
+
         staging_config = config.get("staging", {})
         object_store_config = staging_config.get("polytope", {})
         self.host = object_store_config.get("host", "0.0.0.0")
@@ -210,6 +211,7 @@ class BasicObjectStore:
         self.root_dir = object_store_config.get("root_dir", "/data")
 
     def run(self):
+
         if not os.path.isdir(self.root_dir):
             try:
                 os.mkdir(self.root_dir)

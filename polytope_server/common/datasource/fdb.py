@@ -56,6 +56,7 @@ class FDBDataSource(datasource.DataSource):
                     os.makedirs(root["path"], exist_ok=True)
 
     def check_schema(self):
+
         schema = self.fdb_config.get("schema", None)
 
         # If schema is empty, leave it empty
@@ -68,6 +69,7 @@ class FDBDataSource(datasource.DataSource):
 
         # pull schema from git
         if "git" in schema:
+
             git_config = schema["git"]
             git_path = Path(git_config["path"])
 
@@ -105,6 +107,7 @@ class FDBDataSource(datasource.DataSource):
         return self.type
 
     def archive(self, request):
+
         # could add a check that the request is a singular object (does not contain)
 
         # r = yaml.safe_load(request.user_request)
@@ -114,12 +117,14 @@ class FDBDataSource(datasource.DataSource):
         return True
 
     def retrieve(self, request):
+
         r = copy.deepcopy(request.coerced_request)
         logging.info(r)
         self.output = self.fdb.retrieve(r)
         return True
 
     def result(self, request):
+
         if not self.output:
             return
 

@@ -31,6 +31,7 @@ from .request import Request
 
 class Collection:
     def __init__(self, name, config):
+
         self.config = config
         self.name = name
         self.roles = config.get("roles")

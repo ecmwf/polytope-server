@@ -60,6 +60,7 @@ type_to_class_map = {"mongodb": "MongoKeyGenerator", "none": "NoneKeyGenerator"}
 
 
 def create_keygenerator(generator_config=None):
+
     if generator_config is None:
         generator_config = {"type": "none"}
 
