@@ -156,12 +156,6 @@ def change_grids(request, config):
     """
     res = None
 
-    if request.get("class", None) == "ng":
-        # all resolution=standard have h128
-        if request["resolution"] == "standard":
-            res = 128
-            return change_config_grid_res(config, res)
-
     # This only holds for climate dt data
     if request.get("dataset", None) == "climate-dt":
         # all resolution=standard have h128
