@@ -22,7 +22,7 @@ allow_lists = config.get("allow_lists", default_config["allow_lists"])
 number_allow_zero = config.get("number_allow_zero", default_config["number_allow_zero"])
 
 
-def coerce(request: Dict[str, Any] | str | int | None) -> Dict[str, Any]: 
+def coerce(request: Dict[str, Any] | str | int | None) -> Dict[str, Any]:
     if not isinstance(request, dict):
         return {"data": request}
     request = copy.deepcopy(request)
