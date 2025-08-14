@@ -135,7 +135,7 @@ def coerce_step(value: Any) -> str:
         if value < 0:
             raise CoercionError("Step must be greater than or equal to 0.")
         else:
-            return pd.Timedelta(hours=value)
+            return value
     elif isinstance(value, str):
         if re.match(r"^\d+-\d+$", value):
             # step range
@@ -149,7 +149,7 @@ def coerce_step(value: Any) -> str:
             hours = int(value)
             if hours < 0:
                 raise ValueError("Step must be greater than or equal to 0.")
-            return pd.Timedelta(hours=hours)
+            return hours
 
         # hours and/or minutes like '1h15m'
         h_match = re.search(r'(\d+)\s*h', value)
@@ -165,7 +165,7 @@ def coerce_step(value: Any) -> str:
             raise ValueError("Step must be greater than or equal to 0.")
 
         if hours == 0 and minutes == 0:
-            return pd.Timedelta(0)
+            return 0
 
         return pd.Timedelta(hours=hours, minutes=minutes)
     else:
