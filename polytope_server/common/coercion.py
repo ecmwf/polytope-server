@@ -2,7 +2,6 @@ import copy
 import re
 from datetime import datetime, timedelta
 from typing import Any, Dict
-import pandas as pd
 
 from . import config as polytope_config
 
@@ -153,6 +152,8 @@ def coerce_step(value: Any) -> str:
                 raise CoercionError("Invalid type, expected integer step, step range or sub-hourly step.")
             else:
                 return value
+    else:
+        raise CoercionError("Invalid type, expected integer or string.")
 
 
 def coerce_number(value: Any) -> str:
