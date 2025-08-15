@@ -23,8 +23,7 @@ from typing import Dict
 import yaml
 
 from . import coercion
-from . import config as polytope_config
-from .datasource import DataSource, create_datasource
+from .datasource import create_datasource, DataSource, get_datasource_config
 from .exceptions import InvalidConfig
 from .request import Request
 
@@ -42,19 +41,7 @@ class Collection:
             raise InvalidConfig("No datasources configured for collection {}".format(self.name))
 
         for ds_config in self.config.get("datasources"):
-            # Allows passing in just the name as config
-            if isinstance(ds_config, str):
-                ds_config = {"name": ds_config}
-
-            # 'name' means we are linking to a datasource defined in global_config.datasources
-            if "name" in ds_config:
-                name = ds_config["name"]
-                datasource_configs = polytope_config.global_config.get("datasources")
-                if name not in datasource_configs:
-                    raise KeyError("Could not find config for datasource {}".format(name))
-                # Merge with supplied config
-                ds_config = polytope_config.merge(datasource_configs.get(name, None), ds_config)
-            self.ds_configs.append(ds_config)
+            self.ds_configs.append(get_datasource_config(ds_config))
 
     def dispatch(self, request: Request, input_data: bytes | None) -> DataSource:
         """
