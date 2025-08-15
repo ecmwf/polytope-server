@@ -182,7 +182,7 @@ class MARSDataSource(datasource.DataSource):
                 "MARS_USER_EMAIL": mars_user,
                 "MARS_USER_TOKEN": mars_token,
                 "ECMWF_MARS_COMMAND": self.mars_binary,
-                "FDB5_CONFIG": yaml.dump(self.fdb_config[0]),
+                "FDB5_CONFIG": yaml.dump(self.fdb_config),
             }
 
             if self.mars_config is not None:
