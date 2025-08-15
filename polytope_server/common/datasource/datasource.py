@@ -232,7 +232,6 @@ def _load_ds_parents_recursively(name: str, ds_config: dict, global_ds_configs: 
     config = {}
     if parents := ds_config.get("parents", []):
         for p in parents:
-            logging.debug("Attempting to merge {} into {}".format(p, name))
             if p in children:
                 raise KeyError(f"Datasource {ds_config['name']} has circular parent reference to {p}")
             parent_config = global_ds_configs.get(p, {})
@@ -241,6 +240,7 @@ def _load_ds_parents_recursively(name: str, ds_config: dict, global_ds_configs: 
             config = polytope_config.merge(
                 config, _load_ds_parents_recursively(p, parent_config, global_ds_configs, children + [p])
             )
+            logging.debug("Merged {} into {}".format(p, name))
 
     return polytope_config.merge(config, ds_config)
 

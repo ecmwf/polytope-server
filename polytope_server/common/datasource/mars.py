@@ -53,7 +53,7 @@ class MARSDataSource(datasource.DataSource):
         self.mars_error_filter = config.get("mars_error_filter", "mars - EROR")
 
         # self.fdb_config = None
-        self.fdb_config = config.get("fdb_config", [{}])
+        self.fdb_config = config.get("fdb_config", {})
         if self.protocol == "remote":
             # need to set FDB5 config in a <path>/etc/fdb/config.yaml
             self.fdb_home = self.tmp_dir + "/fdb-home"
