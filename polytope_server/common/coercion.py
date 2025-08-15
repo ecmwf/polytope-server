@@ -143,11 +143,15 @@ def coerce_step(value: Any) -> str:
                 return value
         except ValueError:
             # value cannot be converted to a digit, but we would like to match step ranges too
-            pattern = r"^\d+-\d+$"
-            if re.match(pattern, value):
-                return value
+            step_pattern = r"^\d+-\d+$"
+            step_match = re.match(step_pattern, value)
+            h_match = re.search(r"(\d+)\s*h", value)
+            m_match = re.search(r"(\d+)\s*m", value)
+
+            if not h_match and not m_match and not step_match:
+                raise CoercionError("Invalid type, expected integer step, step range or sub-hourly step.")
             else:
-                raise CoercionError("Invalid type, expected integer step or step range.")
+                return value
     else:
         raise CoercionError("Invalid type, expected integer or string.")
 
