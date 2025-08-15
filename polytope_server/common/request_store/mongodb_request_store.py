@@ -100,7 +100,7 @@ class MongoRequestStore(request_store.RequestStore):
             if request is None:
                 raise NotFound("Request does not exist in request store")
             elif request.user != user:
-                raise UnauthorizedRequest("Request belongs to a different user", None)
+                raise UnauthorizedRequest("Request belongs to a different user")
             elif request.status not in [Status.WAITING, Status.QUEUED]:
                 raise ForbiddenRequest("Request has started processing and can no longer be revoked.", None)
             else:

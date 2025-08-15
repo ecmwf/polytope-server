@@ -18,7 +18,10 @@
 # does it submit to any jurisdiction.
 #
 
+import logging
 import uuid
+
+from .exceptions import ForbiddenRequest
 
 
 class User:
@@ -71,3 +74,27 @@ class User:
 
     def __str__(self):
         return f"User({self.realm}:{self.username})"
+
+    def is_authorized(self, roles: list | set | dict | str) -> bool:
+        """Checks if the user has any of the provided roles"""
+        logging.debug(f"User roles: {self.roles}")
+        logging.debug(f"Allowed roles {roles}")
+        # roles can be a dict of realm:[roles] mapping; find the relevant realm.
+        if isinstance(roles, dict):
+            if self.realm not in roles:
+                logging.info(
+                    "User {} does not have access to realm {}, roles: {}".format(self.username, self.realm, roles)
+                )
+                raise ForbiddenRequest("Not authorized to access this resource.")
+            roles = roles[self.realm]
+
+        # roles can be a single value; convert to a list
+        if not isinstance(roles, (tuple, list, set)):
+            roles = [roles]
+
+        for required_role in roles:
+            if required_role in self.roles:
+                logging.info(f"User {self.username} is authorized with role {required_role}")
+                return True
+
+        raise ForbiddenRequest("Not authorized to access this resource.")

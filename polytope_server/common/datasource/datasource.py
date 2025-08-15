@@ -23,7 +23,6 @@ from abc import ABC
 from importlib import import_module
 from typing import Any, Dict, Iterator
 
-from ..auth import AuthHelper
 from ..coercion import coerce_value
 from ..exceptions import ForbiddenRequest
 from ..request import Request, Verb
@@ -65,7 +64,7 @@ class DataSource(ABC):
         # check datasource specific roles
         roles = ds_config.get("roles", [])
         try:
-            if roles and not AuthHelper.is_authorized(user, roles):
+            if roles and not user.is_authorized(roles):
                 return f"Skipping datasource {DataSource.repr(ds_config)}: user not authorized."
         except ForbiddenRequest as e:
             message = f"Skipping datasource {DataSource.repr(ds_config)}: {repr(e)}"

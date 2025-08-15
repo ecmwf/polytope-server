@@ -46,7 +46,7 @@ class BadRequest(HTTPException):
 class UnauthorizedRequest(HTTPException):
     code = 401
 
-    def __init__(self, message, details, www_authenticate=""):
+    def __init__(self, message, www_authenticate=""):
         super().__init__(message)
         self.www_authenticate = www_authenticate
         self.extra_headers = {"WWW-Authenticate": www_authenticate}
