@@ -35,7 +35,7 @@ from . import datasource
 class FDBDataSource(datasource.DataSource):
     def __init__(self, config):
         self.config = config
-        self.fdb_config = self.config["config"]
+        self.fdb_config = self.config["fdb_config"]
         self.type = config["type"]
         assert self.type == "fdb"
         self.output = None
