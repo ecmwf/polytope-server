@@ -169,25 +169,30 @@ def change_grids(request, config):
             res = 128
             return change_config_grid_res(config, res)
 
-        # for activity CMIP6 and experiment hist, all models except ifs-nemo have h512 and ifs-nemo has h1024
-        if request["activity"] == "cmip6" and request["experiment"] == "hist":
-            # if request["model"] == "ifs-nemo":
-            #     res = 1024
-            # else:
-            #     res = 512
-            res = 1024
+        if request["generation"] == "1":
+            # for activity CMIP6 and experiment hist, all models except ifs-nemo have h512 and ifs-nemo has h1024
+            if request["activity"] == "cmip6" and request["experiment"] == "hist":
+                # if request["model"] == "ifs-nemo":
+                #     res = 1024
+                # else:
+                #     res = 512
+                res = 1024
 
-        if request["activity"] == "story-nudging":
-            res = 512
+            if request["activity"] == "story-nudging":
+                res = 512
 
-        if request["activity"] in ["baseline", "projections", "scenariomip"]:
-            res = 1024
+            if request["activity"] in ["baseline", "projections", "scenariomip"]:
+                res = 1024
 
-        if request["realization"] == "2" and request["model"] == "ifs-fesom":
-            res = 512
+            if request["realization"] == "2" and request["model"] == "ifs-fesom":
+                res = 512
 
-        if request["activity"] == "highresmip" and request["experiment"] == "cont" and request["model"] == "ifs-fesom":
-            res = 512
+            if (
+                request["activity"] == "highresmip"
+                and request["experiment"] == "cont"
+                and request["model"] == "ifs-fesom"
+            ):
+                res = 512
 
     elif request.get("dataset", None) == "extremes-dt":
         if request["stream"] == "wave":
