@@ -53,7 +53,7 @@ class TestDataSourceMatching:
         }
 
     def _mock_auth(self, monkeypatch):
-        monkeypatch.setattr("polytope_server.common.datasource.AuthHelper.is_authorized", lambda *args, **kwargs: True)
+        monkeypatch.setattr("polytope_server.common.user.User.is_authorized", lambda *args, **kwargs: True)
 
     def test_mars_created_correctly(self, monkeypatch, user_request):
         self._mock_auth(monkeypatch)
