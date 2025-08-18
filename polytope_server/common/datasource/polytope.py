@@ -181,7 +181,11 @@ def change_grids(request, config):
             if request["realization"] == "2" and request["model"] == "ifs-fesom":
                 res = 512
 
-            if request["activity"] == "highresmip" and request["experiment"] == "cont" and request["model"] == "ifs-fesom":
+            if (
+                request["activity"] == "highresmip"
+                and request["experiment"] == "cont"
+                and request["model"] == "ifs-fesom"
+            ):
                 res = 512
 
     elif request.get("dataset", None) == "extremes-dt":
