@@ -1,6 +1,7 @@
 import pytest
-from polytope_server.common.datasource.datasource import get_datasource_config
+
 from polytope_server.common.config import polytope_config
+from polytope_server.common.datasource.datasource import get_datasource_config
 
 
 def test_merge_parents(monkeypatch):

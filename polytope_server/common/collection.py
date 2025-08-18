@@ -23,7 +23,7 @@ from typing import Dict
 import yaml
 
 from . import coercion
-from .datasource import create_datasource, DataSource, get_datasource_config
+from .datasource import DataSource, create_datasource, get_datasource_config
 from .exceptions import InvalidConfig
 from .request import Request
 
