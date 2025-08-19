@@ -223,7 +223,7 @@ def get_datasource_config(config: str | dict) -> dict:
     config = polytope_config.merge(datasource_configs.get(name, None), config)
 
     config = _load_ds_parents_recursively(name, config, datasource_configs)
-    logging.info("Loaded datasource config: {}".format(config))
+    logging.debug("Loaded datasource config: {}".format(config))
     return config
 
 
