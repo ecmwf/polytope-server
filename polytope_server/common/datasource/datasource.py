@@ -24,6 +24,7 @@ from importlib import import_module
 from typing import Any, Dict, Iterator
 
 from ..coercion import coerce_value
+from ..config import polytope_config
 from ..exceptions import ForbiddenRequest
 from ..request import Request, Verb
 from ..user import User
@@ -204,8 +205,46 @@ type_to_class_map = {
 }
 
 
-def create_datasource(config) -> DataSource:
+def get_datasource_config(config: str | dict) -> dict:
 
+    # Allows passing in just the name as config
+    if isinstance(config, str):
+        config = {"name": config}
+
+    datasource_configs = polytope_config.global_config.get("datasources", {})
+
+    # 'name' means we are linking to a datasource defined in global_config.datasources
+    name = config.get("name", None)
+    if not name:
+        raise KeyError("Datasource config must contain a 'name' key")
+    if name not in datasource_configs:
+        raise KeyError("Could not find config for datasource {}".format(name))
+    # Merge with supplied config
+    config = polytope_config.merge(datasource_configs.get(name, None), config)
+
+    config = _load_ds_parents_recursively(name, config, datasource_configs)
+    logging.debug("Loaded datasource config: {}".format(config))
+    return config
+
+
+def _load_ds_parents_recursively(name: str, ds_config: dict, global_ds_configs: dict, children: list = []) -> dict:
+    config = {}
+    if parents := ds_config.get("parents", []):
+        for p in parents:
+            if p in children:
+                raise KeyError(f"Datasource {ds_config['name']} has circular parent reference to {p}")
+            parent_config = global_ds_configs.get(p, {})
+            if not parent_config:
+                raise KeyError(f"Parent datasource '{p}' not found in global config.")
+            config = polytope_config.merge(
+                config, _load_ds_parents_recursively(p, parent_config, global_ds_configs, children + [p])
+            )
+            logging.debug("Merged {} into {}".format(p, name))
+
+    return polytope_config.merge(config, ds_config)
+
+
+def create_datasource(config: dict) -> DataSource:
     # Find the class matching config.type
     type = config.get("type")
     module = import_module("polytope_server.common.datasource." + type)
