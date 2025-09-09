@@ -229,7 +229,7 @@ class DynamoDBRequestStore(request_store.RequestStore):
                 if request is None:
                     raise NotFound("Request does not exist in request store")
                 elif request.user != user:
-                    raise UnauthorizedRequest("Only the user who created the request can revoke it", None)
+                    raise UnauthorizedRequest("Only the user who created the request can revoke it")
                 elif request.status not in [Status.WAITING, Status.QUEUED]:
                     raise ForbiddenRequest("Request can only be revoked before it starts processing.")
                 else:
