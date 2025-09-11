@@ -90,7 +90,7 @@ RUN set -eux \
     && mkdir -p /opt/ecmwf/mars-client-cpp \
     && mkdir -p /opt/ecmwf/mars-client-cloud \
     && mkdir -p /opt/fdb \
-    && mkdir -p /opt/fdb-gribjump \
+    && mkdir -p /opt/ecmwf/gribjump-server \
     && touch /usr/local/bin/mars
 
 #######################################################
