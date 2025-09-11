@@ -134,14 +134,15 @@ class DataTransfer:
 
     def process_download(self, request):
         try:
-
-            # TODO: temporary fix for Content-Disposition earthkit issues
-            url_path = PurePosixPath(urlparse(request.url).path)
-            extension = url_path.suffix
-
             object_id = request.id
-            if extension is not None and len(extension) > 0:
-                object_id = request.id + extension
+            
+            if request.url is not None and request.url != "":
+                # TODO: temporary fix for Content-Disposition earthkit issues
+                url_path = PurePosixPath(urlparse(request.url).path)
+                extension = url_path.suffix
+
+                if extension is not None and len(extension) > 0:
+                    object_id = request.id + extension
 
             request.content_type, request.content_length = self.staging.stat(object_id)
         except Exception:
