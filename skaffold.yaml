@@ -26,7 +26,9 @@ build:
       - name: GIT_TAG
         gitCommit:
           ignoreChanges: true
-
+  platforms:
+    - linux/amd64
+    # - linux/arm64
   artifacts:
   
   # Polytope common   
@@ -53,10 +55,11 @@ build:
         # eckit_version: 1.28.0
         # pyfdb_version: 0.1.0
         # fdb_version: 5.13.2
-        mars_base_c: mars-base-c
-        mars_base_cpp: mars-base-cpp
-        fdb_base: blank-base #fdb-base
-        gribjump_base: gribjump-base
+        mars_base_c: '{{ default "mars-base-c" .mars_base_c }}'
+
+        mars_base_cpp: '{{ default "mars-base-cpp" .mars_base_cpp }}'
+        fdb_base: '{{ default "blank-base" .fdb_base }}'
+        gribjump_base: '{{ default "gribjump-base" .gribjump_base }}'
       # cliFlags: 
       #   - --no-cache # for debug purposes
 
