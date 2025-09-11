@@ -32,7 +32,7 @@ class PolytopeStaging(staging.Staging):
         self.host = config.get("host", "0.0.0.0")
         self.port = config.get("port", "8000")
         endpoint = "{}:{}".format(self.host, self.port)
-        self.root_dir = config.get("root_dir", "/data")
+        self.root_dir = config.get("root_dir", "/home/polytope/data")
 
         self.url = config.get("url", None)
         self.internal_url = "http://%s:%s" % (self.host, self.port)
