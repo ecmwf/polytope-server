@@ -33,7 +33,7 @@ class Collection:
 
         self.config = config
         self.name = name
-        self.roles = config.get("roles")
+        self.roles = config.get("roles", {})
         self.limits = config.get("limits", {})
         self.ds_configs = []
 
