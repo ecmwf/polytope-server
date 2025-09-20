@@ -15,7 +15,6 @@ build:
   local:
     useBuildkit: True
     concurrency: 1
-
   tagPolicy:
     customTemplate:
       template: "{{.PREFIX}}{{.GIT_TAG}}"
@@ -55,11 +54,10 @@ build:
         # eckit_version: 1.28.0
         # pyfdb_version: 0.1.0
         # fdb_version: 5.13.2
-        mars_base_c: '{{ default "mars-base-c" .mars_base_c }}'
-
-        mars_base_cpp: '{{ default "mars-base-cpp" .mars_base_cpp }}'
-        fdb_base: '{{ default "blank-base" .fdb_base }}'
-        gribjump_base: '{{ default "gribjump-base" .gribjump_base }}'
+        mars_base_c: '{{ if eq .mars_base_c "1" }}mars-base-c{{ else }}blank-base{{ end }}'
+        mars_base_cpp: '{{ if eq .mars_base_cpp "1" }}mars-base-cpp{{ else }}blank-base{{ end }}'
+        fdb_base: '{{ if eq .fdb_base "1" }}fdb-base{{ else }}blank-base{{ end }}'
+        gribjump_base: '{{ if eq .gribjump_base "1" }}gribjump-base{{ else }}blank-base{{ end }}'
       # cliFlags: 
       #   - --no-cache # for debug purposes
 
