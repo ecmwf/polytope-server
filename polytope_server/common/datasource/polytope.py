@@ -26,6 +26,7 @@ import os
 import yaml
 from polytope_feature.utility.exceptions import PolytopeError
 from polytope_mars.api import PolytopeMars
+from polytope_mars.utils.areas import request_cost
 
 from ..request import Request
 from ..schedule import SCHEDULE_READER
@@ -89,6 +90,9 @@ class PolytopeDataSource(datasource.DataSource):
 
     def retrieve(self, request):
         r = copy.deepcopy(request.coerced_request)
+
+        self.request_cost = request_cost(r)
+        logging.info(f"Request cost: {self.request_cost}")
 
         # Check data released
         if SCHEDULE_READER is not None and self.obey_schedule:
