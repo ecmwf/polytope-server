@@ -94,6 +94,7 @@ class DataSource(ABC):
             )
         match_rules = ds_config.get("match", {})
         for rule_key, allowed_values in match_rules.items():
+            allowed_values = [allowed_values] if not isinstance(allowed_values, (list, tuple)) else allowed_values
 
             # An empty match rule means that the key must not be present
             if allowed_values is None or len(allowed_values) == 0:
@@ -123,7 +124,6 @@ class DataSource(ABC):
                 continue
 
             # check that all values in request are allowed
-            allowed_values = [allowed_values] if not isinstance(allowed_values, (list, tuple)) else allowed_values
             request_values = (
                 [coerced_ur[rule_key]] if not isinstance(coerced_ur[rule_key], (list, tuple)) else coerced_ur[rule_key]
             )
