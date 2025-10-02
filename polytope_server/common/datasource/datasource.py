@@ -127,7 +127,7 @@ class DataSource(ABC):
             request_values = (
                 [coerced_ur[rule_key]] if not isinstance(coerced_ur[rule_key], (list, tuple)) else coerced_ur[rule_key]
             )
-            if not set(request_values).issubset(set(allowed_values)):
+            if not set(request_values).issubset(set(coerce_value(rule_key, allowed_values))):
                 return (
                     f"Skipping datasource {DataSource.repr(ds_config)}: "
                     f"got {rule_key} : {coerced_ur[rule_key]}, but expected one of {allowed_values}"
