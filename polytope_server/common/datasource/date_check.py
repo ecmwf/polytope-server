@@ -52,7 +52,27 @@ def parse_relativedelta(time_str):
     return relativedelta(days=time_dict["d"], hours=time_dict["h"], minutes=time_dict["m"])
 
 
-def date_check(date, allowed_values: str):
+def date_check(date, allowed_values: list):
+    """
+    Process special match rules for DATE constraints
+
+    :param date: Date to check, can be a string or list of strings
+    :param allowed_values: List of allowed values for the date in the format >1d, <2d, >1m, <2h, r"(\\d+)([dhm])".
+    """
+    if not isinstance(allowed_values, list):
+        raise DateError("Allowed values must be a list")
+
+    for allowed in allowed_values:
+        try:
+            if date_check_single_rule(date, allowed):
+                return True
+        except DateError:
+            continue
+
+    raise DateError(f"Date {date} does not match any of the allowed values: {allowed_values}")
+
+
+def date_check_single_rule(date, allowed_values: str):
     """
     Process special match rules for DATE constraints
 
