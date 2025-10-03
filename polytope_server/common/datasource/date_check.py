@@ -63,13 +63,10 @@ def date_check(date, allowed_values: list):
         raise DateError("Allowed values must be a list")
 
     for allowed in allowed_values:
-        try:
-            if date_check_single_rule(date, allowed):
-                return True
-        except DateError:
-            continue
+        if not date_check_single_rule(date, allowed):
+            return False
 
-    raise DateError(f"Date {date} does not match any of the allowed values: {allowed_values}")
+    return True
 
 
 def date_check_single_rule(date, allowed_values: str):
@@ -85,13 +82,14 @@ def date_check_single_rule(date, allowed_values: str):
     date = str(date)
 
     # Parse allowed values
-    comp, offset = allowed_values.split(" ", 1)
+    comp = allowed_values[0]
+    offset = allowed_values[1:].strip()
     if comp == "<":
         after = False
     elif comp == ">":
         after = True
     else:
-        raise DateError("Invalid date comparison")
+        raise DateError(f"Invalid date comparison {comp}, expected < or >")
     now = datetime.today()
     offset = now - parse_relativedelta(offset)
     offset_fmted = offset.strftime("%Y%m%d")

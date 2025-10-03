@@ -18,6 +18,7 @@
 # does it submit to any jurisdiction.
 #
 
+from copy import deepcopy
 from datetime import datetime, timedelta
 
 import pytest  # noqa: F401
@@ -45,9 +46,6 @@ class TestDataSourceMatching:
     def setup_method(self):
 
         self.mars_config = {
-            "type": "mars",
-            "command": "mars",
-            "tmp_dir": "/home/polytope/data",
             "name": "mars",
             "match": {"class": ["od"], "stream": ["oper", "enfo", "something"], "date": "> 30d"},
         }
@@ -122,6 +120,22 @@ class TestDataSourceMatching:
         req = user_request
         req["stream"] = ["oper", "enfo", "something_else"]
         assert "success" != DataSource.match(self.mars_config, req, None)
+
+    def test_mars_match_rule_formatting(self, monkeypatch, user_request):
+        self._mock_auth(monkeypatch)
+        config = deepcopy(self.mars_config)
+
+        # list of date rules works
+        config["match"]["date"] = [">30d", "< 40d"]
+        assert "success" == DataSource.match(config, user_request, None)
+
+        # single number rules works
+        config["match"]["step"] = 0
+        assert "success" == DataSource.match(config, user_request, None)
+        config["match"]["step"] = [0, 6]
+        assert "success" == DataSource.match(config, user_request, None)
+        config["match"]["step"] = [6]
+        assert "success" != DataSource.match(config, user_request, None)
 
 
 def set_request_date(user_request, days_offset):
