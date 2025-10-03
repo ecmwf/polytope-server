@@ -94,10 +94,10 @@ class LegacyAuthHelper:
             try:
                 auth_type, auth_credentials = h.split(" ", 1)
             except ValueError:
-                raise UnauthorizedRequest(
-                    "Could not read authorization header, expected 'Authorization: <type> <credentials>",
-                    www_authenticate=self.auth_info,
-                )
+                message = "Could not split authorization header {}".format(h)
+                logging.exception(message)
+                details.append(f"{message}")
+                continue
 
             for authenticator in self.authenticators:
                 if authenticator.authentication_type() == auth_type:
@@ -105,11 +105,12 @@ class LegacyAuthHelper:
                     try:
                         user = authenticator.authenticate(auth_credentials)
                     except ForbiddenRequest as e:
+                        logging.exception("Access forbidden: {}".format(e))
                         details.append(e.description)
 
         if matched_type == 0:
             raise UnauthorizedRequest(
-                'No authentication providers for authentication type "{}"'.format(auth_type),
+                "No authentication providers for authentication type {}".format(auth_type),
                 www_authenticate=self.auth_info,
             )
 
