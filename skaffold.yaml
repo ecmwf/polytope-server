@@ -79,3 +79,16 @@ deploy:
               replicas: 1
             frontend:
               replicas: 1
+
+profiles:
+  - name: lumi-dev
+    deploy:
+      helm:
+        releases:
+          - name: polytope-dev
+            chartPath: ../polytope-chart
+            valuesFiles:
+              - ../polytope-chart/values.yaml
+              - ../polytope-config/common.yaml
+              - ../polytope-config/location/lumi.yaml
+              - ../polytope-config/env/dev.yaml
