@@ -91,22 +91,33 @@ class LegacyAuthHelper:
 
         # Extract authorization header and check authenticators for a match (first match policy)
         for h in headers:
+            logging.debug("Processing authorization header: {}".format(h))
             try:
-                auth_type, auth_credentials = h.split(" ", 1)
+                auth_type, auth_credentials = h.strip().split(" ", 1)
             except ValueError:
                 message = "Could not split authorization header {}".format(h)
                 logging.exception(message)
                 details.append(f"{message}")
                 continue
 
+            logging.debug("Authorization type: {}, credentials: {}".format(auth_type, auth_credentials))
             for authenticator in self.authenticators:
+                logging.debug(
+                    "Checking authenticator: {} of type {}".format(
+                        authenticator.name(), authenticator.authentication_type()
+                    )
+                )
                 if authenticator.authentication_type() == auth_type:
+                    logging.debug("Authenticator type matches")
                     matched_type += 1
                     try:
                         user = authenticator.authenticate(auth_credentials)
                     except ForbiddenRequest as e:
                         logging.exception("Access forbidden: {}".format(e))
                         details.append(e.description)
+                    except Exception as e:
+                        logging.exception("Error during authentication: {}".format(e))
+                        raise e
 
         if matched_type == 0:
             raise UnauthorizedRequest(
