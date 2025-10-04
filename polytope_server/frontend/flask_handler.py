@@ -73,7 +73,7 @@ class FlaskHandler(frontend.FrontendHandler):
 
         @handler.errorhandler(Exception)
         def default_error_handler(error):
-            logging.exception(str(error))
+            logging.error("Unexpected error: %s %s" % error, str(error))
             return (
                 json.dumps({"message": str(error)}),
                 500,
@@ -82,7 +82,7 @@ class FlaskHandler(frontend.FrontendHandler):
 
         @handler.errorhandler(HTTPException)
         def handle_error(error):
-            logging.exception(str(error))
+            logging.error("HTTP error: %s %s" % (error, error.description))
             return (
                 json.dumps({"message": str(error.description)}),
                 error.code,
