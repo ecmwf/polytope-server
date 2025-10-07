@@ -44,9 +44,6 @@ class DummyDataSource(datasource.DataSource):
 
         return True
 
-    def repr(self):
-        return self.config.get("repr", "dummy")
-
     def result(self, request):
         chunk_size = 2 * 1024 * 1024
         data_generated = 0
@@ -61,6 +58,3 @@ class DummyDataSource(datasource.DataSource):
 
     def mime_type(self) -> str:
         return "application/x-grib"
-
-    def match(self, request):
-        return

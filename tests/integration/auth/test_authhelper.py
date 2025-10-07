@@ -156,14 +156,14 @@ class TestMongoAuthentication:
         # The mongodb user should have the roles it was created with
         # plus the extra role 'polytope-admin' defined by the plain authorization config
         user = self.auth.authenticate(self.mongo_basic_header)
-        assert self.auth.is_authorized(user, [self.mongo_roles[0]])
-        assert self.auth.is_authorized(user, self.mongo_roles[0])  # should accept non-list
-        assert self.auth.is_authorized(user, "polytope-admin")
+        assert user.is_authorized([self.mongo_roles[0]])
+        assert user.is_authorized(self.mongo_roles[0])  # should accept non-list
+        assert user.is_authorized("polytope-admin")
 
         # This should fail because the user does not belong to the realm 'testrealm'
         # that authorizer will not be checked
         with pytest.raises(ForbiddenRequest):
-            self.auth.is_authorized(user, "testrealm-admin")
+            user.is_authorized("testrealm-admin")
 
     def test_authhelper_has_admin_access(self):
 

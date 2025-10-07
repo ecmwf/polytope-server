@@ -7,6 +7,13 @@ from moto import mock_aws
 from polytope_server.common import request, user
 from polytope_server.common.request_store import dynamodb_request_store
 
+from .test_metric_store import _test_remove_old_metrics
+from .test_request_store import (
+    _test_remove_old_requests,
+    _test_revoke_request,
+    _test_update_request,
+)
+
 
 @pytest.fixture(scope="function")
 def aws_credentials():
@@ -65,6 +72,11 @@ def test_remove_request(mocked_aws):
     assert store.get_request(req.id) is None
 
 
+def test_revoke_request(mocked_aws):
+    store = dynamodb_request_store.DynamoDBRequestStore()
+    _test_revoke_request(store)
+
+
 @pytest.fixture(scope="function")
 def populated(mocked_aws):
     def func():
@@ -113,6 +125,8 @@ def test_update(mocked_aws):
     assert r3.id == r1.id
     assert r3.user.attributes["test"] == "updated"
 
+    _test_update_request(store)
+
 
 def test_metric_store(mocked_aws):
     store = dynamodb_request_store.DynamoDBRequestStore(metric_store_config={"dynamodb": {"table_name": "metrics"}})
@@ -120,3 +134,26 @@ def test_metric_store(mocked_aws):
     store.add_request(r1)
     [m1] = store.metric_store.get_metrics()
     assert m1.request_id == r1.id
+
+
+def test_remove_old_requests(mocked_aws):
+    store = dynamodb_request_store.DynamoDBRequestStore()
+    _test_remove_old_requests(store)
+
+
+def test_remove_old_metrics(mocked_aws):
+    store = dynamodb_request_store.DynamoDBRequestStore(
+        metric_store_config={"dynamodb": {"table_name": "metrics"}}
+    ).metric_store
+    _test_remove_old_metrics(store)
+
+
+def test_inexact(mocked_aws):
+    u1 = user.User("user1", "realm1")
+    r1 = request.Request(user=u1, user_request={"some_key": 0.3})
+    store = dynamodb_request_store.DynamoDBRequestStore()
+    store.add_request(r1)
+    r2 = store.get_request(r1.id)
+
+    assert r2 is not None
+    assert r1.user_request == r2.user_request

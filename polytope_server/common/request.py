@@ -55,6 +55,7 @@ class Request:
         "status",
         "user_message",
         "user_request",
+        "coerced_request",
         "content_length",
         "content_type",
     ]
@@ -62,8 +63,8 @@ class Request:
     def __init__(self, from_dict=None, **kwargs):
 
         self.id = str(uuid.uuid4())
-        self.timestamp = datetime.datetime.utcnow().timestamp()
-        self.last_modified = datetime.datetime.utcnow().timestamp()
+        self.timestamp = datetime.datetime.now(datetime.timezone.utc).timestamp()
+        self.last_modified = datetime.datetime.now(datetime.timezone.utc).timestamp()
         self.user = None
         self.verb = Verb.RETRIEVE
         self.url = ""
@@ -72,6 +73,7 @@ class Request:
         self.md5 = None
         self.user_message = ""
         self.user_request = ""
+        self.coerced_request = {}
         self.content_length = None
         self.content_type = "application/octet-stream"
 

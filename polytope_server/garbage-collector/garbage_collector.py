@@ -24,7 +24,6 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from ..common.metric_store import create_metric_store
-from ..common.request import Status
 from ..common.request_store import create_request_store
 from ..common.staging import create_staging
 
@@ -68,34 +67,14 @@ class GarbageCollector:
 
     def remove_old_requests(self):
         """Removes requests that are FAILED or PROCESSED after the configured time"""
-        now = datetime.now(timezone.utc)
-        cutoff = now - self.age
-
-        requests = self.request_store.get_requests(status=Status.FAILED) + self.request_store.get_requests(
-            status=Status.PROCESSED
-        )
-
-        for r in requests:
-            data_name = r.id + ".grib"  # TODO temporary fix
-            if datetime.fromtimestamp(r.last_modified, tz=timezone.utc) < cutoff:
-                logging.info("Deleting {} because it is too old.".format(r.id))
-                try:
-                    self.staging.delete(data_name)
-                except KeyError:
-                    logging.info(f"Removing old request but data {data_name} not found in staging.")
-                self.request_store.remove_request(r.id)
+        cutoff = datetime.now(timezone.utc) - self.age
+        logging.info("Removing requests older than {}".format(cutoff))
+        self.request_store.remove_old_requests(cutoff)
 
     def remove_old_metrics(self):
         """Removes metrics older than the configured time"""
-        now = datetime.now(timezone.utc)
-        cutoff = now - self.metric_age
-
-        metrics = self.metric_store.get_metrics()
-
-        for m in metrics:
-            if datetime.fromtimestamp(m.timestamp, tz=timezone.utc) < cutoff:
-                logging.info("Deleting metric {} because it is too old.".format(m.uuid))
-                self.metric_store.remove_metric(m.uuid, include_processed=True)
+        cutoff = datetime.now(timezone.utc) - self.metric_age
+        self.metric_store.remove_old_metrics(cutoff)
 
     def remove_dangling_data(self):
         """As a failsafe, removes data which has no corresponding request."""
@@ -186,7 +165,7 @@ class GarbageCollector:
 regex = re.compile(r"((?P<days>\d+?)d)?((?P<hours>\d+?)h)?((?P<minutes>\d+?)m)?((?P<seconds>\d+?)s)?")
 
 
-def parse_time(time_str):
+def parse_time(time_str: str) -> timedelta:
     parts = regex.match(time_str)
     if not parts:
         return

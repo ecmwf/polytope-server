@@ -31,7 +31,7 @@ class Subprocess:
 
     def run(self, cmd, cwd=None, env=None):
         env = {**os.environ, **(env or None)}
-        logging.debug("Calling {} in directory {} with env {}".format(cmd, cwd, env))
+        logging.info("Calling {} in directory {} with env {}".format(cmd, cwd, env))
         self.subprocess = subprocess.Popen(
             cmd,
             env=env,
@@ -68,8 +68,16 @@ class Subprocess:
 
     def finalize(self, request, err_filter):
         """Close subprocess and decode output"""
-
-        returncode = self.subprocess.wait()
+        logging.info("Finalizing subprocess")
+        # fifo has been closed so this process should finish, but sometimes hangs so we set a timeout
+        try:
+            returncode = self.subprocess.wait(60)
+        except subprocess.TimeoutExpired:
+            logging.error("Subprocess did not finish in time, killing it")
+            self.subprocess.kill()
+            returncode = self.subprocess.returncode
+        logging.info("Subprocess finished with return code: {}".format(returncode))
+        logging.info("Subprocess stdout:")
         for line in self.subprocess.stdout:
             line = line.decode().strip()
             if err_filter and err_filter in line:
@@ -77,6 +85,7 @@ class Subprocess:
                 logging.error(line)
             else:
                 logging.info(line)
+        logging.info("Subprocess stderr:")
         for line in self.subprocess.stderr:
             line = line.decode().strip()
             if err_filter and err_filter in line:

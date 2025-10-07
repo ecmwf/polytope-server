@@ -175,7 +175,7 @@ RUN set -eux \
 
 FROM python:3.11-bookworm AS gribjump-base
 ARG rpm_repo
-ARG gribjump_version=0.9.2
+ARG gribjump_version=0.10.0
 
 RUN response=$(curl -s -w "%{http_code}" ${rpm_repo}) \
     && if [ "$response" = "403" ]; then echo "Unauthorized access to ${rpm_repo} "; fi

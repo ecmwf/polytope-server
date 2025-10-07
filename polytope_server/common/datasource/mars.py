@@ -18,19 +18,18 @@
 # does it submit to any jurisdiction.
 #
 
+import copy
 import logging
 import os
-import re
 import tempfile
-from datetime import datetime, timedelta
 from subprocess import CalledProcessError
 
 import yaml
-from dateutil.relativedelta import relativedelta
 
 from ..io.fifo import FIFO
 from ..subprocess import Subprocess
 from . import datasource
+from .datasource import convert_to_mars_request
 
 
 class MARSDataSource(datasource.DataSource):
@@ -40,18 +39,12 @@ class MARSDataSource(datasource.DataSource):
         self.type = config.get("type")
         self.command = config.get("command", "/usr/local/bin/mars")
         self.tmp_dir = config.get("tmp_dir", "/tmp")
-        self.match_rules = config.get("match", {})
 
         self.override_mars_email = config.get("override_email")
         self.override_mars_apikey = config.get("override_apikey")
 
         self.subprocess = None
         self.fifo = None
-
-        self.silent_match = config.get("silent_match", False)
-
-        if self.match_rules is None:
-            self.match_rules = {}
 
         self.mars_binary = config.get("binary", "mars")
 
@@ -60,7 +53,7 @@ class MARSDataSource(datasource.DataSource):
         self.mars_error_filter = config.get("mars_error_filter", "mars - EROR")
 
         # self.fdb_config = None
-        self.fdb_config = config.get("fdb_config", [{}])
+        self.fdb_config = config.get("fdb_config", {})
         if self.protocol == "remote":
             # need to set FDB5 config in a <path>/etc/fdb/config.yaml
             self.fdb_home = self.tmp_dir + "/fdb-home"
@@ -86,46 +79,6 @@ class MARSDataSource(datasource.DataSource):
     def get_type(self):
         return self.type
 
-    def repr(self):
-        return self.config.get("repr", "mars")
-
-    def match(self, request):
-
-        r = yaml.safe_load(request.user_request) or {}
-
-        if "feature" in r:
-            raise Exception("Feature requests are not supported by MARS data source")
-
-        for k, v in self.match_rules.items():
-
-            # An empty match rule means that the key must not be present
-            if v is None or len(v) == 0:
-                if k in r:
-                    raise Exception("Request containing key '{}' is not allowed".format(k))
-                else:
-                    continue  # no more checks to do
-
-            # Check that all required keys exist
-            if k not in r and not (v is None or len(v) == 0):
-                raise Exception("Request does not contain expected key '{}'".format(k))
-
-            # Process date rules
-            if k == "date":
-                comp, v = v.split(" ", 1)
-                if comp == "<":
-                    self.date_check(r["date"], v, False)
-                elif comp == ">":
-                    self.date_check(r["date"], v, True)
-                else:
-                    raise Exception("Invalid date comparison")
-                continue
-
-            # ... and check the value of other keys
-
-            v = [v] if isinstance(v, str) else v
-            if r[k] not in v:
-                raise Exception("got {} : {}, but expected one of {}".format(k, r[k], v))
-
     def archive(self, request):
         raise NotImplementedError("Archiving not implemented for MARS data source")
 
@@ -135,14 +88,14 @@ class MARSDataSource(datasource.DataSource):
         self.fifo = FIFO("MARS-FIFO-" + request.id)
 
         # Parse the user request as YAML, and add the FIFO as target
-        r = yaml.safe_load(request.user_request) or {}
+        r = copy.deepcopy(request.coerced_request) or {}
         r["target"] = '"' + self.fifo.path + '"'
 
         # Make a temporary file for the request
         with tempfile.NamedTemporaryFile(delete=False) as tmp:
             self.request_file = tmp.name
             logging.info("Writing request to tempfile {}".format(self.request_file))
-            tmp.write(self.convert_to_mars_request("retrieve", r).encode())
+            tmp.write(convert_to_mars_request(r, "retrieve").encode())
 
         # Call MARS
         self.subprocess = Subprocess()
@@ -152,20 +105,22 @@ class MARSDataSource(datasource.DataSource):
             env=self.make_env(request),
         )
 
+        logging.info("MARS subprocess started with PID {}".format(self.subprocess.subprocess.pid))
         # Poll until the FIFO has been opened by MARS, watch in case the spawned process dies before opening the FIFO
         try:
             while self.subprocess.running():
-                self.subprocess.read_output(request, self.mars_error_filter)
                 # logging.debug("Checking if MARS process has opened FIFO.")  # this floods the logs
                 if self.fifo.ready():
                     logging.info("FIFO is ready for reading.")
                     break
+
+                self.subprocess.read_output(request, self.mars_error_filter)
             else:
                 logging.info("Detected MARS process has exited before opening FIFO.")
                 self.destroy(request)
                 raise Exception("MARS process exited before returning data.")
         except Exception as e:
-            logging.error(f"Error while waiting for MARS process to open FIFO: {e}.")
+            logging.exception(f"Error while waiting for MARS process to open FIFO: {e}.")
             self.destroy(request)
             raise
 
@@ -184,10 +139,8 @@ class MARSDataSource(datasource.DataSource):
         try:
             self.subprocess.finalize(request, self.mars_error_filter)
         except CalledProcessError as e:
-            logging.error("MARS subprocess failed: {}".format(e))
+            logging.exception("MARS subprocess failed: {}".format(e))
             raise Exception("MARS retrieval failed unexpectedly with error code {}".format(e.returncode))
-
-        return
 
     def destroy(self, request):
         try:
@@ -229,7 +182,7 @@ class MARSDataSource(datasource.DataSource):
                 "MARS_USER_EMAIL": mars_user,
                 "MARS_USER_TOKEN": mars_token,
                 "ECMWF_MARS_COMMAND": self.mars_binary,
-                "FDB5_CONFIG": yaml.dump(self.fdb_config[0]),
+                "FDB5_CONFIG": yaml.dump(self.fdb_config),
             }
 
             if self.mars_config is not None:
@@ -242,95 +195,3 @@ class MARSDataSource(datasource.DataSource):
             raise e
 
         return env
-
-    def convert_to_mars_request(self, verb, user_request):
-        """Converts Python dictionary to a MARS request string"""
-        request_str = verb
-        for k, v in user_request.items():
-            if isinstance(v, (list, tuple)):
-                v = "/".join(str(x) for x in v)
-            else:
-                v = str(v)
-            request_str = request_str + "," + k + "=" + v
-        return request_str
-
-    def check_single_date(self, date, offset, offset_fmted, after=False):
-
-        # Date is relative (0 = now, -1 = one day ago)
-        if str(date)[0] == "0" or str(date)[0] == "-":
-            date_offset = int(date)
-            dt = datetime.today() + timedelta(days=date_offset)
-
-            if after and dt >= offset:
-                raise Exception("Date is too recent, expected < {}".format(offset_fmted))
-            elif not after and dt < offset:
-                raise Exception("Date is too old, expected > {}".format(offset_fmted))
-            else:
-                return
-
-        # Absolute date YYYMMDD
-        try:
-            dt = datetime.strptime(date, "%Y%m%d")
-        except ValueError:
-            raise Exception("Invalid date, expected real date in YYYYMMDD format")
-        if after and dt >= offset:
-            raise Exception("Date is too recent, expected < {}".format(offset_fmted))
-        elif not after and dt < offset:
-            raise Exception("Date is too old, expected > {}".format(offset_fmted))
-        else:
-            return
-
-    def parse_relativedelta(self, time_str):
-
-        pattern = r"(\d+)([dhm])"
-        time_dict = {"d": 0, "h": 0, "m": 0}
-        matches = re.findall(pattern, time_str)
-
-        for value, unit in matches:
-            if unit == "d":
-                time_dict["d"] += int(value)
-            elif unit == "h":
-                time_dict["h"] += int(value)
-            elif unit == "m":
-                time_dict["m"] += int(value)
-
-        return relativedelta(days=time_dict["d"], hours=time_dict["h"], minutes=time_dict["m"])
-
-    def date_check(self, date, offset, after=False):
-        """Process special match rules for DATE constraints"""
-
-        date = str(date)
-
-        # Default date is -1
-        if len(date) == 0:
-            date = "-1"
-
-        now = datetime.today()
-        offset = now - self.parse_relativedelta(offset)
-        offset_fmted = offset.strftime("%Y%m%d")
-
-        split = date.split("/")
-
-        # YYYYMMDD
-        if len(split) == 1:
-            self.check_single_date(split[0], offset, offset_fmted, after)
-            return True
-
-        # YYYYMMDD/to/YYYYMMDD -- check end and start date
-        # YYYYMMDD/to/YYYYMMDD/by/N -- check end and start date
-        if len(split) == 3 or len(split) == 5:
-
-            if split[1].casefold() == "to".casefold():
-
-                if len(split) == 5 and split[3].casefold() != "by".casefold():
-                    raise Exception("Invalid date range")
-
-                self.check_single_date(split[0], offset, offset_fmted, after)
-                self.check_single_date(split[2], offset, offset_fmted, after)
-                return True
-
-        # YYYYMMDD/YYYYMMDD/YYYYMMDD/... -- check each date
-        for s in split:
-            self.check_single_date(s, offset, offset_fmted, after)
-
-        return True

@@ -18,12 +18,14 @@
 # does it submit to any jurisdiction.
 #
 
+import datetime
 import importlib
 from abc import ABC, abstractmethod
 from typing import Dict, List, Union
 
 from ..metric import MetricType
 from ..request import Request, Status
+from ..user import User
 
 
 class RequestStore(ABC):
@@ -37,7 +39,7 @@ class RequestStore(ABC):
         """Add a request to the request store"""
 
     @abstractmethod
-    def get_request(self, id: str) -> Request:
+    def get_request(self, id: str) -> Request | None:
         """Fetch request from the request store"""
 
     @abstractmethod
@@ -47,7 +49,30 @@ class RequestStore(ABC):
 
     @abstractmethod
     def remove_request(self, id: str) -> None:
-        """Remove a request from the request store"""
+        """Remove a request from the request store."""
+
+    @abstractmethod
+    def revoke_request(self, user: User, id: str) -> int:
+        """
+        Revoke a queued but unstarted request from the request store.
+
+        Only the user who created the request can revoke it.
+
+        Only requests with status 'waiting' or 'queued' can be removed.
+
+        Args:
+            user: User who is revoking the request
+            id: ID of the request to be revoked. Alternatively "all" can be used to
+                revoke all revokeable requests of the user.
+
+        Returns:
+            int: Number of requests revoked.
+
+        Raises:
+            NotFound: if the request is not in the request store
+            UnauthorizedRequest: if the request belongs to a different user
+            ForbiddenRequest: if the request has started processing.
+        """
 
     @abstractmethod
     def update_request(self, request: Request) -> None:
@@ -66,6 +91,14 @@ class RequestStore(ABC):
         self,
     ) -> Dict[str, Union[None, int, float, str, Status, MetricType]]:
         """Collect dictionary of metrics"""
+
+    @abstractmethod
+    def remove_old_requests(self, cutoff: datetime.datetime) -> int:
+        """Remove FAILED and PROCESSED requests older than cutoff date.
+
+        Returns:
+            int: Number of removed requests.
+        """
 
 
 type_to_class_map = {"mongodb": "MongoRequestStore", "dynamodb": "DynamoDBRequestStore"}

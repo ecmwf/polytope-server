@@ -19,13 +19,16 @@
 #
 
 import logging
-import traceback
 from abc import ABC
 from importlib import import_module
-from typing import Iterator
+from typing import Any, Dict, Iterator
 
-from .. import config as polytope_config
-from ..request import Verb
+from ..coercion import coerce_value
+from ..config import polytope_config
+from ..exceptions import ForbiddenRequest
+from ..request import Request, Verb
+from ..user import User
+from .date_check import DateError, date_check
 
 #######################################################
 
@@ -42,17 +45,104 @@ class DataSource(ABC):
         """Archive data, returns nothing but updates datasource state"""
         raise NotImplementedError()
 
-    def retrieve(self, request: str) -> None:
+    def retrieve(self, request: Request) -> None:
         """Retrieve data, returns nothing but updates datasource state"""
         raise NotImplementedError()
 
-    def match(self, request: str) -> None:
-        """Checks if the request matches the datasource, raises on failure"""
-        raise NotImplementedError()
+    @staticmethod
+    def match(ds_config, coerced_ur: Dict[str, Any], user: User) -> str:
+        """
+        Match the request against a specific datasource configuration.
 
-    def repr(self) -> str:
+        Checks if the user is authorized, applies defaults, and checks match rules.
+        Includes datasource-specific checks based on the type of datasource in the config.
+
+        :param ds_config: The datasource configuration to match against.
+        :param coerced_ur: The coerced user request. This may be modified by applying defaults.
+        :param user: The user making the request.
+        :return: str: "success" if the request matches the datasource, or an error message if it does not.
+        """
+        # check datasource specific roles
+        roles = ds_config.get("roles", [])
+        try:
+            if roles and not user.is_authorized(roles):
+                return f"Skipping datasource {DataSource.repr(ds_config)}: user not authorized."
+        except ForbiddenRequest as e:
+            message = f"Skipping datasource {DataSource.repr(ds_config)}: {repr(e)}"
+            logging.warning(message)
+            return message
+
+        # apply defaults
+        defaults = ds_config.get("defaults", {})
+        if "date" not in defaults:
+            defaults["date"] = "-1"  # today, default for mars
+        for k, v in defaults.items():
+            if k not in coerced_ur:
+                coerced_ur[k] = coerce_value(k, v)
+
+        # check match rules
+        if ds_config.get("type") == "polytope":
+            if "feature" not in coerced_ur:
+                return (
+                    f"Skipping datasource {DataSource.repr(ds_config)}: "
+                    "request does not contain expected key 'feature'"
+                )
+        elif "feature" in coerced_ur:
+            return (
+                f"Skipping datasource {DataSource.repr(ds_config)}: "
+                "request contains key 'feature', but this is not expected by the datasource."
+            )
+        match_rules = ds_config.get("match", {})
+        for rule_key, allowed_values in match_rules.items():
+            allowed_values = [allowed_values] if not isinstance(allowed_values, (list, tuple)) else allowed_values
+
+            # An empty match rule means that the key must not be present
+            if allowed_values is None or len(allowed_values) == 0:
+                if rule_key in coerced_ur:
+                    return (
+                        f"Skipping datasource {DataSource.repr(ds_config)}: "
+                        f"request containing key '{rule_key}' is not allowed."
+                    )
+                else:
+                    continue  # no more checks to do
+
+            # Check that the required key exists
+            if rule_key not in coerced_ur:
+                return (
+                    f"Skipping datasource {DataSource.repr(ds_config)}: "
+                    f"request does not contain expected key '{rule_key}'"
+                )
+
+            # Process date rules
+            if rule_key == "date":
+                try:
+                    date_check(coerced_ur["date"], allowed_values)
+                except DateError as e:
+                    return f"Skipping datasource {DataSource.repr(ds_config)}: {e}."
+                except Exception as e:
+                    return f"Skipping datasource {DataSource.repr(ds_config)}: error processing date check: {e}."
+                continue
+
+            # check that all values in request are allowed
+            request_values = (
+                [coerced_ur[rule_key]] if not isinstance(coerced_ur[rule_key], (list, tuple)) else coerced_ur[rule_key]
+            )
+            if not set(request_values).issubset(set(coerce_value(rule_key, allowed_values))):
+                return (
+                    f"Skipping datasource {DataSource.repr(ds_config)}: "
+                    f"got {rule_key} : {coerced_ur[rule_key]}, but expected one of {allowed_values}"
+                )
+        # If we reach here, the request matches the datasource
+        # Downstream expects MARS-like format of request
+        for key in coerced_ur:
+            if isinstance(coerced_ur[key], list):
+                coerced_ur[key] = "/".join(coerced_ur[key])
+        return "success"
+
+    @staticmethod
+    def repr(config) -> str:
         """Returns a string name of the datasource, presented to the user on error"""
-        raise NotImplementedError
+        return config.get("repr", config.get("name", config.get("type", "unknown")))
 
     def get_type(self) -> str:
         """Returns a string stating the type of this object (e.g. fdb, mars, echo)"""
@@ -70,38 +160,16 @@ class DataSource(ABC):
         """Returns the mimetype of the result"""
         raise NotImplementedError()
 
-    def dispatch(self, request, input_data) -> bool:
+    def dispatch(self, request: Request, input_data) -> bool:
         """
-        Dispatch to match, retrieve and archive.
-        Returns a tuple ( success, data, details )
+        Dispatch to retrieve or archive.
+        This is the main entry point for the datasource, called by the worker/collection.
+        It adds information to the request.user_message.
+        Returns
             success: bool
-            data: None or result
-            log: Messages to be passed back to user
         """
 
         self.input_data = input_data
-
-        # Match
-        try:
-            self.match(request)
-            request.user_message += "Matched datasource {}\n".format(self.repr())
-        except Exception as e:
-            if hasattr(self, "silent_match") and self.silent_match:
-                pass
-            else:
-                request.user_message += "Skipping datasource {}: {}\n".format(self.repr(), str(e))
-            tb = traceback.format_exception(None, e, e.__traceback__)
-            logging.info(tb)
-
-            return False
-
-        # Check for datasource-specific roles
-        if hasattr(self, "config"):
-            datasource_role_rules = self.config.get("roles", None)
-            if datasource_role_rules is not None:
-                if not any(role in request.user.roles for role in datasource_role_rules.get(request.user.realm, [])):
-                    request.user_message += "Skipping datasource {}: user is not authorised.\n".format(self.repr())
-                    return False
 
         # Retrieve/Archive/etc.
         success = False
@@ -115,7 +183,7 @@ class DataSource(ABC):
 
         except NotImplementedError as e:
             request.user_message += "Skipping datasource {}: method '{}' not available: {}\n".format(
-                self.repr(), request.verb, repr(e)
+                self.repr(self.config), request.verb, repr(e)
             )
             return False
 
@@ -137,21 +205,46 @@ type_to_class_map = {
 }
 
 
-def create_datasource(config):
+def get_datasource_config(config: str | dict) -> dict:
 
     # Allows passing in just the name as config
     if isinstance(config, str):
         config = {"name": config}
 
-    # 'name' means we are linking to a datasource defined in global_config.datasources
-    if "name" in config:
-        name = config["name"]
-        datasource_configs = polytope_config.global_config.get("datasources")
-        if name not in datasource_configs:
-            raise KeyError("Could not find config for datasource {}".format(name))
-        # Merge with supplied config
-        config = polytope_config.merge(datasource_configs.get(name, None), config)
+    datasource_configs = polytope_config.global_config.get("datasources", {})
 
+    # 'name' means we are linking to a datasource defined in global_config.datasources
+    name = config.get("name", None)
+    if not name:
+        raise KeyError("Datasource config must contain a 'name' key")
+    if name not in datasource_configs:
+        raise KeyError("Could not find config for datasource {}".format(name))
+    # Merge with supplied config
+    config = polytope_config.merge(datasource_configs.get(name, None), config)
+
+    config = _load_ds_parents_recursively(name, config, datasource_configs)
+    logging.debug("Loaded datasource config: {}".format(config))
+    return config
+
+
+def _load_ds_parents_recursively(name: str, ds_config: dict, global_ds_configs: dict, children: list = []) -> dict:
+    config = {}
+    if parents := ds_config.get("parents", []):
+        for p in parents:
+            if p in children:
+                raise KeyError(f"Datasource {ds_config['name']} has circular parent reference to {p}")
+            parent_config = global_ds_configs.get(p, {})
+            if not parent_config:
+                raise KeyError(f"Parent datasource '{p}' not found in global config.")
+            config = polytope_config.merge(
+                config, _load_ds_parents_recursively(p, parent_config, global_ds_configs, children + [p])
+            )
+            logging.debug("Merged {} into {}".format(p, name))
+
+    return polytope_config.merge(config, ds_config)
+
+
+def create_datasource(config: dict) -> DataSource:
     # Find the class matching config.type
     type = config.get("type")
     module = import_module("polytope_server.common.datasource." + type)
@@ -164,3 +257,20 @@ def create_datasource(config):
     logging.info("Datasource {} initialized [{}].".format(type, datasource_class))
 
     return datasource
+
+
+def convert_to_mars_request(request, verb=None):
+    """
+    Converts a Python dictionary to a MARS request string.
+    If verb is provided, it is prepended to the request string (e.g., 'retrieve').
+    """
+    parts = []
+    if verb:
+        parts.append(verb)
+    for k, v in request.items():
+        if isinstance(v, (list, tuple)):
+            v = "/".join(str(x) for x in v)
+        else:
+            v = str(v)
+        parts.append(f"{k}={v}")
+    return ",".join(parts)

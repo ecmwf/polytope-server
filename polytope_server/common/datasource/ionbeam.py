@@ -17,10 +17,10 @@
 # granted to it by virtue of its status as an intergovernmental organisation nor
 # does it submit to any jurisdiction.
 #
+import copy
 from dataclasses import dataclass
 
 import requests
-import yaml
 from requests import Request
 
 from . import datasource
@@ -74,7 +74,6 @@ class IonBeamDataSource(datasource.DataSource):
         self.type = config["type"]
         assert self.type == "ionbeam"
 
-        self.match_rules = config.get("match", {})
         endpoint = config.get("api_endpoint", "http://iotdev-001:18201/api/v1/")
         self.api = IonBeamAPI(endpoint)
 
@@ -87,20 +86,20 @@ class IonBeamDataSource(datasource.DataSource):
 
     def archive(self, request: Request):
         """Archive data, returns nothing but updates datasource state"""
-        r = yaml.safe_load(request.user_request)
+        r = copy.deepcopy(request.coerced_request)
         keys = r["keys"]
 
         with open(r["path"], "rb") as f:
             return self.api.archive(keys, f)
 
     def list(self, request: Request) -> list:
-        request_keys = yaml.safe_load(request.user_request)
+        request_keys = copy.deepcopy(request.coerced_request)
         return self.api.list(request_keys)
 
     def retrieve(self, request: Request) -> bool:
         """Retrieve data, returns nothing but updates datasource state"""
 
-        request_keys = yaml.safe_load(request.user_request)
+        request_keys = copy.deepcopy(request.coerced_request)
         self.response = self.api.retrieve(request_keys)
         return True
 
@@ -115,21 +114,3 @@ class IonBeamDataSource(datasource.DataSource):
         # or closed explicitly
         if self.response:
             self.response.close()
-
-    def match(self, request: Request) -> None:
-        """Checks if the request matches the datasource, raises on failure"""
-
-        r = yaml.safe_load(request.user_request) or {}
-
-        for k, v in self.match_rules.items():
-            # Check that all required keys exist
-            if k not in r:
-                raise Exception("Request does not contain expected key {}".format(k))
-            # Process date rules
-            if k == "date":
-                # self.date_check(r["date"], v)
-                continue
-            # ... and check the value of other keys
-            v = [v] if isinstance(v, str) else v
-            if r[k] not in v:
-                raise Exception("got {} : {}, but expected one of {}".format(k, r[k], v))

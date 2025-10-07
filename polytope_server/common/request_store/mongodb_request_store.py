@@ -24,12 +24,13 @@ import logging
 import pymongo
 
 from .. import metric_store, mongo_client_factory
+from ..exceptions import ForbiddenRequest, NotFound, UnauthorizedRequest
 from ..metric import MetricType, RequestStatusChange
 from ..metric_collector import (
     MongoRequestStoreMetricCollector,
     MongoStorageMetricCollector,
 )
-from ..request import Request
+from ..request import Request, Status
 from . import request_store
 
 
@@ -80,6 +81,31 @@ class MongoRequestStore(request_store.RequestStore):
             res = self.metric_store.get_metrics(type=MetricType.REQUEST_STATUS_CHANGE, request_id=id)
             for i in res:
                 self.metric_store.remove_metric(i.uuid)
+        logging.info("Request ID %s removed.", id)
+
+    def revoke_request(self, user, id):
+        if id == "all":
+            # Revoke all requests of the user that are waiting or queued
+            result = self.store.delete_many(
+                {"status": {"$in": [Status.WAITING.value, Status.QUEUED.value]}, "user.id": user.id}
+            )
+            return result.deleted_count
+
+        result = self.store.find_one_and_delete(
+            {"id": id, "status": {"$in": [Status.WAITING.value, Status.QUEUED.value]}, "user.id": user.id}
+        )
+        if result is None:
+            # Check if the request exists to distinguish error cause
+            request = self.get_request(id)
+            if request is None:
+                raise NotFound("Request does not exist in request store")
+            elif request.user != user:
+                raise UnauthorizedRequest("Request belongs to a different user")
+            elif request.status not in [Status.WAITING, Status.QUEUED]:
+                raise ForbiddenRequest("Request has started processing and can no longer be revoked.", None)
+            else:
+                raise
+        return 1  # Successfully revoked one request
 
     def get_request(self, id):
         result = self.store.find_one({"id": id}, {"_id": False})
@@ -138,12 +164,15 @@ class MongoRequestStore(request_store.RequestStore):
         return []
 
     def update_request(self, request):
-        request.last_modified = datetime.datetime.utcnow().timestamp()
+        request.last_modified = datetime.datetime.now(datetime.timezone.utc).timestamp()
         res = self.store.find_one_and_update(
             {"id": request.id},
             {"$set": request.serialize()},
             return_document=pymongo.ReturnDocument.AFTER,
         )
+
+        if res is None:
+            raise NotFound("Request {} not found in request store".format(request.id))
 
         if self.metric_store:
             self.metric_store.add_metric(
@@ -168,3 +197,10 @@ class MongoRequestStore(request_store.RequestStore):
         metric = self.request_store_metric_collector.collect().serialize()
         metric["storage"] = self.storage_metric_collector.collect().serialize()
         return metric
+
+    def remove_old_requests(self, cutoff):
+        cutoff = cutoff.timestamp()
+        result = self.store.delete_many(
+            {"status": {"$in": [Status.FAILED.value, Status.PROCESSED.value]}, "last_modified": {"$lt": cutoff}}
+        )
+        return result.deleted_count

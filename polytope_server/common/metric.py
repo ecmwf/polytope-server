@@ -46,7 +46,7 @@ class Metric:
             self.__setattr__(slot, None)
 
         self.uuid = str(uuid.uuid4())
-        self.timestamp = datetime.datetime.utcnow().timestamp()
+        self.timestamp = datetime.datetime.now(datetime.timezone.utc).timestamp()
         self.type = MetricType.GENERIC
 
         for k, v in kwargs.items():
@@ -93,7 +93,7 @@ class Metric:
     def update(self, **kwargs):
         for k, v in kwargs.items():
             self.__setattr__(k, v)
-        self.timestamp = datetime.datetime.utcnow().timestamp()
+        self.timestamp = datetime.datetime.now(datetime.timezone.utc).timestamp()
 
     def __eq__(self, other):
         if isinstance(other, Metric):

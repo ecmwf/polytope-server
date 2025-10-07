@@ -101,7 +101,7 @@ class MongoMetricStore(MetricStore):
     def get_metric(self, uuid):
         result = self.store.find_one({"uuid": uuid}, {"_id": False})
         if result:
-            metric = self.metric_type_class_map[result.type](from_dict=result)
+            metric = self.metric_type_class_map[Metric.deserialize_slot("type", result["type"])](from_dict=result)
             return metric
         else:
             return None
@@ -181,3 +181,8 @@ class MongoMetricStore(MetricStore):
 
     def collect_metric_info(self):
         return self.storage_metric_collector.collect().serialize()
+
+    def remove_old_metrics(self, cutoff):
+        cutoff = cutoff.timestamp()
+        result = self.store.delete_many({"timestamp": {"$lt": cutoff}})
+        return result.deleted_count
