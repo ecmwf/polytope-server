@@ -67,7 +67,6 @@ deploy:
       - name: polytope-dev
         chartPath: ../polytope-chart
         setValueTemplates:
-          # deployment.registry: '{{.IMAGE_REGISTRY_worker}}'
           deployment.fqn_images.polytope_common: '{{.IMAGE_FULLY_QUALIFIED_polytope_common}}'
           deployment.fqn_images.worker: '{{.IMAGE_FULLY_QUALIFIED_worker}}'
         valuesFiles:
@@ -79,16 +78,3 @@ deploy:
               replicas: 1
             frontend:
               replicas: 1
-
-profiles:
-  - name: lumi-dev
-    deploy:
-      helm:
-        releases:
-          - name: polytope-dev
-            chartPath: ../polytope-chart
-            valuesFiles:
-              - ../polytope-chart/values.yaml
-              - ../polytope-config/common.yaml
-              - ../polytope-config/location/lumi.yaml
-              - ../polytope-config/env/dev.yaml
