@@ -135,7 +135,7 @@ class DataTransfer:
     def process_download(self, request):
         try:
             object_id = request.id
-            
+
             if request.url is not None and request.url != "":
                 # TODO: temporary fix for Content-Disposition earthkit issues
                 url_path = PurePosixPath(urlparse(request.url).path)
