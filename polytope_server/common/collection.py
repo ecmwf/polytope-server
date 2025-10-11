@@ -43,6 +43,13 @@ class Collection:
         for ds_config in self.config.get("datasources"):
             self.ds_configs.append(get_datasource_config(ds_config))
 
+        logging.info(
+            "Collection '{}' initialized with datasources: {}".format(
+                self.name, [ds["name"] for ds in self.ds_configs]
+            ),
+            extra={"collection": self.name, "datasources": {ds["name"]: ds for ds in self.ds_configs}},
+        )
+
     def dispatch(self, request: Request, input_data: bytes | None) -> DataSource:
         """
         Match the request against the collection's datasources.
@@ -50,6 +57,7 @@ class Collection:
         Raises a BadRequest exception if no datasource matches.
         """
         coerced_ur = coercion.coerce(yaml.safe_load(request.user_request))
+        logging.info("Coerced user request:", extra={"coerced_request": coerced_ur})
         match_errors = []
         for ds_config in self.ds_configs:
             match_result = DataSource.match(ds_config, coerced_ur, request.user)
@@ -58,7 +66,6 @@ class Collection:
                 request.user_message += message + "\n"
                 logging.info(message)
                 request.coerced_request = coerced_ur
-                logging.info("Coerced user request: {}".format(request.coerced_request))
                 ds = create_datasource(ds_config)
                 ds.dispatch(request, input_data)
                 return ds

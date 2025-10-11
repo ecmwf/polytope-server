@@ -22,34 +22,49 @@ import json
 import logging
 import pathlib
 import tempfile
+from typing import Dict
 
 import flask
 import yaml
-from flask import Flask, request
+from flask import Flask, g, request
 from flask_swagger_ui import get_swaggerui_blueprint
+from opentelemetry import baggage
+from opentelemetry.context import attach, detach
+from opentelemetry.instrumentation.flask import FlaskInstrumentor
 from werkzeug.exceptions import default_exceptions
 from werkzeug.middleware.proxy_fix import ProxyFix
 
+from ..common.auth import AuthHelper
+from ..common.collection import Collection
 from ..common.exceptions import BadRequest, ForbiddenRequest, HTTPException, NotFound
+from ..common.identity import Identity
+from ..common.keygenerator.keygenerator import KeyGenerator
+from ..common.logging import with_baggage_items
+from ..common.request_store import RequestStore
+from ..common.staging import Staging
 from ..version import __version__
 from . import frontend
 from .common.application_server import GunicornServer
 from .common.data_transfer import DataTransfer
 from .common.flask_decorators import RequestSucceeded
 
+instrumentor = FlaskInstrumentor()
+
 
 class FlaskHandler(frontend.FrontendHandler):
     def create_handler(
         self,
-        request_store,
-        auth,
-        staging,
-        collections,
-        identity,
-        apikeygenerator,
+        request_store: RequestStore,
+        auth: AuthHelper,
+        staging: Staging,
+        collections: Dict[str, Collection],
+        identity: Identity,
+        apikeygenerator: KeyGenerator,
         proxy_support: bool,
     ):
         handler = Flask(__name__)
+
+        instrumentor.instrument_app(handler, excluded_urls="/api/v1/test")
 
         if proxy_support:
             handler.wsgi_app = ProxyFix(handler.wsgi_app, x_for=1, x_proto=1, x_host=1)
@@ -73,7 +88,7 @@ class FlaskHandler(frontend.FrontendHandler):
 
         @handler.errorhandler(Exception)
         def default_error_handler(error):
-            logging.error("Unexpected error: %s %s" % error, str(error))
+            logging.error("Unexpected error: %s %s", error, str(error))
             return (
                 json.dumps({"message": str(error)}),
                 500,
@@ -82,7 +97,7 @@ class FlaskHandler(frontend.FrontendHandler):
 
         @handler.errorhandler(HTTPException)
         def handle_error(error):
-            logging.error("HTTP error: %s %s" % (error, error.description))
+            logging.error("HTTP error: %s %s", error, error.description)
             return (
                 json.dumps({"message": str(error.description)}),
                 error.code,
@@ -102,7 +117,9 @@ class FlaskHandler(frontend.FrontendHandler):
 
         @handler.route("/api/v1/auth/users", methods=["POST", "DELETE"])
         def addUser():
-            auth.has_admin_access(get_auth_header(request))
+            user = auth.authenticate(get_auth_header(request))
+            if not auth.has_admin_access(user):
+                raise ForbiddenRequest("Only admin users can manage users")
             username = request.json["username"]
             if request.method == "POST":
                 password = request.json["password"]
@@ -128,7 +145,7 @@ class FlaskHandler(frontend.FrontendHandler):
         )
         def requestLimits():
             user = auth.authenticate(get_auth_header(request))
-            if request.method == "GET":
+            with with_baggage_items({"user.username": user.username}) as _:
                 n_user_requests = len(request_store.get_requests(user=user))
                 return RequestSucceeded({"live requests": "%s" % n_user_requests})
 
@@ -140,7 +157,7 @@ class FlaskHandler(frontend.FrontendHandler):
         )
         def allRequests():
             user = auth.authenticate(get_auth_header(request))
-            if request.method == "GET":
+            with with_baggage_items({"user.username": user.username}) as _:
                 user_requests = request_store.get_requests(user=user)
                 response_message = []
                 for i in user_requests:
@@ -151,43 +168,46 @@ class FlaskHandler(frontend.FrontendHandler):
         # @handler.route("/api/v1/requests/<collection>", methods = ['POST'])
         # see: @handler.route("/api/v1/requests/<collection_or_request_id>", methods = ['GET','POST','DELETE'])
         def handle_requests(request, collection):
-            if request.method == "POST":
-                user = auth.can_access_collection(get_auth_header(request), collections[collection])
+            user = auth.authenticate(get_auth_header(request))
+            with with_baggage_items({"user.username": user.username}) as _:
+                if request.method == "POST":
+                    if not user.is_authorized(collections[collection].roles):
+                        raise ForbiddenRequest("User %s cannot access collection %s" % (user.username, collection))
 
-                if "verb" not in request.json:
-                    raise BadRequest("HTTP request content is missing 'verb' (e.g. retrieve)")
+                    if "verb" not in request.json:
+                        raise BadRequest("HTTP request content is missing 'verb' (e.g. retrieve)")
 
-                if "request" not in request.json:
-                    raise BadRequest("HTTP request content is missing 'request'")
+                    if "request" not in request.json:
+                        raise BadRequest("HTTP request content is missing 'request'")
 
-                verb = request.json["verb"]
-                if verb == "retrieve":
-                    return data_transfer.request_download(request, user, collection, verb)
-                elif verb == "archive":
-                    return data_transfer.request_upload(request, user, collection, verb)
+                    verb = request.json["verb"]
+                    if verb == "retrieve":
+                        return data_transfer.request_download(request, user, collection, verb)
+                    elif verb == "archive":
+                        return data_transfer.request_upload(request, user, collection, verb)
+                    else:
+                        raise BadRequest("Transfer type %s not supported" % verb)
+                elif request.method == "GET":
+                    user_requests = request_store.get_requests(user=user, collection=collection)
+                    response_message = []
+                    for i in user_requests:
+                        response_message.append(i.serialize())
+                    return RequestSucceeded(response_message)
                 else:
-                    raise BadRequest("Transfer type %s not supported" % verb)
-            elif request.method == "GET":
-                user = auth.authenticate(get_auth_header(request))
-                user_requests = request_store.get_requests(user=user, collection=collection)
-                response_message = []
-                for i in user_requests:
-                    response_message.append(i.serialize())
-                return RequestSucceeded(response_message)
-            else:
-                raise BadRequest("Collections do not support %s" % request.method)
+                    raise BadRequest("Collections do not support %s" % request.method)
 
         # corresponds to:
         # @handler.route("/api/v1/requests/<request_id>", methods = ['GET','DELETE'])
         # see: @handler.route("/api/v1/requests/<collection_or_request_id>", methods = ['GET','POST','DELETE'])
         def handle_specific_request(request, request_id):
             user = auth.authenticate(get_auth_header(request))
-            if request.method == "GET":
-                return data_transfer.query_request(user, request_id)
-            elif request.method == "POST":
-                raise NotFound("Unsupported collection type: %s" % request_id)
-            elif request.method == "DELETE":
-                return data_transfer.revoke_request(user, request_id)
+            with with_baggage_items({"user.username": user.username, "request.id": request_id}) as _:
+                if request.method == "GET":
+                    return data_transfer.query_request(user, request_id)
+                elif request.method == "POST":
+                    raise NotFound("Unsupported collection type: %s" % request_id)
+                elif request.method == "DELETE":
+                    return data_transfer.revoke_request(user, request_id)
 
         @handler.route(
             "/api/v1/requests/<collection_or_request_id>",
@@ -201,29 +221,26 @@ class FlaskHandler(frontend.FrontendHandler):
 
         @handler.route("/api/v1/downloads/<path:request_id>", methods=["GET", "HEAD"])
         def downloads(request_id):
-            logging.warning("Serving download data directly through frontend")
-            if request.method == "GET":
-                return data_transfer.download(request_id)
+            with with_baggage_items({"request.id": request_id}) as _:
+                logging.warning("Serving download data directly through frontend")
+                if request.method == "GET":
+                    return data_transfer.download(request_id)
 
         @handler.route("/api/v1/uploads/<request_id>", methods=["GET", "POST"])
         def uploads(request_id):
             user = auth.authenticate(get_auth_header(request))
-            if request.method == "GET":
-                return data_transfer.query_request(user, request_id)
-            elif request.method == "POST":
-                return data_transfer.upload(request_id, request)
+            with with_baggage_items({"user.username": user.username, "request.id": request_id}) as _:
+                if request.method == "GET":
+                    return data_transfer.query_request(user, request_id)
+                elif request.method == "POST":
+                    return data_transfer.upload(request_id, request)
 
         @handler.route("/api/v1/collections", methods=["GET"])
         def list_collections():
-            auth_header = get_auth_header(request)
-            authorized_collections = []
-            for name, collection in collections.items():
-                try:
-                    if auth.can_access_collection(auth_header, collection):
-                        authorized_collections.append(name)
-                except ForbiddenRequest:
-                    pass
-            return RequestSucceeded(authorized_collections)
+            user = auth.authenticate(get_auth_header(request))
+            with with_baggage_items({"user.username": user.username}) as _:
+                authorized_collections = [name for name, col in collections.items() if user.is_authorized(col.roles)]
+                return RequestSucceeded(authorized_collections)
 
         # New handler
         # @handler.route("/api/v1/collection/<collection>", methods=["GET"])
@@ -238,14 +255,11 @@ class FlaskHandler(frontend.FrontendHandler):
         #             pass
         #     return RequestSucceeded(authorized_collections)
 
-        @handler.after_request
-        def add_header(response: flask.Response):
-            response.cache_control.no_cache = True
-            response.cache_control.no_store = True
-            response.headers["X-Content-Type-Options"] = "nosniff"
-            response.headers["X-Frame-Options"] = "DENY"
-            response.headers["X-XSS-Protection"] = "1; mode=block"
-            return response
+        @handler.before_request
+        def add_route_to_baggage():
+            route = request.url_rule.rule if request.url_rule else request.path
+            ctx = baggage.set_baggage("http.route", route)
+            g._baggage_token = attach(ctx)
 
         @handler.before_request
         def only_json():
@@ -256,6 +270,21 @@ class FlaskHandler(frontend.FrontendHandler):
             if "/uploads/" in request.path:
                 return
             raise BadRequest("Request must be JSON")
+
+        @handler.after_request
+        def add_header(response: flask.Response):
+            response.cache_control.no_cache = True
+            response.cache_control.no_store = True
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            response.headers["X-Frame-Options"] = "DENY"
+            response.headers["X-XSS-Protection"] = "1; mode=block"
+            return response
+
+        @handler.teardown_request
+        def remove_route_from_baggage(exc):
+            token = getattr(g, "_baggage_token", None)
+            if token:
+                detach(token)
 
         return handler
 

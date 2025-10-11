@@ -19,6 +19,7 @@
 #
 
 import hashlib
+import logging
 import sys
 from pathlib import PurePosixPath
 from urllib.parse import urlparse
@@ -49,9 +50,11 @@ class DataTransfer:
         try:
             self.request_store.add_request(request)
         except Exception:
+            logging.exception("Error while attempting to add new request to request store")
             raise ServerError("Error while attempting to add new request to request store")
 
         response = self.construct_response(request)
+        logging.info("Retrieverequest added to store: {}".format(request.id), extra={"request.id": request.id})
         return RequestAccepted(response)
 
     def request_upload(self, http_request, user, collection, verb):
@@ -72,9 +75,11 @@ class DataTransfer:
         try:
             self.request_store.add_request(request)
         except Exception:
+            logging.exception("Error while attempting to add new request to request store")
             raise ServerError("Error while attempting to add new request to request store")
 
         response = self.construct_response(request)
+        logging.info("Archive request added to store: {}".format(request.id), extra={"request.id": request.id})
         return RequestAccepted(response)
 
     def query_request(self, user, id):
@@ -82,6 +87,7 @@ class DataTransfer:
         if not request:
             raise NotFound("Request {} not found".format(id))
         if request.user != user:
+            logging.warning
             raise NotFound("Request {} not found".format(id))
         if request.status == Status.FAILED:
             raise BadRequest("Request failed with error:\n{}".format(request.user_message))
@@ -154,9 +160,14 @@ class DataTransfer:
             self.request_store.update_request(request)
 
         except Exception:
+            logging.exception("Error while querying data staging with {}".format(object_id))
             raise ServerError("Error while querying data staging with {}".format(object_id))
 
         response = self.construct_response(request)
+        logging.info(
+            "Request succeeded, redirecting to {}".format(response["location"]),
+            extra={"request.id": request.id, "location": response["location"]},
+        )
         return RequestRedirected(response)
 
     def upload_to_staging(self, data, id):
@@ -166,6 +177,7 @@ class DataTransfer:
             url = self.staging.create(id, [data], "application/octet-stream")
             assert url is not None
         except Exception:
+            logging.exception("Error while attempting to write to data staging")
             raise ServerError("Error writing to data staging")
 
         try:
@@ -173,6 +185,7 @@ class DataTransfer:
             if staged_size != (sys.getsizeof(data) - sys.getsizeof(b"")):
                 raise ServerError("Size of data uploaded to staging area did not match size of user-uploaded data")
         except Exception:
+            logging.exception("Error reading uploaded data from data staging")
             raise ServerError("Error reading uploaded data from data staging")
 
         return url
@@ -209,13 +222,14 @@ class DataTransfer:
 
     def revoke_request(self, user: User, id: str):
         n = self.request_store.revoke_request(user, id)
-
+        logging.info("Request {} successfully revoked by user {}".format(id, user.username))
         return RequestSucceeded(f"Successfully revoked {n} requests")
 
     def get_request(self, id):
         try:
             request = self.request_store.get_request(id)
         except Exception:
+            logging.exception("Error while fetching from the request store")
             raise ServerError("Error while fetching from the request store")
         return request
 
@@ -224,6 +238,7 @@ class DataTransfer:
         try:
             data = self.staging.read(id)
         except Exception:
+            logging.exception("Error while reading data from data staging")
             raise ServerError("Error while reading data from data staging")
 
         data_checksum = hashlib.md5(data).hexdigest()

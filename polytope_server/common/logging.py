@@ -18,10 +18,15 @@
 # does it submit to any jurisdiction.
 #
 
+import contextlib
 import datetime
 import json
 import logging
 import socket
+
+from opentelemetry import baggage
+from opentelemetry.context import attach, detach, get_current
+from pythonjsonlogger import jsonlogger
 
 from .. import version
 
@@ -42,6 +47,14 @@ LOGGING_TO_SYSLOG_SEVERITY = {
 INDEXABLE_FIELDS = {"request_id": str}
 DEFAULT_LOGGING_MODE = "json"
 DEFAULT_LOGGING_LEVEL = "INFO"
+
+
+class OTelBaggageFilter(logging.Filter):
+    def filter(self, record):
+        ctx = get_current()
+        for key, value in baggage.get_all(context=ctx).items():
+            setattr(record, key, value)
+        return True
 
 
 class LogFormatter(logging.Formatter):
@@ -103,21 +116,18 @@ class LogFormatter(logging.Formatter):
         formatted_time = self.format_time(record)
         result = {
             "asctime": formatted_time,
-            "hostname": self.get_hostname(record),
             "process": record.process,
             "thread": record.thread,
             "name": record.name,
             "filename": record.filename,
             "lineno": record.lineno,
             "levelname": record.levelname,
-            "message": record.getMessage(),
         }
-
-        if self.mode == "console":
-            return f"{result['asctime']} | {result['message']}"
 
         self.add_indexable_fields(record, result)
 
+        if self.mode == "console":
+            return f"{result['asctime']} | {result['message']}"
         if self.mode == "logserver":
             return self.format_for_logserver(record, result)
         if self.mode == "prettyprint":
@@ -136,12 +146,33 @@ def setup(config, source_name):
 
     handler = logging.StreamHandler()
     handler.setLevel(logging.DEBUG)
+    handler.addFilter(OTelBaggageFilter())
 
     mode = config.get("logging", {}).get("mode", DEFAULT_LOGGING_MODE)
     level = config.get("logging", {}).get("level", DEFAULT_LOGGING_LEVEL)
 
-    handler.setFormatter(LogFormatter(mode))
+    if mode == "json":
+        handler.setFormatter(
+            jsonlogger.JsonFormatter(
+                reserved_attrs=["msg", "created", "levelno", "msecs", "name", "relativeCreated", "process", "filename"]
+            )
+        )
+    else:
+        handler.setFormatter(LogFormatter(mode))
+
     logger.addHandler(handler)
     logger.setLevel(level)
 
     logger.info("Logging Initialized")
+
+
+@contextlib.contextmanager
+def with_baggage_items(items: dict[str, str]):
+    ctx = get_current()
+    for key, value in items.items():
+        ctx = baggage.set_baggage(key, value, context=ctx)
+    token = attach(ctx)
+    try:
+        yield
+    finally:
+        detach(token)

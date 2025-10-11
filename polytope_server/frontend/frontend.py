@@ -22,12 +22,20 @@ import importlib
 import logging
 from abc import ABC, abstractmethod
 
+from opentelemetry import trace
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+
 from ..common.auth import AuthHelper
 from ..common.collection import create_collections
 from ..common.identity import create_identity
 from ..common.keygenerator import create_keygenerator
 from ..common.request_store import create_request_store
 from ..common.staging import create_staging
+
+trace.set_tracer_provider(TracerProvider(resource=Resource.create({"service.name": "frontend"})))
+
+tracer = trace.get_tracer(__name__)
 
 
 class FrontendHandler(ABC):

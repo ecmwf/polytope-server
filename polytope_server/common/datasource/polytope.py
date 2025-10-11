@@ -63,8 +63,6 @@ class PolytopeDataSource(datasource.DataSource):
                 f.write(yaml.dump(self.config.pop("fdb_config")))
             os.environ["FDB5_CONFIG_FILE"] = self.fdb_config_file
 
-        logging.info("Set up gribjump")
-
     def get_type(self):
         return self.type
 
