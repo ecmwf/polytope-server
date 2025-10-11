@@ -20,6 +20,7 @@
 
 import collections.abc
 import json
+import logging
 
 from flask import Response
 
@@ -33,6 +34,7 @@ handler_dict = {
 def RequestSucceeded(response):
     if not isinstance(response, collections.abc.Mapping):
         response = {"message": response}
+    logging.info("Request succeeded", extra={"response": response})
     return Response(response=json.dumps(response), status=200, mimetype="application/json")
 
 
@@ -44,6 +46,7 @@ def RequestAccepted(response):
     if response["location"]:
         headers = {"Location": response["location"], "Retry-After": 5}
         response.pop("location")
+    logging.info("Request accepted", extra={"response": response})
     return Response(
         response=json.dumps(response),
         status=202,
@@ -57,6 +60,7 @@ def RequestRedirected(response):
     response.pop("message")  # Remove message from successful requests
     assert response["status"] == "processed"
     response.pop("status")
+    logging.info("Request redirected", extra={"response": response})
     return Response(
         response=json.dumps(response),
         status=303,

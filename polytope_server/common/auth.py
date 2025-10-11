@@ -21,7 +21,6 @@
 import logging
 
 from .authotron import Authotron
-from .collection import Collection
 from .legacy_auth import LegacyAuthHelper
 from .user import User
 
@@ -43,14 +42,6 @@ class AuthHelper:
 
         return self.auth.authenticate(auth_header)
 
-    def has_admin_access(self, auth_header: str):
+    def has_admin_access(self, user: User) -> bool:
         """Authenticate and authorize user, testing if they have admin rights"""
-        return self.auth.has_admin_access(auth_header)
-
-    def has_roles(self, auth_header: str, roles: list):
-        """Authenticate and authorize user, testing if they have any of the provided roles"""
-        return self.auth.has_roles(auth_header, roles)
-
-    def can_access_collection(self, auth_header: str, collection: Collection):
-        """Authenticate and authorize a user, testing if they can access a collection"""
-        return self.auth.can_access_collection(auth_header, collection)
+        return self.auth.has_admin_access(user)

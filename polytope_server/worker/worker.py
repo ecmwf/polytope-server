@@ -28,11 +28,19 @@ import traceback
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
+from opentelemetry import trace
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
 
 from ..common import collection
 from ..common import queue as polytope_queue
 from ..common import request_store, staging
+from ..common.logging import with_baggage_items
 from ..common.request import Status
+
+trace.set_tracer_provider(TracerProvider(resource=Resource.create({"service.name": "frontend"})))
+
+tracer = trace.get_tracer(__name__)
 
 
 class TaskGroupTermination(Exception):
@@ -101,12 +109,14 @@ class Worker:
         logging.info(
             "Worker status update",
             extra={
-                "status": self.status,
-                "request_id": self.processing_id,
-                "requests_processed": self.requests_processed,
-                "requests_failed": self.requests_failed,
-                "total_idle_time": self.total_idle_time,
-                "total_processing_time": self.total_processing_time,
+                "worker": {
+                    "status": self.status,
+                    "request_id": self.processing_id,
+                    "requests_processed": self.requests_processed,
+                    "requests_failed": self.requests_failed,
+                    "total_idle_time": self.total_idle_time,
+                    "total_processing_time": self.total_processing_time,
+                }
             },
         )
 
@@ -227,46 +237,46 @@ class Worker:
         """Entrypoint for the worker thread."""
 
         id = request.id
-        collection = self.collections[request.collection]
+        with with_baggage_items({"request.id": id}):
+            collection = self.collections[request.collection]
 
-        logging.info(
-            "Processing request on collection {}".format(collection.name),
-            extra={"request_id": id},
-        )
-        logging.info("Request is: {}".format(request.serialize()))
+            logging.info(
+                "Processing request on collection {}".format(collection.name),
+                extra={"collection": collection.name, "request": request.serialize()},
+            )
 
-        input_data = self.fetch_input_data(request.url)
+            input_data = self.fetch_input_data(request.url)
 
-        # Dispatch to collection
-        datasource = collection.dispatch(request, input_data)
-        # Clean up
-        try:
-            # delete input data if it exists in staging (input data can come from external URLs too)
-            if input_data is not None:
-                if self.staging.query(id):
-                    self.staging.delete(id)
+            # Dispatch to collection
+            datasource = collection.dispatch(request, input_data)
+            # Clean up
+            try:
+                # delete input data if it exists in staging (input data can come from external URLs too)
+                if input_data is not None:
+                    if self.staging.query(id):
+                        self.staging.delete(id)
 
-            # upload result data
-            if datasource is not None:
-                request.url = self.staging.create(id, datasource.result(request), datasource.mime_type())
+                # upload result data
+                if datasource is not None:
+                    request.url = self.staging.create(id, datasource.result(request), datasource.mime_type())
 
-        except Exception as e:
-            logging.exception("Failed to finalize request", extra={"request_id": id, "exception": repr(e)})
-            raise
+            except Exception as e:
+                logging.exception("Failed to finalize request", extra={"exception": repr(e)})
+                raise
 
-        # Guarantee destruction of the datasource
-        finally:
-            if datasource is not None:
-                datasource.destroy(request)
+            # Guarantee destruction of the datasource
+            finally:
+                if datasource is not None:
+                    datasource.destroy(request)
 
-        if datasource is None:
-            # request.user_message += "Failed to process request."
-            logging.info(request.user_message, extra={"request_id": id})
-            raise Exception("Request was not accepted by any datasources.")
-        else:
-            request.user_message += "Success"
+            if datasource is None:
+                # request.user_message += "Failed to process request."
+                logging.info(request.user_message)
+                raise Exception("Request was not accepted by any datasources.")
+            else:
+                request.user_message += "Success"
 
-        return
+            return
 
     def fetch_input_data(self, url):
         """Downloads input data from external URL or staging"""
@@ -294,33 +304,32 @@ class Worker:
     def on_request_complete(self, request):
         """Called when the request processing exits cleanly"""
 
-        request.user_message = "Success"  # Do not report log history on successful request
-        logging.info("Request completed successfully.", extra={"request_id": request.id})
-        request.set_status(Status.PROCESSED)
-        self.requests_processed += 1
+        with with_baggage_items({"request.id": request.id}):
+            request.user_message = "Success"  # Do not report log history on successful request
+            logging.info("Request completed successfully.", extra={"request_id": request.id})
+            request.set_status(Status.PROCESSED)
+            self.requests_processed += 1
 
     def on_request_fail(self, request, exception):
         """Called when the request processing raises an exception"""
 
-        _, v, _ = sys.exc_info()
-        tb = traceback.format_exception(None, exception, exception.__traceback__)
-        logging.info(tb, extra={"request_id": request.id})
-        error_message = request.user_message + "\n" + str(v)
-        request.set_status(Status.FAILED)
-        request.user_message = error_message
-        logging.exception("Request failed with exception.", extra={"request_id": request.id})
-        self.requests_failed += 1
+        with with_baggage_items({"request.id": request.id}):
+            _, v, _ = sys.exc_info()
+            tb = traceback.format_exception(None, exception, exception.__traceback__)
+            logging.exception(tb)
+            error_message = request.user_message + "\n" + str(v)
+            request.set_status(Status.FAILED)
+            request.user_message = error_message
+            logging.exception("Request failed with exception.")
+            self.requests_failed += 1
 
     def on_process_terminated(self, signumm=None, frame=None):
         """Called when the worker is asked to exit whilst processing a request, and we want to reschedule the request"""
 
         if self.request is not None:
-            logging.info(
-                "Request being rescheduled due to worker shutdown.",
-                extra={"request_id": self.request.id},
-            )
-            error_message = self.request.user_message + "\n" + "Worker shutdown, rescheduling request."
-            self.request.user_message = error_message
-            self.request.set_status(Status.QUEUED)
-            self.request_store.update_request(self.request)
-            self.queue.nack(self.queue_msg)
+            with with_baggage_items({"request.id": self.request.id}):
+                error_message = self.request.user_message + "\n" + "Worker shutdown, rescheduling request."
+                self.request.user_message = error_message
+                self.request.set_status(Status.QUEUED)
+                self.request_store.update_request(self.request)
+                self.queue.nack(self.queue_msg)
