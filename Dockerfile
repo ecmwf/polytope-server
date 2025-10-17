@@ -264,6 +264,7 @@ ENV VIRTUAL_ENV=/root/.venv
 RUN uv venv /root/.venv
 RUN uv pip install -r requirements.txt
 RUN uv pip install geopandas==1.0.1
+RUN uv pip install -i https://test.pypi.org/simple polytope-python==1.1.2.dev436
 
 COPY . ./polytope
 RUN set -eux \

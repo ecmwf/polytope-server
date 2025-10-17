@@ -23,7 +23,6 @@ mongomock==4.3.0
 moto[dynamodb,s3]==5.0.16
 pika==1.3.2
 polytope-mars==0.3.5
-git+https://github.com/ecmwf/polytope.git@feat/ax_from_catalogue
 qubed==0.3.0
 py-bcrypt==0.4
 pykwalify==1.8.0
