@@ -25,6 +25,7 @@ pika==1.3.2
 polytope-mars==0.3.4
 polytope-python==1.1.1
 py-bcrypt==0.4
+git+https://github.com/ecmwf/gribjump@0.10.2
 pykwalify==1.8.0
 pymemcache==4.0.0
 pymongo==4.8.0
