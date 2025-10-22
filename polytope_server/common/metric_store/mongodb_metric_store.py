@@ -267,9 +267,7 @@ class MongoMetricStore(MetricStore):
                                 "$group": {
                                     "_id": None,
                                     "requests": {"$sum": 1},
-                                    "unique_users": {
-                                        "$addToSet": "$_id"
-                                    },  # Collect unique user_ids
+                                    "unique_users": {"$addToSet": "$_id"},  # Collect unique user_ids
                                 }
                             },
                             {"$project": {"requests": 1, "unique_users": {"$size": "$unique_users"}}},
