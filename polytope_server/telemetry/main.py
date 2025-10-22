@@ -26,9 +26,6 @@ from .telemetry_service import TelemetryService
 # Set up logging
 logging.setup(config, source_name=__name__)
 
-# Initialize caching
-cache.init(config.get("caching", {}))
-
 # Initialize the telemetry service
 telemetry_service = TelemetryService(config)
 
