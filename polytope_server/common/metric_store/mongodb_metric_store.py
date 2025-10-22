@@ -269,7 +269,7 @@ class MongoMetricStore(MetricStore):
                                     "requests": {"$sum": 1},
                                     "unique_users": {
                                         "$addToSet": "$_id"
-                                    },  # $addToSet on ~200 users instead of 100k docs
+                                    },  # Collect unique user_ids
                                 }
                             },
                             {"$project": {"requests": 1, "unique_users": {"$size": "$unique_users"}}},
