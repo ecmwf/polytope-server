@@ -111,6 +111,8 @@ def _create_table(dynamodb, table_name):
             "AttributeDefinitions": [
                 {"AttributeName": "uuid", "AttributeType": "S"},
                 {"AttributeName": "request_id", "AttributeType": "S"},
+                {"AttributeName": "type", "AttributeType": "S"},
+                {"AttributeName": "timestamp", "AttributeType": "N"},
             ],
             "TableName": table_name,
             "KeySchema": [{"AttributeName": "uuid", "KeyType": "HASH"}],
@@ -118,6 +120,15 @@ def _create_table(dynamodb, table_name):
                 {
                     "IndexName": "request-index",
                     "KeySchema": [{"AttributeName": "request_id", "KeyType": "HASH"}],
+                    "Projection": {"ProjectionType": "ALL"},
+                },
+                # GSI for type-based queries with timestamp sorting
+                {
+                    "IndexName": "type-timestamp-index",
+                    "KeySchema": [
+                        {"AttributeName": "type", "KeyType": "HASH"},
+                        {"AttributeName": "timestamp", "KeyType": "RANGE"},
+                    ],
                     "Projection": {"ProjectionType": "ALL"},
                 },
             ],
@@ -226,3 +237,131 @@ class DynamoDBMetricStore(MetricStore):
                 batch.delete_item(Key={"uuid": str(uuid)})
 
         return len(items_to_delete)
+
+    def get_usage_metrics_aggregated(self, cutoff_timestamps):
+        """
+        Fetch and aggregate usage metrics from DynamoDB.
+
+        Unlike MongoDB, DynamoDB cannot perform server-side aggregation,
+        so this method minimizes data transfer by:
+        1. Using a GSI to filter by type (avoids full table scan)
+        2. Projecting only necessary fields (userid, timestamp, status)
+        3. Paginating efficiently through results
+        4. Performing aggregation in Python
+
+        Args:
+            cutoff_timestamps: Dict mapping timeframe names to Unix timestamps
+
+        Returns:
+            Dict with total_requests, unique_users, and time_frame_metrics
+        """
+
+        # The GSI (type-timestamp-index) allows us to efficiently query
+        # only request_status_change metrics without scanning the entire table.
+        # ProjectionExpression reduces data transfer by fetching only needed fields.
+
+        try:
+            # Items we'll collect from DynamoDB
+            # We only need: user_id, timestamp, status
+            items = []
+
+            # Use the type-timestamp-index GSI for efficient querying
+            # This avoids a full table scan by filtering on partition key (type)
+            query_params = {
+                "IndexName": "type-timestamp-index",
+                # Query only request_status_change type metrics
+                "KeyConditionExpression": Key("type").eq("request_status_change"),
+                # Additional filter: only processed status
+                # Note: FilterExpression is applied AFTER query
+                "FilterExpression": Attr("status").eq("processed"),
+                # Projection: only fetch fields we need
+                "ProjectionExpression": "user_id, #ts, #st",
+                # ExpressionAttributeNames required because 'status' and 'timestamp'
+                # are reserved keywords in DynamoDB
+                "ExpressionAttributeNames": {
+                    "#ts": "timestamp",
+                    "#st": "status",
+                },
+            }
+
+            # DynamoDB returns max 1MB per call, so we must paginate.
+            # The query automatically handles this via LastEvaluatedKey.
+
+            while True:
+                response = self.table.query(**query_params)
+
+                # Add items from this page to our collection
+                items.extend(response.get("Items", []))
+
+                # Check if there are more pages
+                if "LastEvaluatedKey" not in response:
+                    break  # No more results
+
+                # Set the starting point for the next page
+                query_params["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+
+            # Since DynamoDB can't do server-side aggregation, we must
+            # count and deduplicate in application code.
+
+            # Convert Decimal timestamps back to float for comparison
+            # DynamoDB stores numbers as Decimal type
+            items_with_float_timestamps = []
+            for item in items:
+                items_with_float_timestamps.append(
+                    {
+                        "user_id": item.get("user_id"),
+                        "timestamp": float(item["timestamp"]),  # Decimal -> float
+                        "status": item.get("status"),
+                    }
+                )
+
+            # Overall metrics across all time
+            total_requests = len(items_with_float_timestamps)
+            unique_users = set()  # Set automatically handles deduplication
+
+            # Initialize per-timeframe metrics storage
+            time_frame_metrics = {}
+            for frame_name in cutoff_timestamps.keys():
+                time_frame_metrics[frame_name] = {
+                    "requests": 0,
+                    "unique_users": set(),
+                }
+
+            # Single pass through data to calculate:
+            # - Total unique users
+            # - Per-timeframe request counts
+            # - Per-timeframe unique users
+
+            for item in items_with_float_timestamps:
+                user_id = item.get("user_id")
+                timestamp = item["timestamp"]
+
+                # Add to overall unique users count
+                if user_id:
+                    unique_users.add(user_id)
+
+                # Check which timeframes this request falls into
+                for frame_name, cutoff in cutoff_timestamps.items():
+                    # If this request is newer than the cutoff
+                    if timestamp >= cutoff:
+                        # Increment request count for this timeframe
+                        time_frame_metrics[frame_name]["requests"] += 1
+
+                        # Add user to this timeframe's unique users set
+                        if user_id:
+                            time_frame_metrics[frame_name]["unique_users"].add(user_id)
+
+            for frame_name in time_frame_metrics.keys():
+                # Replace the set with its size (count of unique items)
+                time_frame_metrics[frame_name]["unique_users"] = len(time_frame_metrics[frame_name]["unique_users"])
+
+            # Return the aggregated results in the expected format
+            return {
+                "total_requests": total_requests,
+                "unique_users": len(unique_users),
+                "time_frame_metrics": time_frame_metrics,
+            }
+
+        except Exception as e:
+            logger.error(f"Error fetching metrics from DynamoDB: {e}")
+            raise

@@ -36,16 +36,14 @@ from .dependencies import (
 )
 from .enums import StatusEnum
 from .exceptions import (
-    MetricCalculationError,
     OutputFormatError,
     RequestFetchError,
     TelemetryConfigError,
     TelemetryUsageDisabled,
 )
 from .helpers import (
-    calculate_usage_metrics,
-    format_output,
-    get_cached_usage_metrics,
+    format_output_aggregated,
+    get_usage_metrics_aggregated,
     get_usage_timeframes_from_config,
     is_usage_enabled,
     obfuscate_apikey,
@@ -289,28 +287,25 @@ async def usage_metrics(
             raise TelemetryUsageDisabled("Telemetry usage is disabled")
 
         now = datetime.now(timezone.utc)
-        cache_expiry_seconds = config.get("telemetry", {}).get("usage", {}).get("cache_expiry_seconds", 30)
-
-        # Fetch user requests
-        user_requests = await get_cached_usage_metrics(
-            metric_store=metric_store,
-            cache_expiry_seconds=cache_expiry_seconds,
-        )
 
         # Load timeframes from config
         time_frames = get_usage_timeframes_from_config()
 
-        # Calculate metrics
-        metrics = calculate_usage_metrics(user_requests, time_frames, now)
+        # Fetch aggregated metrics
+        metrics = await get_usage_metrics_aggregated(
+            metric_store=metric_store,
+            time_frames=time_frames,
+            now=now,
+        )
 
         # Format output
-        return format_output(metrics, time_frames, format)
+        return format_output_aggregated(metrics, time_frames, format)
 
     except TelemetryUsageDisabled as e:
         logger.warning(e)
         raise HTTPException(status_code=403, detail=str(e))
 
-    except (TelemetryConfigError, RequestFetchError, MetricCalculationError, OutputFormatError) as e:
+    except (TelemetryConfigError, RequestFetchError, OutputFormatError) as e:
         logger.error(e)
         raise HTTPException(status_code=500, detail=str(e))
 
