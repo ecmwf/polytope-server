@@ -19,7 +19,6 @@
 #
 
 from ..common import logging
-from ..common.caching import cache
 from .config import config
 from .telemetry_service import TelemetryService
 
