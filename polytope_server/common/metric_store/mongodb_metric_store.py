@@ -245,7 +245,6 @@ class MongoMetricStore(MetricStore):
             # Filter: Only processed requests since earliest timeframe
             {"$match": {"type": "request_status_change", "status": "processed", "timestamp": {"$gte": min_cutoff}}},
             # Group by user_id first - this reduces subsequent stages' working set
-            # from ~100k requests to ~200 users
             {
                 "$group": {
                     "_id": "$user_id",
