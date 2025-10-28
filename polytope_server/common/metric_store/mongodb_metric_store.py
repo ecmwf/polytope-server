@@ -31,8 +31,6 @@ from ..metric import (
     QueueInfo,
     RequestStatusChange,
     StorageInfo,
-    WorkerInfo,
-    WorkerStatusChange,
 )
 from ..metric_collector import MongoStorageMetricCollector
 from . import MetricStore
@@ -59,8 +57,6 @@ class MongoMetricStore(MetricStore):
         self._ensure_indexes()
 
         self.metric_type_class_map = {
-            MetricType.WORKER_STATUS_CHANGE: WorkerStatusChange,
-            MetricType.WORKER_INFO: WorkerInfo,
             MetricType.REQUEST_STATUS_CHANGE: RequestStatusChange,
             MetricType.STORAGE_INFO: StorageInfo,
             MetricType.CACHE_INFO: CacheInfo,

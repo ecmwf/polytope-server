@@ -101,34 +101,6 @@ class Metric:
         return False
 
 
-class WorkerStatusChange(Metric):
-
-    __slots__ = [
-        "host",
-        "status",
-    ]
-
-    def __init__(self, **kwargs):
-        super().__init__(type=MetricType.WORKER_STATUS_CHANGE, host=socket.gethostname(), **kwargs)
-
-
-class WorkerInfo(Metric):
-
-    __slots__ = [
-        "host",
-        "status",
-        "status_time",
-        "request_id",
-        "requests_processed",
-        "requests_failed",
-        "total_idle_time",
-        "total_processing_time",
-    ]
-
-    def __init__(self, **kwargs):
-        super().__init__(type=MetricType.WORKER_INFO, host=socket.gethostname(), **kwargs)
-
-
 class RequestStatusChange(Metric):
 
     __slots__ = ["host", "status", "request_id", "user_id"]

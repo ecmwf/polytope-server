@@ -37,8 +37,6 @@ from ..metric import (
     QueueInfo,
     RequestStatusChange,
     StorageInfo,
-    WorkerInfo,
-    WorkerStatusChange,
 )
 from . import MetricStore
 
@@ -46,8 +44,6 @@ logger = logging.getLogger(__name__)
 
 
 METRIC_TYPE_CLASS_MAP = {
-    MetricType.WORKER_STATUS_CHANGE: WorkerStatusChange,
-    MetricType.WORKER_INFO: WorkerInfo,
     MetricType.REQUEST_STATUS_CHANGE: RequestStatusChange,
     MetricType.STORAGE_INFO: StorageInfo,
     MetricType.CACHE_INFO: CacheInfo,
