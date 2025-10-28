@@ -62,7 +62,6 @@ class Worker:
         self.total_idle_time = 0.0
         self.total_processing_time = 0.0
 
-
         self.collections = collection.create_collections(self.config.get("collections"))
         self.staging = staging.create_staging(self.config.get("staging"))
         self.request_store = request_store.create_request_store(
@@ -81,7 +80,7 @@ class Worker:
         if time_spent is None:
             time_spent = self.poll_interval
         self.status_time += time_spent
-        
+
         if self.status == "processing":
             self.total_processing_time += time_spent
         else:
