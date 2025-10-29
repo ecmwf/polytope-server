@@ -89,8 +89,3 @@ class Authotron:
             return user
         if user.is_authorized(roles):
             return user
-
-    def collect_metric_info(
-        self,
-    ) -> dict:
-        return {}
