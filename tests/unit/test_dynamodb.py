@@ -132,8 +132,13 @@ def test_metric_store(mocked_aws):
     store = dynamodb_request_store.DynamoDBRequestStore(metric_store_config={"dynamodb": {"table_name": "metrics"}})
     r1 = request.Request()
     store.add_request(r1)
+    # transition to processed and update
+    # we only keep metrics for processed requests
+    r1.status = request.Status.PROCESSED
+    store.update_request(r1)
     [m1] = store.metric_store.get_metrics()
     assert m1.request_id == r1.id
+    assert m1.status == request.Status.PROCESSED
 
 
 def test_remove_old_requests(mocked_aws):
