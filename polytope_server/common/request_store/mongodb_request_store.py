@@ -60,7 +60,7 @@ class MongoRequestStore(request_store.RequestStore):
             raise ValueError("Request already exists in request store")
         self.store.insert_one(request.serialize())
 
-        if self.metric_store:
+        if self.metric_store and request.status == Status.PROCESSED:
             self.metric_store.add_metric(
                 RequestStatusChange(request_id=request.id, status=request.status, user_id=request.user.id)
             )
@@ -168,7 +168,7 @@ class MongoRequestStore(request_store.RequestStore):
         if res is None:
             raise NotFound("Request {} not found in request store".format(request.id))
 
-        if self.metric_store:
+        if self.metric_store and request.status == Status.PROCESSED:
             self.metric_store.add_metric(
                 RequestStatusChange(request_id=request.id, status=request.status, user_id=request.user.id)
             )

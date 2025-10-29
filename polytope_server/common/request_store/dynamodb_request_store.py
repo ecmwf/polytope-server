@@ -163,7 +163,7 @@ class DynamoDBRequestStore(request_store.RequestStore):
                 raise ValueError("Request already exists in request store") from e
             raise
 
-        if self.metric_store:
+        if self.metric_store and request.status == Status.PROCESSED:
             self.metric_store.add_metric(RequestStatusChange(request_id=request.id, status=request.status))
 
         logger.info("Request ID %s status set to %s.", request.id, request.status)
@@ -294,7 +294,7 @@ class DynamoDBRequestStore(request_store.RequestStore):
                 raise NotFound("Request {} not found in request store".format(request.id)) from e
             raise
 
-        if self.metric_store:
+        if self.metric_store and request.status == Status.PROCESSED:
             self.metric_store.add_metric(RequestStatusChange(request_id=request.id, status=request.status))
 
         logger.info("Request ID %s status set to %s.", request.id, request.status)
