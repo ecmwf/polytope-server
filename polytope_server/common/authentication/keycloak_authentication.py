@@ -118,6 +118,3 @@ class KeycloakAuthentication(authentication.Authentication):
         finally:
             os.environ.clear()
             os.environ.update(_environ)
-
-    def collect_metric_info(self):
-        return {}

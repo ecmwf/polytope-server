@@ -23,7 +23,6 @@ from datetime import datetime, timezone
 from .. import mongo_client_factory
 from ..auth import User
 from ..exceptions import ForbiddenRequest
-from ..metric_collector import MongoStorageMetricCollector
 from . import authentication
 
 
@@ -43,13 +42,10 @@ class ApiKeyMongoAuthentication(authentication.Authentication):
         collection = config.get("collection", "keys")
         username = config.get("username")
         password = config.get("password")
-
         self.mongo_client = mongo_client_factory.create_client(uri, username, password)
         self.database = self.mongo_client.keys
         self.keys = self.database[collection]
         assert realm == "polytope"
-
-        self.storage_metric_collector = MongoStorageMetricCollector(uri, self.mongo_client, "keys", collection)
 
         super().__init__(name, realm, config)
 
@@ -80,6 +76,3 @@ class ApiKeyMongoAuthentication(authentication.Authentication):
             raise ForbiddenRequest("Key has expired")
 
         return User(res["username"], res["realm"])
-
-    def collect_metric_info(self):
-        return self.storage_metric_collector.collect().serialize()

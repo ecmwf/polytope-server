@@ -73,6 +73,3 @@ class JWTAuthentication(authentication.Authentication):
             logging.info(e)
             raise ForbiddenRequest("Credentials could not be unpacked")
         return user
-
-    def collect_metric_info(self):
-        return {}
