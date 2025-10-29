@@ -18,9 +18,12 @@
 # does it submit to any jurisdiction.
 #
 
+import socket
+
 import pytest
 
-from polytope_server.common.metric import Metric, MetricType, QueueInfo
+from polytope_server.common.metric import Metric, MetricType, RequestStatusChange
+from polytope_server.common.request import Status
 
 
 class Test:
@@ -58,15 +61,20 @@ class Test:
             Metric(new_attr=0)
 
     def test_from_dict(self):
-        d = {"uuid": "id001", "type": "queue_info"}
+        d = {"uuid": "id001", "type": "request_status_change"}
         m = Metric(from_dict=d)
         assert m.uuid == "id001"
-        assert m.type == MetricType.QUEUE_INFO
+        assert m.type == MetricType.REQUEST_STATUS_CHANGE
 
     def test_sub_metric(self):
-        m = QueueInfo(queue_host="none", total_queued=0)
-        assert m.type == MetricType.QUEUE_INFO
-        assert "queue_host" in m.get_slots()
-        assert m.queue_host == "none"
-        assert "total_queued" in m.get_slots()
-        assert m.total_queued == 0
+        m = RequestStatusChange(status=Status.PROCESSED, request_id="test-request-123", user_id="test-user")
+        assert m.type == MetricType.REQUEST_STATUS_CHANGE
+        assert "host" in m.get_slots()
+        # host will be set automatically to socket.gethostname()
+        assert m.host == socket.gethostname()
+        assert "status" in m.get_slots()
+        assert m.status == Status.PROCESSED
+        assert "request_id" in m.get_slots()
+        assert m.request_id == "test-request-123"
+        assert "user_id" in m.get_slots()
+        assert m.user_id == "test-user"
