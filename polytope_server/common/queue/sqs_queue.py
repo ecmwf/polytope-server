@@ -4,7 +4,6 @@ from uuid import uuid4
 
 import boto3
 
-from ..metric_collector import SQSQueueMetricCollector
 from . import queue
 
 
@@ -23,7 +22,6 @@ class SQSQueue(queue.Queue):
 
         self.queue_url = self.client.get_queue_url(QueueName=queue_name).get("QueueUrl")
         self.check_connection()
-        self.queue_metric_collector = SQSQueueMetricCollector(self.queue_url, self.client)
 
     def enqueue(self, message):
         # Messages need to have different a `MessageGroupId` so that they can be processed in parallel.
@@ -84,6 +82,3 @@ class SQSQueue(queue.Queue):
 
     def get_type(self):
         return "sqs"
-
-    def collect_metric_info(self):
-        return self.queue_metric_collector.collect().serialize()

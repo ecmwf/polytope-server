@@ -23,7 +23,6 @@ import logging
 
 import pika
 
-from ..metric_collector import RabbitmqQueueMetricCollector
 from . import queue
 
 
@@ -32,7 +31,6 @@ class RabbitmqQueue(queue.Queue):
 
         self.host = config.get("host", "localhost")
         self.port = config.get("port", "5672")
-        endpoint = "{}:{}".format(self.host, self.port)
         self.queue_name = config.get("name", "default")
         self.username = config.get("user", "guest")
         self.password = config.get("password", "guest")
@@ -57,8 +55,6 @@ class RabbitmqQueue(queue.Queue):
         self.channel.confirm_delivery()
         self.channel.basic_qos(prefetch_count=1)
         self.channel.basic_recover(requeue=True)
-
-        self.queue_metric_collector = RabbitmqQueueMetricCollector(endpoint, self.parameters, self.queue_name)
 
     def enqueue(self, message):
         self.channel.basic_publish(
@@ -100,6 +96,3 @@ class RabbitmqQueue(queue.Queue):
 
     def get_type(self):
         return "rabbitmq"
-
-    def collect_metric_info(self):
-        return self.queue_metric_collector.collect().serialize()
