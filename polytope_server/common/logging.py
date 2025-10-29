@@ -51,6 +51,8 @@ DEFAULT_LOGGING_LEVEL = "INFO"
 
 class OTelBaggageFilter(logging.Filter):
     def filter(self, record):
+        setattr(record, "asc_time", format_time(record))
+        setattr(record, "app", "polytope-server")
         ctx = get_current()
         for key, value in baggage.get_all(context=ctx).items():
             setattr(record, key, value)
@@ -61,10 +63,6 @@ class LogFormatter(logging.Formatter):
     def __init__(self, mode):
         super().__init__()
         self.mode = mode
-
-    def format_time(self, record):
-        utc_time = datetime.datetime.fromtimestamp(record.created, datetime.timezone.utc)
-        return utc_time.strftime("%Y-%m-%d %H:%M:%S,%f")[:-3]
 
     def get_hostname(self, record):
         return getattr(record, "hostname", socket.gethostname())
@@ -113,7 +111,7 @@ class LogFormatter(logging.Formatter):
         return json.dumps(result, indent=None)
 
     def format(self, record):
-        formatted_time = self.format_time(record)
+        formatted_time = format_time(record)
         result = {
             "asctime": formatted_time,
             "process": record.process,
@@ -140,6 +138,11 @@ class LogFormatter(logging.Formatter):
         return json.dumps(result, indent=None)
 
 
+def format_time(record):
+    utc_time = datetime.datetime.fromtimestamp(record.created, datetime.timezone.utc)
+    return utc_time.strftime("%Y-%m-%d %H:%M:%S,%f")[:-3]
+
+
 def setup(config, source_name):
     logger = logging.getLogger()
     logger.name = source_name
@@ -154,7 +157,7 @@ def setup(config, source_name):
     if mode == "json":
         handler.setFormatter(
             jsonlogger.JsonFormatter(
-                reserved_attrs=["msg", "created", "levelno", "msecs", "name", "relativeCreated", "process", "filename"]
+                reserved_attrs=["msg", "created", "msecs", "name", "relativeCreated", "process", "filename"]
             )
         )
     else:
