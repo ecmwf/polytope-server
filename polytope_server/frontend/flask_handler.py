@@ -259,6 +259,7 @@ class FlaskHandler(frontend.FrontendHandler):
         def add_route_to_baggage():
             route = request.url_rule.rule if request.url_rule else request.path
             ctx = baggage.set_baggage("http.route", route)
+            ctx = baggage.set_baggage("http.method", request.method, context=ctx)
             g._baggage_token = attach(ctx)
 
         @handler.before_request
