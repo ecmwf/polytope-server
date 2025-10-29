@@ -50,7 +50,7 @@ class MongoRequestStore(request_store.RequestStore):
 
         self.request_store_metric_collector = MongoRequestStoreMetricCollector()
 
-        logging.info("MongoClient configured to open at {}".format(uri))
+        logging.debug("MongoClient configured to open at {}".format(uri))
 
     def get_type(self):
         return "mongodb"
@@ -99,6 +99,7 @@ class MongoRequestStore(request_store.RequestStore):
                 raise ForbiddenRequest("Request has started processing and can no longer be revoked.", None)
             else:
                 raise
+        logging.info("Request ID %s revoked.", id)
         return 1  # Successfully revoked one request
 
     def get_request(self, id):
@@ -173,7 +174,10 @@ class MongoRequestStore(request_store.RequestStore):
                 RequestStatusChange(request_id=request.id, status=request.status, user_id=request.user.id)
             )
 
-        logging.info("Request ID {} status set to {}.".format(request.id, request.status))
+        logging.info(
+            "Request ID {} updated on request store. Status set to {}.".format(request.id, request.status),
+            extra={"request": request},
+        )
 
         return res
 
