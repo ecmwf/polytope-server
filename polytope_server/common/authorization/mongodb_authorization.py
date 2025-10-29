@@ -20,7 +20,6 @@
 
 from .. import mongo_client_factory
 from ..auth import User
-from ..metric_collector import MongoStorageMetricCollector
 from . import authorization
 
 
@@ -37,10 +36,6 @@ class MongoDBAuthorization(authorization.Authorization):
         self.database = self.mongo_client.authentication
         self.users = self.database[self.collection]
 
-        self.storage_metric_collector = MongoStorageMetricCollector(
-            self.uri, self.mongo_client, "authentication", self.collection
-        )
-
         super().__init__(name, realm, config)
 
     def get_roles(self, user: User) -> list:
@@ -56,6 +51,3 @@ class MongoDBAuthorization(authorization.Authorization):
 
     def get_attributes(self, user: User) -> dict:
         return {}
-
-    def collect_metric_info(self):
-        return self.storage_metric_collector.collect().serialize()

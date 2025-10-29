@@ -21,10 +21,7 @@
 import logging
 from abc import ABC, abstractmethod
 from importlib import import_module
-from typing import Dict, Union
 
-from ..metric import MetricType
-from ..request import Status
 from ..user import User
 
 #######################################################
@@ -43,12 +40,6 @@ class Authorization(ABC):
     @abstractmethod
     def get_attributes(self, user: User) -> dict:
         """Get attributes associated with this user"""
-
-    @abstractmethod
-    def collect_metric_info(
-        self,
-    ) -> Dict[str, Union[None, int, float, str, Status, MetricType]]:
-        """Collect dictionary of metrics"""
 
     def realm(self) -> str:
         """Return the realm this authenticator is set up for (e.g. ECMWF)"""
