@@ -155,11 +155,20 @@ def setup(config, source_name):
     level = config.get("logging", {}).get("level", DEFAULT_LOGGING_LEVEL)
 
     if mode == "json":
-        handler.setFormatter(
-            jsonlogger.JsonFormatter(
-                reserved_attrs=["msg", "created", "msecs", "name", "relativeCreated", "process", "filename"]
-            )
-        )
+        reserved_attrs = ["msg", "msecs", "relativeCreated", "process"]
+        if level != "DEBUG":
+            reserved_attrs += [
+                "filename",
+                "funcName",
+                "levelname",
+                "lineno",
+                "module",
+                "pathname",
+                "processName",
+                "thread",
+                "threadName",
+            ]
+        handler.setFormatter(jsonlogger.JsonFormatter(reserved_attrs=reserved_attrs))
     else:
         handler.setFormatter(LogFormatter(mode))
 
