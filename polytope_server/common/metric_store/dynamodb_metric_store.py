@@ -30,14 +30,7 @@ import botocore
 import botocore.exceptions
 from boto3.dynamodb.conditions import Attr, Key
 
-from ..metric import (
-    CacheInfo,
-    Metric,
-    MetricType,
-    QueueInfo,
-    RequestStatusChange,
-    StorageInfo,
-)
+from ..metric import Metric, MetricType, RequestStatusChange
 from . import MetricStore
 
 logger = logging.getLogger(__name__)
@@ -45,9 +38,6 @@ logger = logging.getLogger(__name__)
 
 METRIC_TYPE_CLASS_MAP = {
     MetricType.REQUEST_STATUS_CHANGE: RequestStatusChange,
-    MetricType.STORAGE_INFO: StorageInfo,
-    MetricType.CACHE_INFO: CacheInfo,
-    MetricType.QUEUE_INFO: QueueInfo,
 }
 
 
@@ -212,9 +202,6 @@ class DynamoDBMetricStore(MetricStore):
 
     def wipe(self):
         warnings.warn("wipe is not implemented for DynamoDBMetricStore")
-
-    def collect_metric_info(self):
-        return {}
 
     def remove_old_metrics(self, cutoff):
         cutoff_timestamp = cutoff.timestamp()
