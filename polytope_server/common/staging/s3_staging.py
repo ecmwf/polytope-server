@@ -27,7 +27,6 @@ import boto3
 import botocore
 from botocore.exceptions import ClientError
 
-from ..metric_collector import S3StorageMetricCollector
 from . import staging
 
 
@@ -109,9 +108,6 @@ class S3Staging(staging.Staging):
         # Set bucket policy
         if self.should_set_policy:
             self.set_bucket_policy()
-        self.storage_metric_collector = S3StorageMetricCollector(
-            self.host, self.s3_client, self.bucket, self.get_type()
-        )
 
         logging.info(f"Opened data staging at {self.host}:{self.port} with bucket {self.bucket}")
 
@@ -300,9 +296,6 @@ class S3Staging(staging.Staging):
             except ClientError as e:
                 logging.error(f"Error deleting objects: {e}")
                 raise
-
-    def collect_metric_info(self):
-        return self.storage_metric_collector.collect().serialize()
 
     def get_url_prefix(self):
         return "{}/".format(self.bucket)

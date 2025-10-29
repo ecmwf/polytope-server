@@ -21,10 +21,7 @@
 import importlib
 import warnings
 from abc import ABC, abstractmethod
-from typing import AnyStr, Dict, Iterator, List, Tuple, Union
-
-from ..metric import MetricType
-from ..request import Status
+from typing import AnyStr, Iterator, List, Tuple
 
 deprecated_staging_types = {
     "s3_boto3": "s3",
@@ -96,12 +93,6 @@ class Staging(ABC):
     @abstractmethod
     def wipe(self) -> None:
         """Delete all resources"""
-
-    @abstractmethod
-    def collect_metric_info(
-        self,
-    ) -> Dict[str, Union[None, int, float, str, Status, MetricType]]:
-        """Collect dictionary with metrics"""
 
     @abstractmethod
     def get_url_prefix(self) -> str:
