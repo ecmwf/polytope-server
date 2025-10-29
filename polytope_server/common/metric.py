@@ -29,10 +29,7 @@ from .request import Status
 class MetricType(enum.Enum):
     GENERIC = "generic"
     WORKER_STATUS_CHANGE = "worker_status_change"
-    WORKER_INFO = "worker_info"
     REQUEST_STATUS_CHANGE = "request_status_change"
-    STORAGE_INFO = "storage_info"
-    CACHE_INFO = "cache_info"
     QUEUE_INFO = "queue_info"
 
 
@@ -119,56 +116,3 @@ class RequestStatusChange(Metric):
         if key == "status" and value:
             return Status(value)
         return super().deserialize_slot(key, value)
-
-
-class QueueInfo(Metric):
-
-    __slots__ = [
-        "queue_host",
-        "total_queued",
-    ]
-
-    def __init__(self, **kwargs):
-        super().__init__(type=MetricType.QUEUE_INFO, **kwargs)
-
-
-class CacheInfo(Metric):
-
-    __slots__ = [
-        "hits",
-        "misses",
-    ]
-
-    def __init__(self, **kwargs):
-        super().__init__(type=MetricType.CACHE_INFO, **kwargs)
-
-
-class StorageInfo(Metric):
-
-    __slots__ = [
-        "storage_host",
-        "storage_type",
-        "storage_space_used",
-        "storage_space_limit",
-        "device_space_used",
-        "device_space_limit",
-        "entries",
-    ]
-
-    def __init__(self, **kwargs):
-        super().__init__(type=MetricType.STORAGE_INFO, **kwargs)
-
-
-class MongoStorageInfo(StorageInfo):
-
-    __slots__ = [
-        "collection_name",
-        "db_space_used",
-        "db_space_limit",
-        "db_name",
-    ]
-
-
-class S3StorageInfo(StorageInfo):
-
-    __slots__ = ["bucket_space_used", "bucket_space_limit", "bucket_name"]
