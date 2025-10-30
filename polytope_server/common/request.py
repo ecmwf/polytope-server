@@ -58,6 +58,7 @@ class Request:
         "coerced_request",
         "content_length",
         "content_type",
+        "status_history",
     ]
 
     def __init__(self, from_dict=None, **kwargs):
@@ -77,6 +78,9 @@ class Request:
         self.content_length = None
         self.content_type = "application/octet-stream"
 
+        now_ts = datetime.datetime.now(datetime.timezone.utc).timestamp()
+        self.status_history = {self.status.value: now_ts}
+
         if from_dict:
             self.deserialize(from_dict)
 
@@ -85,7 +89,11 @@ class Request:
 
     def set_status(self, value):
         self.status = value
-        logging.info("Request ID {} status set to {}.".format(self.id, value.value))
+        now_ts = datetime.datetime.now(datetime.timezone.utc).timestamp()
+        if self.status_history is None:
+            self.status_history = {}
+        self.status_history.setdefault(value.value, now_ts)
+        logging.info("Request %s status set to %s.", self.id, value.value)
 
     @classmethod
     def serialize_slot(cls, key, value):
@@ -97,6 +105,8 @@ class Request:
             return value.value
         if key == "user":
             return value.serialize()
+        if key == "status_history":
+            return value
         return value
 
     @classmethod
@@ -109,6 +119,8 @@ class Request:
             return Status(value)
         if key == "user":
             return User(from_dict=value)
+        if key == "status_history":
+            return value
         return value
 
     def serialize(self):
