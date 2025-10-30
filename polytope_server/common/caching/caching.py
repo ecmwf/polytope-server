@@ -320,4 +320,3 @@ class cache(object):
             return result
 
         return wrapper
-        return wrapper
