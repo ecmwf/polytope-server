@@ -3,6 +3,7 @@ from unittest import mock
 
 import pytest
 from moto import mock_aws
+
 from polytope_server.common import request, user
 from polytope_server.common.request_store import dynamodb_request_store
 
