@@ -43,7 +43,7 @@ class Collection:
         for ds_config in self.config.get("datasources"):
             self.ds_configs.append(get_datasource_config(ds_config))
 
-        logging.info(
+        logging.debug(
             "Collection '{}' initialized with datasources: {}".format(
                 self.name, [ds["name"] for ds in self.ds_configs]
             ),
@@ -79,4 +79,5 @@ def create_collections(config) -> Dict[str, Collection]:
     collections = {}
     for k, v in config.items():
         collections[k] = Collection(k, v)
+    logging.info("Configured collections: {}".format(list(collections.keys())), extra={"collections": collections})
     return collections

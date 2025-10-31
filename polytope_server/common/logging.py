@@ -160,10 +160,8 @@ def setup(config, source_name):
             reserved_attrs += [
                 "filename",
                 "funcName",
-                "levelname",
                 "lineno",
                 "module",
-                "pathname",
                 "processName",
                 "thread",
                 "threadName",
