@@ -74,10 +74,16 @@ class Collection:
         message = "\n".join(match_errors)
         raise Exception(f"No matching datasource found for request:\n{message}")
 
+    def _serialize(self) -> Dict:
+        return {"name": self.name, "roles": self.roles, "limits": self.limits, "datasources": self.ds_configs}
+
 
 def create_collections(config) -> Dict[str, Collection]:
     collections = {}
     for k, v in config.items():
         collections[k] = Collection(k, v)
-    logging.info("Configured collections: {}".format(list(collections.keys())), extra={"collections": collections})
+    logging.info(
+        "Configured collections: {}".format(list(collections.keys())),
+        extra={"collections": [col._serialize() for col in collections.values()]},
+    )
     return collections
