@@ -32,7 +32,7 @@ class Test:
         self.user.attributes["extra_info"] = "realm1_specific_id"
 
     def test_request(self):
-        r = request.Request(user=self.user, verb=request.Verb.RETRIEVE)
+        r = request.PolytopeRequest(user=self.user, verb=request.Verb.RETRIEVE)
         assert r.verb == request.Verb.RETRIEVE
         assert r.verb != "retrieve"  # enum should not evaluate directly
         assert r.user == self.user
@@ -41,25 +41,25 @@ class Test:
         assert r.user.attributes["extra_info"] == "realm1_specific_id"
 
     def test_request_equality(self):
-        r1 = request.Request(user=self.user, verb=request.Verb.RETRIEVE)
-        r2 = request.Request(user=self.user, verb=request.Verb.RETRIEVE)
+        r1 = request.PolytopeRequest(user=self.user, verb=request.Verb.RETRIEVE)
+        r2 = request.PolytopeRequest(user=self.user, verb=request.Verb.RETRIEVE)
         assert r1 != r2
         r2.id = r1.id
         r2.timestamp = r1.timestamp
         assert r1 == r2
 
     def test_request_cant_add_attribute(self):
-        r1 = request.Request()
+        r1 = request.PolytopeRequest()
         with pytest.raises(AttributeError):
             r1.new_attr = "test"
 
     def test_request_serialization(self):
-        r1 = request.Request(user=self.user, verb=request.Verb.RETRIEVE)
+        r1 = request.PolytopeRequest(user=self.user, verb=request.Verb.RETRIEVE)
         d = r1.serialize()
         assert d["verb"] == "retrieve"
         assert d["user"] == self.user.serialize()
-        r2 = request.Request(from_dict=d)
-        r3 = request.Request()
+        r2 = request.PolytopeRequest(from_dict=d)
+        r3 = request.PolytopeRequest()
         r3.deserialize(d)
         assert r2 == r1
         assert r3 == r1
@@ -68,6 +68,6 @@ class Test:
         assert r2.user == self.user
 
     def test_request_copy(self):
-        r1 = request.Request(user=self.user, verb=request.Verb.RETRIEVE)
+        r1 = request.PolytopeRequest(user=self.user, verb=request.Verb.RETRIEVE)
         r2 = deepcopy(r1)
         assert r1 == r2

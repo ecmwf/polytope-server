@@ -24,7 +24,7 @@ from abc import ABC, abstractmethod
 from typing import Dict, List, Union
 
 from ..metric import MetricType
-from ..request import Request, Status
+from ..request import PolytopeRequest, Status
 from ..user import User
 
 
@@ -35,15 +35,15 @@ class RequestStore(ABC):
         """Initialize a request store"""
 
     @abstractmethod
-    def add_request(self, request: Request) -> None:
+    def add_request(self, request: PolytopeRequest) -> None:
         """Add a request to the request store"""
 
     @abstractmethod
-    def get_request(self, id: str) -> Request | None:
+    def get_request(self, id: str) -> PolytopeRequest | None:
         """Fetch request from the request store"""
 
     @abstractmethod
-    def get_requests(self, ascending=None, descending=None, limit=None, **kwargs) -> List[Request]:
+    def get_requests(self, ascending=None, descending=None, limit=None, **kwargs) -> List[PolytopeRequest]:
         """Returns [limit] requests which match kwargs, ordered by
         ascending/descenging keys (e.g. ascending = 'timestamp')"""
 
@@ -75,7 +75,7 @@ class RequestStore(ABC):
         """
 
     @abstractmethod
-    def update_request(self, request: Request) -> None:
+    def update_request(self, request: PolytopeRequest) -> None:
         """Updates a stored request"""
 
     @abstractmethod

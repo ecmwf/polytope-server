@@ -27,7 +27,7 @@ import yaml
 from polytope_feature.utility.exceptions import PolytopeError
 from polytope_mars.api import PolytopeMars
 
-from ..request import Request
+from ..request import PolytopeRequest
 from ..schedule import SCHEDULE_READER
 from . import datasource
 
@@ -69,7 +69,7 @@ class PolytopeDataSource(datasource.DataSource):
     def archive(self, request):
         raise NotImplementedError()
 
-    def check_extra_roles(self, request: Request) -> bool:
+    def check_extra_roles(self, request: PolytopeRequest) -> bool:
         # if the user has any of the extra roles, they are allowed
         realm = request.user.realm
         req_extra_roles = self.extra_required_role.get(realm, [])

@@ -44,7 +44,7 @@ def test_default_init(mocked_aws):
 def test_add_request(mocked_aws):
     store = dynamodb_request_store.DynamoDBRequestStore()
     u1 = user.User("some-user", "some-realm")
-    r1 = request.Request(user=u1, verb=request.Verb.RETRIEVE, status=request.Status.QUEUED)
+    r1 = request.PolytopeRequest(user=u1, verb=request.Verb.RETRIEVE, status=request.Status.QUEUED)
     assert r1.user == u1
     store.add_request(r1)
     r2 = store.get_request(r1.id)
@@ -57,7 +57,7 @@ def test_add_request(mocked_aws):
 
 def test_add_request_duplicate(mocked_aws):
     store = dynamodb_request_store.DynamoDBRequestStore()
-    req = request.Request()
+    req = request.PolytopeRequest()
     store.add_request(req)
     with pytest.raises(ValueError):
         store.add_request(req)
@@ -65,7 +65,7 @@ def test_add_request_duplicate(mocked_aws):
 
 def test_remove_request(mocked_aws):
     store = dynamodb_request_store.DynamoDBRequestStore()
-    req = request.Request()
+    req = request.PolytopeRequest()
     store.add_request(req)
     assert store.get_request(req.id) is not None
     store.remove_request(req.id)
@@ -81,9 +81,9 @@ def test_revoke_request(mocked_aws):
 def populated(mocked_aws):
     def func():
         u1, u2, u3 = (user.User(f"user{i}", f"realm{i}") for i in (1, 2, 3))
-        r1 = request.Request(user=u1, collection="hello", status=request.Status.PROCESSED)
-        r2 = request.Request(user=u2, collection="hello", content_length=10)
-        r3 = request.Request(user=u3, collection="hello2")
+        r1 = request.PolytopeRequest(user=u1, collection="hello", status=request.Status.PROCESSED)
+        r2 = request.PolytopeRequest(user=u2, collection="hello", content_length=10)
+        r3 = request.PolytopeRequest(user=u3, collection="hello2")
         store = dynamodb_request_store.DynamoDBRequestStore()
         for req in (r1, r2, r3):
             store.add_request(req)
@@ -112,7 +112,7 @@ def test_get_requests_scan(populated):
 
 def test_update(mocked_aws):
     u1 = user.User("user1", "realm1")
-    r1 = request.Request(user=u1)
+    r1 = request.PolytopeRequest(user=u1)
     store = dynamodb_request_store.DynamoDBRequestStore()
     store.add_request(r1)
     r2 = store.get_request(r1.id)
@@ -130,7 +130,7 @@ def test_update(mocked_aws):
 
 def test_metric_store(mocked_aws):
     store = dynamodb_request_store.DynamoDBRequestStore(metric_store_config={"dynamodb": {"table_name": "metrics"}})
-    r1 = request.Request()
+    r1 = request.PolytopeRequest()
     store.add_request(r1)
     [m1] = store.metric_store.get_metrics()
     assert m1.request_id == r1.id
@@ -150,7 +150,7 @@ def test_remove_old_metrics(mocked_aws):
 
 def test_inexact(mocked_aws):
     u1 = user.User("user1", "realm1")
-    r1 = request.Request(user=u1, user_request={"some_key": 0.3})
+    r1 = request.PolytopeRequest(user=u1, user_request={"some_key": 0.3})
     store = dynamodb_request_store.DynamoDBRequestStore()
     store.add_request(r1)
     r2 = store.get_request(r1.id)
