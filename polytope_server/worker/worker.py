@@ -188,9 +188,10 @@ class Worker:
 
             self.queue.ack(self.queue_msg)
 
-            self.update_status("idle")
             self.request_store.update_request(self.request)
-            sys.exit(0)
+
+            self.update_status("idle")
+            await self.terminate()
 
             self.queue_msg = None
             self.request = None
