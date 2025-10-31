@@ -80,7 +80,7 @@ class RequestStore(ABC):
 
     def set_request_status(self, request: PolytopeRequest, status: Status) -> None:
         """Set the status of a request and update the request store"""
-        request.status = status
+        request.set_status(status)
         self.update_request(request)
 
     @abstractmethod
