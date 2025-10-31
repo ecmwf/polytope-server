@@ -136,6 +136,3 @@ class OpenIDOfflineAuthentication(authentication.Authentication):
             logging.info(e)
             raise ForbiddenRequest("Could not authenticate user from openid offline_access token")
         return user
-
-    def collect_metric_info(self):
-        return {}

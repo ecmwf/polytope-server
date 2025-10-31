@@ -62,9 +62,6 @@ class FederationAuthentication(authentication.Authentication):
         user = User(proxy_user, proxy_realm)
         return user
 
-    def collect_metric_info(self):
-        return {}
-
 
 #################################################
 

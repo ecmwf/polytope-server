@@ -66,6 +66,3 @@ class PlainAuthorization(Authorization):
             attributes.update(self.user_attributes.get(r, {}))
 
         return attributes
-
-    def collect_metric_info(self):
-        return {}

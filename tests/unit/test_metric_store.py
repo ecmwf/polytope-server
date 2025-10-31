@@ -1,16 +1,18 @@
 from datetime import datetime, timedelta
 
-from polytope_server.common.metric import QueueInfo
+from polytope_server.common.metric import RequestStatusChange
 from polytope_server.common.metric_store.metric_store import MetricStore
+from polytope_server.common.request import Status
 
 
 def _test_remove_old_metrics(store: MetricStore):
     """Test that old metrics are deleted correctly."""
 
     # Create a metric older than the cutoff
-    old_metric = QueueInfo(
-        queue_host="test_host",
-        total_queued=100,
+    old_metric = RequestStatusChange(
+        status=Status.PROCESSED,
+        request_id="test-request-1",
+        user_id="test-user-1",
         timestamp=(datetime.now() - timedelta(days=10)).timestamp(),
     )
     store.add_metric(old_metric)
@@ -18,9 +20,10 @@ def _test_remove_old_metrics(store: MetricStore):
     assert store.get_metric(old_metric.uuid) is not None
 
     # Create a metric newer than the cutoff
-    new_metric = QueueInfo(
-        queue_host="test_host",
-        total_queued=200,
+    new_metric = RequestStatusChange(
+        status=Status.PROCESSED,
+        request_id="test-request-2",
+        user_id="test-user-2",
         timestamp=(datetime.now().timestamp()),
     )
     store.add_metric(new_metric)

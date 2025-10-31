@@ -24,17 +24,7 @@ import pymongo
 from pymongo import ASCENDING
 
 from .. import mongo_client_factory
-from ..metric import (
-    CacheInfo,
-    Metric,
-    MetricType,
-    QueueInfo,
-    RequestStatusChange,
-    StorageInfo,
-    WorkerInfo,
-    WorkerStatusChange,
-)
-from ..metric_collector import MongoStorageMetricCollector
+from ..metric import Metric, MetricType, RequestStatusChange
 from . import MetricStore
 
 
@@ -59,17 +49,8 @@ class MongoMetricStore(MetricStore):
         self._ensure_indexes()
 
         self.metric_type_class_map = {
-            MetricType.WORKER_STATUS_CHANGE: WorkerStatusChange,
-            MetricType.WORKER_INFO: WorkerInfo,
             MetricType.REQUEST_STATUS_CHANGE: RequestStatusChange,
-            MetricType.STORAGE_INFO: StorageInfo,
-            MetricType.CACHE_INFO: CacheInfo,
-            MetricType.QUEUE_INFO: QueueInfo,
         }
-
-        self.storage_metric_collector = MongoStorageMetricCollector(
-            uri, self.mongo_client, "metric_store", metric_collection
-        )
 
         logging.info("MongoClient configured to open at {}".format(uri))
 
@@ -214,9 +195,6 @@ class MongoMetricStore(MetricStore):
 
     def wipe(self):
         self.database.drop_collection(self.store.name)
-
-    def collect_metric_info(self):
-        return self.storage_metric_collector.collect().serialize()
 
     def remove_old_metrics(self, cutoff):
         cutoff = cutoff.timestamp()

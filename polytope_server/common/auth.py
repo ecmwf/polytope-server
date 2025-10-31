@@ -54,8 +54,3 @@ class AuthHelper:
     def can_access_collection(self, auth_header: str, collection: Collection):
         """Authenticate and authorize a user, testing if they can access a collection"""
         return self.auth.can_access_collection(auth_header, collection)
-
-    def collect_metric_info(
-        self,
-    ) -> dict:
-        return self.auth.collect_metric_info()

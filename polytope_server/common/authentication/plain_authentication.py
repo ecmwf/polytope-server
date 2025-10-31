@@ -56,6 +56,3 @@ class PlainAuthentication(authentication.Authentication):
                 return user
 
         raise ForbiddenRequest("Invalid credentials")
-
-    def collect_metric_info(self):
-        return {}

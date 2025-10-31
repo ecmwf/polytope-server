@@ -29,10 +29,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
-from ..common import collection, metric_store
+from ..common import collection
 from ..common import queue as polytope_queue
 from ..common import request_store, staging
-from ..common.metric import WorkerInfo, WorkerStatusChange
 from ..common.request import Status
 
 
@@ -68,14 +67,6 @@ class Worker:
         self.total_idle_time = 0.0
         self.total_processing_time = 0.0
 
-        self.metric_store = None
-        self.metric = WorkerInfo()
-        self.update_metric()
-
-        if self.config.get("metric_store"):
-            self.metric_store = metric_store.create_metric_store(self.config.get("metric_store"))
-            self.metric_store.add_metric(self.metric)
-
         self.collections = collection.create_collections(self.config.get("collections"))
         self.staging = staging.create_staging(self.config.get("staging"))
         self.request_store = request_store.create_request_store(
@@ -89,7 +80,6 @@ class Worker:
     def update_status(self, new_status, time_spent=None, request_id=None):
         if time_spent is None:
             time_spent = self.poll_interval
-
         self.status_time += time_spent
 
         if self.status == "processing":
@@ -110,22 +100,15 @@ class Worker:
 
         logging.info(
             "Worker status update",
-            extra=WorkerStatusChange(status=self.status).serialize(),
+            extra={
+                "status": self.status,
+                "request_id": self.processing_id,
+                "requests_processed": self.requests_processed,
+                "requests_failed": self.requests_failed,
+                "total_idle_time": self.total_idle_time,
+                "total_processing_time": self.total_processing_time,
+            },
         )
-        self.update_metric()
-
-    def update_metric(self):
-        self.metric.update(
-            status=self.status,
-            status_time=self.status_time,
-            request_id=self.processing_id,
-            requests_processed=self.requests_processed,
-            requests_failed=self.requests_failed,
-            total_idle_time=self.total_idle_time,
-            total_processing_time=self.total_processing_time,
-        )
-        if self.metric_store:
-            self.metric_store.update_metric(self.metric)
 
     async def keep_alive(self):
         if self.queue is None:

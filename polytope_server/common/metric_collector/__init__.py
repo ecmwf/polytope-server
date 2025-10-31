@@ -19,7 +19,4 @@
 #
 
 from .metric_collector import *  # isort:skip
-from .cache_metric_collector import *
-from .queue_metric_collector import *
 from .request_store_metric_collector import *
-from .storage_metric_collector import *

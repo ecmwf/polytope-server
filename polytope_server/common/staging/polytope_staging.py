@@ -23,7 +23,6 @@ import logging
 
 import requests
 
-from ..metric_collector import StorageMetricCollector
 from . import staging
 
 
@@ -31,13 +30,10 @@ class PolytopeStaging(staging.Staging):
     def __init__(self, config):
         self.host = config.get("host", "0.0.0.0")
         self.port = config.get("port", "8000")
-        endpoint = "{}:{}".format(self.host, self.port)
         self.root_dir = config.get("root_dir", "/home/polytope/data")
 
         self.url = config.get("url", None)
         self.internal_url = "http://%s:%s" % (self.host, self.port)
-
-        self.metric_collector = StorageMetricCollector(endpoint, "basic_object_store")
 
         logging.info("Opened data staging at {}".format(self.internal_url))
 
@@ -108,9 +104,6 @@ class PolytopeStaging(staging.Staging):
 
     def wipe(self):
         raise NotImplementedError()
-
-    def collect_metric_info(self):
-        return self.metric_collector.collect().serialize()
 
     def get_url(self, name):
         if self.url is None:

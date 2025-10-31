@@ -65,9 +65,6 @@ class LDAPAuthorization(authorization.Authorization):
     def get_attributes(self, user: User) -> dict:
         return {}
 
-    def collect_metric_info(self):
-        return {}
-
 
 #################################################
 

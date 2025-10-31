@@ -20,10 +20,6 @@
 
 import importlib
 from abc import ABC, abstractmethod
-from typing import Dict, Union
-
-from ..metric import MetricType
-from ..request import Status
 
 
 class Message:
@@ -72,12 +68,6 @@ class Queue(ABC):
     @abstractmethod
     def get_type(self) -> str:
         """Get the implementation type"""
-
-    @abstractmethod
-    def collect_metric_info(
-        self,
-    ) -> Dict[str, Union[None, int, float, str, Status, MetricType]]:
-        """Collect dictionary of metrics"""
 
 
 queue_dict = {"rabbitmq": "RabbitmqQueue", "sqs": "SQSQueue"}

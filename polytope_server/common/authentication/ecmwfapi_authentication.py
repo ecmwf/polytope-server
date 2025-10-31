@@ -71,9 +71,6 @@ class ECMWFAuthentication(authentication.Authentication):
         user.attributes["ecmwf-apikey"] = auth_key
         return user
 
-    def collect_metric_info(self):
-        return {}
-
 
 #################################################
 

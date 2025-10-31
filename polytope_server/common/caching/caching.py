@@ -24,26 +24,12 @@ import hashlib
 import io
 import logging
 import pickle
-import socket
 from abc import ABC, abstractmethod
-from typing import Dict, Union
 
 import pymemcache
 import redis
 
 from .. import mongo_client_factory
-from ..metric import MetricType
-from ..metric_collector import (
-    DictStorageMetricCollector,
-    GlobalVarCacheMetricCollector,
-    MemcachedCacheMetricCollector,
-    MemcachedStorageMetricCollector,
-    MongoCacheMetricCollector,
-    MongoStorageMetricCollector,
-    RedisCacheMetricCollector,
-    RedisStorageMetricCollector,
-)
-from ..request import Status
 
 
 class Caching(ABC):
@@ -69,12 +55,6 @@ class Caching(ABC):
     def wipe(self):
         """Wipes the cache"""
 
-    @abstractmethod
-    def collect_metric_info(
-        self,
-    ) -> Dict[str, Union[None, int, float, str, Status, MetricType]]:
-        """Collect dictionary of metrics"""
-
 
 # ------------------ globalvar cache -----------------
 
@@ -84,9 +64,6 @@ class GlobalVarCaching(Caching):
         super().__init__(cache_config)
         self.config = cache_config
         self.store = {}
-        host = socket.gethostname()
-        self.storage_metric_collector = DictStorageMetricCollector(host, self.store)
-        self.cache_metric_collector = GlobalVarCacheMetricCollector()
 
     def get_type(self):
         return "globalvar"
@@ -108,11 +85,6 @@ class GlobalVarCaching(Caching):
     def wipe(self):
         self.store = {}
 
-    def collect_metric_info(self):
-        metric = self.cache_metric_collector.collect().serialize()
-        metric["storage"] = self.storage_metric_collector.collect().serialize()
-        return metric
-
 
 # ------------------ Memcached -----------------
 
@@ -122,10 +94,7 @@ class MemcachedCaching(Caching):
         super().__init__(cache_config)
         host = cache_config.get("host", "localhost")
         port = cache_config.get("port", 11211)
-        endpoint = "{}:{}".format(host, port)
         self.client = pymemcache.client.base.Client((host, port), connect_timeout=5, timeout=1)
-        self.storage_metric_collector = MemcachedStorageMetricCollector(endpoint, self.client)
-        self.cache_metric_collector = MemcachedCacheMetricCollector(self.client)
 
     def get_type(self):
         return "memcached"
@@ -145,11 +114,6 @@ class MemcachedCaching(Caching):
     def wipe(self):
         self.client.flush_all()
 
-    def collect_metric_info(self):
-        metric = self.storage_metric_collector.collect().serialize()
-        metric["storage"] = self.cache_metric_collector.collect().serialize()
-        return metric
-
 
 # ------------------ Redis -----------------
 
@@ -159,11 +123,8 @@ class RedisCaching(Caching):
         super().__init__(cache_config)
         host = cache_config.get("host", "localhost")
         port = cache_config.get("port", 6379)
-        endpoint = "{}:{}".format(host, port)
         db = cache_config.get("db", 0)
         self.client = redis.Redis(host=host, port=port, db=db)
-        self.storage_metric_collector = RedisStorageMetricCollector(endpoint, self.client)
-        self.cache_metric_collector = RedisCacheMetricCollector(self.client)
 
     def get_type(self):
         return "redis"
@@ -182,11 +143,6 @@ class RedisCaching(Caching):
 
     def wipe(self):
         self.client.flushdb()
-
-    def collect_metric_info(self):
-        metric = self.cache_metric_collector.collect().serialize()
-        metric["storage"] = self.storage_metric_collector.collect().serialize()
-        return metric
 
 
 # ------------------ MongoDB -----------------
@@ -212,8 +168,6 @@ class MongoDBCaching(Caching):
         self.collection.create_index("expire_at", expireAfterSeconds=0)
         self.collection.update_one({"_id": "hits"}, {"$setOnInsert": {"n": 0}}, upsert=True)
         self.collection.update_one({"_id": "misses"}, {"$setOnInsert": {"n": 0}}, upsert=True)
-        self.storage_metric_collector = MongoStorageMetricCollector(uri, self.client, "cache", collection)
-        self.cache_metric_collector = MongoCacheMetricCollector(self.client, "cache", collection)
 
     def get_type(self):
         return "mongodb"
@@ -244,11 +198,6 @@ class MongoDBCaching(Caching):
         self.collection.drop()
         self.collection.update_one({"_id": "hits"}, {"$setOnInsert": {"n": hits}}, upsert=True)
         self.collection.update_one({"_id": "misses"}, {"$setOnInsert": {"n": misses}}, upsert=True)
-
-    def collect_metric_info(self):
-        metric = self.cache_metric_collector.collect().serialize()
-        metric["storage"] = self.storage_metric_collector.collect().serialize()
-        return metric
 
 
 # ------------------ Decorator -----------------
@@ -311,11 +260,6 @@ class cache(object):
         want to cache the failure.
         """
         cls.cancelled = True
-
-    @classmethod
-    def collect_metric_info(cls):
-        """Collect dictionary of metrics"""
-        return cls.cache.collect_metric_info()
 
     def __init__(self, lifetime=0, ignore=None):  # lifetime in seconds
         """

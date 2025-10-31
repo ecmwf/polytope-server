@@ -25,7 +25,6 @@ import hashlib
 from .. import mongo_client_factory
 from ..auth import User
 from ..exceptions import ForbiddenRequest
-from ..metric_collector import MongoStorageMetricCollector
 from . import authentication
 
 
@@ -40,10 +39,6 @@ class MongoAuthentication(authentication.Authentication):
         self.mongo_client = mongo_client_factory.create_client(uri, username, password)
         self.database = self.mongo_client.authentication
         self.users = self.database[collection]
-
-        self.storage_metric_collector = MongoStorageMetricCollector(
-            uri, self.mongo_client, "authentication", collection
-        )
 
         super().__init__(name, realm, config)
 
@@ -89,6 +84,3 @@ class MongoAuthentication(authentication.Authentication):
     def verify_password(username, password, stored_password):
         password_hash = MongoAuthentication.hash_password(username, password)
         return password_hash == stored_password
-
-    def collect_metric_info(self):
-        return self.storage_metric_collector.collect().serialize()

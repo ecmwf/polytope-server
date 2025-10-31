@@ -128,6 +128,12 @@ class DataTransfer:
 
         request.set_status(Status.WAITING)
         request.url = self.staging.get_internal_url(id)
+
+        # Update content length and type
+        stored_content_type, stored_size = self.staging.stat(id)
+        request.content_type = stored_content_type
+        request.content_length = stored_size
+
         self.request_store.update_request(request)
         response = self.construct_response(request)
         return RequestAccepted(response)
@@ -140,11 +146,13 @@ class DataTransfer:
                 # TODO: temporary fix for Content-Disposition earthkit issues
                 url_path = PurePosixPath(urlparse(request.url).path)
                 extension = url_path.suffix
-
                 if extension is not None and len(extension) > 0:
                     object_id = request.id + extension
+            content_type, content_length = self.staging.stat(object_id)
+            request.content_type = content_type
+            request.content_length = content_length
+            self.request_store.update_request(request)
 
-            request.content_type, request.content_length = self.staging.stat(object_id)
         except Exception:
             raise ServerError("Error while querying data staging with {}".format(object_id))
 

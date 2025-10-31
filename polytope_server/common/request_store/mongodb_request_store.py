@@ -26,10 +26,7 @@ import pymongo
 from .. import metric_store, mongo_client_factory
 from ..exceptions import ForbiddenRequest, NotFound, UnauthorizedRequest
 from ..metric import MetricType, RequestStatusChange
-from ..metric_collector import (
-    MongoRequestStoreMetricCollector,
-    MongoStorageMetricCollector,
-)
+from ..metric_collector import MongoRequestStoreMetricCollector
 from ..request import Request, Status
 from . import request_store
 
@@ -51,9 +48,6 @@ class MongoRequestStore(request_store.RequestStore):
         if metric_store_config:
             self.metric_store = metric_store.create_metric_store(metric_store_config)
 
-        self.storage_metric_collector = MongoStorageMetricCollector(
-            uri, self.mongo_client, "request_store", request_collection
-        )
         self.request_store_metric_collector = MongoRequestStoreMetricCollector()
 
         logging.info("MongoClient configured to open at {}".format(uri))
@@ -66,7 +60,7 @@ class MongoRequestStore(request_store.RequestStore):
             raise ValueError("Request already exists in request store")
         self.store.insert_one(request.serialize())
 
-        if self.metric_store:
+        if self.metric_store and request.status == Status.PROCESSED:
             self.metric_store.add_metric(
                 RequestStatusChange(request_id=request.id, status=request.status, user_id=request.user.id)
             )
@@ -174,7 +168,7 @@ class MongoRequestStore(request_store.RequestStore):
         if res is None:
             raise NotFound("Request {} not found in request store".format(request.id))
 
-        if self.metric_store:
+        if self.metric_store and request.status == Status.PROCESSED:
             self.metric_store.add_metric(
                 RequestStatusChange(request_id=request.id, status=request.status, user_id=request.user.id)
             )
@@ -195,7 +189,6 @@ class MongoRequestStore(request_store.RequestStore):
 
     def collect_metric_info(self):
         metric = self.request_store_metric_collector.collect().serialize()
-        metric["storage"] = self.storage_metric_collector.collect().serialize()
         return metric
 
     def remove_old_requests(self, cutoff):
