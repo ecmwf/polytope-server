@@ -176,7 +176,7 @@ class MongoRequestStore(request_store.RequestStore):
 
         logging.info(
             "Request ID {} updated on request store. Status set to {}.".format(request.id, request.status),
-            extra={"request": request},
+            extra={"request": request.serialize()},
         )
 
         return res
