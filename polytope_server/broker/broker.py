@@ -85,7 +85,7 @@ class Broker:
                 return
 
     def check_limits(self, active_requests, request):
-        with with_baggage_items({"request.id": request.id}):
+        with with_baggage_items({"request_id": request.id}):
             logging.debug(f"Checking limits for request {request.id}")
 
             # Get collection limits and calculate active requests
@@ -128,7 +128,7 @@ class Broker:
             return True
 
     def enqueue(self, request):
-        with with_baggage_items({"request.id": request.id}):
+        with with_baggage_items({"request_id": request.id}):
             logging.info("Queuing request")
 
             try:

@@ -23,6 +23,7 @@ import datetime
 import json
 import logging
 import socket
+from collections import OrderedDict
 
 from opentelemetry import baggage
 from opentelemetry.context import attach, detach, get_current
@@ -138,6 +139,24 @@ class LogFormatter(logging.Formatter):
         return json.dumps(result, indent=None)
 
 
+def ordered_dumps(primary_fields=None):
+    def inner(obj, **json_kwargs):
+        if not isinstance(obj, dict):
+            return json.dumps(obj, **json_kwargs)
+
+        ordered = OrderedDict()
+        for field in primary_fields:
+            if field in obj:
+                ordered[field] = obj.pop(field)
+
+        remaining = OrderedDict(obj)
+        ordered.update(remaining)
+
+        return json.dumps(ordered, **json_kwargs)
+
+    return inner
+
+
 def format_time(record):
     utc_time = datetime.datetime.fromtimestamp(record.created, datetime.timezone.utc)
     return utc_time.strftime("%Y-%m-%d %H:%M:%S,%f")[:-3]
@@ -155,7 +174,7 @@ def setup(config, source_name):
     level = config.get("logging", {}).get("level", DEFAULT_LOGGING_LEVEL)
 
     if mode == "json":
-        reserved_attrs = ["msg", "msecs", "relativeCreated", "process"]
+        reserved_attrs = ["args", "msg", "msecs", "relativeCreated", "process"]
         if level != "DEBUG":
             reserved_attrs += [
                 "filename",
@@ -164,9 +183,13 @@ def setup(config, source_name):
                 "module",
                 "processName",
                 "thread",
-                "threadName",
             ]
-        handler.setFormatter(jsonlogger.JsonFormatter(reserved_attrs=reserved_attrs))
+        handler.setFormatter(
+            jsonlogger.JsonFormatter(
+                reserved_attrs=reserved_attrs,
+                json_serializer=ordered_dumps(primary_fields=["asc_time", "request_id", "message"]),
+            )
+        )
     else:
         handler.setFormatter(LogFormatter(mode))
 

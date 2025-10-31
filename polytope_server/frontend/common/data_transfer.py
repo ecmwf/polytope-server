@@ -56,7 +56,7 @@ class DataTransfer:
             raise ServerError("Error while attempting to add new request to request store")
 
         response = self.construct_response(request)
-        logging.info("Retrieverequest added to store: {}".format(request.id), extra={"request.id": request.id})
+        logging.info("Retrieverequest added to store: {}".format(request.id), extra={"request_id": request.id})
         return RequestAccepted(response)
 
     def request_upload(self, http_request: Request, user: User, collection: str):
@@ -81,7 +81,7 @@ class DataTransfer:
             raise ServerError("Error while attempting to add new request to request store")
 
         response = self.construct_response(request)
-        logging.info("Archive request added to store: {}".format(request.id), extra={"request.id": request.id})
+        logging.info("Archive request added to store: {}".format(request.id), extra={"request_id": request.id})
         return RequestAccepted(response)
 
     def query_request(self, user: User, id: str) -> Response:
@@ -170,7 +170,7 @@ class DataTransfer:
         response = self.construct_response(request)
         logging.info(
             "Request succeeded, redirecting to {}".format(response["location"]),
-            extra={"request.id": request.id, "location": response["location"]},
+            extra={"request_id": request.id, "location": response["location"]},
         )
         return RequestRedirected(response)
 

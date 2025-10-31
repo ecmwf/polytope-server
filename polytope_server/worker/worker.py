@@ -146,7 +146,7 @@ class Worker:
                 continue
 
             id = self.queue_msg.body["id"]
-            with with_baggage_items({"request.id": id}):
+            with with_baggage_items({"request_id": id}):
                 self.request = self.request_store.get_request(id)
 
                 # This occurs when a request has been revoked while it was on the queue
@@ -316,7 +316,7 @@ class Worker:
         """Called when the worker is asked to exit whilst processing a request, and we want to reschedule the request"""
 
         if self.request is not None:
-            with with_baggage_items({"request.id": self.request.id}):
+            with with_baggage_items({"request_id": self.request.id}):
                 logging.info("Rescheduling request due to worker shutdown.")
                 error_message = self.request.user_message + "\n" + "Worker shutdown, rescheduling request."
                 self.request.user_message = error_message

@@ -201,7 +201,7 @@ class FlaskHandler(frontend.FrontendHandler):
         # see: @handler.route("/api/v1/requests/<collection_or_request_id>", methods = ['GET','POST','DELETE'])
         def handle_specific_request(request, request_id):
             user = auth.authenticate(get_auth_header(request))
-            with with_baggage_items({"user.username": user.username, "request.id": request_id}) as _:
+            with with_baggage_items({"user.username": user.username, "request_id": request_id}) as _:
                 if request.method == "GET":
                     return data_transfer.query_request(user, request_id)
                 elif request.method == "POST":
@@ -221,7 +221,7 @@ class FlaskHandler(frontend.FrontendHandler):
 
         @handler.route("/api/v1/downloads/<path:request_id>", methods=["GET", "HEAD"])
         def downloads(request_id):
-            with with_baggage_items({"request.id": request_id}) as _:
+            with with_baggage_items({"request_id": request_id}) as _:
                 logging.warning("Serving download data directly through frontend")
                 if request.method == "GET":
                     return data_transfer.download(request_id)
@@ -229,7 +229,7 @@ class FlaskHandler(frontend.FrontendHandler):
         @handler.route("/api/v1/uploads/<request_id>", methods=["GET", "POST"])
         def uploads(request_id):
             user = auth.authenticate(get_auth_header(request))
-            with with_baggage_items({"user.username": user.username, "request.id": request_id}) as _:
+            with with_baggage_items({"user.username": user.username, "request_id": request_id}) as _:
                 if request.method == "GET":
                     return data_transfer.query_request(user, request_id)
                 elif request.method == "POST":
