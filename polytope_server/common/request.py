@@ -87,7 +87,7 @@ class PolytopeRequest:
         for k, v in kwargs.items():
             self.__setattr__(k, v)
 
-    def set_status(self, value):
+    def set_status(self, value: Status) -> None:
         self.status = value
         now_ts = datetime.datetime.now(datetime.timezone.utc).timestamp()
         if self.status_history is None:

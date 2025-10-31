@@ -78,6 +78,11 @@ class RequestStore(ABC):
     def update_request(self, request: PolytopeRequest) -> None:
         """Updates a stored request"""
 
+    def set_request_status(self, request: PolytopeRequest, status: Status) -> None:
+        """Set the status of a request and update the request store"""
+        request.status = status
+        self.update_request(request)
+
     @abstractmethod
     def get_type(self) -> str:
         """Returns the type of the request_store in use"""

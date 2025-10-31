@@ -27,6 +27,7 @@ import signal
 import sys
 import traceback
 from concurrent.futures import ThreadPoolExecutor
+from typing import NoReturn
 
 import requests
 from opentelemetry import trace
@@ -121,7 +122,7 @@ class Worker:
             },
         )
 
-    async def keep_alive(self) -> os.NoReturn:
+    async def keep_alive(self) -> NoReturn:
         if self.queue is None:
             raise RuntimeError("queue was not initialised")
 
@@ -162,25 +163,22 @@ class Worker:
                         "Request has unexpected status %s, setting to failed",
                         self.request.status,
                     )
-                    self.request.set_status(Status.FAILED)
                     msg = "Request was not processed due to an unexpected worker crash. Please contact support."
                     self.request.user_message += msg
-                    self.request_store.update_request(self.request)
+                    self.request_store.set_request_status(self.request, Status.FAILED)
                     self.queue.ack(self.queue_msg)
                     self.update_status("idle")
                     continue
 
-                self.request.set_status(Status.PROCESSING)
+                self.request_store.set_request_status(self.request, Status.PROCESSING)
                 self.update_status("processing", request_id=self.request.id)
-                self.request_store.update_request(self.request)
                 try:
                     await loop.run_in_executor(executor, self.process_request, self.request)
                 except Exception as e:
-                    self.on_request_fail(self.request, e)
+                    self.on_request_fail(e)
                 else:
-                    self.on_request_complete(self.request)
+                    self.on_request_complete()
 
-                self.request_store.update_request(self.request)
                 self.queue.ack(self.queue_msg)
 
                 self.update_status("idle")
@@ -189,13 +187,13 @@ class Worker:
                 self.queue_msg = None
                 self.request = None
 
-    async def terminate(self) -> os.NoReturn:
+    async def terminate(self) -> NoReturn:
         if timeout := self.config.get("timeout"):
             self.update_status("draining")
             await aio.sleep(timeout)
         raise TaskGroupTermination()
 
-    async def schedule(self, executor: concurrent.futures.Executor) -> os.NoReturn:
+    async def schedule(self, executor: concurrent.futures.Executor) -> NoReturn:
 
         def handle_termination(group: aio.TaskGroup) -> None:
             logging.info("Termination signal received, exiting...")
@@ -294,24 +292,23 @@ class Worker:
                 )
         return None
 
-    def on_request_complete(self, request: PolytopeRequest) -> None:
+    def on_request_complete(self) -> None:
         """Called when the request processing exits cleanly"""
 
-        with with_baggage_items({"request.id": request.id}):
-            request.user_message = "Success"  # Do not report log history on successful request
-            logging.info("Request completed successfully.", extra={"request_id": request.id})
-            request.set_status(Status.PROCESSED)
-            self.requests_processed += 1
+        self.request.user_message = "Success"  # Do not report log history on successful request
+        logging.info("Request completed successfully.")
+        self.request_store.set_request_status(self.request, Status.PROCESSED)
+        self.requests_processed += 1
 
-    def on_request_fail(self, request: PolytopeRequest, exception: Exception) -> None:
+    def on_request_fail(self, exception: Exception) -> None:
         """Called when the request processing raises an exception"""
 
         _, v, _ = sys.exc_info()
         tb = traceback.format_exception(None, exception, exception.__traceback__)
         logging.exception(tb)
-        error_message = request.user_message + "\n" + str(v)
-        request.set_status(Status.FAILED)
-        request.user_message = error_message
+        error_message = self.request.user_message + "\n" + str(v)
+        self.request.user_message = error_message
+        self.request_store.set_request_status(self.request, Status.FAILED)
         logging.exception("Request failed with exception.")
         self.requests_failed += 1
 
@@ -319,9 +316,12 @@ class Worker:
         """Called when the worker is asked to exit whilst processing a request, and we want to reschedule the request"""
 
         if self.request is not None:
-            error_message = self.request.user_message + "\n" + "Worker shutdown, rescheduling request."
-            self.request.user_message = error_message
-            if self.request.status == Status.PROCESSING:
-                self.request.set_status(Status.QUEUED)
-                self.request_store.update_request(self.request)
-                self.queue.nack(self.queue_msg)
+            with with_baggage_items({"request.id": self.request.id}):
+                logging.info("Rescheduling request due to worker shutdown.")
+                error_message = self.request.user_message + "\n" + "Worker shutdown, rescheduling request."
+                self.request.user_message = error_message
+                if self.request.status == Status.PROCESSING:
+                    self.request_store.set_request_status(self.request, Status.QUEUED)
+                    self.queue.nack(self.queue_msg)
+                else:
+                    self.request_store.update_request(self.request)

@@ -140,7 +140,6 @@ class Broker:
             except Exception as e:
                 # If we fail to call this, the request will be stuck (POLY-21)
                 logging.exception("Failed to queue, error: {}".format(repr(e)))
-                request.set_status(Status.WAITING)
-                self.request_store.update_request(request)
+                self.request_store.set_request_status(request, Status.WAITING)
             else:
                 logging.info("Queued request")
