@@ -140,6 +140,12 @@ class LogFormatter(logging.Formatter):
 
 
 def ordered_dumps(primary_fields=None):
+    """
+    Return a json.dumps function that orders fields with primary_fields first.
+    The remaining fields are sorted alphabetically.
+    primary_fields: list of field names to appear first in order.
+    """
+
     def inner(obj, **json_kwargs):
         if not isinstance(obj, dict):
             return json.dumps(obj, **json_kwargs)
@@ -147,6 +153,10 @@ def ordered_dumps(primary_fields=None):
         ordered = OrderedDict()
         for field in primary_fields:
             if field in obj:
+                ordered[field] = obj.pop(field)
+
+        for field in sorted(obj.keys()):
+            if field:
                 ordered[field] = obj.pop(field)
 
         remaining = OrderedDict(obj)
