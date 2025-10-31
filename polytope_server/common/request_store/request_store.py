@@ -104,7 +104,7 @@ class RequestStore(ABC):
 type_to_class_map = {"mongodb": "MongoRequestStore", "dynamodb": "DynamoDBRequestStore"}
 
 
-def create_request_store(request_store_config=None, metric_store_config=None):
+def create_request_store(request_store_config=None, metric_store_config=None) -> RequestStore:
 
     if request_store_config is None:
         request_store_config = {"mongodb": {}}
