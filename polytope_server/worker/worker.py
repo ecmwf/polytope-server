@@ -18,11 +18,12 @@
 # does it submit to any jurisdiction.
 #
 
+import asyncio as aio
+import functools
 import logging
 import os
 import signal
 import sys
-import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 
@@ -32,6 +33,10 @@ from ..common import collection
 from ..common import queue as polytope_queue
 from ..common import request_store, staging
 from ..common.request import Status
+
+
+class TaskGroupTermination(Exception):
+    pass
 
 
 class Worker:
@@ -68,13 +73,9 @@ class Worker:
             self.config.get("request_store"), self.config.get("metric_store")
         )
 
-        self.future = None
         self.queue_msg = None
         self.request = None
         self.queue = None
-
-        signal.signal(signal.SIGINT, self.on_process_terminated)
-        signal.signal(signal.SIGTERM, self.on_process_terminated)
 
     def update_status(self, new_status, time_spent=None, request_id=None):
         if time_spent is None:
@@ -109,89 +110,118 @@ class Worker:
             },
         )
 
-    def run(self):
+    async def keep_alive(self):
+        if self.queue is None:
+            raise RuntimeError("queue was not initialised")
 
-        self.thread_pool = ThreadPoolExecutor(1)
-
-        try:
-            self.queue = polytope_queue.create_queue(self.config.get("queue"))
-
-            self.update_status("idle", time_spent=0)
-
-            while not time.sleep(self.poll_interval):
+        while True:
+            if self.request is not None:
                 self.queue.keep_alive()
 
-                # No active request: try to pop from queue and process request in future thread
-                if self.future is None:
-                    self.queue_msg = self.queue.dequeue()
-                    if self.queue_msg is not None:
-                        id = self.queue_msg.body["id"]
-                        self.request = self.request_store.get_request(id)
+            await aio.sleep(self.poll_interval)
 
-                        # This occurs when a request has been revoked while it was on the queue
-                        if self.request is None:
-                            logging.info(
-                                "Request no longer exists, ignoring",
-                                extra={"request_id": id},
-                            )
-                            self.update_status("idle")
-                            self.queue.ack(self.queue_msg)
+    async def listen_queue(self, executor):
+        if self.queue is None:
+            raise RuntimeError("queue was not initialised")
 
-                        # Occurs if a request crashed a worker and the message gets requeued (status will be PROCESSING)
-                        # We do not want to try this request again
-                        elif self.request.status != Status.QUEUED:
-                            logging.info(
-                                "Request has unexpected status {}, setting to failed".format(self.request.status),
-                                extra={"request_id": id},
-                            )
-                            self.request.set_status(Status.FAILED)
-                            self.request.user_message += (
-                                "Request was not processed due to an unexpected worker crash. Please contact support."
-                            )
-                            self.request_store.update_request(self.request)
-                            self.update_status("idle")
-                            self.queue.ack(self.queue_msg)
+        loop = aio.get_running_loop()
 
-                        # OK, process the request
-                        else:
-                            logging.info(
-                                "Popped request from the queue, beginning worker thread.",
-                                extra={"request_id": id},
-                            )
-                            self.request.set_status(Status.PROCESSING)
-                            self.update_status("processing", request_id=self.request.id)
-                            self.request_store.update_request(self.request)
-                            self.future = self.thread_pool.submit(self.process_request, (self.request))
-                    else:
-                        self.update_status("idle")
+        while self.status != "draining":
+            self.queue_msg = self.queue.dequeue()
+            if self.queue_msg is None:
+                # Only sleep if system is idling
+                await aio.sleep(self.poll_interval)
+                continue
 
-                # Future completed: do callback, ack message and reset state
-                elif self.future.done():
-                    try:
-                        self.future.result(0)
-                    except Exception as e:
-                        self.on_request_fail(self.request, e)
-                    else:
-                        self.on_request_complete(self.request)
+            id = self.queue_msg.body["id"]
+            self.request = self.request_store.get_request(id)
 
-                    self.queue.ack(self.queue_msg)
+            # This occurs when a request has been revoked while it was on the queue
+            if self.request is None:
+                logging.info(
+                    "Request no longer exists, ignoring",
+                    extra={"request_id": id},
+                )
+                self.update_status("idle")
+                self.queue.ack(self.queue_msg)
+                continue
 
-                    self.update_status("idle")
-                    self.request_store.update_request(self.request)
-                    sys.exit(0)
+            # Occurs if a request crashed a worker and the message gets requeued (status will be PROCESSING)
+            # We do not want to try this request again
+            if self.request.status != Status.QUEUED:
+                logging.info(
+                    "Request has unexpected status %s, setting to failed",
+                    self.request.status,
+                    extra={"request_id": id},
+                )
+                self.request.set_status(Status.FAILED)
+                msg = "Request was not processed due to an unexpected worker crash. Please contact support."
+                self.request.user_message += msg
+                self.request_store.update_request(self.request)
+                self.update_status("idle")
+                self.queue.ack(self.queue_msg)
+                continue
 
-                    self.future = None
-                    self.queue_msg = None
-                    self.request = None
+            logging.info(
+                "Popped request from the queue, beginning worker thread.",
+                extra={"request_id": id},
+            )
+            self.request.set_status(Status.PROCESSING)
+            self.update_status("processing", request_id=self.request.id)
+            self.request_store.update_request(self.request)
+            try:
+                await loop.run_in_executor(executor, self.process_request, self.request)
+            except Exception as e:
+                self.on_request_fail(self.request, e)
+            else:
+                self.on_request_complete(self.request)
 
-                # Future running: keep checking
-                else:
-                    self.update_status("processing")
+            self.queue.ack(self.queue_msg)
 
-        except Exception:
+            self.update_status("idle")
+            self.request_store.update_request(self.request)
+            sys.exit(0)
+
+            self.queue_msg = None
+            self.request = None
+
+    async def terminate(self):
+        if timeout := self.config.get("timeout"):
+            self.update_status("draining")
+            await aio.sleep(timeout)
+        raise TaskGroupTermination()
+
+    async def schedule(self, executor):
+
+        def handle_termination(group):
+            logging.info("Termination signal received, exiting...")
+            group.create_task(self.terminate())
+
+        loop = aio.get_running_loop()
+
+        try:
+            async with aio.TaskGroup() as group:
+                group.create_task(self.keep_alive())
+                group.create_task(self.listen_queue(executor))
+                cbk = functools.partial(handle_termination, group)
+                loop.add_signal_handler(signal.SIGINT, cbk)
+                loop.add_signal_handler(signal.SIGTERM, cbk)
+
+        except* TaskGroupTermination:
             # We must force threads to shutdown in case of failure, otherwise the worker won't exit
-            self.thread_pool.shutdown(wait=False)
-            raise
+            executor.shutdown(wait=False)
+            self.on_process_terminated()
+        finally:
+            loop.remove_signal_handler(signal.SIGINT)
+            loop.remove_signal_handler(signal.SIGTERM)
+
+    def run(self):
+        self.queue = polytope_queue.create_queue(self.config.get("queue"))
+
+        self.update_status("idle", time_spent=0)
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            aio.run(self.schedule(executor))
 
     def process_request(self, request):
         """Entrypoint for the worker thread."""
@@ -262,7 +292,7 @@ class Worker:
         return None
 
     def on_request_complete(self, request):
-        """Called when the future exits cleanly"""
+        """Called when the request processing exits cleanly"""
 
         request.user_message = "Success"  # Do not report log history on successful request
         logging.info("Request completed successfully.", extra={"request_id": request.id})
@@ -270,7 +300,7 @@ class Worker:
         self.requests_processed += 1
 
     def on_request_fail(self, request, exception):
-        """Called when the future thread raises an exception"""
+        """Called when the request processing raises an exception"""
 
         _, v, _ = sys.exc_info()
         tb = traceback.format_exception(None, exception, exception.__traceback__)
@@ -294,5 +324,3 @@ class Worker:
             self.request.set_status(Status.QUEUED)
             self.request_store.update_request(self.request)
             self.queue.nack(self.queue_msg)
-
-        exit(0)

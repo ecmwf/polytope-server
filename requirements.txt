@@ -1,6 +1,6 @@
 attrdict==2.0.1
 boto3==1.35.19
-covjsonkit==0.2.3
+covjsonkit==0.2.8
 deepmerge==2.0
 docker==7.1.0
 ecmwf-api-client==1.6.3
@@ -23,7 +23,7 @@ mongomock==4.3.0
 moto[dynamodb,s3]==5.0.16
 pika==1.3.2
 polytope-mars==0.3.5
-polytope-python==2.0.0
+polytope-python==2.1.0
 qubed==0.3.0
 py-bcrypt==0.4
 pykwalify==1.8.0
