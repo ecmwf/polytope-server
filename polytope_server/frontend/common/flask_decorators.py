@@ -35,7 +35,7 @@ def RequestSucceeded(response: collections.abc.Mapping | str) -> Response:
     if not isinstance(response, collections.abc.Mapping):
         response = {"message": response}
     status = 200
-    logging.info("Request succeeded", extra={"response": response, "http.status": status})
+    logging.info(response["message"], extra={"response": response, "http.status": status})
     return Response(response=json.dumps(response), status=status, mimetype="application/json")
 
 
@@ -48,7 +48,7 @@ def RequestAccepted(response: collections.abc.Mapping | str) -> Response:
         headers = {"Location": response["location"], "Retry-After": 5}
         response.pop("location")
     status = 202
-    logging.info("Request accepted", extra={"response": response, "http.status": status})
+    logging.info(response["message"], extra={"response": response, "http.status": status})
     return Response(
         response=json.dumps(response),
         status=status,
@@ -63,7 +63,7 @@ def RequestRedirected(response: collections.abc.Mapping) -> Response:
     assert response["status"] == "processed"
     response.pop("status")
     status = 303
-    logging.info("Request redirected", extra={"response": response, "http.status": status})
+    logging.info("Request successful. User redirected to staging.", extra={"response": response, "http.status": status})
     return Response(
         response=json.dumps(response),
         status=status,
