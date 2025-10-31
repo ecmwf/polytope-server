@@ -19,6 +19,7 @@
 #
 
 import asyncio as aio
+import concurrent
 import functools
 import logging
 import os
@@ -36,7 +37,7 @@ from ..common import collection
 from ..common import queue as polytope_queue
 from ..common import request_store, staging
 from ..common.logging import with_baggage_items
-from ..common.request import Status
+from ..common.request import PolytopeRequest, Status
 
 trace.set_tracer_provider(TracerProvider(resource=Resource.create({"service.name": "frontend"})))
 
@@ -56,7 +57,7 @@ class Worker:
     - Repeats
     """
 
-    def __init__(self, config, debug=False, is_webmars=False):
+    def __init__(self, config: dict):
         self.config = config
         self.worker_config = config.get("worker", {})
         self.datasource_configs = config.get("datasources", {})
@@ -85,7 +86,7 @@ class Worker:
         self.request = None
         self.queue = None
 
-    def update_status(self, new_status, time_spent=None, request_id=None):
+    def update_status(self, new_status: str, time_spent: float = None, request_id: str = None) -> None:
         if time_spent is None:
             time_spent = self.poll_interval
         self.status_time += time_spent
@@ -120,7 +121,7 @@ class Worker:
             },
         )
 
-    async def keep_alive(self):
+    async def keep_alive(self) -> os.NoReturn:
         if self.queue is None:
             raise RuntimeError("queue was not initialised")
 
@@ -130,7 +131,7 @@ class Worker:
 
             await aio.sleep(self.poll_interval)
 
-    async def listen_queue(self, executor):
+    async def listen_queue(self, executor: concurrent.futures.Executor) -> None:
         if self.queue is None:
             raise RuntimeError("queue was not initialised")
 
@@ -144,67 +145,59 @@ class Worker:
                 continue
 
             id = self.queue_msg.body["id"]
-            self.request = self.request_store.get_request(id)
+            with with_baggage_items({"request.id": id}):
+                self.request = self.request_store.get_request(id)
 
-            # This occurs when a request has been revoked while it was on the queue
-            if self.request is None:
-                logging.info(
-                    "Request no longer exists, ignoring",
-                    extra={"request_id": id},
-                )
-                self.update_status("idle")
-                self.queue.ack(self.queue_msg)
-                continue
+                # This occurs when a request has been revoked while it was on the queue
+                if self.request is None:
+                    logging.info("Request no longer exists, ignoring")
+                    self.queue.ack(self.queue_msg)
+                    self.update_status("idle")
+                    continue
 
-            # Occurs if a request crashed a worker and the message gets requeued (status will be PROCESSING)
-            # We do not want to try this request again
-            if self.request.status != Status.QUEUED:
-                logging.info(
-                    "Request has unexpected status %s, setting to failed",
-                    self.request.status,
-                    extra={"request_id": id},
-                )
-                self.request.set_status(Status.FAILED)
-                msg = "Request was not processed due to an unexpected worker crash. Please contact support."
-                self.request.user_message += msg
+                # Occurs if a request crashed a worker and the message gets requeued (status will be PROCESSING)
+                # We do not want to try this request again
+                if self.request.status != Status.QUEUED:
+                    logging.info(
+                        "Request has unexpected status %s, setting to failed",
+                        self.request.status,
+                    )
+                    self.request.set_status(Status.FAILED)
+                    msg = "Request was not processed due to an unexpected worker crash. Please contact support."
+                    self.request.user_message += msg
+                    self.request_store.update_request(self.request)
+                    self.queue.ack(self.queue_msg)
+                    self.update_status("idle")
+                    continue
+
+                self.request.set_status(Status.PROCESSING)
+                self.update_status("processing", request_id=self.request.id)
                 self.request_store.update_request(self.request)
-                self.update_status("idle")
+                try:
+                    await loop.run_in_executor(executor, self.process_request, self.request)
+                except Exception as e:
+                    self.on_request_fail(self.request, e)
+                else:
+                    self.on_request_complete(self.request)
+
+                self.request_store.update_request(self.request)
                 self.queue.ack(self.queue_msg)
-                continue
 
-            logging.info(
-                "Popped request from the queue, beginning worker thread.",
-                extra={"request_id": id},
-            )
-            self.request.set_status(Status.PROCESSING)
-            self.update_status("processing", request_id=self.request.id)
-            self.request_store.update_request(self.request)
-            try:
-                await loop.run_in_executor(executor, self.process_request, self.request)
-            except Exception as e:
-                self.on_request_fail(self.request, e)
-            else:
-                self.on_request_complete(self.request)
+                self.update_status("idle")
+                await self.terminate()
 
-            self.queue.ack(self.queue_msg)
+                self.queue_msg = None
+                self.request = None
 
-            self.request_store.update_request(self.request)
-
-            self.update_status("idle")
-            await self.terminate()
-
-            self.queue_msg = None
-            self.request = None
-
-    async def terminate(self):
+    async def terminate(self) -> os.NoReturn:
         if timeout := self.config.get("timeout"):
             self.update_status("draining")
             await aio.sleep(timeout)
         raise TaskGroupTermination()
 
-    async def schedule(self, executor):
+    async def schedule(self, executor: concurrent.futures.Executor) -> os.NoReturn:
 
-        def handle_termination(group):
+        def handle_termination(group: aio.TaskGroup) -> None:
             logging.info("Termination signal received, exiting...")
             group.create_task(self.terminate())
 
@@ -234,52 +227,51 @@ class Worker:
         with ThreadPoolExecutor(max_workers=1) as executor:
             aio.run(self.schedule(executor))
 
-    def process_request(self, request):
+    def process_request(self, request: PolytopeRequest) -> None:
         """Entrypoint for the worker thread."""
 
         id = request.id
-        with with_baggage_items({"request.id": id}):
-            collection = self.collections[request.collection]
+        collection = self.collections[request.collection]
 
-            logging.info(
-                "Processing request on collection {}".format(collection.name),
-                extra={"collection": collection.name, "request": request.serialize()},
-            )
+        logging.info(
+            "Processing request on collection {}".format(collection.name),
+            extra={"collection": collection.name, "request": request.serialize()},
+        )
 
-            input_data = self.fetch_input_data(request.url)
+        input_data = self.fetch_input_data(request.url)
 
-            # Dispatch to collection
-            datasource = collection.dispatch(request, input_data)
-            # Clean up
-            try:
-                # delete input data if it exists in staging (input data can come from external URLs too)
-                if input_data is not None:
-                    if self.staging.query(id):
-                        self.staging.delete(id)
+        # Dispatch to collection
+        datasource = collection.dispatch(request, input_data)
+        # Clean up
+        try:
+            # delete input data if it exists in staging (input data can come from external URLs too)
+            if input_data is not None:
+                if self.staging.query(id):
+                    self.staging.delete(id)
 
-                # upload result data
-                if datasource is not None:
-                    request.url = self.staging.create(id, datasource.result(request), datasource.mime_type())
+            # upload result data
+            if datasource is not None:
+                request.url = self.staging.create(id, datasource.result(request), datasource.mime_type())
 
-            except Exception as e:
-                logging.exception("Failed to finalize request", extra={"exception": repr(e)})
-                raise
+        except Exception as e:
+            logging.exception("Failed to finalize request", extra={"exception": repr(e)})
+            raise
 
-            # Guarantee destruction of the datasource
-            finally:
-                if datasource is not None:
-                    datasource.destroy(request)
+        # Guarantee destruction of the datasource
+        finally:
+            if datasource is not None:
+                datasource.destroy(request)
 
-            if datasource is None:
-                # request.user_message += "Failed to process request."
-                logging.info(request.user_message)
-                raise Exception("Request was not accepted by any datasources.")
-            else:
-                request.user_message += "Success"
+        if datasource is None:
+            # request.user_message += "Failed to process request."
+            logging.info(request.user_message)
+            raise Exception("Request was not accepted by any datasources.")
+        else:
+            request.user_message += "Success"
 
-            return
+        return
 
-    def fetch_input_data(self, url):
+    def fetch_input_data(self, url: str) -> bytes | None:
         """Downloads input data from external URL or staging"""
         if url != "":
             try:
@@ -302,7 +294,7 @@ class Worker:
                 )
         return None
 
-    def on_request_complete(self, request):
+    def on_request_complete(self, request: PolytopeRequest) -> None:
         """Called when the request processing exits cleanly"""
 
         with with_baggage_items({"request.id": request.id}):
@@ -311,26 +303,25 @@ class Worker:
             request.set_status(Status.PROCESSED)
             self.requests_processed += 1
 
-    def on_request_fail(self, request, exception):
+    def on_request_fail(self, request: PolytopeRequest, exception: Exception) -> None:
         """Called when the request processing raises an exception"""
 
-        with with_baggage_items({"request.id": request.id}):
-            _, v, _ = sys.exc_info()
-            tb = traceback.format_exception(None, exception, exception.__traceback__)
-            logging.exception(tb)
-            error_message = request.user_message + "\n" + str(v)
-            request.set_status(Status.FAILED)
-            request.user_message = error_message
-            logging.exception("Request failed with exception.")
-            self.requests_failed += 1
+        _, v, _ = sys.exc_info()
+        tb = traceback.format_exception(None, exception, exception.__traceback__)
+        logging.exception(tb)
+        error_message = request.user_message + "\n" + str(v)
+        request.set_status(Status.FAILED)
+        request.user_message = error_message
+        logging.exception("Request failed with exception.")
+        self.requests_failed += 1
 
-    def on_process_terminated(self, signumm=None, frame=None):
+    def on_process_terminated(self) -> None:
         """Called when the worker is asked to exit whilst processing a request, and we want to reschedule the request"""
 
         if self.request is not None:
-            with with_baggage_items({"request.id": self.request.id}):
-                error_message = self.request.user_message + "\n" + "Worker shutdown, rescheduling request."
-                self.request.user_message = error_message
+            error_message = self.request.user_message + "\n" + "Worker shutdown, rescheduling request."
+            self.request.user_message = error_message
+            if self.request.status == Status.PROCESSING:
                 self.request.set_status(Status.QUEUED)
                 self.request_store.update_request(self.request)
                 self.queue.nack(self.queue_msg)
