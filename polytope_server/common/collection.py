@@ -25,7 +25,7 @@ import yaml
 from . import coercion
 from .datasource import DataSource, create_datasource, get_datasource_config
 from .exceptions import InvalidConfig
-from .request import Request
+from .request import PolytopeRequest
 
 
 class Collection:
@@ -50,7 +50,7 @@ class Collection:
             extra={"collection": self.name, "datasources": {ds["name"]: ds for ds in self.ds_configs}},
         )
 
-    def dispatch(self, request: Request, input_data: bytes | None) -> DataSource:
+    def dispatch(self, request: PolytopeRequest, input_data: bytes | None) -> DataSource:
         """
         Match the request against the collection's datasources.
         Instantiates, dispatches and returns the first matching datasource.

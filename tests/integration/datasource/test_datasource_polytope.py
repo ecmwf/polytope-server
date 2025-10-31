@@ -25,7 +25,7 @@ import pytest
 import polytope_server.common.config as polytope_config
 from polytope_server.common.auth import AuthHelper
 from polytope_server.common.datasource import create_datasource
-from polytope_server.common.request import Request, Verb
+from polytope_server.common.request import PolytopeRequest, Verb
 
 
 class TestDataSourcePolytope:
@@ -63,7 +63,7 @@ class TestDataSourcePolytope:
 
         dummy_data = "this message will be echo'd"
 
-        self.request = Request()
+        self.request = PolytopeRequest()
         self.request.user_request = dummy_data
         self.request.user = self.user
         self.request.verb = Verb.RETRIEVE
@@ -80,7 +80,7 @@ class TestDataSourcePolytope:
     def test_datasource_polytope_archive(self):
 
         dummy_data = "this message will be echo'd"
-        self.request = Request()
+        self.request = PolytopeRequest()
         self.request.user_request = dummy_data
         self.request.user = self.user
         self.request.verb = Verb.ARCHIVE
@@ -91,7 +91,7 @@ class TestDataSourcePolytope:
 
         dummy_data = "this message will be echo'd"
 
-        self.request = Request()
+        self.request = PolytopeRequest()
         self.request.user_request = dummy_data
         self.request.user = self.user
         self.request.verb = Verb.RETRIEVE
@@ -102,7 +102,7 @@ class TestDataSourcePolytope:
     def test_datasource_polytope_archive_error(self):
 
         dummy_data = "this message will be echo'd"
-        self.request = Request()
+        self.request = PolytopeRequest()
         self.request.user_request = dummy_data
         self.request.user = self.user
         self.request.verb = Verb.ARCHIVE

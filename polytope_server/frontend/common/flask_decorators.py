@@ -31,14 +31,15 @@ handler_dict = {
 }
 
 
-def RequestSucceeded(response):
+def RequestSucceeded(response: collections.abc.Mapping | str) -> Response:
     if not isinstance(response, collections.abc.Mapping):
         response = {"message": response}
-    logging.info("Request succeeded", extra={"response": response})
-    return Response(response=json.dumps(response), status=200, mimetype="application/json")
+    status = 200
+    logging.info("Request succeeded", extra={"response": response, "http.status": status})
+    return Response(response=json.dumps(response), status=status, mimetype="application/json")
 
 
-def RequestAccepted(response):
+def RequestAccepted(response: collections.abc.Mapping | str) -> Response:
     if not isinstance(response, collections.abc.Mapping):
         response = {"message": response}
     if response["message"] == "":
@@ -46,24 +47,26 @@ def RequestAccepted(response):
     if response["location"]:
         headers = {"Location": response["location"], "Retry-After": 5}
         response.pop("location")
-    logging.info("Request accepted", extra={"response": response})
+    status = 202
+    logging.info("Request accepted", extra={"response": response, "http.status": status})
     return Response(
         response=json.dumps(response),
-        status=202,
+        status=status,
         mimetype="application/json",
         headers=headers,
     )
 
 
-def RequestRedirected(response):
+def RequestRedirected(response: collections.abc.Mapping) -> Response:
     headers = {"Location": response["location"]}
     response.pop("message")  # Remove message from successful requests
     assert response["status"] == "processed"
     response.pop("status")
-    logging.info("Request redirected", extra={"response": response})
+    status = 303
+    logging.info("Request redirected", extra={"response": response, "http.status": status})
     return Response(
         response=json.dumps(response),
-        status=303,
+        status=status,
         mimetype="application/json",
         headers=headers,
     )

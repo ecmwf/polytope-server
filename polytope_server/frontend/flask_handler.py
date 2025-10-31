@@ -182,9 +182,9 @@ class FlaskHandler(frontend.FrontendHandler):
 
                     verb = request.json["verb"]
                     if verb == "retrieve":
-                        return data_transfer.request_download(request, user, collection, verb)
+                        return data_transfer.request_download(request, user, collection)
                     elif verb == "archive":
-                        return data_transfer.request_upload(request, user, collection, verb)
+                        return data_transfer.request_upload(request, user, collection)
                     else:
                         raise BadRequest("Transfer type %s not supported" % verb)
                 elif request.method == "GET":
