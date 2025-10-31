@@ -21,8 +21,6 @@
 import logging
 import uuid
 
-from .exceptions import ForbiddenRequest
-
 
 class User:
 
@@ -41,7 +39,6 @@ class User:
 
         if self.username is None or self.realm is None:
             raise AttributeError("User object must be instantiated with username and realm attributes")
-
         self.create_uuid()
 
     def __setattr__(self, attr, value):
@@ -85,7 +82,7 @@ class User:
                 logging.info(
                     "User {} does not have access to realm {}, roles: {}".format(self.username, self.realm, roles)
                 )
-                raise ForbiddenRequest("Not authorized to access this resource.")
+                return False
             roles = roles[self.realm]
 
         # roles can be a single value; convert to a list
@@ -97,4 +94,4 @@ class User:
                 logging.info(f"User {self.username} is authorized with role {required_role}")
                 return True
 
-        raise ForbiddenRequest("Not authorized to access this resource.")
+        return False

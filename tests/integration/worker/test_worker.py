@@ -22,13 +22,13 @@ import logging
 
 import polytope_server.common.config as polytope_config
 from polytope_server import worker
-from polytope_server.common.request import Request
+from polytope_server.common.request import PolytopeRequest
 
 
 class TestWorker:
     def setup_method(self, method):
 
-        self.request = Request()
+        self.request = PolytopeRequest()
         self.request.collection = "debug"
         self.request.user_request = "hello_world"  # all default
         self.worker = worker.Worker(polytope_config.global_config)

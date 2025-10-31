@@ -40,7 +40,7 @@ class Verb(enum.Enum):
     ARCHIVE = "archive"
 
 
-class Request:
+class PolytopeRequest:
     """A sealed class representing a request"""
 
     __slots__ = [
@@ -87,7 +87,7 @@ class Request:
         for k, v in kwargs.items():
             self.__setattr__(k, v)
 
-    def set_status(self, value):
+    def set_status(self, value: Status) -> None:
         self.status = value
         now_ts = datetime.datetime.now(datetime.timezone.utc).timestamp()
         if self.status_history is None:
@@ -137,7 +137,7 @@ class Request:
             self.__setattr__(k, self.deserialize_slot(k, v))
 
     def __eq__(self, other):
-        if isinstance(other, Request):
+        if isinstance(other, PolytopeRequest):
             return other.id == self.id
         return False
 

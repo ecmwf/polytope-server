@@ -24,7 +24,7 @@ from abc import ABC, abstractmethod
 from typing import Dict, List, Union
 
 from ..metric import MetricType
-from ..request import Request, Status
+from ..request import PolytopeRequest, Status
 from ..user import User
 
 
@@ -35,15 +35,15 @@ class RequestStore(ABC):
         """Initialize a request store"""
 
     @abstractmethod
-    def add_request(self, request: Request) -> None:
+    def add_request(self, request: PolytopeRequest) -> None:
         """Add a request to the request store"""
 
     @abstractmethod
-    def get_request(self, id: str) -> Request | None:
+    def get_request(self, id: str) -> PolytopeRequest | None:
         """Fetch request from the request store"""
 
     @abstractmethod
-    def get_requests(self, ascending=None, descending=None, limit=None, **kwargs) -> List[Request]:
+    def get_requests(self, ascending=None, descending=None, limit=None, **kwargs) -> List[PolytopeRequest]:
         """Returns [limit] requests which match kwargs, ordered by
         ascending/descenging keys (e.g. ascending = 'timestamp')"""
 
@@ -75,8 +75,13 @@ class RequestStore(ABC):
         """
 
     @abstractmethod
-    def update_request(self, request: Request) -> None:
+    def update_request(self, request: PolytopeRequest) -> None:
         """Updates a stored request"""
+
+    def set_request_status(self, request: PolytopeRequest, status: Status) -> None:
+        """Set the status of a request and update the request store"""
+        request.set_status(status)
+        self.update_request(request)
 
     @abstractmethod
     def get_type(self) -> str:
@@ -104,7 +109,7 @@ class RequestStore(ABC):
 type_to_class_map = {"mongodb": "MongoRequestStore", "dynamodb": "DynamoDBRequestStore"}
 
 
-def create_request_store(request_store_config=None, metric_store_config=None):
+def create_request_store(request_store_config=None, metric_store_config=None) -> RequestStore:
 
     if request_store_config is None:
         request_store_config = {"mongodb": {}}

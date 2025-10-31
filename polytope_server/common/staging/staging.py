@@ -99,7 +99,7 @@ class Staging(ABC):
         """Get url prefix for all objects (e.g. bucket name or other static URL segment)"""
 
 
-def create_staging(staging_config=None):
+def create_staging(staging_config=None) -> Staging:
 
     if staging_config is None:
         staging_config = {"polytope": {}}

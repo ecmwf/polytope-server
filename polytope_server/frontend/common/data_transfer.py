@@ -19,27 +19,30 @@
 #
 
 import hashlib
+import logging
 import sys
 from pathlib import PurePosixPath
 from urllib.parse import urlparse
 
 # TODO: Remove flask from this module, it should be agnostic
-from flask import Response
+from flask import Request, Response
 
 from ...common.exceptions import BadRequest, NotFound, ServerError
-from ...common.request import Request, Status, Verb
+from ...common.request import PolytopeRequest, Status, Verb
+from ...common.request_store.request_store import RequestStore
+from ...common.staging.staging import Staging
 from ...common.user import User
 from .flask_decorators import RequestAccepted, RequestRedirected, RequestSucceeded
 
 
 class DataTransfer:
-    def __init__(self, request_store, staging):
+    def __init__(self, request_store: RequestStore, staging: Staging):
         self.request_store = request_store
         self.staging = staging
 
-    def request_download(self, http_request, user, collection, verb):
+    def request_download(self, http_request: Request, user: User, collection):
         payload = http_request.json
-        request = Request(
+        request = PolytopeRequest(
             user=user,
             collection=collection,
             status=Status.WAITING,
@@ -49,15 +52,17 @@ class DataTransfer:
         try:
             self.request_store.add_request(request)
         except Exception:
+            logging.exception("Error while attempting to add new request to request store")
             raise ServerError("Error while attempting to add new request to request store")
 
         response = self.construct_response(request)
+        logging.info("Retrieverequest added to store: {}".format(request.id), extra={"request_id": request.id})
         return RequestAccepted(response)
 
-    def request_upload(self, http_request, user, collection, verb):
+    def request_upload(self, http_request: Request, user: User, collection: str):
         payload = http_request.json
         url = payload.get("url", None)
-        request = Request(
+        request = PolytopeRequest(
             user=user,
             collection=collection,
             url=url,
@@ -72,16 +77,21 @@ class DataTransfer:
         try:
             self.request_store.add_request(request)
         except Exception:
+            logging.exception("Error while attempting to add new request to request store")
             raise ServerError("Error while attempting to add new request to request store")
 
         response = self.construct_response(request)
+        logging.info("Archive request added to store: {}".format(request.id), extra={"request_id": request.id})
         return RequestAccepted(response)
 
-    def query_request(self, user, id):
+    def query_request(self, user: User, id: str) -> Response:
         request = self.get_request(id)
         if not request:
             raise NotFound("Request {} not found".format(id))
         if request.user != user:
+            logging.warning(
+                "User {} attempted to access request {} owned by {}".format(user.username, id, request.user.username)
+            )
             raise NotFound("Request {} not found".format(id))
         if request.status == Status.FAILED:
             raise BadRequest("Request failed with error:\n{}".format(request.user_message))
@@ -97,7 +107,7 @@ class DataTransfer:
         response = self.construct_response(request)
         return RequestAccepted(response)
 
-    def download(self, id):
+    def download(self, id: str) -> Response:
 
         if id.startswith(self.staging.get_url_prefix()):
             id = id.replace(self.staging.get_url_prefix(), "", 1)
@@ -110,7 +120,7 @@ class DataTransfer:
                 return self.create_download_response(id)
         raise BadRequest("Request {} not ready for download yet".format(id))
 
-    def upload(self, id, http_request):
+    def upload(self, id: str, http_request: Request) -> Response:
         request = self.get_request(id)
         if not request:
             raise BadRequest("Request {} does not exist".format(id))
@@ -138,7 +148,7 @@ class DataTransfer:
         response = self.construct_response(request)
         return RequestAccepted(response)
 
-    def process_download(self, request):
+    def process_download(self, request: PolytopeRequest) -> Response:
         try:
             object_id = request.id
 
@@ -154,9 +164,14 @@ class DataTransfer:
             self.request_store.update_request(request)
 
         except Exception:
+            logging.exception("Error while querying data staging with {}".format(object_id))
             raise ServerError("Error while querying data staging with {}".format(object_id))
 
         response = self.construct_response(request)
+        logging.info(
+            "Request succeeded, redirecting to {}".format(response["location"]),
+            extra={"request_id": request.id, "location": response["location"]},
+        )
         return RequestRedirected(response)
 
     def upload_to_staging(self, data, id):
@@ -166,6 +181,7 @@ class DataTransfer:
             url = self.staging.create(id, [data], "application/octet-stream")
             assert url is not None
         except Exception:
+            logging.exception("Error while attempting to write to data staging")
             raise ServerError("Error writing to data staging")
 
         try:
@@ -173,11 +189,12 @@ class DataTransfer:
             if staged_size != (sys.getsizeof(data) - sys.getsizeof(b"")):
                 raise ServerError("Size of data uploaded to staging area did not match size of user-uploaded data")
         except Exception:
+            logging.exception("Error reading uploaded data from data staging")
             raise ServerError("Error reading uploaded data from data staging")
 
         return url
 
-    def construct_response(self, request):
+    def construct_response(self, request: PolytopeRequest) -> dict:
 
         location = "./{}".format(request.id)
 
@@ -209,21 +226,23 @@ class DataTransfer:
 
     def revoke_request(self, user: User, id: str):
         n = self.request_store.revoke_request(user, id)
-
+        logging.info("Request {} successfully revoked by user {}".format(id, user.username))
         return RequestSucceeded(f"Successfully revoked {n} requests")
 
-    def get_request(self, id):
+    def get_request(self, id: str) -> PolytopeRequest | None:
         try:
             request = self.request_store.get_request(id)
         except Exception:
+            logging.exception("Error while fetching from the request store")
             raise ServerError("Error while fetching from the request store")
         return request
 
-    def create_download_response(self, id):
+    def create_download_response(self, id: str) -> Response:
         content_type, content_size = self.staging.stat(id)
         try:
             data = self.staging.read(id)
         except Exception:
+            logging.exception("Error while reading data from data staging")
             raise ServerError("Error while reading data from data staging")
 
         data_checksum = hashlib.md5(data).hexdigest()

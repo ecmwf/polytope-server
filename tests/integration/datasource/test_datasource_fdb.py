@@ -24,7 +24,7 @@ import pytest
 import yaml
 
 from polytope_server.common.datasource import create_datasource
-from polytope_server.common.request import Request, Verb
+from polytope_server.common.request import PolytopeRequest, Verb
 
 
 @pytest.mark.skipif(subprocess.call(["which", "fdb"]) != 0, reason="fdb not in path")
@@ -33,7 +33,7 @@ class TestDataSourceFDB:
 
         self.datasource_config = {"name": "fdb"}
 
-        self.request = Request()
+        self.request = PolytopeRequest()
 
         self.request.user_request = yaml.dump(
             {

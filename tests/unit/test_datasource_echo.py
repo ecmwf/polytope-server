@@ -19,14 +19,14 @@
 #
 
 from polytope_server.common.datasource import create_datasource
-from polytope_server.common.request import Request
+from polytope_server.common.request import PolytopeRequest
 
 
 class TestDataSourceecho:
     def setup_method(self, method):
         self.echo_config = {"name": "echo", "type": "echo"}
 
-        self.request = Request()
+        self.request = PolytopeRequest()
         self.request.user_request = "Hello World!" * 1000
         self.ds = create_datasource(self.echo_config)
 

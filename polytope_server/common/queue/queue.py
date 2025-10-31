@@ -73,7 +73,7 @@ class Queue(ABC):
 queue_dict = {"rabbitmq": "RabbitmqQueue", "sqs": "SQSQueue"}
 
 
-def create_queue(queue_config):
+def create_queue(queue_config) -> Queue:
 
     queue_type = next(iter(queue_config.keys()), "rabbitmq")
 

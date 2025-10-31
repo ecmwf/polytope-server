@@ -21,14 +21,14 @@
 import pytest
 
 from polytope_server.common.datasource import create_datasource
-from polytope_server.common.request import Request
+from polytope_server.common.request import PolytopeRequest
 
 
 class TestDataSourcedummy:
     def setup_method(self, method):
         self.dummy_config = {"name": "dummy", "type": "dummy"}
 
-        self.request = Request()
+        self.request = PolytopeRequest()
         self.request.user_request = str(20 * 1024 * 1024)
         self.ds = create_datasource(self.dummy_config)
 

@@ -32,7 +32,7 @@ from boto3.dynamodb.conditions import Attr, Key
 from .. import metric_store
 from ..exceptions import ForbiddenRequest, NotFound, UnauthorizedRequest
 from ..metric import RequestStatusChange
-from ..request import Request, Status
+from ..request import PolytopeRequest, Status
 from ..user import User
 from . import request_store
 
@@ -52,13 +52,13 @@ def _iter_items(fn, **params):
 def _make_query(**kwargs):
     query = {}
     for key, value in kwargs.items():
-        if key not in Request.__slots__:
+        if key not in PolytopeRequest.__slots__:
             raise KeyError("Request has no key {}".format(key))
 
         if value is None:
             continue
 
-        query[key] = Request.serialize_slot(key, value)
+        query[key] = PolytopeRequest.serialize_slot(key, value)
 
     return query
 
@@ -83,7 +83,7 @@ def _convert_numbers(obj, reverse=False):
 
 
 def _load(item):
-    return Request(
+    return PolytopeRequest(
         from_dict={key: _convert_numbers(value, reverse=True) for key, value in item.items() if key != "user_id"}
     )
 

@@ -23,7 +23,6 @@ import logging
 import requests
 from jose import jwt
 
-from .collection import Collection
 from .exceptions import UnauthorizedRequest
 from .user import User
 
@@ -61,31 +60,16 @@ class Authotron:
         # decode the jwt token in the authorization header of the response
         jwt_token = response.headers["Authorization"].split(" ")[1]
         decoded_token = jwt.decode(jwt_token, self.secret)
-        logging.info("Decoded JWT token: {}".format(decoded_token))
+        logging.debug("Decoded JWT token: {}".format(decoded_token))
         user = User(decoded_token["username"], decoded_token["realm"])
         user.roles = list(set(decoded_token.get("roles", [])) | {"default"})
         user.attributes = decoded_token.get("attributes", {})
 
-        logging.info("User authenticated:\n {}".format(user.serialize()))
+        logging.debug("User authenticated:\n {}".format(user.username), extra=user.serialize())
 
         return user
 
-    def has_admin_access(self, auth_header: str) -> User:
+    def has_admin_access(self, user: User) -> bool:
         """Authenticate and authorize user, testing if they have admin rights"""
-        user = self.authenticate(auth_header)
         roles = self.admin_roles.get(user.realm, [])
-        if user.is_authorized(roles):
-            return user
-
-    def has_roles(self, auth_header: str, roles: list) -> User:
-        """Deprecated and unused function"""
-        raise NotImplementedError
-
-    def can_access_collection(self, auth_header: str, collection: Collection) -> User:
-        """Authenticate and authorize a user, testing if they can access a collection"""
-        user = self.authenticate(auth_header)
-        roles = collection.roles.get(user.realm, [])
-        if isinstance(roles, str) and roles == "any":
-            return user
-        if user.is_authorized(roles):
-            return user
+        return user.is_authorized(roles)

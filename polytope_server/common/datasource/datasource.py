@@ -25,8 +25,7 @@ from typing import Any, Dict, Iterator
 
 from ..coercion import coerce_value
 from ..config import polytope_config
-from ..exceptions import ForbiddenRequest
-from ..request import Request, Verb
+from ..request import PolytopeRequest, Verb
 from ..user import User
 from .date_check import DateError, date_check
 
@@ -45,7 +44,7 @@ class DataSource(ABC):
         """Archive data, returns nothing but updates datasource state"""
         raise NotImplementedError()
 
-    def retrieve(self, request: Request) -> None:
+    def retrieve(self, request: PolytopeRequest) -> None:
         """Retrieve data, returns nothing but updates datasource state"""
         raise NotImplementedError()
 
@@ -64,13 +63,8 @@ class DataSource(ABC):
         """
         # check datasource specific roles
         roles = ds_config.get("roles", [])
-        try:
-            if roles and not user.is_authorized(roles):
-                return f"Skipping datasource {DataSource.repr(ds_config)}: user not authorized."
-        except ForbiddenRequest as e:
-            message = f"Skipping datasource {DataSource.repr(ds_config)}: {repr(e)}"
-            logging.warning(message)
-            return message
+        if roles and not user.is_authorized(roles):
+            return f"Skipping datasource {DataSource.repr(ds_config)}: user not authorized."
 
         # apply defaults
         defaults = ds_config.get("defaults", {})
@@ -160,7 +154,7 @@ class DataSource(ABC):
         """Returns the mimetype of the result"""
         raise NotImplementedError()
 
-    def dispatch(self, request: Request, input_data) -> bool:
+    def dispatch(self, request: PolytopeRequest, input_data) -> bool:
         """
         Dispatch to retrieve or archive.
         This is the main entry point for the datasource, called by the worker/collection.
@@ -223,7 +217,7 @@ def get_datasource_config(config: str | dict) -> dict:
     config = polytope_config.merge(datasource_configs.get(name, None), config)
 
     config = _load_ds_parents_recursively(name, config, datasource_configs)
-    logging.debug("Loaded datasource config: {}".format(config))
+    logging.debug("Loaded datasource config {}".format(config["name"]))
     return config
 
 
@@ -254,7 +248,7 @@ def create_datasource(config: dict) -> DataSource:
     constructor = getattr(module, datasource_class)
     datasource = constructor(config)
 
-    logging.info("Datasource {} initialized [{}].".format(type, datasource_class))
+    logging.info("Datasource {} initialized [{}].".format(config["name"], datasource_class))
 
     return datasource
 

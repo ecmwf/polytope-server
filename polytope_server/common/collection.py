@@ -25,7 +25,7 @@ import yaml
 from . import coercion
 from .datasource import DataSource, create_datasource, get_datasource_config
 from .exceptions import InvalidConfig
-from .request import Request
+from .request import PolytopeRequest
 
 
 class Collection:
@@ -43,13 +43,21 @@ class Collection:
         for ds_config in self.config.get("datasources"):
             self.ds_configs.append(get_datasource_config(ds_config))
 
-    def dispatch(self, request: Request, input_data: bytes | None) -> DataSource:
+        logging.debug(
+            "Collection '{}' initialized with datasources: {}".format(
+                self.name, [ds["name"] for ds in self.ds_configs]
+            ),
+            extra={"collection": self.name, "datasources": {ds["name"]: ds for ds in self.ds_configs}},
+        )
+
+    def dispatch(self, request: PolytopeRequest, input_data: bytes | None) -> DataSource:
         """
         Match the request against the collection's datasources.
         Instantiates, dispatches and returns the first matching datasource.
         Raises a BadRequest exception if no datasource matches.
         """
         coerced_ur = coercion.coerce(yaml.safe_load(request.user_request))
+        logging.info("Coerced user request:", extra={"coerced_request": coerced_ur})
         match_errors = []
         for ds_config in self.ds_configs:
             match_result = DataSource.match(ds_config, coerced_ur, request.user)
@@ -58,7 +66,6 @@ class Collection:
                 request.user_message += message + "\n"
                 logging.info(message)
                 request.coerced_request = coerced_ur
-                logging.info("Coerced user request: {}".format(request.coerced_request))
                 ds = create_datasource(ds_config)
                 ds.dispatch(request, input_data)
                 return ds
@@ -67,9 +74,16 @@ class Collection:
         message = "\n".join(match_errors)
         raise Exception(f"No matching datasource found for request:\n{message}")
 
+    def _serialize(self) -> Dict:
+        return {"name": self.name, "roles": self.roles, "limits": self.limits, "datasources": self.ds_configs}
+
 
 def create_collections(config) -> Dict[str, Collection]:
     collections = {}
     for k, v in config.items():
         collections[k] = Collection(k, v)
+    logging.info(
+        "Configured collections: {}".format(list(collections.keys())),
+        extra={"collections": [col._serialize() for col in collections.values()]},
+    )
     return collections

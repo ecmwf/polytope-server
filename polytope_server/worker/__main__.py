@@ -27,5 +27,5 @@ config = polytope_config.ConfigParser().read()
 
 logging.setup(config, source_name="worker")
 
-w = Worker(config, debug=False)
+w = Worker(config)
 w.run()

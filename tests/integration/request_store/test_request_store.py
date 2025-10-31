@@ -54,7 +54,7 @@ class Test:
         assert self.request_store.get_type() == "mongodb"
 
     def test_request_store_add_request(self):
-        r = request.Request(user=self.user1)
+        r = request.PolytopeRequest(user=self.user1)
         r.verb = request.Verb.RETRIEVE
         r.status = request.Status.QUEUED
         assert r.user == self.user1
@@ -67,24 +67,24 @@ class Test:
         assert r.verb == r2.verb
 
     def test_request_store_add_request_duplicate_fails(self):
-        r = request.Request(user=self.user1)
+        r = request.PolytopeRequest(user=self.user1)
         self.request_store.add_request(r)
         with pytest.raises(ValueError):
             self.request_store.add_request(r)
 
     def test_request_store_remove_request(self):
-        r = request.Request(user=self.user1)
+        r = request.PolytopeRequest(user=self.user1)
         self.request_store.add_request(r)
         assert self.request_store.get_request(r.id) is not None
         self.request_store.remove_request(r.id)
         assert self.request_store.get_request(r.id) is None
 
     def test_request_store_get_requests(self):
-        r1 = request.Request(user=self.user1, collection="hello", status=request.Status.PROCESSED)
+        r1 = request.PolytopeRequest(user=self.user1, collection="hello", status=request.Status.PROCESSED)
         self.request_store.add_request(r1)
-        r2 = request.Request(user=self.user2, collection="hello", content_length=10)
+        r2 = request.PolytopeRequest(user=self.user2, collection="hello", content_length=10)
         self.request_store.add_request(r2)
-        r3 = request.Request(user=self.user3, collection="hello2")
+        r3 = request.PolytopeRequest(user=self.user3, collection="hello2")
         self.request_store.add_request(r3)
 
         results = self.request_store.get_requests(user=self.user1)
@@ -136,7 +136,7 @@ class Test:
         assert results[1] == r2
 
     def test_request_store_update_request(self):
-        r1 = request.Request(user=self.user1)
+        r1 = request.PolytopeRequest(user=self.user1)
         id = r1.id
         self.request_store.add_request(r1)
         r2 = self.request_store.get_request(id)
@@ -151,9 +151,9 @@ class Test:
 
     def test_request_store_wipe(self):
         assert len(self.request_store.get_requests()) == 0
-        self.request_store.add_request(request.Request())
-        self.request_store.add_request(request.Request())
-        self.request_store.add_request(request.Request())
+        self.request_store.add_request(request.PolytopeRequest())
+        self.request_store.add_request(request.PolytopeRequest())
+        self.request_store.add_request(request.PolytopeRequest())
         assert len(self.request_store.get_requests()) == 3
         self.request_store.wipe()
         assert len(self.request_store.get_requests()) == 0

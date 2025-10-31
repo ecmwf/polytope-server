@@ -18,10 +18,16 @@
 # does it submit to any jurisdiction.
 #
 
+import contextlib
 import datetime
 import json
 import logging
 import socket
+from collections import OrderedDict
+
+from opentelemetry import baggage
+from opentelemetry.context import attach, detach, get_current
+from pythonjsonlogger import jsonlogger
 
 from .. import version
 
@@ -44,14 +50,20 @@ DEFAULT_LOGGING_MODE = "json"
 DEFAULT_LOGGING_LEVEL = "INFO"
 
 
+class OTelBaggageFilter(logging.Filter):
+    def filter(self, record):
+        setattr(record, "asc_time", format_time(record))
+        setattr(record, "app", "polytope-server")
+        ctx = get_current()
+        for key, value in baggage.get_all(context=ctx).items():
+            setattr(record, key, value)
+        return True
+
+
 class LogFormatter(logging.Formatter):
     def __init__(self, mode):
         super().__init__()
         self.mode = mode
-
-    def format_time(self, record):
-        utc_time = datetime.datetime.fromtimestamp(record.created, datetime.timezone.utc)
-        return utc_time.strftime("%Y-%m-%d %H:%M:%S,%f")[:-3]
 
     def get_hostname(self, record):
         return getattr(record, "hostname", socket.gethostname())
@@ -100,24 +112,21 @@ class LogFormatter(logging.Formatter):
         return json.dumps(result, indent=None)
 
     def format(self, record):
-        formatted_time = self.format_time(record)
+        formatted_time = format_time(record)
         result = {
             "asctime": formatted_time,
-            "hostname": self.get_hostname(record),
             "process": record.process,
             "thread": record.thread,
             "name": record.name,
             "filename": record.filename,
             "lineno": record.lineno,
             "levelname": record.levelname,
-            "message": record.getMessage(),
         }
-
-        if self.mode == "console":
-            return f"{result['asctime']} | {result['message']}"
 
         self.add_indexable_fields(record, result)
 
+        if self.mode == "console":
+            return f"{result['asctime']} | {result['message']}"
         if self.mode == "logserver":
             return self.format_for_logserver(record, result)
         if self.mode == "prettyprint":
@@ -130,18 +139,83 @@ class LogFormatter(logging.Formatter):
         return json.dumps(result, indent=None)
 
 
+def ordered_dumps(primary_fields=None):
+    """
+    Return a json.dumps function that orders fields with primary_fields first.
+    The remaining fields are sorted alphabetically.
+    primary_fields: list of field names to appear first in order.
+    """
+
+    def inner(obj, **json_kwargs):
+        if not isinstance(obj, dict):
+            return json.dumps(obj, **json_kwargs)
+
+        ordered = OrderedDict()
+        for field in primary_fields:
+            if field in obj:
+                ordered[field] = obj.pop(field)
+
+        for field in sorted(obj.keys()):
+            if field:
+                ordered[field] = obj.pop(field)
+
+        remaining = OrderedDict(obj)
+        ordered.update(remaining)
+
+        return json.dumps(ordered, **json_kwargs)
+
+    return inner
+
+
+def format_time(record):
+    utc_time = datetime.datetime.fromtimestamp(record.created, datetime.timezone.utc)
+    return utc_time.strftime("%Y-%m-%d %H:%M:%S,%f")[:-3]
+
+
 def setup(config, source_name):
     logger = logging.getLogger()
     logger.name = source_name
 
     handler = logging.StreamHandler()
     handler.setLevel(logging.DEBUG)
+    handler.addFilter(OTelBaggageFilter())
 
     mode = config.get("logging", {}).get("mode", DEFAULT_LOGGING_MODE)
     level = config.get("logging", {}).get("level", DEFAULT_LOGGING_LEVEL)
 
-    handler.setFormatter(LogFormatter(mode))
+    if mode == "json":
+        reserved_attrs = ["args", "msg", "msecs", "relativeCreated", "process"]
+        if level != "DEBUG":
+            reserved_attrs += [
+                "filename",
+                "funcName",
+                "lineno",
+                "module",
+                "processName",
+                "thread",
+            ]
+        handler.setFormatter(
+            jsonlogger.JsonFormatter(
+                reserved_attrs=reserved_attrs,
+                json_serializer=ordered_dumps(primary_fields=["asc_time", "request_id", "message"]),
+            )
+        )
+    else:
+        handler.setFormatter(LogFormatter(mode))
+
     logger.addHandler(handler)
     logger.setLevel(level)
 
     logger.info("Logging Initialized")
+
+
+@contextlib.contextmanager
+def with_baggage_items(items: dict[str, str]):
+    ctx = get_current()
+    for key, value in items.items():
+        ctx = baggage.set_baggage(key, value, context=ctx)
+    token = attach(ctx)
+    try:
+        yield
+    finally:
+        detach(token)

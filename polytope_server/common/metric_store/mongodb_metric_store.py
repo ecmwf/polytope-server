@@ -52,7 +52,7 @@ class MongoMetricStore(MetricStore):
             MetricType.REQUEST_STATUS_CHANGE: RequestStatusChange,
         }
 
-        logging.info("MongoClient configured to open at {}".format(uri))
+        logging.debug("MongoClient configured to open at {}".format(uri))
 
     def _ensure_indexes(self) -> None:
         """

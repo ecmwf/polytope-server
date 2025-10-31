@@ -27,7 +27,7 @@ from .. import metric_store, mongo_client_factory
 from ..exceptions import ForbiddenRequest, NotFound, UnauthorizedRequest
 from ..metric import MetricType, RequestStatusChange
 from ..metric_collector import MongoRequestStoreMetricCollector
-from ..request import Request, Status
+from ..request import PolytopeRequest, Status
 from . import request_store
 
 
@@ -50,7 +50,7 @@ class MongoRequestStore(request_store.RequestStore):
 
         self.request_store_metric_collector = MongoRequestStoreMetricCollector()
 
-        logging.info("MongoClient configured to open at {}".format(uri))
+        logging.debug("MongoClient configured to open at {}".format(uri))
 
     def get_type(self):
         return "mongodb"
@@ -99,28 +99,29 @@ class MongoRequestStore(request_store.RequestStore):
                 raise ForbiddenRequest("Request has started processing and can no longer be revoked.", None)
             else:
                 raise
+        logging.info("Request ID %s revoked.", id)
         return 1  # Successfully revoked one request
 
     def get_request(self, id):
         result = self.store.find_one({"id": id}, {"_id": False})
         if result:
-            request = Request(from_dict=result)
+            request = PolytopeRequest(from_dict=result)
             return request
         else:
             return None
 
     def get_requests(self, ascending=None, descending=None, limit=None, **kwargs):
         if ascending:
-            if ascending not in Request.__slots__:
+            if ascending not in PolytopeRequest.__slots__:
                 raise KeyError("Request has no key {}".format(ascending))
 
         if descending:
-            if descending not in Request.__slots__:
+            if descending not in PolytopeRequest.__slots__:
                 raise KeyError("Request has no key {}".format(descending))
 
         query = {}
         for k, v in kwargs.items():
-            if k not in Request.__slots__:
+            if k not in PolytopeRequest.__slots__:
                 raise KeyError("Request has no key {}".format(k))
 
             if v is None:
@@ -135,7 +136,7 @@ class MongoRequestStore(request_store.RequestStore):
                 query[k + ".id"] = sub_doc_id
                 continue
 
-            query[k] = Request.serialize_slot(k, v)
+            query[k] = PolytopeRequest.serialize_slot(k, v)
 
         cursor = self.store.find(query, {"_id": False})
 
@@ -152,7 +153,7 @@ class MongoRequestStore(request_store.RequestStore):
         if cursor_list:
             res = []
             for i in cursor_list:
-                request = Request(from_dict=i)
+                request = PolytopeRequest(from_dict=i)
                 res.append(request)
             return res
         return []
@@ -173,7 +174,10 @@ class MongoRequestStore(request_store.RequestStore):
                 RequestStatusChange(request_id=request.id, status=request.status, user_id=request.user.id)
             )
 
-        logging.info("Request ID {} status set to {}.".format(request.id, request.status))
+        logging.info(
+            "Request ID {} updated on request store. Status set to {}.".format(request.id, request.status),
+            extra={"request": request.serialize()},
+        )
 
         return res
 

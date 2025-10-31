@@ -143,27 +143,10 @@ class LegacyAuthHelper:
 
         return user
 
-    def has_admin_access(self, auth_header):
+    def has_admin_access(self, user: User) -> bool:
         """Authenticate and authorize user, testing if they have admin rights"""
-        user = self.authenticate(auth_header)
         roles = self.admin_roles.get(user.realm, [])
-        if user.is_authorized(roles):
-            return user
-
-    def has_roles(self, auth_header, roles):
-        """Authenticate and authorize user, testing if they have any of the provided roles"""
-        user = self.authenticate(auth_header)
-        if user.is_authorized(roles):
-            return user
-
-    def can_access_collection(self, auth_header, collection):
-        """Authenticate and authorize a user, testing if they can access a collection"""
-        user = self.authenticate(auth_header)
-        roles = collection.roles.get(user.realm, [])
-        if isinstance(roles, str) and roles == "any":
-            return user
-        if user.is_authorized(roles):
-            return user
+        return user.is_authorized(roles)
 
     def collect_metric_info(
         self,

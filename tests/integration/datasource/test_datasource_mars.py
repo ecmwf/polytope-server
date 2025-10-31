@@ -26,7 +26,7 @@ import pytest
 
 import polytope_server.common.config as polytope_config
 from polytope_server.common.datasource import create_datasource
-from polytope_server.common.request import Request
+from polytope_server.common.request import PolytopeRequest
 
 
 @pytest.mark.skipif(subprocess.call(["which", "mars"]) != 0, reason="MARS not in path")
@@ -43,7 +43,7 @@ class TestDataSourceMars:
 
         self.mars_config = {"name": "mars"}
 
-        self.request = Request()
+        self.request = PolytopeRequest()
         self.request.user_request = ""  # all default
         self.ds = create_datasource(self.mars_config)
 
