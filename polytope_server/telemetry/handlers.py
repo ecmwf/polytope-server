@@ -21,9 +21,10 @@
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from prometheus_client import CONTENT_TYPE_LATEST
 
 from ..common.metric import MetricType
 from .config import config
@@ -48,11 +49,50 @@ from .helpers import (
     is_usage_enabled,
     obfuscate_apikey,
 )
+from .renderer import (
+    render_counters,
+    render_proc_hist,
+    render_req_duration_hist,
+    render_unique_users,
+)
+from .telemetry_utils import parse_window
 
 logger = logging.getLogger(__name__)
 
 # Prefix for all telemetry endpoints
 router = APIRouter(prefix="/telemetry/v1")
+
+DEFAULT_WINDOW = "5m"
+
+
+@router.get("/application-metrics", summary="Windowed application metrics")
+async def application_metrics(
+    window: str = Query("5m", description="Time window, e.g., 5m, 1h"),
+    sections: Optional[str] = Query("counters,histograms", description="Comma-separated sections: counters,histograms"),
+    request_store=Depends(get_request_store),
+):
+    try:
+        win_secs = parse_window(window, default_seconds=300.0)
+        selected = set((sections or "").split(","))
+        want_counters = "counters" in selected or sections is None
+        want_histograms = "histograms" in selected or sections is None
+
+        lines: List[str] = []
+        if want_counters:
+            lines += render_counters(request_store, win_secs)
+        if want_histograms:
+            lines += render_req_duration_hist(request_store, win_secs)
+            lines += render_proc_hist(request_store, win_secs)
+
+        # Unique users always useful and cheap;
+        # Calculating over standard windows: 5m, 1h, 1d, 3d as garbage collector removes old entries
+        lines += render_unique_users(request_store, [300, 3600, 86400, 259200])
+
+        data = "\n".join(lines) + ("\n" if lines else "")
+        return Response(content=data, media_type=CONTENT_TYPE_LATEST)
+    except Exception as e:
+        logger.exception("Unexpected error in /application-metrics: %s", e)
+        raise HTTPException(status_code=500, detail="Unexpected error")
 
 
 @router.get("/", summary="List API routes (optional)")
@@ -60,7 +100,7 @@ async def list_endpoints():
     """
     Optional 'index' endpoint for enumerating possible sub-routes.
     """
-    return ["health", "status", "requests", "users/{user_id}/requests", "workers", "report", "metrics"]
+    return ["health", "requests", "users/{user_id}/requests", "metrics"]
 
 
 @router.get("/health", summary="Health check endpoint")
@@ -71,206 +111,66 @@ async def health():
     return {"message": "Polytope telemetry server is alive"}
 
 
-@router.get("/status", summary="Get overall service status")
-async def service_status(
-    request_store=Depends(get_request_store),
-    staging=Depends(get_staging),
-    auth=Depends(get_auth),
-    metric_store=Depends(get_metric_store),
-):
-    """
-    Returns status or metrics for core services/stores.
-    """
-    return {
-        "request_store": request_store.collect_metric_info(),
-        "staging": staging.collect_metric_info(),
-        "auth": auth.collect_metric_info(),
-        "metric_store": metric_store.collect_metric_info() if metric_store else None,
-    }
-
-
 @router.get("/requests", summary="Retrieve requests")
 async def all_requests(
-    status: Optional[StatusEnum] = Query(None, description="Filter requests by status"),
-    id: Optional[str] = Query(None, description="Filter requests by ID"),
+    status: Optional[StatusEnum] = Query(None),
+    id: Optional[str] = Query(None),
+    limit: Optional[int] = Query(None, ge=0, description="Max items; 0 or None means no limit"),
+    include_trace: bool = Query(False),
     request_store=Depends(get_request_store),
     metric_store=Depends(get_metric_store),
 ):
-    """
-    Fetch a list of requests. Can filter by status and/or ID.
-    """
-    active_statuses = {
-        StatusEnum.ACTIVE: [
-            StatusEnum.WAITING,
-            StatusEnum.UPLOADING,
-            StatusEnum.QUEUED,
-            StatusEnum.PROCESSING,
-        ]
-    }
-
-    if status == StatusEnum.ACTIVE:
-        statuses = active_statuses[status]
-    elif status:
-        statuses = [status]
-    else:
-        statuses = []
-
-    # Fetch requests from the store
-    user_requests = []
-    if statuses:
-        for status_filter in statuses:
-            query = {"status": status_filter, "id": id}
-            user_requests += request_store.get_requests(**query)
-    else:
-        user_requests = request_store.get_requests(id=id)
-
-    # Serialize and possibly attach metrics
-    response_message = []
-    for request in user_requests:
-        serialized_request = request.serialize()
-
-        if id:
+    try:
+        rows = request_store.list_requests(
+            status=status.value if status else None,
+            req_id=id,
+            limit=limit,
+        )
+        # include trace only when a single id is specified
+        if include_trace and id and metric_store:
             metrics = metric_store.get_metrics(type=MetricType.REQUEST_STATUS_CHANGE, request_id=id)
-            serialized_request["trace"] = [metric.serialize() for metric in metrics]
+            trace = [m.serialize() for m in metrics]
+        else:
+            trace = None
 
-        # Obfuscate user details
-        serialized_request["user"]["details"] = "**hidden**"
-        if config.get("telemetry", {}).get("obfuscate_apikeys", False):
-            attributes = serialized_request["user"].get("attributes", {})
-            if "ecmwf-apikey" in attributes:
-                attributes["ecmwf-apikey"] = obfuscate_apikey(attributes["ecmwf-apikey"])
-
-        response_message.append(serialized_request)
-
-    return response_message
+        out = []
+        for r in rows:
+            # Obfuscate API key (in-place)
+            if config.get("telemetry", {}).get("obfuscate_apikeys", False):
+                attrs = ((r.get("user") or {}).get("attributes")) or {}
+                if "ecmwf-apikey" in attrs:
+                    attrs["ecmwf-apikey"] = obfuscate_apikey(attrs["ecmwf-apikey"])
+            if trace is not None and r.get("id") == id:
+                r["trace"] = trace
+            out.append(r)
+        return out
+    except Exception as e:
+        logger.exception("Error in /requests: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to retrieve requests")
 
 
 @router.get("/users/{user_id}/requests", summary="Get requests by user")
 async def user_requests(
     user_id: str,
     status: Optional[StatusEnum] = Query(None, description="Filter by status"),
-    id: Optional[str] = Query(None, description="Filter by ID"),
+    limit: Optional[int] = Query(None, ge=0, description="Max items; 0 or None means no limit"),
     request_store=Depends(get_request_store),
-    metric_store=Depends(get_metric_store),
 ):
-    """
-    Get all requests for a given user, optionally filtered by status or ID.
-    """
-    active_statuses = {
-        StatusEnum.ACTIVE: [
-            StatusEnum.WAITING,
-            StatusEnum.UPLOADING,
-            StatusEnum.QUEUED,
-            StatusEnum.PROCESSING,
-        ]
-    }
-
-    user_requests = request_store.get_requests(id=id)
-
-    # Filter by status if provided
-    if status == StatusEnum.ACTIVE:
-        statuses = active_statuses[status]
-    elif status:
-        statuses = [status]
-    else:
-        statuses = []
-
-    if statuses:
-        user_requests = [r for r in user_requests if r.status in statuses]
-
-    # Filter by user ID
-    filtered_requests = []
-    for request in user_requests:
-        if request.serialize()["user"]["id"] == user_id:
-            filtered_requests.append(request)
-
-    # Serialize and attach metrics
-    response_message = []
-    for request in filtered_requests:
-        serialized_request = request.serialize()
-
-        metrics = metric_store.get_metrics(type=MetricType.REQUEST_STATUS_CHANGE, request_id=user_id)
-        serialized_request["metrics"] = [m.serialize() for m in metrics]
-
-        # Hide sensitive info
-        serialized_request["user"]["details"] = "**hidden**"
-        if config.get("telemetry", {}).get("obfuscate_apikeys", False):
-            attributes: Dict[str, Any] = serialized_request["user"].get("attributes", {})
-            if "ecmwf-apikey" in attributes:
-                attributes["ecmwf-apikey"] = obfuscate_apikey(attributes["ecmwf-apikey"])
-
-        response_message.append(serialized_request)
-
-    return response_message
-
-
-@router.get("/workers", summary="Get workers information")
-async def active_workers(
-    uuid: Optional[str] = Query(None, description="Filter by worker UUID"),
-    host: Optional[str] = Query(None, description="Filter by host name"),
-    metric_store=Depends(get_metric_store),
-):
-    """
-    Retrieve info about active workers from the metric store.
-    """
-    if not metric_store:
-        raise HTTPException(status_code=500, detail="Metric store is unavailable.")
-
-    query = {"uuid": uuid, "host": host, "type": MetricType.WORKER_INFO}
-    worker_statuses = metric_store.get_metrics(**query)
-
-    response = []
-    for worker in worker_statuses:
-        serialized_worker = worker.serialize(ndigits=2)
-        # Show original timestamp
-        serialized_worker["timestamp_served"] = worker.timestamp
-        response.append(serialized_worker)
-
-    return response
-
-
-@router.get("/report", summary="Get a full overview")
-async def full_telemetry_report(
-    request_store=Depends(get_request_store),
-    staging=Depends(get_staging),
-    auth=Depends(get_auth),
-    metric_store=Depends(get_metric_store),
-):
-    """
-    Retrieves an aggregated 'big picture': service status,
-    active requests, active workers, etc.
-    """
-    # Service status
-    service_status_data = {
-        "request_store": request_store.collect_metric_info(),
-        "staging": staging.collect_metric_info(),
-        "auth": auth.collect_metric_info(),
-        "metric_store": metric_store.collect_metric_info() if metric_store else None,
-    }
-
-    # Active requests
-    active_requests = []
-    active_statuses = [
-        StatusEnum.WAITING,
-        StatusEnum.UPLOADING,
-        StatusEnum.QUEUED,
-        StatusEnum.PROCESSING,
-    ]
-    for st in active_statuses:
-        query = {"status": st}
-        active_requests += request_store.get_requests(**query)
-
-    # Active workers
-    worker_statuses = []
-    if metric_store:
-        worker_statuses = metric_store.get_metrics(type=MetricType.WORKER_INFO)
-
-    # Combine
-    return {
-        "service_status": service_status_data,
-        "active_requests": [r.serialize() for r in active_requests],
-        "active_workers": [w.serialize(ndigits=2) for w in worker_statuses],
-    }
+    try:
+        rows = request_store.list_requests_by_user(
+            user_id=user_id,
+            status=status.value if status else None,
+            limit=limit,
+        )
+        for r in rows:
+            if config.get("telemetry", {}).get("obfuscate_apikeys", False):
+                attrs = ((r.get("user") or {}).get("attributes")) or {}
+                if "ecmwf-apikey" in attrs:
+                    attrs["ecmwf-apikey"] = obfuscate_apikey(attrs["ecmwf-apikey"])
+        return rows
+    except Exception as e:
+        logger.exception("Error in /users/{user_id}/requests: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to retrieve user requests")
 
 
 @router.get("/metrics", summary="Retrieve usage metrics")

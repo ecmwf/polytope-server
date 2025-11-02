@@ -20,9 +20,17 @@
 
 import datetime
 import logging
+from typing import Any, Dict, List, Optional
 
 import pymongo
+from pymongo import ASCENDING, DESCENDING
 
+from ...telemetry.telemetry_utils import (
+    PROCESSING_DURATION_BUCKETS,
+    REQUEST_DURATION_BUCKETS,
+    TELEMETRY_PRODUCT_LABELS,
+    now_utc_ts,
+)
 from .. import metric_store, mongo_client_factory
 from ..exceptions import ForbiddenRequest, NotFound, UnauthorizedRequest
 from ..metric import MetricType, RequestStatusChange
@@ -201,3 +209,369 @@ class MongoRequestStore(request_store.RequestStore):
             {"status": {"$in": [Status.FAILED.value, Status.PROCESSED.value]}, "last_modified": {"$lt": cutoff}}
         )
         return result.deleted_count
+
+    # Methods after this point are for creating indexes and other optimizations to support telemetry.
+    def _ensure_indexes(self) -> None:
+        """
+        Create indexes to support fast sliding-window aggregations.
+        Mirrors the pattern used in metric_store._ensure_indexes.
+        """
+        # State scans (processed/failed) within a time window.
+        self.store.create_index(
+            [("status", ASCENDING), ("last_modified", DESCENDING)],
+            name="ix_terminal_status_last_modified",
+            partialFilterExpression={"status": {"$in": [Status.PROCESSED.value, Status.FAILED.value]}},
+        )
+        # Generic time-window scans.
+        self.store.create_index(
+            [("last_modified", DESCENDING)],
+            name="ix_last_modified_desc",
+        )
+        # Group-bys on collection, realm, and the product labels
+        keys = [
+            ("collection", ASCENDING),
+            ("user.realm", ASCENDING),
+            *[(f"coerced_request.{k}", ASCENDING) for k in TELEMETRY_PRODUCT_LABELS],
+            ("last_modified", DESCENDING),
+        ]
+        self.store.create_index(keys, name="ix_product_labels_last_modified")
+
+        # Optional helpers histogram phases
+        self.store.create_index(
+            [("timestamp", DESCENDING), ("last_modified", DESCENDING)],
+            name="ix_ts_last_modified_desc",
+        )
+        self.store.create_index(
+            [("status", ASCENDING), ("content_length", ASCENDING), ("last_modified", DESCENDING)],
+            name="ix_processed_bytes_window",
+            partialFilterExpression={"status": Status.PROCESSED.value},
+        )
+
+    def agg_requests_total_window(self, window_seconds: float) -> List[Dict[str, Any]]:
+        """
+        Count request states within the sliding window, grouped by:
+          status, collection, realm, and TELEMETRY_PRODUCT_LABELS.
+        """
+        cutoff = now_utc_ts() - window_seconds
+        pipeline = [
+            {
+                "$match": {
+                    "last_modified": {"$gte": cutoff},
+                    "status": {"$in": [Status.PROCESSED.value, Status.FAILED.value]},
+                }
+            },
+            {
+                "$project": {
+                    "status": 1,
+                    "collection": 1,
+                    "realm": "$user.realm",
+                    "cr": "$coerced_request",
+                }
+            },
+            {
+                "$group": {
+                    "_id": {
+                        "status": "$status",
+                        "collection": "$collection",
+                        "realm": "$realm",
+                        **{k: f"$cr.{k}" for k in TELEMETRY_PRODUCT_LABELS},
+                    },
+                    "value": {"$sum": 1},
+                }
+            },
+            {"$project": {"_id": 0, "labels": "$_id", "value": 1}},
+        ]
+        return list(self.store.aggregate(pipeline, allowDiskUse=False))
+
+    def agg_bytes_served_total_window(self, window_seconds: float) -> List[Dict[str, Any]]:
+        """
+        Sum content_length for processed requests within the sliding window, grouped by:
+          collection, realm, and TELEMETRY_PRODUCT_LABELS.
+        """
+        cutoff = now_utc_ts() - window_seconds
+        pipeline = [
+            {
+                "$match": {
+                    "last_modified": {"$gte": cutoff},
+                    "status": Status.PROCESSED.value,
+                    "content_length": {"$type": "number"},
+                }
+            },
+            {
+                "$project": {
+                    "collection": 1,
+                    "realm": "$user.realm",
+                    "cr": "$coerced_request",
+                    "content_length": 1,
+                }
+            },
+            {
+                "$group": {
+                    "_id": {
+                        "collection": "$collection",
+                        "realm": "$realm",
+                        **{k: f"$cr.{k}" for k in TELEMETRY_PRODUCT_LABELS},
+                    },
+                    "value": {"$sum": "$content_length"},
+                }
+            },
+            {"$project": {"_id": 0, "labels": "$_id", "value": 1}},
+        ]
+        return list(self.store.aggregate(pipeline, allowDiskUse=False))
+
+    def agg_request_duration_histogram(self, window_seconds: float) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        End-to-end request duration: last_modified - timestamp for requests in window.
+        Emits Mongo-scanned rows once, buckets in Python for clarity and to keep one collection scan.
+        Labels include status to distinguish success vs failure latency.
+        """
+        cutoff = now_utc_ts() - window_seconds
+
+        # $match: bound by time and terminal statuses to use ix_terminal_status_last_modified
+        rows = list(
+            self.store.aggregate(
+                [
+                    {
+                        "$match": {
+                            "last_modified": {"$gte": cutoff},
+                            "status": {"$in": [Status.PROCESSED.value, Status.FAILED.value]},
+                            "timestamp": {"$type": "number"},
+                        }
+                    },
+                    # $project: shrink documents early, compute duration in-database
+                    {
+                        "$project": {
+                            "status": 1,
+                            "collection": 1,
+                            "realm": "$user.realm",
+                            "cr": "$coerced_request",
+                            "duration": {"$subtract": ["$last_modified", "$timestamp"]},
+                        }
+                    },
+                ],
+                allowDiskUse=False,
+            )
+        )
+
+        from collections import defaultdict
+
+        # Adding +Inf at exposition time; boundaries define the <= 'le' buckets
+        bnds = REQUEST_DURATION_BUCKETS + [float("inf")]
+
+        def le_str(b: float) -> str:
+            return "+Inf" if b == float("inf") else str(b)
+
+        def pick_bucket(v: float) -> float:
+            for b in bnds:
+                if v <= b:
+                    return b
+            return float("inf")
+
+        bucket_out: Dict[tuple, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        sum_map: Dict[tuple, float] = defaultdict(float)
+        cnt_map: Dict[tuple, int] = defaultdict(int)
+
+        for r in rows:
+            lid = (
+                r["status"],
+                r["collection"],
+                r.get("realm", ""),
+                tuple((r.get("cr") or {}).get(k, "") for k in TELEMETRY_PRODUCT_LABELS),
+            )
+            dur = float(r.get("duration", 0.0))
+            b = pick_bucket(dur)
+            bucket_out[lid][le_str(b)] += 1
+            sum_map[lid] += dur
+            cnt_map[lid] += 1
+
+        buckets_rows, sum_rows, count_rows = [], [], []
+        for lid, le_counts in bucket_out.items():
+            status, collection, realm, prod = lid
+            prod_map = dict(zip(TELEMETRY_PRODUCT_LABELS, prod))
+            base = {"status": status, "collection": collection, "realm": realm, **prod_map}
+            for b in bnds:
+                key = le_str(b)
+                buckets_rows.append({"labels": {"le": key, **base}, "value": le_counts.get(key, 0)})
+            sum_rows.append({"labels": base, "value": sum_map[lid]})
+            count_rows.append({"labels": base, "value": cnt_map[lid]})
+
+        return {"buckets": buckets_rows, "sum": sum_rows, "count": count_rows}
+
+    def agg_processing_duration_histogram(self, window_seconds: float) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Processing duration: status_history.processed - status_history.processing for processed requests.
+        Only includes documents where both timestamps exist; no status label.
+        """
+        cutoff = now_utc_ts() - window_seconds
+
+        rows = list(
+            self.store.aggregate(
+                [
+                    {
+                        "$match": {
+                            "last_modified": {"$gte": cutoff},
+                            "status": Status.PROCESSED.value,
+                            "status_history.processing": {"$type": "number"},
+                            "status_history.processed": {"$type": "number"},
+                        }
+                    },
+                    {
+                        "$project": {
+                            "collection": 1,
+                            "realm": "$user.realm",
+                            "cr": "$coerced_request",
+                            "proc": {"$subtract": ["$status_history.processed", "$status_history.processing"]},
+                        }
+                    },
+                ],
+                allowDiskUse=False,
+            )
+        )
+
+        from collections import defaultdict
+
+        bnds = PROCESSING_DURATION_BUCKETS + [float("inf")]
+
+        def le_str(b: float) -> str:
+            return "+Inf" if b == float("inf") else str(b)
+
+        def pick_bucket(v: float) -> float:
+            for b in bnds:
+                if v <= b:
+                    return b
+            return float("inf")
+
+        bucket_out: Dict[tuple, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        sum_map: Dict[tuple, float] = defaultdict(float)
+        cnt_map: Dict[tuple, int] = defaultdict(int)
+
+        for r in rows:
+            lid = (
+                r["collection"],
+                r.get("realm", ""),
+                tuple((r.get("cr") or {}).get(k, "") for k in TELEMETRY_PRODUCT_LABELS),
+            )
+            dur = float(r.get("proc", 0.0))
+            b = pick_bucket(dur)
+            bucket_out[lid][le_str(b)] += 1
+            sum_map[lid] += dur
+            cnt_map[lid] += 1
+
+        buckets_rows, sum_rows, count_rows = [], [], []
+        for lid, le_counts in bucket_out.items():
+            collection, realm, prod = lid
+            prod_map = dict(zip(TELEMETRY_PRODUCT_LABELS, prod))
+            base = {"collection": collection, "realm": realm, **prod_map}
+            for b in bnds:
+                key = le_str(b)
+                buckets_rows.append({"labels": {"le": key, **base}, "value": le_counts.get(key, 0)})
+            sum_rows.append({"labels": base, "value": sum_map[lid]})
+            count_rows.append({"labels": base, "value": cnt_map[lid]})
+
+        return {"buckets": buckets_rows, "sum": sum_rows, "count": count_rows}
+
+    def agg_unique_users(self, windows_seconds: List[int]) -> Dict[int, int]:
+        """
+        Distinct user.id counts for multiple windows via $facet.
+        Returns { "w{sec}": N }.
+        """
+        now = now_utc_ts()
+        facets = {}
+        for w in windows_seconds:
+            cutoff = now - w
+            facets[str(w)] = [
+                {
+                    "$match": {
+                        "last_modified": {"$gte": cutoff},
+                        "status": {"$in": [Status.PROCESSED.value, Status.FAILED.value]},
+                        "user.id": {"$exists": True, "$type": "string"},
+                    }
+                },
+                {"$group": {"_id": "$user.id"}},
+                {"$group": {"_id": None, "unique": {"$sum": 1}}},
+                {"$project": {"_id": 0, "unique": 1}},
+            ]
+        out = list(self.store.aggregate([{"$facet": facets}], allowDiskUse=False))
+        res: Dict[int, int] = {}
+        if out:
+            row = out[0]
+            for k, v in row.items():
+                res[int(k)] = v[0]["unique"] if v else 0
+        return res
+
+    def list_requests(
+        self,
+        status: Optional[str] = None,
+        req_id: Optional[str] = None,
+        limit: int = 100,
+        fields: Optional[Dict[str, int]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Fast path for /requests:
+        - Optional status filter,
+        - Optional single id,
+        - Sorted by last_modified desc,
+        - Light projection driven by 'fields'.
+        """
+        q: Dict[str, Any] = {}
+        if req_id:
+            q["id"] = req_id
+        if status:
+            q["status"] = status
+
+        proj = fields or {
+            "_id": 0,
+            "id": 1,
+            "status": 1,
+            "collection": 1,
+            "user.id": 1,
+            "user.realm": 1,
+            "user.username": 1,
+            "user.attributes": 1,
+            "last_modified": 1,
+            "timestamp": 1,
+            "content_length": 1,
+            "coerced_request": 1,
+            "status_history": 1,
+            "user_message": 1,
+        }
+        cur = self.store.find(q, proj).sort("last_modified", -1)
+        if limit and limit > 0:
+            cur = cur.limit(int(limit))
+        return list(cur)
+
+    def list_requests_by_user(
+        self,
+        user_id: str,
+        status: Optional[str] = None,
+        limit: int = 100,
+        fields: Optional[Dict[str, int]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Fast path for /users/{user_id}/requests with optional status.
+        """
+        q: Dict[str, Any] = {"user.id": user_id}
+        if status:
+            q["status"] = status
+
+        proj = fields or {
+            "_id": 0,
+            "id": 1,
+            "status": 1,
+            "collection": 1,
+            "user.id": 1,
+            "user.realm": 1,
+            "user.username": 1,
+            "user.attributes": 1,
+            "last_modified": 1,
+            "timestamp": 1,
+            "content_length": 1,
+            "coerced_request": 1,
+            "status_history": 1,
+            "user_message": 1,
+        }
+
+        cur = self.store.find(q, proj).sort("last_modified", -1)
+        if limit and limit > 0:
+            cur = cur.limit(int(limit))
+        return list(cur)
