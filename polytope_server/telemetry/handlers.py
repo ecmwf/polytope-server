@@ -21,20 +21,14 @@
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from prometheus_client import CONTENT_TYPE_LATEST
 
 from ..common.metric import MetricType
 from .config import config
-from .dependencies import (
-    get_auth,
-    get_metric_store,
-    get_request_store,
-    get_staging,
-    metrics_auth,
-)
+from .dependencies import get_metric_store, get_request_store, metrics_auth
 from .enums import StatusEnum
 from .exceptions import (
     OutputFormatError,
