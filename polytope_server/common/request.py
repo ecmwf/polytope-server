@@ -131,6 +131,16 @@ class PolytopeRequest:
             result[k] = self.serialize_slot(k, v)
         return result
 
+    def serialize_logging(self):
+        """Serialize the request object to a reduced dictionary for logging purposes"""
+        result = self.serialize()
+        # unnecessary for request logging
+        result.pop("user", None)
+        # omit user_request if request has been coerced
+        if self.coerced_request:
+            result.pop("user_request", None)
+        return result
+
     def deserialize(self, dict):
         """Modify the request by deserializing a dictionary into it"""
         for k, v in dict.items():
