@@ -65,7 +65,7 @@ class Authotron:
         user.roles = list(set(decoded_token.get("roles", [])) | {"default"})
         user.attributes = decoded_token.get("attributes", {})
 
-        logging.debug("User authenticated:\n {}".format(user.username), extra=user.serialize())
+        logging.debug("User {} authenticated".format(user.username), extra=user.serialize())
 
         return user
 

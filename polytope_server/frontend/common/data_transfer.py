@@ -56,7 +56,7 @@ class DataTransfer:
             raise ServerError("Error while attempting to add new request to request store")
 
         response = self.construct_response(request)
-        logging.info("Retrieverequest added to store: {}".format(request.id), extra={"request_id": request.id})
+        logging.info("Retrieve request added to store: {}".format(request.id), extra={"request_id": request.id})
         return RequestAccepted(response)
 
     def request_upload(self, http_request: Request, user: User, collection: str):
