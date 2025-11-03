@@ -25,7 +25,6 @@ import logging
 import os
 import signal
 import sys
-import traceback
 from concurrent.futures import ThreadPoolExecutor
 from typing import NoReturn
 
@@ -40,7 +39,7 @@ from ..common import request_store, staging
 from ..common.logging import with_baggage_items
 from ..common.request import PolytopeRequest, Status
 
-trace.set_tracer_provider(TracerProvider(resource=Resource.create({"service.name": "frontend"})))
+trace.set_tracer_provider(TracerProvider(resource=Resource.create({"service.name": "worker"})))
 
 tracer = trace.get_tracer(__name__)
 
@@ -303,13 +302,10 @@ class Worker:
     def on_request_fail(self, exception: Exception) -> None:
         """Called when the request processing raises an exception"""
 
-        _, v, _ = sys.exc_info()
-        tb = traceback.format_exception(None, exception, exception.__traceback__)
-        logging.exception(tb)
-        error_message = self.request.user_message + "\n" + str(v)
+        logging.exception("Request failed with exception.")
+        error_message = self.request.user_message + "\n" + str(exception)
         self.request.user_message = error_message
         self.request_store.set_request_status(self.request, Status.FAILED)
-        logging.exception("Request failed with exception.")
         self.requests_failed += 1
 
     def on_process_terminated(self) -> None:
