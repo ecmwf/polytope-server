@@ -1,8 +1,28 @@
+#
+# Copyright 2022 European Centre for Medium-Range Weather Forecasts (ECMWF)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# In applying this licence, ECMWF does not waive the privileges and immunities
+# granted to it by virtue of its status as an intergovernmental organisation nor
+# does it submit to any jurisdiction.
+#
+
 import datetime
 from typing import Any, List, Mapping, Optional, Tuple
 
 # Label policy: low-cardinality, normalized, business-meaningful fields.
-TELEMETRY_PRODUCT_LABELS: Tuple[str, ...] = ("class", "dataset", "expver", "stream", "type", "resolution")
+TELEMETRY_PRODUCT_LABELS: Tuple[str, ...] = ("class", "type")
 
 # Canonical order for metrics that include 'status'; not all metrics will use all keys.
 CANONICAL_LABEL_ORDER: Tuple[str, ...] = ("status", "collection", "realm", *TELEMETRY_PRODUCT_LABELS)
