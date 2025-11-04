@@ -1,5 +1,6 @@
 from typing import List
 
+from ..common.metric_calculator.base import MetricCalculator
 from .telemetry_utils import (
     CANONICAL_LABEL_ORDER,
     TELEMETRY_PRODUCT_LABELS,
@@ -11,72 +12,132 @@ from .telemetry_utils import (
 )
 
 
-def render_counters(request_store, win_secs: float) -> List[str]:
+def render_counters(metric_calculator: MetricCalculator, winsecs: float) -> List[str]:
+    """
+    Render counter metrics (requests total, bytes served).
+
+    Args:
+        metric_calculator: MetricCalculator instance to fetch metrics from
+        winsecs: Time window in seconds
+
+    Returns:
+        List of Prometheus exposition format lines
+    """
     lines: List[str] = []
-    # Requests
-    req_rows = request_store.agg_requests_total_window(win_secs)
+
+    # Requests total
+    reqrows = metric_calculator.aggregate_requests_total_window(winsecs)
     lines += exposition_header("polytope_requests_total", "counter", "Requests observed in the sliding window")
-    for row in req_rows:
+    for row in reqrows:
         labels = row["labels"]
         for key in CANONICAL_LABEL_ORDER:
             labels.setdefault(key, "")
-        lines.append(f'polytope_requests_total{labels_to_exposition(labels)} {int(row["value"])}')
-    # Bytes
-    bytes_rows = request_store.agg_bytes_served_total_window(win_secs)
+        lines.append(f"polytope_requests_total{labels_to_exposition(labels)} {int(row['value'])}")
+
+    # Bytes served
+    bytesrows = metric_calculator.aggregate_bytes_served_total_window(winsecs)
     lines += exposition_header("polytope_bytes_served_total", "counter", "Bytes served in the sliding window")
-    for row in bytes_rows:
+    for row in bytesrows:
         labels = dict(row["labels"])
-        order = ["collection", "realm", *TELEMETRY_PRODUCT_LABELS]
-        lines.append(f'polytope_bytes_served_total{labels_to_exposition_freeform(labels, order)} {int(row["value"])}')
+        order = ["collection", "realm"] + list(TELEMETRY_PRODUCT_LABELS)
+        lines.append(f"polytope_bytes_served_total{labels_to_exposition_freeform(labels, order)} {int(row['value'])}")
+
     return lines
 
 
-def render_req_duration_hist(request_store, win_secs: float) -> List[str]:
+def render_req_duration_hist(metric_calculator: MetricCalculator, winsecs: float) -> List[str]:
+    """
+    Render request duration histogram metrics.
+
+    Args:
+        metric_calculator: MetricCalculator instance to fetch metrics from
+        winsecs: Time window in seconds
+
+    Returns:
+        List of Prometheus exposition format lines
+    """
     lines: List[str] = []
-    base, bucket_name, sum_name, count_name = histogram_metric_names("polytope_request_duration_seconds")
+    base, bucketname, sumname, countname = histogram_metric_names("polytope_request_duration_seconds")
     lines += exposition_header(base, "histogram", "End-to-end request duration over the sliding window")
-    req_hist = request_store.agg_request_duration_histogram(win_secs)
-    for row in req_hist["buckets"]:
+
+    reqhist = metric_calculator.aggregate_request_duration_histogram(winsecs)
+
+    for row in reqhist["buckets"]:
         labels = dict(row["labels"])
-        order = ["status", "collection", "realm", *TELEMETRY_PRODUCT_LABELS, "le"]
-        lines.append(f'{bucket_name}{labels_to_exposition_freeform(labels, order)} {int(row["value"])}')
-    for row in req_hist["sum"]:
+        order = ["status", "collection", "realm"] + list(TELEMETRY_PRODUCT_LABELS) + ["le"]
+        lines.append(f"{bucketname}{labels_to_exposition_freeform(labels, order)} {int(row['value'])}")
+
+    for row in reqhist["sum"]:
         labels = dict(row["labels"])
-        order = ["status", "collection", "realm", *TELEMETRY_PRODUCT_LABELS]
-        lines.append(f'{sum_name}{labels_to_exposition_freeform(labels, order)} {row["value"]}')
-    for row in req_hist["count"]:
+        order = ["status", "collection", "realm"] + list(TELEMETRY_PRODUCT_LABELS)
+        lines.append(f"{sumname}{labels_to_exposition_freeform(labels, order)} {row['value']}")
+
+    for row in reqhist["count"]:
         labels = dict(row["labels"])
-        order = ["status", "collection", "realm", *TELEMETRY_PRODUCT_LABELS]
-        lines.append(f'{count_name}{labels_to_exposition_freeform(labels, order)} {int(row["value"])}')
+        order = ["status", "collection", "realm"] + list(TELEMETRY_PRODUCT_LABELS)
+        lines.append(f"{countname}{labels_to_exposition_freeform(labels, order)} {int(row['value'])}")
+
     return lines
 
 
-def render_proc_hist(request_store, win_secs: float) -> List[str]:
+def render_proc_hist(metric_calculator: MetricCalculator, winsecs: float) -> List[str]:
+    """
+    Render processing duration histogram metrics.
+
+    Args:
+        metric_calculator: MetricCalculator instance to fetch metrics from
+        winsecs: Time window in seconds
+
+    Returns:
+        List of Prometheus exposition format lines
+    """
     lines: List[str] = []
-    base, bucket_name, sum_name, count_name = histogram_metric_names("polytope_processing_seconds")
-    lines += exposition_header(base, "histogram", "Processing time (processing->processed) over the sliding window")
-    proc_hist = request_store.agg_processing_duration_histogram(win_secs)
-    for row in proc_hist["buckets"]:
+    base, bucketname, sumname, countname = histogram_metric_names("polytope_processing_seconds")
+    lines += exposition_header(
+        base,
+        "histogram",
+        "Processing time (processing→processed) over the sliding window",
+    )
+
+    prochist = metric_calculator.aggregate_processing_duration_histogram(winsecs)
+
+    for row in prochist["buckets"]:
         labels = dict(row["labels"])
-        order = ["collection", "realm", *TELEMETRY_PRODUCT_LABELS, "le"]
-        lines.append(f'{bucket_name}{labels_to_exposition_freeform(labels, order)} {int(row["value"])}')
-    for row in proc_hist["sum"]:
+        order = ["collection", "realm"] + list(TELEMETRY_PRODUCT_LABELS) + ["le"]
+        lines.append(f"{bucketname}{labels_to_exposition_freeform(labels, order)} {int(row['value'])}")
+
+    for row in prochist["sum"]:
         labels = dict(row["labels"])
-        order = ["collection", "realm", *TELEMETRY_PRODUCT_LABELS]
-        lines.append(f'{sum_name}{labels_to_exposition_freeform(labels, order)} {row["value"]}')
-    for row in proc_hist["count"]:
+        order = ["collection", "realm"] + list(TELEMETRY_PRODUCT_LABELS)
+        lines.append(f"{sumname}{labels_to_exposition_freeform(labels, order)} {row['value']}")
+
+    for row in prochist["count"]:
         labels = dict(row["labels"])
-        order = ["collection", "realm", *TELEMETRY_PRODUCT_LABELS]
-        lines.append(f'{count_name}{labels_to_exposition_freeform(labels, order)} {int(row["value"])}')
+        order = ["collection", "realm"] + list(TELEMETRY_PRODUCT_LABELS)
+        lines.append(f"{countname}{labels_to_exposition_freeform(labels, order)} {int(row['value'])}")
+
     return lines
 
 
-def render_unique_users(request_store, windows_seconds: List[int]) -> List[str]:
+def render_unique_users(metric_calculator: MetricCalculator, windows_seconds: List[int]) -> List[str]:
+    """
+    Render unique users gauge metrics.
+
+    Args:
+        metric_calculator: MetricCalculator instance to fetch metrics from
+        windows_seconds: List of time windows in seconds
+
+    Returns:
+        List of Prometheus exposition format lines
+    """
     lines: List[str] = []
-    uniques = request_store.agg_unique_users(windows_seconds)  # Dict[int,int]
+
+    uniques = metric_calculator.aggregate_unique_users(windows_seconds)
+
     lines += exposition_header("polytope_unique_users", "gauge", "Distinct users over common windows")
     for secs in windows_seconds:
         val = int(uniques.get(secs, 0))
-        label = seconds_to_duration_label(secs)  # "5m", "1h", "1d", "3d"
+        label = seconds_to_duration_label(secs)
         lines.append(f'polytope_unique_users{{window="{label}"}} {val}')
+
     return lines
