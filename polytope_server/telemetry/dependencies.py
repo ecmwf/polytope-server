@@ -26,6 +26,7 @@ from fastapi import HTTPException, Request, status
 from ..common.auth import AuthHelper
 from ..common.authentication.plain_authentication import PlainAuthentication
 from ..common.exceptions import ForbiddenRequest
+from ..common.metric_calculator.base import MetricCalculator
 from ..common.metric_store import create_metric_store
 from ..common.request_store import create_request_store
 from ..common.staging import create_staging
@@ -55,16 +56,6 @@ def initialize_resources(config):
     }
 
 
-def get_settings():
-    telemetry_config = config.get("telemetry", {})
-    return {
-        "server_type": telemetry_config.get("server", "uvicorn"),
-        "handler_type": telemetry_config.get("handler", "fastapi"),
-        "host": telemetry_config.get("bind_to", "localhost"),
-        "port": int(telemetry_config.get("port", "6000")),
-    }
-
-
 def get_request_store(request: Request):
     return request.app.state.resources["request_store"]
 
@@ -79,6 +70,11 @@ def get_metric_store(request: Request):
 
 def get_auth(request: Request):
     return request.app.state.resources["auth"]
+
+
+def get_metric_calculator(request: Request) -> MetricCalculator:
+    requeststore = get_request_store(request)
+    return requeststore.metric_calculator
 
 
 def metrics_auth(request: Request):
