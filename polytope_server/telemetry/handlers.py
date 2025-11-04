@@ -27,8 +27,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from prometheus_client import CONTENT_TYPE_LATEST
 
 from ..common.metric import MetricType
+from ..common.metric_calculator.base import MetricCalculator
 from .config import config
-from .dependencies import get_metric_store, get_request_store, metrics_auth
+from .dependencies import (
+    get_metric_calculator,
+    get_metric_store,
+    get_request_store,
+    metrics_auth,
+)
 from .enums import StatusEnum
 from .exceptions import (
     OutputFormatError,
@@ -63,7 +69,7 @@ DEFAULT_WINDOW = "5m"
 async def application_metrics(
     window: str = Query("5m", description="Time window, e.g., 5m, 1h"),
     sections: Optional[str] = Query("counters,histograms", description="Comma-separated sections: counters,histograms"),
-    request_store=Depends(get_request_store),
+    metric_calculator: MetricCalculator = Depends(get_metric_calculator),
 ):
     try:
         win_secs = parse_window(window, default_seconds=300.0)
@@ -73,14 +79,14 @@ async def application_metrics(
 
         lines: List[str] = []
         if want_counters:
-            lines += render_counters(request_store, win_secs)
+            lines += render_counters(metric_calculator, win_secs)
         if want_histograms:
-            lines += render_req_duration_hist(request_store, win_secs)
-            lines += render_proc_hist(request_store, win_secs)
+            lines += render_req_duration_hist(metric_calculator, win_secs)
+            lines += render_proc_hist(metric_calculator, win_secs)
 
         # Unique users always useful and cheap;
         # Calculating over standard windows: 5m, 1h, 1d, 3d as garbage collector removes old entries
-        lines += render_unique_users(request_store, [300, 3600, 86400, 259200])
+        lines += render_unique_users(metric_calculator, [300, 3600, 86400, 259200])
 
         data = "\n".join(lines) + ("\n" if lines else "")
         return Response(content=data, media_type=CONTENT_TYPE_LATEST)
