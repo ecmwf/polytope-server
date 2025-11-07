@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from pymongo import ASCENDING, DESCENDING
 from pymongo.collection import Collection
@@ -194,13 +194,15 @@ class MongoMetricCalculator(MetricCalculator):
         formatted_rows = []
         for r in rows:
             cr = {k: r.get(f"cr_{k}", "") for k in TELEMETRY_PRODUCT_LABELS}
-            formatted_rows.append({
-                "status": r["status"],
-                "collection": r["collection"],
-                "realm": r.get("realm", ""),
-                "cr": cr,
-                "duration": r["duration"],
-            })
+            formatted_rows.append(
+                {
+                    "status": r["status"],
+                    "collection": r["collection"],
+                    "realm": r.get("realm", ""),
+                    "cr": cr,
+                    "duration": r["duration"],
+                }
+            )
 
         result = self.histogram_builder.build_histogram(
             rows=formatted_rows,
@@ -250,12 +252,14 @@ class MongoMetricCalculator(MetricCalculator):
         formatted_rows = []
         for r in rows:
             cr = {k: r.get(f"cr_{k}", "") for k in TELEMETRY_PRODUCT_LABELS}
-            formatted_rows.append({
-                "collection": r["collection"],
-                "realm": r.get("realm", ""),
-                "cr": cr,
-                "proc": r["proc"],
-            })
+            formatted_rows.append(
+                {
+                    "collection": r["collection"],
+                    "realm": r.get("realm", ""),
+                    "cr": cr,
+                    "proc": r["proc"],
+                }
+            )
 
         result = self.histogram_builder.build_histogram(
             rows=formatted_rows,
@@ -305,3 +309,80 @@ class MongoMetricCalculator(MetricCalculator):
 
         logger.debug("Unique users aggregation result: %s", res)
         return res
+
+    def list_requests(
+        self,
+        status: Optional[str] = None,
+        req_id: Optional[str] = None,
+        limit: int = 100,
+        fields: Optional[Dict[str, int]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Fast path for /requests:
+        - Optional status filter,
+        - Optional single id,
+        - Sorted by last_modified desc,
+        - Light projection driven by 'fields'.
+        """
+        q: Dict[str, Any] = {}
+        if req_id:
+            q["id"] = req_id
+        if status:
+            q["status"] = status
+
+        proj = fields or {
+            "_id": 0,
+            "id": 1,
+            "status": 1,
+            "collection": 1,
+            "user.id": 1,
+            "user.realm": 1,
+            "user.username": 1,
+            "user.attributes": 1,
+            "last_modified": 1,
+            "timestamp": 1,
+            "content_length": 1,
+            "coerced_request": 1,
+            "status_history": 1,
+            "user_message": 1,
+        }
+        cur = self.collection.find(q, proj).sort("last_modified", -1)
+        if limit and limit > 0:
+            cur = cur.limit(int(limit))
+        return list(cur)
+
+    def list_requests_by_user(
+        self,
+        user_id: str,
+        status: Optional[str] = None,
+        limit: int = 100,
+        fields: Optional[Dict[str, int]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Fast path for /users/{user_id}/requests with optional status.
+        """
+        q: Dict[str, Any] = {"user.id": user_id}
+        if status:
+            q["status"] = status
+
+        proj = fields or {
+            "_id": 0,
+            "id": 1,
+            "status": 1,
+            "collection": 1,
+            "user.id": 1,
+            "user.realm": 1,
+            "user.username": 1,
+            "user.attributes": 1,
+            "last_modified": 1,
+            "timestamp": 1,
+            "content_length": 1,
+            "coerced_request": 1,
+            "status_history": 1,
+            "user_message": 1,
+        }
+
+        cur = self.collection.find(q, proj).sort("last_modified", -1)
+        if limit and limit > 0:
+            cur = cur.limit(int(limit))
+        return list(cur)

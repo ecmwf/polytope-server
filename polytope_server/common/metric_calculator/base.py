@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 class MetricCalculator(ABC):
@@ -81,14 +81,35 @@ class MetricCalculator(ABC):
         pass
 
     @abstractmethod
-    def aggregate_unique_users(self, windows_seconds: List[int]) -> Dict[int, int]:
+    def list_requests(
+        self, status: Optional[str] = None, req_id: Optional[str] = None, limit: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
         """
-        Count unique users across multiple time windows.
+        List requests with optional filtering.
 
         Args:
-            windows_seconds: List of time windows in seconds
+            status: Optional status filter
+            req_id: Optional request ID filter
+            limit: Optional limit on number of results (None or 0 for no limit)
 
         Returns:
-            Dict mapping window size (seconds) to unique user count
+            List of request dictionaries
+        """
+        pass
+
+    @abstractmethod
+    def list_requests_by_user(
+        self, user_id: str, status: Optional[str] = None, limit: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        List requests for a specific user with optional filtering.
+
+        Args:
+            user_id: User ID to filter by
+            status: Optional status filter
+            limit: Optional limit on number of results (None or 0 for no limit)
+
+        Returns:
+            List of request dictionaries
         """
         pass
