@@ -20,7 +20,6 @@
 
 import datetime
 import logging
-from typing import Any, Dict, List, Optional
 
 import pymongo
 
@@ -205,81 +204,3 @@ class MongoRequestStore(request_store.RequestStore):
             {"status": {"$in": [Status.FAILED.value, Status.PROCESSED.value]}, "last_modified": {"$lt": cutoff}}
         )
         return result.deleted_count
-
-    # Methods after this point are for creating indexes and other optimizations to support telemetry.
-    def list_requests(
-        self,
-        status: Optional[str] = None,
-        req_id: Optional[str] = None,
-        limit: int = 100,
-        fields: Optional[Dict[str, int]] = None,
-    ) -> List[Dict[str, Any]]:
-        """
-        Fast path for /requests:
-        - Optional status filter,
-        - Optional single id,
-        - Sorted by last_modified desc,
-        - Light projection driven by 'fields'.
-        """
-        q: Dict[str, Any] = {}
-        if req_id:
-            q["id"] = req_id
-        if status:
-            q["status"] = status
-
-        proj = fields or {
-            "_id": 0,
-            "id": 1,
-            "status": 1,
-            "collection": 1,
-            "user.id": 1,
-            "user.realm": 1,
-            "user.username": 1,
-            "user.attributes": 1,
-            "last_modified": 1,
-            "timestamp": 1,
-            "content_length": 1,
-            "coerced_request": 1,
-            "status_history": 1,
-            "user_message": 1,
-        }
-        cur = self.store.find(q, proj).sort("last_modified", -1)
-        if limit and limit > 0:
-            cur = cur.limit(int(limit))
-        return list(cur)
-
-    def list_requests_by_user(
-        self,
-        user_id: str,
-        status: Optional[str] = None,
-        limit: int = 100,
-        fields: Optional[Dict[str, int]] = None,
-    ) -> List[Dict[str, Any]]:
-        """
-        Fast path for /users/{user_id}/requests with optional status.
-        """
-        q: Dict[str, Any] = {"user.id": user_id}
-        if status:
-            q["status"] = status
-
-        proj = fields or {
-            "_id": 0,
-            "id": 1,
-            "status": 1,
-            "collection": 1,
-            "user.id": 1,
-            "user.realm": 1,
-            "user.username": 1,
-            "user.attributes": 1,
-            "last_modified": 1,
-            "timestamp": 1,
-            "content_length": 1,
-            "coerced_request": 1,
-            "status_history": 1,
-            "user_message": 1,
-        }
-
-        cur = self.store.find(q, proj).sort("last_modified", -1)
-        if limit and limit > 0:
-            cur = cur.limit(int(limit))
-        return list(cur)
