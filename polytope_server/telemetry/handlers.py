@@ -29,12 +29,7 @@ from prometheus_client import CONTENT_TYPE_LATEST
 from ..common.metric import MetricType
 from ..common.metric_calculator.base import MetricCalculator
 from .config import config
-from .dependencies import (
-    get_metric_calculator,
-    get_metric_store,
-    get_request_store,
-    metrics_auth,
-)
+from .dependencies import get_metric_calculator, get_metric_store, metrics_auth
 from .enums import StatusEnum
 from .exceptions import (
     OutputFormatError,
@@ -115,37 +110,42 @@ async def health():
 async def all_requests(
     status: Optional[StatusEnum] = Query(None),
     id: Optional[str] = Query(None),
-    limit: Optional[int] = Query(None, ge=0, description="Max items; 0 or None means no limit"),
-    include_trace: bool = Query(False),
-    request_store=Depends(get_request_store),
-    metric_store=Depends(get_metric_store),
+    limit: Optional[int] = Query(None, ge=0, description="Max items (0 or None means no limit)"),
+    includetrace: bool = Query(False),
+    metric_calculator: MetricCalculator = Depends(get_metric_calculator),
+    metricstore=Depends(get_metric_store),
 ):
     try:
-        rows = request_store.list_requests(
+        rows = metric_calculator.list_requests(
             status=status.value if status else None,
             req_id=id,
             limit=limit,
         )
-        # include trace only when a single id is specified
-        if include_trace and id and metric_store:
-            metrics = metric_store.get_metrics(type=MetricType.REQUEST_STATUS_CHANGE, request_id=id)
+
+        # Include trace only when a single id is specified
+        if includetrace and id and metricstore:
+            metrics = metricstore.get_metrics(type=MetricType.REQUEST_STATUS_CHANGE, request_id=id)
             trace = [m.serialize() for m in metrics]
         else:
             trace = None
 
         out = []
         for r in rows:
-            # Obfuscate API key (in-place)
-            if config.get("telemetry", {}).get("obfuscate_apikeys", False):
-                attrs = ((r.get("user") or {}).get("attributes")) or {}
-                if "ecmwf-apikey" in attrs:
-                    attrs["ecmwf-apikey"] = obfuscate_apikey(attrs["ecmwf-apikey"])
+            # Obfuscate API key in-place
+            if config.get("telemetry", {}).get("obfuscate_api_keys", False):
+                attrs = r.get("user", {}).get("attributes", {})
+                if "ecmwf-api-key" in attrs:
+                    attrs["ecmwf-api-key"] = obfuscate_apikey(attrs["ecmwf-api-key"])
+
             if trace is not None and r.get("id") == id:
                 r["trace"] = trace
+
             out.append(r)
+
         return out
+
     except Exception as e:
-        logger.exception("Error in /requests: %s", e)
+        logger.exception(f"Error in /requests: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve requests")
 
 
@@ -153,23 +153,27 @@ async def all_requests(
 async def user_requests(
     user_id: str,
     status: Optional[StatusEnum] = Query(None, description="Filter by status"),
-    limit: Optional[int] = Query(None, ge=0, description="Max items; 0 or None means no limit"),
-    request_store=Depends(get_request_store),
+    limit: Optional[int] = Query(None, ge=0, description="Max items (0 or None means no limit)"),
+    metric_calculator: MetricCalculator = Depends(get_metric_calculator),
 ):
     try:
-        rows = request_store.list_requests_by_user(
+        rows = metric_calculator.list_requests_by_user(
             user_id=user_id,
             status=status.value if status else None,
             limit=limit,
         )
+
+        # Obfuscate API key in-place
         for r in rows:
-            if config.get("telemetry", {}).get("obfuscate_apikeys", False):
-                attrs = ((r.get("user") or {}).get("attributes")) or {}
-                if "ecmwf-apikey" in attrs:
-                    attrs["ecmwf-apikey"] = obfuscate_apikey(attrs["ecmwf-apikey"])
+            if config.get("telemetry", {}).get("obfuscate_api_keys", False):
+                attrs = r.get("user", {}).get("attributes", {})
+                if "ecmwf-api-key" in attrs:
+                    attrs["ecmwf-api-key"] = obfuscate_apikey(attrs["ecmwf-api-key"])
+
         return rows
+
     except Exception as e:
-        logger.exception("Error in /users/{user_id}/requests: %s", e)
+        logger.exception(f"Error in /users/{user_id}/requests: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve user requests")
 
 
