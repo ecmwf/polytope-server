@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from .base import MetricCalculator
 
@@ -39,3 +39,41 @@ class DynamoDBMetricCalculator(MetricCalculator):
     def aggregate_unique_users(self, windows_seconds: List[int]) -> Dict[int, int]:
         """Returns zeros for all windows."""
         return {w: 0 for w in windows_seconds}
+
+    def list_requests(
+        self, status: Optional[str] = None, req_id: Optional[str] = None, limit: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        List requests with optional filtering.
+
+        Returns empty list for DynamoDB implementation.
+
+        Args:
+            status: Optional status filter
+            req_id: Optional request ID filter
+            limit: Optional limit on number of results (None or 0 for no limit)
+
+        Returns:
+            Empty list
+        """
+        logger.info("DynamoDB list_requests called - returning empty list")
+        return []
+
+    def list_requests_by_user(
+        self, user_id: str, status: Optional[str] = None, limit: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        List requests for a specific user with optional filtering.
+
+        Returns empty list for DynamoDB implementation.
+
+        Args:
+            user_id: User ID to filter by
+            status: Optional status filter
+            limit: Optional limit on number of results (None or 0 for no limit)
+
+        Returns:
+            Empty list
+        """
+        logger.info(f"DynamoDB list_requests_by_user called for user {user_id} - returning empty list")
+        return []
