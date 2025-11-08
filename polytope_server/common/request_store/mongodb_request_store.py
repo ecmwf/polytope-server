@@ -51,9 +51,14 @@ class MongoRequestStore(request_store.RequestStore):
 
         self.request_store_metric_collector = MongoRequestStoreMetricCollector()
         # fast metric calculation queries
-        self.metric_calculator = MongoMetricCalculator(self.store)
-        self.metric_calculator.ensure_indexes()
-        logging.debug("MongoClient configured to open at {}".format(uri))
+        metrics_collection = self.metric_store.store if self.metric_store else None
+        self.metric_calculator = MongoMetricCalculator(
+            collection=self.store,  # requests collection
+            metric_collection=metrics_collection,  # metrics collection (optional)
+        )
+        self.metric_calculator.ensure_indexes()  # Indexes for requests collection
+        if metrics_collection is not None:
+            self.metric_calculator.ensure_metric_indexes()  # Indexes for metrics collection
 
     def get_type(self):
         return "mongodb"
