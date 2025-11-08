@@ -33,6 +33,7 @@ from prometheus_client import (
     generate_latest,
 )
 
+from ..common.metric_calculator.base import MetricCalculator
 from .config import config
 from .exceptions import OutputFormatError, RequestFetchError, TelemetryConfigError
 
@@ -107,16 +108,19 @@ def get_usage_timeframes_from_config() -> List[Dict[str, Any]]:
 
 
 async def get_usage_metrics_aggregated(
-    metric_store,
-    time_frames: List[Dict[str, Any]],
+    metric_calculator: MetricCalculator,
+    timeframes: List[Dict[str, Any]],
     now: datetime,
 ) -> Dict[str, Any]:
-    """Fetches aggregated usage metrics directly from MongoDB."""
+    """
+    Fetches aggregated usage metrics from the metric calculator.
+    """
     try:
         # Calculate cutoff timestamps for each timeframe
-        cutoff_timestamps = {frame["name"]: (now - frame["delta"]).timestamp() for frame in time_frames}
+        cutoff_timestamps = {frame["name"]: (now - frame["delta"]).timestamp() for frame in timeframes}
 
-        return metric_store.get_usage_metrics_aggregated(cutoff_timestamps)
+        # Use metric_calculator.get_usage_metrics_aggregated
+        return metric_calculator.get_usage_metrics_aggregated(cutoff_timestamps)
 
     except Exception as e:
         logger.error(f"Error fetching metrics: {e}")
@@ -161,8 +165,8 @@ def prepare_aggregated_json_metrics(metrics: Dict[str, Any], time_frames: List[D
 
     for frame in time_frames:
         frame_name = frame["name"]
-        if frame_name in metrics["time_frame_metrics"]:
-            json_metrics["time_frames"][frame_name] = metrics["time_frame_metrics"][frame_name]
+        if frame_name in metrics["timeframe_metrics"]:
+            json_metrics["time_frames"][frame_name] = metrics["timeframe_metrics"][frame_name]
 
     return json_metrics
 
@@ -184,7 +188,7 @@ def set_aggregated_prometheus_metrics(
 
         for frame in time_frames:
             frame_name = frame["name"]
-            frame_metrics = metrics["time_frame_metrics"].get(frame_name, {"requests": 0, "unique_users": 0})
+            frame_metrics = metrics["timeframe_metrics"].get(frame_name, {"requests": 0, "unique_users": 0})
 
             requests_metric = Gauge(
                 frame["request_metric_name"],
@@ -214,7 +218,7 @@ class TelemetryLogSuppressor:
     def __init__(self, ttl_seconds: int):
         self.ttl_seconds = ttl_seconds
         # Key: user_id (string), Value: last log timestamp (float)
-        self._last_log_time = {}
+        self._last_log_time: Dict[str, float] = {}
 
     def log_if_needed(self, user_id: str):
         now = time.time()
