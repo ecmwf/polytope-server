@@ -21,7 +21,6 @@
 import logging
 
 import pymongo
-from pymongo import ASCENDING
 
 from .. import mongo_client_factory
 from ..metric import Metric, MetricType, RequestStatusChange
@@ -46,46 +45,11 @@ class MongoMetricStore(MetricStore):
         self.database = self.mongo_client.metric_store
         self.store = self.database[metric_collection]
 
-        self._ensure_indexes()
-
         self.metric_type_class_map = {
             MetricType.REQUEST_STATUS_CHANGE: RequestStatusChange,
         }
 
         logging.debug("MongoClient configured to open at {}".format(uri))
-
-    def _ensure_indexes(self) -> None:
-        """
-        Indexes tuned for:
-          - $match {type:'request_status_change', status:'processed', timestamp:{$gte:...}}
-          - per-user grouping / distinct counting
-          - all-time totals (requests & unique users)
-        Safe to call repeatedly
-        """
-
-        # Primary filter path for the pipelines (time-window scans + totals)
-        #    Matches: type + status + timestamp >= X
-        self.store.create_index(
-            [("type", ASCENDING), ("status", ASCENDING), ("timestamp", ASCENDING)],
-            name="type_status_ts",
-        )
-
-        # Partial index restricted to the subset:
-        #    Great for user-based grouping within the 'processed' subset.
-        self.store.create_index(
-            [("timestamp", ASCENDING), ("user_id", ASCENDING)],
-            name="processed_ts_user",
-            partialFilterExpression={
-                "type": "request_status_change",
-                "status": "processed",
-            },
-        )
-
-        # 3) Distinct users
-        self.store.create_index(
-            [("type", ASCENDING), ("status", ASCENDING), ("user_id", ASCENDING)],
-            name="type_status_user",
-        )
 
     def get_type(self):
         return "mongodb"
@@ -200,86 +164,3 @@ class MongoMetricStore(MetricStore):
         cutoff = cutoff.timestamp()
         result = self.store.delete_many({"timestamp": {"$lt": cutoff}})
         return result.deleted_count
-
-    def get_usage_metrics_aggregated(self, cutoff_timestamps):
-        """
-        Aggregates usage metrics for multiple timeframes in a single MongoDB query.
-
-        Strategy: Pre-filter to earliest timeframe, group by user first to reduce
-        the working set size, then calculate per-timeframe metrics.
-
-        Args:
-            cutoff_timestamps: Dict mapping timeframe names to Unix timestamps
-                            e.g., {"last_24h": 1729012520.0, "last_7d": 1728407720.0}
-
-        Returns:
-            Dict with total_requests, unique_users, and time_frame_metrics
-        """
-
-        # Only query documents from the earliest timeframe onwards to reduce dataset size
-        min_cutoff = min(cutoff_timestamps.values()) if cutoff_timestamps else 0
-
-        pipeline = [
-            # Filter: Only processed requests since earliest timeframe
-            {"$match": {"type": "request_status_change", "status": "processed", "timestamp": {"$gte": min_cutoff}}},
-            # Group by user_id first - this reduces subsequent stages' working set
-            {
-                "$group": {
-                    "_id": "$user_id",
-                    "timestamps": {"$push": "$timestamp"},  # Keep all request timestamps per user
-                    "request_count": {"$sum": 1},
-                }
-            },
-            # Unwind timestamps back to one document per request
-            # Now each doc has: {_id: user_id, timestamps: timestamp, request_count: N}
-            {"$unwind": "$timestamps"},
-            # Calculate all timeframes in parallel using $facet
-            {
-                "$facet": {
-                    # Python dict comprehension creates one sub-pipeline per timeframe
-                    **{
-                        frame_name: [
-                            {"$match": {"timestamps": {"$gte": cutoff}}},
-                            {
-                                "$group": {
-                                    "_id": None,
-                                    "requests": {"$sum": 1},
-                                    "unique_users": {"$addToSet": "$_id"},  # Collect unique user_ids
-                                }
-                            },
-                            {"$project": {"requests": 1, "unique_users": {"$size": "$unique_users"}}},
-                        ]
-                        for frame_name, cutoff in cutoff_timestamps.items()
-                    }
-                }
-            },
-        ]
-
-        result = list(self.store.aggregate(pipeline))[0]
-
-        # Extract timeframe results
-        time_frame_metrics = {}
-        for frame_name in cutoff_timestamps.keys():
-            frame_data = result[frame_name][0] if result[frame_name] else {"requests": 0, "unique_users": 0}
-            time_frame_metrics[frame_name] = frame_data
-
-        # Separate queries for all-time totals
-        total_pipeline = [
-            {"$match": {"type": "request_status_change", "status": "processed"}},
-            {"$group": {"_id": None, "total_requests": {"$sum": 1}}},
-        ]
-
-        total_users_pipeline = [
-            {"$match": {"type": "request_status_change", "status": "processed"}},
-            {"$group": {"_id": "$user_id"}},  # Group by user_id for distinct count
-            {"$count": "unique_users"},
-        ]
-
-        total_result = list(self.store.aggregate(total_pipeline))
-        users_result = list(self.store.aggregate(total_users_pipeline))
-
-        return {
-            "total_requests": total_result[0]["total_requests"] if total_result else 0,
-            "unique_users": users_result[0]["unique_users"] if users_result else 0,
-            "time_frame_metrics": time_frame_metrics,
-        }
