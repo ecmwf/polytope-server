@@ -1,3 +1,23 @@
+#
+# Copyright 2022 European Centre for Medium-Range Weather Forecasts (ECMWF)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# In applying this licence, ECMWF does not waive the privileges and immunities
+# granted to it by virtue of its status as an intergovernmental organisation nor
+# does it submit to any jurisdiction.
+#
+
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
@@ -12,6 +32,14 @@ class MetricCalculator(ABC):
     def ensure_indexes(self) -> None:
         """
         Ensure required database indexes exist for efficient metric queries.
+        This is database-specific and may be a no-op for some backends.
+        """
+        pass
+
+    @abstractmethod
+    def ensure_metric_indexes(self) -> None:
+        """
+        Ensure required database indexes exist for metrics collection.
         This is database-specific and may be a no-op for some backends.
         """
         pass
@@ -81,8 +109,27 @@ class MetricCalculator(ABC):
         pass
 
     @abstractmethod
+    def get_usage_metrics_aggregated(self, cutoff_timestamps: Dict[str, float]) -> Dict[str, Any]:
+        """
+        Get aggregated usage metrics for multiple time windows.
+
+        Operates on the metrics collection, not the requests collection.
+
+        Args:
+            cutoff_timestamps: Dict mapping timeframe names to cutoff timestamps
+
+        Returns:
+            Dict with 'total_requests', 'unique_users', and 'timeframe_metrics' keys
+        """
+        pass
+
+    @abstractmethod
     def list_requests(
-        self, status: Optional[str] = None, req_id: Optional[str] = None, limit: Optional[int] = None
+        self,
+        status: Optional[str] = None,
+        req_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        fields: Optional[Dict[str, int]] = None,
     ) -> List[Dict[str, Any]]:
         """
         List requests with optional filtering.
@@ -91,6 +138,7 @@ class MetricCalculator(ABC):
             status: Optional status filter
             req_id: Optional request ID filter
             limit: Optional limit on number of results (None or 0 for no limit)
+            fields: Optional MongoDB projection dict for field selection
 
         Returns:
             List of request dictionaries
@@ -99,7 +147,11 @@ class MetricCalculator(ABC):
 
     @abstractmethod
     def list_requests_by_user(
-        self, user_id: str, status: Optional[str] = None, limit: Optional[int] = None
+        self,
+        user_id: str,
+        status: Optional[str] = None,
+        limit: Optional[int] = None,
+        fields: Optional[Dict[str, int]] = None,
     ) -> List[Dict[str, Any]]:
         """
         List requests for a specific user with optional filtering.
@@ -108,6 +160,7 @@ class MetricCalculator(ABC):
             user_id: User ID to filter by
             status: Optional status filter
             limit: Optional limit on number of results (None or 0 for no limit)
+            fields: Optional MongoDB projection dict for field selection
 
         Returns:
             List of request dictionaries
