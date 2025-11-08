@@ -1,3 +1,23 @@
+#
+# Copyright 2022 European Centre for Medium-Range Weather Forecasts (ECMWF)
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# In applying this licence, ECMWF does not waive the privileges and immunities
+# granted to it by virtue of its status as an intergovernmental organisation nor
+# does it submit to any jurisdiction.
+#
+
 import logging
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -20,21 +40,29 @@ logger = logging.getLogger(__name__)
 class MongoMetricCalculator(MetricCalculator):
     """
     MongoDB-specific metric calculator using aggregation pipelines.
+
+    Operates on two collections:
+    - requests collection (request_store DB) for request metrics
+    - metrics collection (metric_store DB) for usage metrics
     """
 
-    def __init__(self, collection: Collection):
+    def __init__(self, collection: Collection, metric_collection: Optional[Collection] = None):
         """
         Initialize with a MongoDB collection.
 
         Args:
-            collection: The MongoDB collection containing request documents
+            collection: The MongoDB collection containing request documents (requests)
+            metric_collection: Optional MongoDB collection containing metric documents (metrics)
         """
         self.collection = collection
+        self.metric_collection = metric_collection
         self.histogram_builder = HistogramBuilder()
-        logger.info("Initialized MongoMetricCalculator for collection: %s", collection.name)
+        logger.info("Initialized MongoMetricCalculator for collection %s", collection.name)
+        if metric_collection is not None:
+            logger.info("  with metric_collection %s", metric_collection.name)
 
     def ensure_indexes(self) -> None:
-        """Create indexes optimized for metric aggregation queries."""
+        """Create indexes optimized for metric aggregation queries on requests collection."""
         logger.info("Ensuring metric aggregation indexes for collection: %s", self.collection.name)
 
         # Drop old indexes with old field names if they exist
@@ -100,6 +128,130 @@ class MongoMetricCalculator(MetricCalculator):
         )
 
         logger.info("Metric aggregation indexes ensured successfully")
+
+    def ensure_metric_indexes(self) -> None:
+        """
+        Create indexes optimized for metrics collection queries.
+
+        Operates on the metrics collection, not the requests collection.
+        """
+        if self.metric_collection is None:
+            logger.warning("No metric_collection provided, skipping metric indexes")
+            return
+
+        logger.info("Ensuring metric store indexes for collection: %s", self.metric_collection.name)
+
+        # Index for type + status + timestamp queries
+        self.metric_collection.create_index(
+            [("type", ASCENDING), ("status", ASCENDING), ("timestamp", ASCENDING)],
+            name="ix_type_status_ts",
+        )
+
+        # Index for type + status + user aggregations (processed requests)
+        self.metric_collection.create_index(
+            [("type", ASCENDING), ("status", ASCENDING), ("user_id", ASCENDING)],
+            name="ix_type_status_user",
+        )
+
+        # Index for processed timestamps and user grouping
+        self.metric_collection.create_index(
+            [("timestamp", ASCENDING), ("user_id", ASCENDING)],
+            name="ix_processed_ts_user",
+            partialFilterExpression={
+                "type": "request_status_change",
+                "status": "processed",
+            },
+        )
+
+        logger.info("Metric store indexes ensured successfully")
+
+    def get_usage_metrics_aggregated(self, cutoff_timestamps: Dict[str, float]) -> Dict[str, Any]:
+        """
+        Get aggregated usage metrics for multiple time windows.
+
+        Operates on the metrics collection, not the requests collection.
+
+        Args:
+            cutoff_timestamps: Dict mapping timeframe names (e.g., "5m", "1h")
+                            to Unix timestamps
+
+        Returns:
+            Dict containing:
+                - total_requests: Total count of all processed requests
+                - unique_users: Count of unique users across all time
+                - timeframe_metrics: Dict mapping timeframe names to
+                {requests: int, unique_users: int}
+        """
+        if self.metric_collection is None:
+            logger.warning("No metric_collection provided, returning empty metrics")
+            return {
+                "total_requests": 0,
+                "unique_users": 0,
+                "timeframe_metrics": {name: {"requests": 0, "unique_users": 0} for name in cutoff_timestamps.keys()},
+            }
+
+        logger.debug("Aggregating usage metrics for cutoffs %s", cutoff_timestamps)
+
+        # Get all-time totals for processed requests
+        # Count unique request_ids that reached processed state
+        total_requests = len(
+            self.metric_collection.distinct(
+                "request_id",
+                {
+                    "type": "request_status_change",
+                    "status": "processed",
+                },
+            )
+        )
+
+        # Get unique users count (all-time)
+        unique_users = self.metric_collection.distinct(
+            "user_id",
+            {
+                "type": "request_status_change",
+                "status": "processed",
+                "user_id": {"$exists": True, "$type": "string"},
+            },
+        )
+
+        # Calculate per-window metrics
+        timeframe_metrics = {}
+        for framename, cutoff in cutoff_timestamps.items():
+            # Count unique request_ids for this timeframe
+            unique_request_ids = self.metric_collection.distinct(
+                "request_id",
+                {
+                    "type": "request_status_change",
+                    "status": "processed",
+                    "timestamp": {"$gte": cutoff},
+                },
+            )
+            requests_count = len(unique_request_ids)
+
+            # Count unique users for this timeframe
+            unique_users_in_window = self.metric_collection.distinct(
+                "user_id",
+                {
+                    "type": "request_status_change",
+                    "status": "processed",
+                    "timestamp": {"$gte": cutoff},
+                    "user_id": {"$exists": True, "$type": "string"},
+                },
+            )
+
+            timeframe_metrics[framename] = {
+                "requests": requests_count,
+                "unique_users": len(unique_users_in_window),
+            }
+
+        result = {
+            "total_requests": total_requests,
+            "unique_users": len(unique_users),
+            "timeframe_metrics": timeframe_metrics,
+        }
+
+        logger.debug("Usage metrics aggregation result: %s", result)
+        return result
 
     def aggregate_requests_total_window(self, window_seconds: float) -> List[Dict[str, Any]]:
         """MongoDB implementation using aggregation pipeline."""
@@ -314,7 +466,7 @@ class MongoMetricCalculator(MetricCalculator):
         self,
         status: Optional[str] = None,
         req_id: Optional[str] = None,
-        limit: int = 100,
+        limit: Optional[int] = 0,
         fields: Optional[Dict[str, int]] = None,
     ) -> List[Dict[str, Any]]:
         """
@@ -355,7 +507,7 @@ class MongoMetricCalculator(MetricCalculator):
         self,
         user_id: str,
         status: Optional[str] = None,
-        limit: int = 100,
+        limit: Optional[int] = 0,
         fields: Optional[Dict[str, int]] = None,
     ) -> List[Dict[str, Any]]:
         """
