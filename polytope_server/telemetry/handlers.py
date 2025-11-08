@@ -179,9 +179,9 @@ async def user_requests(
 
 @router.get("/metrics", summary="Retrieve usage metrics")
 async def usage_metrics(
-    _=Depends(metrics_auth),
-    format: str = Query("prometheus", description="Output format: prometheus or json"),
-    metric_store=Depends(get_metric_store),
+    _auth=Depends(metrics_auth),
+    format: str = Query("prometheus", description="Output format (prometheus or json)"),
+    metric_calculator: MetricCalculator = Depends(get_metric_calculator),
 ):
     """
     Endpoint exposing usage metrics in various formats.
@@ -191,28 +191,19 @@ async def usage_metrics(
             raise TelemetryUsageDisabled("Telemetry usage is disabled")
 
         now = datetime.now(timezone.utc)
+        timeframes = get_usage_timeframes_from_config()
 
-        # Load timeframes from config
-        time_frames = get_usage_timeframes_from_config()
+        # Get metrics from metric_calculator
+        metrics = await get_usage_metrics_aggregated(metric_calculator, timeframes, now)
 
-        # Fetch aggregated metrics
-        metrics = await get_usage_metrics_aggregated(
-            metric_store=metric_store,
-            time_frames=time_frames,
-            now=now,
-        )
-
-        # Format output
-        return format_output_aggregated(metrics, time_frames, format)
+        return format_output_aggregated(metrics, timeframes, format)
 
     except TelemetryUsageDisabled as e:
         logger.warning(e)
         raise HTTPException(status_code=403, detail=str(e))
-
     except (TelemetryConfigError, RequestFetchError, OutputFormatError) as e:
         logger.error(e)
         raise HTTPException(status_code=500, detail=str(e))
-
     except Exception as e:
         logger.error(f"Unexpected error in telemetry usage endpoint: {e}")
         raise HTTPException(status_code=500, detail="An unexpected error occurred")
