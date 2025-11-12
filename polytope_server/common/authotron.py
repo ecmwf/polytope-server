@@ -46,7 +46,9 @@ class Authotron:
         if auth_header.startswith("EmailKey "):
             logging.debug("Converting EmailKey to Bearer token")
             auth_header = f"Bearer {auth_header.split(':')[1]}"
-
+        elif auth_header.startswith("Basic "):
+            logging.debug("Basic auth detected, forwarding as-is")
+        
         logging.debug("Forwarding authentication header {}".format(auth_header))
 
         response = requests.get(f"{self.url}/authenticate", headers={"Authorization": auth_header})
@@ -68,6 +70,7 @@ class Authotron:
         logging.debug("User {} authenticated".format(user.username), extra=user.serialize())
 
         return user
+
 
     def has_admin_access(self, user: User) -> bool:
         """Authenticate and authorize user, testing if they have admin rights"""
