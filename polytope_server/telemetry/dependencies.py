@@ -24,8 +24,7 @@ import logging
 from fastapi import HTTPException, Request, status
 
 from ..common.auth import AuthHelper
-from ..common.authentication.plain_authentication import PlainAuthentication
-from ..common.exceptions import ForbiddenRequest
+from ..common.exceptions import ForbiddenRequest, UnauthorizedRequest
 from ..common.metric_calculator.base import MetricCalculator
 from ..common.metric_store import create_metric_store
 from ..common.request_store import create_request_store
@@ -37,13 +36,8 @@ logger = logging.getLogger(__name__)
 
 # This is to avoid spamming the logs with the same auth message
 log_suppression_ttl = config.get("telemetry", {}).get("basic_auth", {}).get("log_suppression_ttl", 300)
-_telemetry_log_suppressor = TelemetryLogSuppressor(log_suppression_ttl)
 
-plain_auth = PlainAuthentication(
-    name="telemetry_basic_auth",
-    realm="telemetry_realm",
-    config={"users": config.get("telemetry", {}).get("basic_auth", {}).get("users", [])},
-)
+_telemetry_log_suppressor = TelemetryLogSuppressor(log_suppression_ttl)
 
 
 def initialize_resources(config):
@@ -79,18 +73,19 @@ def get_metric_calculator(request: Request) -> MetricCalculator:
 
 def metrics_auth(request: Request):
     """
-    FastAPI dependency that:
-      - Reads the 'Authorization' header.
-      - If Basic Auth is disabled, returns immediately.
-      - If it's enabled, calls 'plain_auth.authenticate'.
-      - Translates 'ForbiddenRequest' -> FastAPI's HTTPException.
+    Dependency that enforces Basic Auth for telemetry endpoints,
+    delegating verification to the main authentication stack (Auth-o-tron
+    via AuthHelper, or any other configured backend).
+
+    It still respects `telemetry.basic_auth.enabled` and
+    `telemetry.basic_auth.log_suppression_ttl` from the config.
     """
     basic_auth_cfg = config.get("telemetry", {}).get("basic_auth", {})
     if not basic_auth_cfg.get("enabled", False):
-        # Basic Auth is disabled; skip credential checks
+        # Auth disabled for telemetry metrics
         return
 
-    auth_header = request.headers.get("Authorization")
+    auth_header = request.headers.get("Authorization") or ""
     if not auth_header:
         logger.warning("Missing Authorization header for telemetry.")
         raise HTTPException(
@@ -99,25 +94,27 @@ def metrics_auth(request: Request):
             headers={"WWW-Authenticate": "Basic"},
         )
 
+    # forcing basic auth
     if not auth_header.startswith("Basic "):
         logger.warning("Invalid Auth scheme (expected Basic) for telemetry.")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid Auth scheme",
+            detail="Invalid Auth scheme (Basic required)",
             headers={"WWW-Authenticate": "Basic"},
         )
 
-    encoded_creds = auth_header[len("Basic ") :]
+    auth = get_auth(request)
 
     try:
-        user = plain_auth.authenticate(encoded_creds)
-        # If this succeeded, we have a valid user
-        # Instead of logging directly every time, let the log suppressor decide.
+        # Pass the full Authorization header; AuthHelper/Authotron will
+        # validate credentials and return a User object or raise.
+        user = auth.authenticate(auth_header)
+        # Avoid spamming logs – per-user TTL
         _telemetry_log_suppressor.log_if_needed(user.id)
-    except ForbiddenRequest as e:
-        # Ensure we never send an empty detail message
+        return user
+    except (ForbiddenRequest, UnauthorizedRequest) as e:
         detail_msg = str(e).strip() or "Invalid credentials"
-        logger.warning(f"ForbiddenRequest: {detail_msg}")
+        logger.warning(f"Telemetry Auth failed: {detail_msg}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=detail_msg,
