@@ -150,31 +150,8 @@ components:
             $ref: '#/components/schemas/Error'
 
 paths:
-  /api/v1/auth/keys:
-    post:
-      tags: [Authentication]
-      description: Post user details to receive a key
-      summary: Generate API key
-      security:
-        - basicAuth: []
-      responses:
-        '200':
-          description: Key with expiry date
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  key:
-                    type: string
-                  expires:
-                    type: string
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
 
-  /api/v1/collections:
+  /collections:
     get:
       tags: [Collections]
       description: Get collections
@@ -198,7 +175,7 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
 
-  /api/v1/downloads/{request_id}:
+  /downloads/{request_id}:
     get:
       tags: [Downloads]
       description: Download data for a completed request
@@ -237,7 +214,7 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
 
-  /api/v1/requests:
+  /requests:
     get:
       tags: [Requests]
       description: Get user requests
@@ -259,7 +236,7 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
 
-  /api/v1/requests/{collection_or_request_id}:
+  /requests/{collection_or_request_id}:
     get:
       tags: [Requests]
       description: Get specific request or list of requests on collection
@@ -443,7 +420,7 @@ paths:
           $ref: '#/components/responses/NotFound'
         
 
-  /api/v1/test:
+  /test:
     get:
       tags: [Health]
       description: Test if the server is alive
@@ -461,7 +438,7 @@ paths:
                     type: string
                     example: Polytope server is alive
 
-  /api/v1/user:
+  /user:
     get:
       tags: [User]
       description: Get user information
@@ -490,8 +467,6 @@ security:
   - ecmwfKey: []
 
 tags:
-  - name: Authentication
-    description: API key generation and authentication
   - name: Collections
     description: Available data collections
   - name: Downloads
