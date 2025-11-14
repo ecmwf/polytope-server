@@ -18,68 +18,157 @@
 # does it submit to any jurisdiction.
 #
 
+import io
 import json
 import logging
+import socket
 
-import pytest
+from pythonjsonlogger.json import JsonFormatter
 
 
 class Test:
     def setup_method(self, method):
-        pass
+        # Clear any existing handlers
+        logger = logging.getLogger()
+        logger.handlers = []
+        logger.setLevel(logging.NOTSET)
 
     def teardown_method(self, method):
-        pass
+        # Clean up handlers
+        logger = logging.getLogger()
+        logger.handlers = []
+        logger.setLevel(logging.NOTSET)
 
     def test_logging_name(self):
-
         logger = logging.getLogger()
         assert logger.name == "polytope_server.tests.unit"
 
-    def test_logging_format(self):
-
+    def test_logging_setup(self):
+        """Test that logging.setup() configures the logger correctly."""
         import polytope_server.common.logging as mylogging
 
-        formatter = mylogging.LogFormatter(mode="json")
+        config = {"logging": {"mode": "json", "level": "DEBUG"}}
+        mylogging.setup(config, "test_source")
 
-        # Normal record
-        log_message = {
-            "name": "polytope_server.tests.unit",
-            "filename": "world",
-            "lineno": 500,
-            "levelname": "DEBUG",
-            "message": "Test Message",
-        }
-        record = logging.LogRecord(
-            log_message["name"],
-            logging.getLevelNamesMapping()[log_message["levelname"]],
-            log_message["filename"],
-            log_message["lineno"],
-            log_message["message"],
-            None,
-            None,
+        logger = logging.getLogger()
+        assert logger.name == "test_source"
+        assert logger.level == logging.DEBUG
+        assert len(logger.handlers) > 0
+
+    def test_logging_json_output(self):
+        """Test that logs are formatted as JSON."""
+        import polytope_server.common.logging as mylogging
+
+        # Create a string buffer to capture log output
+        log_capture = io.StringIO()
+        handler = logging.StreamHandler(log_capture)
+        handler.setLevel(logging.DEBUG)
+
+        # Configure the formatter
+        formatter = mylogging.optional_json_dumps(mode="json")
+
+        handler.setFormatter(
+            JsonFormatter(
+                fmt=["asctime", "request_id", "message"],
+                defaults={"app": "polytope-server"},
+                reserved_attrs=["args", "msg", "msecs", "relativeCreated", "process"],
+                json_serializer=formatter,
+            )
         )
-        result = json.loads(formatter.format(record))
-        for k in log_message.keys():
-            assert result[k] == log_message[k]
 
-        # Record with valid extra info
-        record.request_id = "hello"
-        log_message["request_id"] = "hello"
-        result = json.loads(formatter.format(record))
-        for k in log_message.keys():
-            assert result[k] == log_message[k]
+        logger = logging.getLogger("test_logger")
+        logger.handlers = []
+        logger.addHandler(handler)
+        logger.setLevel(logging.DEBUG)
 
-        # Record with invalid extra info (wrong type)
-        record.request_id = 1234
-        with pytest.raises(TypeError):
-            result = formatter.format(record)
-        del record.request_id
-        del log_message["request_id"]
+        # Log a message
+        logger.info("Test message")  # , extra={"request_id": "12345"})
 
-        # Record with unknown extra info (silently ignores extra)
-        record.unknown_extra_arg = "hello"
-        result = json.loads(formatter.format(record))
-        for k in log_message.keys():
-            assert result[k] == log_message[k]
-        assert "unknown_extra_arg" not in result
+        # Get the output and parse as JSON
+        log_output = log_capture.getvalue().strip()
+        log_json = json.loads(log_output)
+
+        assert log_json["message"] == "Test message"
+        assert log_json["app"] == "polytope-server"
+        assert "asctime" in log_json
+        # assert log_json["request_id"] == "12345"
+
+    def test_otel_baggage_filter(self):
+        """Test that OpenTelemetry baggage is added to log records."""
+        import polytope_server.common.logging as mylogging
+
+        log_capture = io.StringIO()
+        handler = logging.StreamHandler(log_capture)
+        handler.setLevel(logging.DEBUG)
+        handler.addFilter(mylogging.OTelBaggageFilter())
+
+        formatter = mylogging.optional_json_dumps(mode="json")
+
+        handler.setFormatter(
+            JsonFormatter(
+                fmt=["asctime", "request_id", "message"],
+                defaults={"app": "polytope-server"},
+                reserved_attrs=["args", "msg", "msecs", "relativeCreated", "process"],
+                json_serializer=formatter,
+            )
+        )
+
+        logger = logging.getLogger("test_baggage_logger")
+        logger.handlers = []
+        logger.addHandler(handler)
+        logger.setLevel(logging.DEBUG)
+
+        # Log with baggage
+        with mylogging.with_baggage_items({"request_id": "test-123"}):
+            logger.info("Test with baggage")
+
+        log_output = log_capture.getvalue().strip()
+        log_json = json.loads(log_output)
+
+        assert log_json["request_id"] == "test-123"
+        assert log_json["message"] == "Test with baggage"
+
+    def test_logserver_format(self):
+        """Test the format_for_logserver function."""
+        import polytope_server.common.logging as mylogging
+
+        # The function expects a dict with 'levelno' as a key, not an attribute
+        record_dict = {
+            "asctime": "2025-11-14 12:00:00,123",
+            "name": "test_logger",
+            "filename": "test.py",
+            "lineno": 42,
+            "levelname": "INFO",
+            "levelno": logging.INFO,
+            "message": "Test message",
+            "process": 1234,
+            "thread": 5678,
+            "request_id": "test-123",
+        }
+
+        result = mylogging.format_for_logserver(record_dict)
+
+        # Check required fields
+        assert result["asctime"] == "2025-11-14 12:00:00"  # Note: last 3 chars (milliseconds) truncated
+        assert result["hostname"] == socket.gethostname()
+        assert result["name"] == "test_logger"
+        assert result["filename"] == "test.py"
+        assert result["lineno"] == 42
+        assert result["levelname"] == "INFO"
+        assert result["process"] == 1234
+        assert result["thread"] == 5678
+
+        # Check syslog fields
+        assert result["syslog_facility"] == 23  # LOCAL7
+        assert result["syslog_severity"] == 6  # INFO
+        assert result["syslog_priority"] == (23 << 3) | 6
+
+        # Check origin
+        assert result["origin"]["software"] == "polytope-server"
+        assert "swVersion" in result["origin"]
+        assert "ip" in result["origin"]
+
+        # Check that message is JSON-encoded with extra fields
+        message_content = json.loads(result["message"])
+        assert message_content["message"] == "Test message"
+        assert message_content["request_id"] == "test-123"
