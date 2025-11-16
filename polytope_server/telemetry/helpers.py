@@ -36,6 +36,7 @@ from prometheus_client import (
 from ..common.metric_calculator.base import MetricCalculator
 from .config import config
 from .exceptions import OutputFormatError, RequestFetchError, TelemetryConfigError
+from .telemetry_utils import METRIC_PREFIX
 
 logger = logging.getLogger(__name__)
 
@@ -80,27 +81,30 @@ def is_usage_enabled():
 
 def get_usage_timeframes_from_config() -> List[Dict[str, Any]]:
     """
-    Load timeframes from the telemetry configuration and generate metric details.
+    Returns a list of time-frame definitions.
     """
     try:
         raw_timeframes = config.get("telemetry", {}).get("usage", {}).get("timeframes", [])
         if not raw_timeframes:
             raise TelemetryConfigError("No timeframes defined in telemetry configuration")
 
-        timeframes = []
+        timeframes: List[Dict[str, Any]] = []
         for time_str in raw_timeframes:
             delta = parse_time(time_str)
-            metric_name = time_str.replace(" ", "").lower()  # Normalize the metric name
+            metric_suffix = time_str.replace(" ", "").lower()
+            base = f"last_{metric_suffix}"
+
             timeframes.append(
                 {
-                    "name": f"last_{metric_name}",
+                    "name": base,
                     "delta": delta,
-                    "request_metric_name": f"polytope_requests_last_{metric_name}",
-                    "user_metric_name": f"polytope_unique_users_last_{metric_name}",
+                    "request_metric_name": f"{METRIC_PREFIX}_requests_{base}",
+                    "user_metric_name": f"{METRIC_PREFIX}_unique_users_{base}",
                     "request_metric_description": f"Number of requests in the last {time_str}",
                     "user_metric_description": f"Number of unique users in the last {time_str}",
                 }
             )
+
         return timeframes
     except Exception as e:
         logger.error(f"Error loading timeframes from config: {e}")
@@ -180,15 +184,26 @@ def set_aggregated_prometheus_metrics(
     Define and register Prometheus metrics from aggregated data.
     """
     try:
-        total_requests_metric = Gauge("polytope_total_requests", "Total number of requests", registry=registry)
+        total_requests_metric = Gauge(
+            f"{METRIC_PREFIX}_total_requests",
+            "Total number of requests",
+            registry=registry,
+        )
         total_requests_metric.set(metrics["total_requests"])
 
-        unique_users_metric = Gauge("polytope_unique_users", "Total number of unique users", registry=registry)
+        unique_users_metric = Gauge(
+            f"{METRIC_PREFIX}_unique_users",
+            "Total number of unique users",
+            registry=registry,
+        )
         unique_users_metric.set(metrics["unique_users"])
 
         for frame in time_frames:
             frame_name = frame["name"]
-            frame_metrics = metrics["timeframe_metrics"].get(frame_name, {"requests": 0, "unique_users": 0})
+            frame_metrics = metrics["timeframe_metrics"].get(
+                frame_name,
+                {"requests": 0, "unique_users": 0},
+            )
 
             requests_metric = Gauge(
                 frame["request_metric_name"],
@@ -203,7 +218,6 @@ def set_aggregated_prometheus_metrics(
                 registry=registry,
             )
             users_metric.set(frame_metrics["unique_users"])
-
     except Exception as e:
         logger.error(f"Error setting Prometheus metrics: {e}")
         raise
