@@ -67,18 +67,21 @@ class HistogramBuilder:
         cnt_map: Dict[Tuple[Any, ...], int] = defaultdict(int)
 
         for r in rows:
+            ds = r.get("datasource", "")
             # Build label ID tuple
             lid: Tuple[Any, ...]
             if include_status:
                 lid = (
                     r["status"],
                     r["collection"],
+                    ds,
                     r.get("realm", ""),
                     tuple(r.get("cr", {}).get(k, "") for k in product_labels),
                 )
             else:
                 lid = (
                     r["collection"],
+                    ds,
                     r.get("realm", ""),
                     tuple(r.get("cr", {}).get(k, "") for k in product_labels),
                 )
@@ -99,18 +102,19 @@ class HistogramBuilder:
             # Unpack label tuple
             base: Dict[str, Any]
             if include_status:
-                status, collection, realm, prod = lid
+                status, collection, datasource, realm, prod = lid
                 prodmap = dict(zip(product_labels, prod))
                 base = {
                     "status": status,
                     "collection": collection,
+                    "datasource": datasource,
                     "realm": realm,
                     **prodmap,
                 }
             else:
-                collection, realm, prod = lid
+                collection, datasource, realm, prod = lid
                 prodmap = dict(zip(product_labels, prod))
-                base = {"collection": collection, "realm": realm, **prodmap}
+                base = {"collection": collection, "datasource": datasource, "realm": realm, **prodmap}
 
             # Emit bucket counts
             for b in bnds:
