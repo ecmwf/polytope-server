@@ -21,25 +21,7 @@
 import datetime
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
-# Labels allowed on Prometheus metrics for a request.
-# Here more can be added in future if needed.
-# We should avoid high-cardinality labels as much as possible.
-TELEMETRY_PRODUCT_LABELS: Tuple[str, ...] = (
-    "class",
-    "dataset",
-    "type",
-)
-
-# Canonical label order across all samples; missing labels are emitted as empty strings
-# to keep the series schema stable in Prometheus.
-CANONICAL_LABEL_ORDER: Tuple[str, ...] = (
-    "collection",
-    "realm",
-    *TELEMETRY_PRODUCT_LABELS,
-)
-
-REQUEST_DURATION_BUCKETS = [0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300]
-PROCESSING_DURATION_BUCKETS = [0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300]
+from .telemetry_utils import CANONICAL_LABEL_ORDER, TELEMETRY_PRODUCT_LABELS
 
 
 def histogram_metric_names(base: str) -> Tuple[str, str, str, str]:

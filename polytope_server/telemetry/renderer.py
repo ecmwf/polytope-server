@@ -50,7 +50,7 @@ def render_counters(metric_calculator: MetricCalculator, winsecs: float) -> List
     )
     for row in bytesrows:
         labels = dict(row["labels"])
-        order = ["collection", "realm"] + list(TELEMETRY_PRODUCT_LABELS)
+        order = ["collection", "datasource", "realm"] + list(TELEMETRY_PRODUCT_LABELS)
         lines.append(f"{bytes_metric_name}{labels_to_exposition_freeform(labels, order)} {int(row['value'])}")
 
     return lines
@@ -76,17 +76,17 @@ def render_req_duration_hist(metric_calculator: MetricCalculator, winsecs: float
 
     for row in reqhist["buckets"]:
         labels = dict(row["labels"])
-        order = ["status", "collection", "realm"] + list(TELEMETRY_PRODUCT_LABELS) + ["le"]
+        order = ["status", "collection", "datasource", "realm"] + list(TELEMETRY_PRODUCT_LABELS) + ["le"]
         lines.append(f"{bucketname}{labels_to_exposition_freeform(labels, order)} {int(row['value'])}")
 
     for row in reqhist["sum"]:
         labels = dict(row["labels"])
-        order = ["status", "collection", "realm"] + list(TELEMETRY_PRODUCT_LABELS)
+        order = ["status", "collection", "datasource", "realm"] + list(TELEMETRY_PRODUCT_LABELS)
         lines.append(f"{sumname}{labels_to_exposition_freeform(labels, order)} {row['value']}")
 
     for row in reqhist["count"]:
         labels = dict(row["labels"])
-        order = ["status", "collection", "realm"] + list(TELEMETRY_PRODUCT_LABELS)
+        order = ["status", "collection", "datasource", "realm"] + list(TELEMETRY_PRODUCT_LABELS)
         lines.append(f"{countname}{labels_to_exposition_freeform(labels, order)} {int(row['value'])}")
 
     return lines
@@ -116,17 +116,17 @@ def render_proc_hist(metric_calculator: MetricCalculator, winsecs: float) -> Lis
 
     for row in prochist["buckets"]:
         labels = dict(row["labels"])
-        order = ["collection", "realm"] + list(TELEMETRY_PRODUCT_LABELS) + ["le"]
+        order = ["collection", "datasource", "realm"] + list(TELEMETRY_PRODUCT_LABELS) + ["le"]
         lines.append(f"{bucketname}{labels_to_exposition_freeform(labels, order)} {int(row['value'])}")
 
     for row in prochist["sum"]:
         labels = dict(row["labels"])
-        order = ["collection", "realm"] + list(TELEMETRY_PRODUCT_LABELS)
+        order = ["collection", "datasource", "realm"] + list(TELEMETRY_PRODUCT_LABELS)
         lines.append(f"{sumname}{labels_to_exposition_freeform(labels, order)} {row['value']}")
 
     for row in prochist["count"]:
         labels = dict(row["labels"])
-        order = ["collection", "realm"] + list(TELEMETRY_PRODUCT_LABELS)
+        order = ["collection", "datasource", "realm"] + list(TELEMETRY_PRODUCT_LABELS)
         lines.append(f"{countname}{labels_to_exposition_freeform(labels, order)} {int(row['value'])}")
 
     return lines
