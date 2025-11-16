@@ -59,6 +59,7 @@ class PolytopeRequest:
         "content_length",
         "content_type",
         "status_history",
+        "datasource",
     ]
 
     def __init__(self, from_dict=None, **kwargs):
@@ -77,6 +78,7 @@ class PolytopeRequest:
         self.coerced_request = {}
         self.content_length = None
         self.content_type = "application/octet-stream"
+        self.datasource = ""
 
         now_ts = datetime.datetime.now(datetime.timezone.utc).timestamp()
         self.status_history = {self.status.value: now_ts}
