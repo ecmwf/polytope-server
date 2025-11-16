@@ -124,6 +124,19 @@ class MetricCalculator(ABC):
         pass
 
     @abstractmethod
+    def aggregate_unique_users(self, windows_seconds: List[int]) -> Dict[int, int]:
+        """
+        Aggregate unique users over multiple time windows.
+
+        Args:
+            window_seconds: Time window in seconds to look back from now
+
+        Returns:
+            Dict mapping window seconds to unique user counts
+        """
+        pass
+
+    @abstractmethod
     def list_requests(
         self,
         status: Optional[str] = None,
