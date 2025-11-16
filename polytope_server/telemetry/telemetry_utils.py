@@ -26,11 +26,9 @@ from .config import config
 
 def _load_metrics_config():
     """
-    Read label / bucket configuration from telemetry.metrics, with safe fallbacks.
+    Read label / bucket configuration from metrics, with safe fallbacks.
     """
-    telemetry_cfg = config.get("telemetry", {}) or {}
-    metrics_cfg = telemetry_cfg.get("metrics", {}) or {}
-
+    metrics_cfg = config.get("metrics", {}) or {}
     # Prefix for *all* telemetry metrics (requests_total, bytes_served_total, usage gauges, etc.)
     prefix = metrics_cfg.get("prefix", "polytope")
 
@@ -45,7 +43,7 @@ def _load_metrics_config():
     if isinstance(canonical_cfg, (list, tuple)):
         canonical_label_order = tuple(str(l) for l in canonical_cfg)
     else:
-        canonical_label_order = ("status", "collection", "realm", *product_labels)
+        canonical_label_order = ("status", "collection", "datasource", "realm", *product_labels)
 
     # Histogram buckets
     def _ensure_bucket_list(key: str, default: List[float]) -> List[float]:
@@ -147,6 +145,7 @@ def build_product_labels(doc: Mapping[str, Any]) -> Mapping[str, Any]:
     labels: dict[str, Any] = {
         "collection": doc.get("collection", ""),
         "realm": (((doc.get("user") or {}) or {}).get("realm")) if doc.get("user") else "",
+        "datasource": doc.get("datasource", ""),
     }
     cr = doc.get("cr") or doc.get("coerced_request") or {}
     for k in TELEMETRY_PRODUCT_LABELS:
