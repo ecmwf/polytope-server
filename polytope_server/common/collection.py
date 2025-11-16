@@ -65,6 +65,7 @@ class Collection:
                 message = f"Matched datasource {DataSource.repr(ds_config)}"
                 request.user_message += message + "\n"
                 logging.info(message)
+                request.datasource = ds_config.get("name")
                 request.coerced_request = coerced_ur
                 ds = create_datasource(ds_config)
                 ds.dispatch(request, input_data)
