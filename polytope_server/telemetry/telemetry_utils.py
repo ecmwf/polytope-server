@@ -36,12 +36,12 @@ def _load_metrics_config():
     product_labels_cfg = metrics_cfg.get("product_labels", ["class", "type"])
     if not isinstance(product_labels_cfg, (list, tuple)):
         product_labels_cfg = ["class", "type"]
-    product_labels = tuple(str(l) for l in product_labels_cfg)
+    product_labels = tuple(str(label) for label in product_labels_cfg)
 
     # Canonical label order for counters; if not provided, we derive it
     canonical_cfg = metrics_cfg.get("canonical_label_order")
     if isinstance(canonical_cfg, (list, tuple)):
-        canonical_label_order = tuple(str(l) for l in canonical_cfg)
+        canonical_label_order = tuple(str(label) for label in canonical_cfg)
     else:
         canonical_label_order = ("status", "collection", "datasource", "realm", *product_labels)
 
