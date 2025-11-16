@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from pymongo import ASCENDING, DESCENDING
 from pymongo.collection import Collection
+from pymongo.errors import OperationFailure
 
 from ...telemetry.telemetry_utils import (
     PROCESSING_DURATION_BUCKETS,
@@ -62,49 +63,32 @@ class MongoMetricCalculator(MetricCalculator):
             logger.info("  with metric_collection %s", metric_collection.name)
 
     def ensure_indexes(self) -> None:
-        """Create indexes optimized for metric aggregation queries on requests collection."""
-        logger.info("Ensuring metric aggregation indexes for collection: %s", self.collection.name)
+        """Ensure all indexes needed for metric queries exist."""
 
-        # Drop old indexes with old field names if they exist
-        old_index_names = [
-            "ix_terminal_status_lastmodified",
-            "ix_ts_lastmodified_desc",
-            "ix_lastmodified_desc",
-            "ix_product_labels_lastmodified",
-            "ix_processed_bytes_window",
-            "ix_statushistory_processing",
-        ]
-
-        for index_name in old_index_names:
-            try:
-                self.collection.drop_index(index_name)
-                logger.info("Dropped old index: %s", index_name)
-            except Exception as e:
-                logger.debug("Could not drop index %s: %s", index_name, e)
-
-        # Terminal status + last_modified for time-windowed queries
+        # For fast queries on terminal status + time windows
         self.collection.create_index(
             [("status", ASCENDING), ("last_modified", DESCENDING)],
             name="ix_terminal_status_last_modified",
             partialFilterExpression={"status": {"$in": [Status.PROCESSED.value, Status.FAILED.value]}},
         )
 
-        # Timestamp + last_modified descending
+        # Generic descending timestamp + last_modified index
         self.collection.create_index(
             [("timestamp", DESCENDING), ("last_modified", DESCENDING)],
             name="ix_ts_last_modified_desc",
         )
 
-        # Last_modified descending (general queries)
+        # Fallback index on last_modified alone
         self.collection.create_index(
             [("last_modified", DESCENDING)],
             name="ix_last_modified_desc",
         )
 
-        # Product labels for grouping
+        # Dynamic product-label index based on TELEMETRY_PRODUCT_LABELS
         keys = (
             [
                 ("collection", ASCENDING),
+                ("datasource", ASCENDING),
                 ("user.realm", ASCENDING),
             ]
             + [(f"coerced_request.{k}", ASCENDING) for k in TELEMETRY_PRODUCT_LABELS]
@@ -112,16 +96,40 @@ class MongoMetricCalculator(MetricCalculator):
                 ("last_modified", DESCENDING),
             ]
         )
-        self.collection.create_index(keys, name="ix_product_labels_last_modified")
 
-        # Status + content_length + last_modified for bytes served
+        try:
+            # Main index for product-label aggregations
+            self.collection.create_index(keys, name="ix_product_labels_last_modified")
+        except OperationFailure as exc:
+            # Handle label config changes: drop old index if spec conflicts
+            if exc.code == 86:  # IndexKeySpecsConflict
+                logger.warning(
+                    "Index 'ix_product_labels_last_modified' exists with a different "
+                    "key spec. Dropping and recreating with TELEMETRY_PRODUCT_LABELS=%s",
+                    TELEMETRY_PRODUCT_LABELS,
+                )
+                try:
+                    self.collection.drop_index("ix_product_labels_last_modified")
+                except Exception:
+                    # If we can't drop it, surface the original failure
+                    logger.exception(
+                        "Failed to drop existing index 'ix_product_labels_last_modified'. " "Re-raising original error."
+                    )
+                    raise
+                # Recreate with updated key spec
+                self.collection.create_index(keys, name="ix_product_labels_last_modified")
+            else:
+                # Any other index error should bubble up
+                raise
+
+        # For aggregations over processed bytes within time windows
         self.collection.create_index(
             [("status", ASCENDING), ("content_length", ASCENDING), ("last_modified", DESCENDING)],
             name="ix_processed_bytes_window",
             partialFilterExpression={"status": Status.PROCESSED.value},
         )
 
-        # Status history indexes for processing duration
+        # For queries using status history (processing → processed timing)
         self.collection.create_index(
             [("status_history.processing", ASCENDING), ("status_history.processed", ASCENDING)],
             name="ix_status_history_processing",
@@ -270,6 +278,7 @@ class MongoMetricCalculator(MetricCalculator):
                     "_id": {
                         "status": "$status",
                         "collection": "$collection",
+                        "datasource": "$datasource",
                         "realm": "$user.realm",
                         **{k: f"$coerced_request.{k}" for k in TELEMETRY_PRODUCT_LABELS},
                     },
@@ -300,6 +309,7 @@ class MongoMetricCalculator(MetricCalculator):
                 "$group": {
                     "_id": {
                         "collection": "$collection",
+                        "datasource": "$datasource",
                         "realm": "$user.realm",
                         **{k: f"$coerced_request.{k}" for k in TELEMETRY_PRODUCT_LABELS},
                     },
@@ -332,6 +342,7 @@ class MongoMetricCalculator(MetricCalculator):
                 "$project": {
                     "status": 1,
                     "collection": 1,
+                    "datasource": 1,
                     "realm": "$user.realm",
                     # Only project the specific label fields we need
                     **{f"cr_{k}": f"$coerced_request.{k}" for k in TELEMETRY_PRODUCT_LABELS},
@@ -350,6 +361,7 @@ class MongoMetricCalculator(MetricCalculator):
                 {
                     "status": r["status"],
                     "collection": r["collection"],
+                    "datasource": r.get("datasource", ""),
                     "realm": r.get("realm", ""),
                     "cr": cr,
                     "duration": r["duration"],
@@ -390,6 +402,7 @@ class MongoMetricCalculator(MetricCalculator):
             {
                 "$project": {
                     "collection": 1,
+                    "datasource": 1,
                     "realm": "$user.realm",
                     # Only project the specific label fields we need
                     **{f"cr_{k}": f"$coerced_request.{k}" for k in TELEMETRY_PRODUCT_LABELS},
@@ -407,6 +420,7 @@ class MongoMetricCalculator(MetricCalculator):
             formatted_rows.append(
                 {
                     "collection": r["collection"],
+                    "datasource": r.get("datasource", ""),
                     "realm": r.get("realm", ""),
                     "cr": cr,
                     "proc": r["proc"],
