@@ -58,38 +58,6 @@ mapping:
     required: true
     func: one_of
     mapping:
-
-      mongodb:
-        desc: use a mongodb to hold users & tokens
-        type: map
-        func: one_of
-        mapping:
-          manual:
-            desc: point to a hosted mongodb
-            type: map
-            mapping:
-              uri:
-                desc: host and port
-                example: localhost:27017
-                type: str
-                required: true
-          
-          auto:
-            desc: mongodb will be deployed as containers
-            type: map
-            mapping:
-              replicas:
-                desc: number of load-balanced entrypoints to create
-                type: int
-                example: "3"
-              persistent_storage:
-                desc: path to the database on a shared filesystem
-                example: /shared/fs/mongodb
-                type: str
-                required: true
-
-
-
       no_auth:
         type: any
         func: empty

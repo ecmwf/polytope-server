@@ -20,10 +20,8 @@ Through common abstraction layers, these components speak to various other servi
 * **request_store**: database to track requests (MongoDB)
 * **queue**: queue to dispatch requests to workers (RabbitMQ)
 * **staging**: object-store to serve and receive data (S3, BasicHTTPServer)
-* **authentication**: for authenticating users to Polytope (ECMWF API, Basic MongoDB, API Key MongoDB)
-* **authorization**: for managing authorization to different collections (ECMWF LDAP, MongoDB)
-* **identity**: for registering users with Polytope (MongoDB)
-* **api-keys**: for generating Polytope API keys (MongoDB)
+* **authentication**: for authenticating users to Polytope (ECMWF API, Basic)
+* **authorization**: for managing authorization to different collections (ECMWF LDAP)
 * **caching**: caching of web requests to various services (MongoDB, Redis, Memcached)
 
 ## Quick Start

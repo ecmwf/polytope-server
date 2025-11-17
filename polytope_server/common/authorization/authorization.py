@@ -55,7 +55,6 @@ class Authorization(ABC):
 type_to_class_map = {
     "plain": "PlainAuthorization",
     "ldap": "LDAPAuthorization",
-    "mongodb": "MongoDBAuthorization",
 }
 
 

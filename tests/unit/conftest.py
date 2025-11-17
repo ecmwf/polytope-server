@@ -35,7 +35,7 @@ with open(tmp.name, "w") as tf:
         "developer": {"disable_schema_check": True},
         "version": "1",
         "logging": {},
-        "authentication": {"mongodb": {}},
+        "authentication": {},
         "request_store": {},
         "staging": {},
         "testrunner": {},

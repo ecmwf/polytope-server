@@ -38,17 +38,6 @@ def pytest_configure(config):
 
     polytope_config_auth = copy.deepcopy(pytest.polytope_config)
 
-    for realm, _ in polytope_config_auth["authentication"].items():
-        for auth in polytope_config_auth["authentication"][realm]["authenticators"].values():
-            if isinstance(auth, dict) and auth.get("type", "") == "mongodb":
-                auth["collection"] = "test-users"
-        for auth in polytope_config_auth["authentication"][realm]["authorizers"].values():
-            if isinstance(auth, dict) and auth.get("type", "") == "mongodb":
-                auth["collection"] = "test-users"
-
-    polytope_config_auth["identity"]["mongodb"]["collection"] = "test-users"
-    polytope_config_auth["api-keys"]["generator"]["collection"] = "test-keys"
-    polytope_config_auth["api-keys"]["authenticator"]["collection"] = "test-keys"
     pytest.polytope_config_auth = polytope_config_auth
 
     logging.setup(pytest.polytope_config, source_name="polytope_server.tests.internal")
@@ -90,19 +79,12 @@ def pytest_configure(config):
         "staging": {"s3": None, "polytope": None},
         "authentication": [
             {"type": "ecmwfapi"},
-            {"type": "mongodb"},
             {"type": "plain"},
         ],
         "authorization": [
             {"type": "ldap"},
-            {"type": "mongodb"},
             {"type": "plain"},
         ],
-        "identity": {"mongodb": None},
-        "api-keys": {
-            "generator": {"type": "mongodb"},
-            "authenticator": {"type": "mongoapikey"},
-        },
     }
 
     markers = build_labels(markers, leafs_only=True)
