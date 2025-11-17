@@ -28,8 +28,6 @@ from opentelemetry.sdk.trace import TracerProvider
 
 from ..common.auth import AuthHelper
 from ..common.collection import create_collections
-from ..common.identity import create_identity
-from ..common.keygenerator import create_keygenerator
 from ..common.request_store import create_request_store
 from ..common.staging import create_staging
 
@@ -69,11 +67,9 @@ class Frontend:
         request_store = create_request_store(self.config.get("request_store"), self.config.get("metric_store"))
 
         auth = AuthHelper(self.config)
-        apikeygenerator = create_keygenerator(self.config.get("api-keys", {}).get("generator", None))
 
         staging = create_staging(self.config.get("staging"))
         collections = create_collections(self.config.get("collections"))
-        identity = create_identity(self.config.get("identity"))
 
         handler_module = importlib.import_module("polytope_server.frontend." + self.handler_type + "_handler")
         handler_class = getattr(handler_module, self.handler_dict[self.handler_type])()
@@ -82,8 +78,6 @@ class Frontend:
             auth,
             staging,
             collections,
-            identity,
-            apikeygenerator,
             self.config.get("frontend", {}).get("proxy_support", False),
         )
 

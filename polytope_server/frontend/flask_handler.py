@@ -37,8 +37,6 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from ..common.auth import AuthHelper
 from ..common.collection import Collection
 from ..common.exceptions import BadRequest, ForbiddenRequest, HTTPException, NotFound
-from ..common.identity import Identity
-from ..common.keygenerator.keygenerator import KeyGenerator
 from ..common.logging import with_baggage_items
 from ..common.request_store import RequestStore
 from ..common.staging import Staging
@@ -58,8 +56,6 @@ class FlaskHandler(frontend.FrontendHandler):
         auth: AuthHelper,
         staging: Staging,
         collections: Dict[str, Collection],
-        identity: Identity,
-        apikeygenerator: KeyGenerator,
         proxy_support: bool,
     ):
         handler = Flask(__name__)
@@ -114,28 +110,6 @@ class FlaskHandler(frontend.FrontendHandler):
         def test():
             if request.method == "GET":
                 return RequestSucceeded("Polytope server is alive")
-
-        @handler.route("/api/v1/auth/users", methods=["POST", "DELETE"])
-        def addUser():
-            user = auth.authenticate(get_auth_header(request))
-            if not auth.has_admin_access(user):
-                raise ForbiddenRequest("Only admin users can manage users")
-            username = request.json["username"]
-            if request.method == "POST":
-                password = request.json["password"]
-                role = request.json["role"]
-                if identity.add_user(username, password, [role]):
-                    return RequestSucceeded("Successfully added user")
-            elif request.method == "DELETE":
-                if identity.remove_user(username):
-                    return RequestSucceeded("Successfully removed user")
-
-        @handler.route("/api/v1/auth/keys", methods=["POST"])
-        def getToken():
-            user = auth.authenticate(get_auth_header(request))
-            if request.method == "POST":
-                apikey = apikeygenerator.create_key(user)
-                return RequestSucceeded({"key": apikey.key, "expires": apikey.expiry})
 
         @handler.route(
             "/api/v1/user",

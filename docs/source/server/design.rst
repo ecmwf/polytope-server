@@ -22,6 +22,6 @@ While revocation of requests is possible, they will not be interrupted once they
 
 A *telemetry* microservice collects important metrics from the other services, and makes them available at ``/telemetry/v1/``.
 
-Polytope has a mongodb-based *authentication* service, but usually Polytope is connected to external authentication services instead.
+Polytope has an *authentication* module for connecting to external services as well as a plain text provider for testing purposes, but usually Polytope is connected to external authentication services via [Auth-o-tron](https://github.com/ecmwf/auth-o-tron) instead.
 
 Most of the components in Polytope are configurable via a YAML configuration file that must be provided at deployment time. This configuration file specifies the URLs for all of the microservices, various options and parameters for how these services run, and may also contain configuration used by the deployment mechanism (e.g. number of service replicas). See :ref:`deployment` and :ref:`server_configuration` for details.

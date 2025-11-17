@@ -62,8 +62,6 @@ class Authentication(ABC):
 #######################################################
 
 type_to_class_map = {
-    "mongodb": "MongoAuthentication",
-    "mongoapikey": "ApiKeyMongoAuthentication",
     "ecmwfapi": "ECMWFAuthentication",
     "plain": "PlainAuthentication",
     "keycloak": "KeycloakAuthentication",
