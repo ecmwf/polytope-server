@@ -59,8 +59,6 @@ class Frontend:
         self.handler_type = frontend_config.get("handler", "flask")
         self.handler_dict = {
             "flask": "FlaskHandler",
-            "restplus": "RestplusHandler",
-            "falcon": "FalconHandler",
         }
 
         self.host = frontend_config.get("bind_to", "localhost")
