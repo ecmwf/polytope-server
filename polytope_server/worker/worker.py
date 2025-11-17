@@ -313,11 +313,12 @@ class Worker:
 
         if self.request is not None:
             with with_baggage_items({"request_id": self.request.id}):
-                logging.info("Rescheduling request due to worker shutdown.")
-                error_message = self.request.user_message + "\n" + "Worker shutdown, rescheduling request."
-                self.request.user_message = error_message
                 if self.request.status == Status.PROCESSING:
+                    logging.info("Rescheduling request due to worker shutdown.")
+                    error_message = self.request.user_message + "\n" + "Worker shutdown, rescheduling request."
+                    self.request.user_message = error_message
                     self.request_store.set_request_status(self.request, Status.QUEUED)
                     self.queue.nack(self.queue_msg)
                 else:
+                    logging.info("Worker shutting down", extra={"request": self.request.serialize()})
                     self.request_store.update_request(self.request)

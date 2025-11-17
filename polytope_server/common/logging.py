@@ -39,7 +39,6 @@ DEFAULT_IGNORED_FIELDS = [
     "msecs",
     "relativeCreated",
     "process",
-    "lineno",
 ]
 
 
