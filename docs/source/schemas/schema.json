@@ -37,8 +37,6 @@
         "garbage-collector",
         "authentication",
         "federation",
-        "identity",
-        "api-keys",
         "admin",
         "datasources",
         "collections"
@@ -95,14 +93,6 @@
         "federation": {
           "$ref": "#/definitions/FederationConfig",
           "description": "describes federated access from remote instances of polytope"
-        },
-        "identity": {
-          "$ref": "#/definitions/IdentityConfig",
-          "description": "describes the identity service for adding and removing users"
-        },
-        "api-keys": {
-          "$ref": "#/definitions/APIKeyConfig",
-          "description": "describes the mechanism for user-generated API keys and their subsequent authentication"
         },
         "admin": {
           "$ref": "#/definitions/AdminConfig",
@@ -576,196 +566,6 @@
         "realm2"
       ]
     },
-    "APIKeyConfig": {
-      "type": "object",
-      "anyOf": [
-        {
-          "properties": {
-            "generator": {
-              "$ref": "#/definitions/APIKeyConfig-Generator",
-              "description": "describes the API key generator"
-            },
-            "authenticator": {
-              "$ref": "#/definitions/APIKeyConfig-Authenticator",
-              "description": "describes the extra authenticator which accepts the API keys"
-            }
-          },
-          "preferredOrder": [
-            "generator",
-            "authenticator"
-          ],
-          "required": [
-            "generator",
-            "authenticator"
-          ],
-          "additionalProperties": false
-        }
-      ]
-    },
-    "APIKeyConfig-Generator": {
-      "type": "object",
-      "properties": {
-        "type": {
-          "host": "string",
-          "default": "mongodb"
-        },
-        "host": {
-          "type": "string",
-          "default": "localhost",
-          "description": "mongodb-based store for API keys"
-        },
-        "port": {
-          "type": "integer",
-          "default": 27017
-        },
-        "collection": {
-          "type": "string",
-          "description": "mongodb collection name",
-          "default": "keys"
-        },
-        "allowed_realms": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "description": "realms in which users may generate API keys",
-          "default": "[]"
-        }
-      },
-      "preferredOrder": [
-        "type",
-        "host",
-        "port",
-        "collection",
-        "allowed_realms"
-      ],
-      "required": [
-        "type"
-      ]
-    },
-    "APIKeyConfig-Authenticator": {
-      "type": "object",
-      "properties": {
-        "host": {
-          "type": "string",
-          "default": "mongodb",
-          "description": "mongodb-based store for API keys"
-        },
-        "type": {
-          "host": "string",
-          "default": "localhost"
-        },
-        "port": {
-          "type": "integer",
-          "default": 27017
-        },
-        "collection": {
-          "type": "string",
-          "description": "mongodb collection name",
-          "default": "keys"
-        }
-      },
-      "preferredOrder": [
-        "type",
-        "host",
-        "port",
-        "collection"
-      ],
-      "required": [
-        "type"
-      ]
-    },
-    "IdentityConfig": {
-      "type": "object",
-      "anyOf": [
-        {
-          "properties": {
-            "mongodb": {
-              "$ref": "#/definitions/IdentityConfig-MongoDB",
-              "description": "mongodb-backed identity service"
-            }
-          },
-          "preferredOrder": [
-            "mongodb"
-          ],
-          "additionalProperties": false
-        }
-      ]
-    },
-    "IdentityConfig-MongoDB": {
-      "type": "object",
-      "properties": {
-        "host": {
-          "type": "string",
-          "description": "mongodb host",
-          "default": "localhost"
-        },
-        "port": {
-          "type": "integer",
-          "description": "mongodb port",
-          "default": 27017
-        },
-        "collection": {
-          "type": "string",
-          "description": "mongodb collection name",
-          "default": "users"
-        },
-        "realm": {
-          "type": "string",
-          "description": "realm to assign users to",
-          "default": ""
-        },
-        "extra-users": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/IdentityConfig-MongoDB-User"
-          },
-          "default": [],
-          "description": "additional users to be created at start-up"
-        }
-      },
-      "preferredOrder": [
-        "host",
-        "port",
-        "collection",
-        "realm",
-        "extra-users"
-      ],
-      "required": [
-        "realm"
-      ]
-    },
-    "IdentityConfig-MongoDB-User": {
-      "type": "object",
-      "properties": {
-        "uid": {
-          "type": "string",
-          "examples": [
-            "user1"
-          ],
-          "description": ""
-        },
-        "password": {
-          "type": "string",
-          "examples": [
-            "password"
-          ],
-          "description": ""
-        },
-        "roles": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "description": "a list of roles to grant the user"
-        }
-      },
-      "preferredOrder": [
-        "uid",
-        "password",
-        "roles"
-      ]
-    },
     "FederationConfig": {
       "type": "object",
       "anyOf": [
@@ -864,20 +664,15 @@
         {
           "properties": {
             "authenticator1": {
-              "$ref": "#/definitions/AuthenticationConfig-Realm-Authenticators-MongoDB",
-              "description": "custom authenticator name"
-            },
-            "authenticator2": {
               "$ref": "#/definitions/AuthenticationConfig-Realm-Authenticators-Plain"
             },
-            "authenticator3": {
+            "authenticator2": {
               "$ref": "#/definitions/AuthenticationConfig-Realm-Authenticators-Keycloak"
             }
           },
           "preferredOrder": [
             "authenticator1",
-            "authenticator2",
-            "authenticator3"
+            "authenticator2"
           ],
           "additionalProperties": false
         }
@@ -893,16 +688,12 @@
               "description": "custom authorizer name"
             },
             "authorizer2": {
-              "$ref": "#/definitions/AuthenticationConfig-Realm-Authenticators-Authorizers-MongoDB"
-            },
-            "authorizer3": {
               "$ref": "#/definitions/AuthenticationConfig-Realm-Authenticators-Authorizers-Plain"
             }
           },
           "preferredOrder": [
             "authorizer1",
-            "authorizer2",
-            "authorizer3"
+            "authorizer2"
           ],
           "additionalProperties": false
         }
@@ -1004,40 +795,6 @@
         "filter"
       ]
     },
-    "AuthenticationConfig-Realm-Authenticators-Authorizers-MongoDB": {
-      "type": "object",
-      "properties": {
-        "type": {
-          "type": "string",
-          "default": "mongodb",
-          "description": "connect to a mongodb-backed authorizer"
-        },
-        "host": {
-          "type": "string",
-          "default": "localhost",
-          "description": "mongodb hostname"
-        },
-        "port": {
-          "type": "integer",
-          "default": 27017,
-          "description": "mongodb port"
-        },
-        "collection": {
-          "type": "string",
-          "default": "users",
-          "description": "mongodb port"
-        }
-      },
-      "preferredOrder": [
-        "type",
-        "host",
-        "port",
-        "collection"
-      ],
-      "required": [
-        "type"
-      ]
-    },
     "AuthenticationConfig-Realm-Authenticators-Keycloak": {
       "type": "object",
       "properties": {
@@ -1127,40 +884,6 @@
       "required": [
         "uid",
         "password"
-      ]
-    },
-    "AuthenticationConfig-Realm-Authenticators-MongoDB": {
-      "type": "object",
-      "properties": {
-        "type": {
-          "type": "string",
-          "default": "mongodb",
-          "description": "creates a mongodb-backed authenticator"
-        },
-        "host": {
-          "type": "string",
-          "default": "localhost",
-          "description": "mongodb host"
-        },
-        "port": {
-          "type": "integer",
-          "default": 27017,
-          "description": "mongodb port"
-        },
-        "collection": {
-          "type": "string",
-          "default": "users",
-          "description": "mongodb collection"
-        }
-      },
-      "preferredOrder": [
-        "type",
-        "host",
-        "port",
-        "collection"
-      ],
-      "required": [
-        "type"
       ]
     },
     "FrontendConfig": {
