@@ -64,7 +64,6 @@ def setup(config, source_name):
         JsonFormatter(
             fmt=fmt,
             defaults=defaults,
-            datefmt="%Y-%m-%d %H:%M:%S,%f",
             reserved_attrs=reserved_attrs,
             json_serializer=optional_json_dumps(mode=mode),
             json_indent=2 if mode == "prettyprint" else None,
