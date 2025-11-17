@@ -217,7 +217,7 @@ def get_datasource_config(config: str | dict) -> dict:
     config = polytope_config.merge(datasource_configs.get(name, None), config)
 
     config = _load_ds_parents_recursively(name, config, datasource_configs)
-    logging.debug("Loaded datasource config {}".format(config["name"]))
+    # logging.debug("Loaded datasource config {}".format(config["name"]))
     return config
 
 
@@ -233,7 +233,7 @@ def _load_ds_parents_recursively(name: str, ds_config: dict, global_ds_configs: 
             config = polytope_config.merge(
                 config, _load_ds_parents_recursively(p, parent_config, global_ds_configs, children + [p])
             )
-            logging.debug("Merged {} into {}".format(p, name))
+            # logging.debug("Merged {} into {}".format(p, name))
 
     return polytope_config.merge(config, ds_config)
 
