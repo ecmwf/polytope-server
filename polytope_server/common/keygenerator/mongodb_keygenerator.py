@@ -25,7 +25,6 @@ from datetime import datetime, timedelta
 from .. import mongo_client_factory
 from ..auth import User
 from ..exceptions import ForbiddenRequest
-from ..metric_collector import MongoStorageMetricCollector
 from . import ApiKey, keygenerator
 
 
@@ -42,8 +41,6 @@ class MongoKeyGenerator(keygenerator.KeyGenerator):
         self.database = self.mongo_client.keys
         self.keys = self.database[collection]
         self.realms = config.get("allowed_realms")
-
-        self.storage_metric_collector = MongoStorageMetricCollector(uri, self.mongo_client, "keys", collection)
 
     def create_key(self, user: User) -> ApiKey:
         if user.realm not in self.realms:
@@ -67,4 +64,4 @@ class MongoKeyGenerator(keygenerator.KeyGenerator):
         return key
 
     def collect_metric_info(self):
-        return self.storage_metric_collector.collect().serialize()
+        pass

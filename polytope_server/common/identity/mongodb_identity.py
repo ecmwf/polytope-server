@@ -21,7 +21,7 @@
 from .. import mongo_client_factory
 from ..authentication.mongodb_authentication import MongoAuthentication
 from ..exceptions import Conflict, NotFound
-from ..metric_collector import MetricCollector, MongoStorageMetricCollector
+from ..metric_collector import MetricCollector
 from . import identity
 
 
@@ -50,9 +50,6 @@ class MongoDBIdentity(identity.Identity):
                 # Likely that the user already exists
                 pass
 
-        self.storage_metric_collector = MongoStorageMetricCollector(
-            self.uri, self.mongo_client, "authentication", self.collection
-        )
         self.identity_metric_collector = MetricCollector()
 
     def add_user(self, username: str, password: str, roles: list) -> bool:
@@ -84,5 +81,4 @@ class MongoDBIdentity(identity.Identity):
 
     def collect_metric_info(self):
         metric = self.identity_metric_collector.collect().serialize()
-        metric["storage"] = self.storage_metric_collector.collect().serialize()
         return metric
