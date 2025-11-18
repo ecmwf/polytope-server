@@ -98,6 +98,13 @@ def optional_json_dumps(mode="json"):
 
 @contextlib.contextmanager
 def with_baggage_items(items: dict[str, str]):
+    """
+    Context manager that adds the given baggage items to the current OpenTelemetry context.
+    Usage:
+        with with_baggage_items({"key1": "value1", "key2": "value2"}) as ctx:
+            # baggage will be available here, ctx can be used to pass context explicitly
+            pass
+    """
     ctx = get_current()
     for key, value in items.items():
         ctx = baggage.set_baggage(key, value, context=ctx)
