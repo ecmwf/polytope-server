@@ -36,7 +36,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from ..common import collection
 from ..common import queue as polytope_queue
 from ..common import request_store, staging
-from ..common.logging import with_baggage_items
+from ..common.logging import propagate_context, with_baggage_items
 from ..common.request import PolytopeRequest, Status
 
 trace.set_tracer_provider(TracerProvider(resource=Resource.create({"service.name": "worker"})))
@@ -172,7 +172,7 @@ class Worker:
                 self.request_store.set_request_status(self.request, Status.PROCESSING)
                 self.update_status("processing", request_id=self.request.id)
                 try:
-                    await loop.run_in_executor(executor, self.process_request, self.request)
+                    await loop.run_in_executor(executor, propagate_context(self.process_request), self.request)
                 except Exception as e:
                     self.on_request_fail(e)
                 else:
@@ -224,7 +224,10 @@ class Worker:
         with ThreadPoolExecutor(max_workers=1) as executor:
             aio.run(self.schedule(executor))
 
-    def process_request(self, request: PolytopeRequest) -> None:
+    def process_request(
+        self,
+        request: PolytopeRequest,
+    ) -> None:
         """Entrypoint for the worker thread."""
 
         id = request.id
