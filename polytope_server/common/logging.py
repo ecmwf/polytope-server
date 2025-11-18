@@ -103,9 +103,32 @@ def with_baggage_items(items: dict[str, str]):
         ctx = baggage.set_baggage(key, value, context=ctx)
     token = attach(ctx)
     try:
-        yield
+        yield ctx
     finally:
         detach(token)
+
+
+def propagate_context(func):
+    """
+    Decorator that captures OpenTelemetry context (including baggage) and propagates it
+    when the function is executed in a different thread (e.g., via ThreadPoolExecutor).
+
+    Usage:
+        @propagate_context
+        def my_function(arg1, arg2):
+            # baggage will be available here even in a different thread
+            pass
+    """
+
+    def wrapper(*args, **kwargs):
+        ctx = get_current()
+        token = attach(ctx)
+        try:
+            return func(*args, **kwargs)
+        finally:
+            detach(token)
+
+    return wrapper
 
 
 class OTelBaggageFilter(logging.Filter):
