@@ -47,7 +47,7 @@ class Collection:
             "Collection '{}' initialized with datasources: {}".format(
                 self.name, [ds["name"] for ds in self.ds_configs]
             ),
-            extra={"collection": self.name, "datasources": {ds["name"]: ds for ds in self.ds_configs}},
+            extra={"collection": self._serialize()},
         )
 
     def dispatch(self, request: PolytopeRequest, input_data: bytes | None) -> DataSource:
