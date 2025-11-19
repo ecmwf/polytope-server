@@ -54,17 +54,10 @@ class HistogramBuilder:
         def le_str(b: float) -> str:
             return "Inf" if b == float("inf") else str(b)
 
-        def pick_bucket(v: float) -> float:
-            for b in bnds:
-                if v < b:
-                    return b
-            return float("inf")
-
-        # Track buckets, sums, and counts per label combination
-        # Use Union type to allow both tuple shapes
-        bucket_out: Dict[Tuple[Any, ...], Dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        # Track sums, counts, and raw durations per label combination
         sum_map: Dict[Tuple[Any, ...], float] = defaultdict(float)
         cnt_map: Dict[Tuple[Any, ...], int] = defaultdict(int)
+        durations_map: Dict[Tuple[Any, ...], List[float]] = defaultdict(list)
 
         for r in rows:
             ds = r.get("datasource", "")
@@ -87,9 +80,8 @@ class HistogramBuilder:
                 )
 
             dur = float(r.get(duration_key, 0.0))
-            b = pick_bucket(dur)
 
-            bucket_out[lid][le_str(b)] += 1
+            durations_map[lid].append(dur)
             sum_map[lid] += dur
             cnt_map[lid] += 1
 
@@ -98,7 +90,7 @@ class HistogramBuilder:
         sum_rows: List[Dict[str, Any]] = []
         count_rows: List[Dict[str, Any]] = []
 
-        for lid, le_counts in bucket_out.items():
+        for lid in durations_map.keys():
             # Unpack label tuple
             base: Dict[str, Any]
             if include_status:
@@ -116,13 +108,14 @@ class HistogramBuilder:
                 prodmap = dict(zip(product_labels, prod))
                 base = {"collection": collection, "datasource": datasource, "realm": realm, **prodmap}
 
-            # Emit bucket counts
+            # Calculate cumulative bucket counts
+            durations = durations_map[lid]
             for b in bnds:
-                key = le_str(b)
+                count = sum(1 for d in durations if d <= b)
                 buckets_rows.append(
                     {
-                        "labels": {"le": key, **base},
-                        "value": le_counts.get(key, 0),
+                        "labels": {"le": le_str(b), **base},
+                        "value": count,
                     }
                 )
 
