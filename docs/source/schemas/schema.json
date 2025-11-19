@@ -37,7 +37,6 @@
         "garbage-collector",
         "authentication",
         "federation",
-        "admin",
         "datasources",
         "collections"
       ],
@@ -93,10 +92,6 @@
         "federation": {
           "$ref": "#/definitions/FederationConfig",
           "description": "describes federated access from remote instances of polytope"
-        },
-        "admin": {
-          "$ref": "#/definitions/AdminConfig",
-          "description": "describes the authorization to access administrator API calls"
         },
         "datasources": {
           "$ref": "#/definitions/DatasourcesConfig",
@@ -519,51 +514,6 @@
       "preferredOrder": [
         "key1",
         "key2"
-      ]
-    },
-    "AdminConfig": {
-      "type": "object",
-      "anyOf": [
-        {
-          "properties": {
-            "roles": {
-              "$ref": "#/definitions/AdminConfig-Roles",
-              "description": "roles which a user must have in order to access admin API calls, per realm"
-            }
-          },
-          "required": [
-            "roles"
-          ],
-          "preferredOrder": [
-            "roles"
-          ],
-          "additionalProperties": false
-        }
-      ]
-    },
-    "AdminConfig-Roles": {
-      "type": "object",
-      "properties": {
-        "realm1": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "examples": [
-            "[\"example-role-polytope-admin\"]"
-          ]
-        },
-        "realm2": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "examples": []
-        }
-      },
-      "preferredOrder": [
-        "realm1",
-        "realm2"
       ]
     },
     "FederationConfig": {
