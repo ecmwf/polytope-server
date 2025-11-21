@@ -19,7 +19,7 @@
 #
 
 import logging
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from pymongo import ASCENDING, DESCENDING
 from pymongo.collection import Collection
@@ -36,6 +36,43 @@ from .base import MetricCalculator
 from .histogram import HistogramBuilder
 
 logger = logging.getLogger(__name__)
+
+
+def safe_create_index(
+    coll: Collection,
+    keys: List[Tuple[str, Any]],
+    name: str,
+    **kwargs,
+) -> str:
+    """
+    Create a MongoDB index in a way that's resilient to legacy index names/specs.
+
+    Handles:
+    - code 86 (IndexKeySpecsConflict): same name, different key spec -> drop old, recreate.
+    - code 85 (IndexOptionsConflict): same key spec, different name -> keep existing, don't fail.
+
+    Returns the name of the index that ends up being in use.
+    """
+    try:
+        return coll.create_index(keys, name=name, **kwargs)
+    except OperationFailure as exc:
+        # 86: same name, different spec  -> we want *our* spec, drop & recreate
+        if exc.code == 86:
+            coll.drop_index(name)
+            return coll.create_index(keys, name=name, **kwargs)
+
+        # 85: same spec, different name -> find index with same keys, keep it
+        if exc.code == 85:
+            existing = coll.index_information()
+            # keys in index_information() are list of (field, direction)
+            for idx_name, spec in existing.items():
+                if spec.get("key") == keys:
+                    # There is already an index with this spec under another name.
+                    # Index name doesn't affect query planning, so we just keep it.
+                    return idx_name
+
+        # anything else: bubble up
+        raise
 
 
 class MongoMetricCalculator(MetricCalculator):
@@ -66,20 +103,33 @@ class MongoMetricCalculator(MetricCalculator):
         """Ensure all indexes needed for metric queries exist."""
 
         # For fast queries on terminal status + time windows
-        self.collection.create_index(
+        safe_create_index(
+            self.collection,
             [("status", ASCENDING), ("last_modified", DESCENDING)],
             name="ix_terminal_status_last_modified",
-            partialFilterExpression={"status": {"$in": [Status.PROCESSED.value, Status.FAILED.value]}},
+            partialFilterExpression={
+                "status": {
+                    "$in": [
+                        Status.PROCESSED.value,
+                        Status.WAITING.value,
+                        Status.QUEUED.value,
+                        Status.PROCESSING.value,
+                        Status.FAILED.value,
+                    ]
+                }
+            },
         )
 
         # Generic descending timestamp + last_modified index
-        self.collection.create_index(
+        safe_create_index(
+            self.collection,
             [("timestamp", DESCENDING), ("last_modified", DESCENDING)],
             name="ix_ts_last_modified_desc",
         )
 
         # Fallback index on last_modified alone
-        self.collection.create_index(
+        safe_create_index(
+            self.collection,
             [("last_modified", DESCENDING)],
             name="ix_last_modified_desc",
         )
@@ -97,40 +147,25 @@ class MongoMetricCalculator(MetricCalculator):
             ]
         )
 
-        try:
-            # Main index for product-label aggregations
-            self.collection.create_index(keys, name="ix_product_labels_last_modified")
-        except OperationFailure as exc:
-            # Handle label config changes: drop old index if spec conflicts
-            if exc.code == 86:  # IndexKeySpecsConflict
-                logger.warning(
-                    "Index 'ix_product_labels_last_modified' exists with a different "
-                    "key spec. Dropping and recreating with TELEMETRY_PRODUCT_LABELS=%s",
-                    TELEMETRY_PRODUCT_LABELS,
-                )
-                try:
-                    self.collection.drop_index("ix_product_labels_last_modified")
-                except Exception:
-                    # If we can't drop it, surface the original failure
-                    logger.exception(
-                        "Failed to drop existing index 'ix_product_labels_last_modified'. " "Re-raising original error."
-                    )
-                    raise
-                # Recreate with updated key spec
-                self.collection.create_index(keys, name="ix_product_labels_last_modified")
-            else:
-                # Any other index error should bubble up
-                raise
+        # Main index for product-label aggregations
+        # safe_create_index handles both spec changes (code 86) and legacy names (code 85)
+        safe_create_index(
+            self.collection,
+            keys,
+            name="ix_product_labels_last_modified",
+        )
 
         # For aggregations over processed bytes within time windows
-        self.collection.create_index(
+        safe_create_index(
+            self.collection,
             [("status", ASCENDING), ("content_length", ASCENDING), ("last_modified", DESCENDING)],
             name="ix_processed_bytes_window",
             partialFilterExpression={"status": Status.PROCESSED.value},
         )
 
         # For queries using status history (processing → processed timing)
-        self.collection.create_index(
+        safe_create_index(
+            self.collection,
             [("status_history.processing", ASCENDING), ("status_history.processed", ASCENDING)],
             name="ix_status_history_processing",
         )
@@ -150,19 +185,22 @@ class MongoMetricCalculator(MetricCalculator):
         logger.info("Ensuring metric store indexes for collection: %s", self.metric_collection.name)
 
         # Index for type + status + timestamp queries
-        self.metric_collection.create_index(
-            [("type", ASCENDING), ("status", ASCENDING), ("timestamp", ASCENDING)],
+        safe_create_index(
+            self.metric_collection,
+            [("type", 1), ("status", 1), ("timestamp", -1)],
             name="ix_type_status_ts",
         )
 
         # Index for type + status + user aggregations (processed requests)
-        self.metric_collection.create_index(
-            [("type", ASCENDING), ("status", ASCENDING), ("user_id", ASCENDING)],
+        safe_create_index(
+            self.metric_collection,
+            [("type", 1), ("status", 1), ("user_id", 1)],
             name="ix_type_status_user",
         )
 
         # Index for processed timestamps and user grouping
-        self.metric_collection.create_index(
+        safe_create_index(
+            self.metric_collection,
             [("timestamp", ASCENDING), ("user_id", ASCENDING)],
             name="ix_processed_ts_user",
             partialFilterExpression={
@@ -270,7 +308,15 @@ class MongoMetricCalculator(MetricCalculator):
             {
                 "$match": {
                     "last_modified": {"$gte": cutoff},
-                    "status": {"$in": [Status.PROCESSED.value, Status.FAILED.value]},
+                    "status": {
+                        "$in": [
+                            Status.PROCESSED.value,
+                            Status.WAITING.value,
+                            Status.QUEUED.value,
+                            Status.PROCESSING.value,
+                            Status.FAILED.value,
+                        ]
+                    },
                 }
             },
             {
