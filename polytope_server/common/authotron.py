@@ -46,8 +46,6 @@ class Authotron:
         if auth_header.startswith("EmailKey "):
             logging.debug("Converting EmailKey to Bearer token")
             auth_header = f"Bearer {auth_header.split(':')[1]}"
-        elif auth_header.startswith("Basic "):
-            logging.debug("Basic auth detected, forwarding as-is")
 
         logging.debug("Forwarding authentication header {}".format(auth_header))
 
