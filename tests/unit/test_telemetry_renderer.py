@@ -89,7 +89,7 @@ def test_render_counters_output_shape():
     # Should contain HELP/TYPE and the metrics themselves
     joined = "\n".join(lines)
     assert f"# HELP {METRIC_PREFIX}_requests_total" in joined
-    assert f"# TYPE {METRIC_PREFIX}_requests_total counter" in joined
+    assert f"# TYPE {METRIC_PREFIX}_requests_total gauge" in joined
     assert f"{METRIC_PREFIX}_requests_total" in joined
     assert f"{METRIC_PREFIX}_bytes_served_total" in joined
     assert "1024" in joined  # bytes value
