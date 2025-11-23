@@ -24,8 +24,26 @@ from typing import Any, Dict, List, Tuple
 
 class HistogramBuilder:
     """
-    Shared histogram building logic for all implementations.
-    Works on pre-aggregated data to build Prometheus-style histograms.
+    Build Prometheus-style histograms for Polytope request metrics.
+
+    This helper is intentionally request-specific: it expects each row to
+    represent a request (or processing step) with fields like:
+
+        {
+            "status": "<status>",              # optional, if include_status=True
+            "collection": "<collection>",
+            "datasource": "<datasource>",      # optional
+            "realm": "<realm>",                # e.g. user.realm
+            "cr": {                            # coerced_request
+                <product_label>: "<value>",
+                ...
+            },
+            "<duration_key>": <float seconds>, # e.g. "request_duration" or "processing_duration"
+        }
+
+    It groups by (status, collection, datasource, realm, product_labels)
+    and produces Prometheus-style bucket/sum/count series for the given
+    duration field.
     """
 
     @staticmethod
