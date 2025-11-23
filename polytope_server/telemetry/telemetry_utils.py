@@ -23,66 +23,13 @@ from typing import Any, List, Mapping, Optional, Tuple
 
 from .config import config
 
-
-def _load_metrics_config():
-    """
-    Read label / bucket configuration from metrics, with safe fallbacks.
-    """
-    metrics_cfg = config.get("metrics", {}) or {}
-    # Prefix for *all* telemetry metrics (requests_total, bytes_served_total, usage gauges, etc.)
-    prefix = metrics_cfg.get("prefix", "polytope")
-
-    # Product labels taken from coerced_request
-    product_labels_cfg = metrics_cfg.get("product_labels", ["class", "type"])
-    if not isinstance(product_labels_cfg, (list, tuple)):
-        product_labels_cfg = ["class", "type"]
-    product_labels = tuple(str(label) for label in product_labels_cfg)
-
-    # Canonical label order for counters; if not provided, we derive it
-    canonical_cfg = metrics_cfg.get("canonical_label_order")
-    if isinstance(canonical_cfg, (list, tuple)):
-        canonical_label_order = tuple(str(label) for label in canonical_cfg)
-    else:
-        canonical_label_order = ("status", "collection", "datasource", "realm", *product_labels)
-
-    # Histogram buckets
-    def _ensure_bucket_list(key: str, default: List[float]) -> List[float]:
-        raw = metrics_cfg.get(key, default)
-        if not isinstance(raw, (list, tuple)):
-            return default
-        out: List[float] = []
-        for v in raw:
-            try:
-                out.append(float(v))
-            except Exception:
-                continue
-        return out or default
-
-    request_buckets = _ensure_bucket_list(
-        "request_duration_buckets",
-        [0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300],
-    )
-    processing_buckets = _ensure_bucket_list(
-        "processing_duration_buckets",
-        [0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300],
-    )
-
-    return (
-        prefix,
-        product_labels,
-        canonical_label_order,
-        request_buckets,
-        processing_buckets,
-    )
-
-
 (
     METRIC_PREFIX,
     TELEMETRY_PRODUCT_LABELS,
     CANONICAL_LABEL_ORDER,
     REQUEST_DURATION_BUCKETS,
     PROCESSING_DURATION_BUCKETS,
-) = _load_metrics_config()
+) = config.get_metrics_config()
 
 
 def now_utc_ts() -> float:
