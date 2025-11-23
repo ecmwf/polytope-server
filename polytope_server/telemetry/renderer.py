@@ -15,7 +15,7 @@ from .telemetry_utils import (
 
 def render_counters(metric_calculator: MetricCalculator, winsecs: float) -> List[str]:
     """
-    Render counter metrics (requests total, bytes served).
+    Render windowed total metrics (requests, bytes) as gauges.
 
     Args:
         metric_calculator: MetricCalculator instance to fetch metrics from
@@ -31,7 +31,7 @@ def render_counters(metric_calculator: MetricCalculator, winsecs: float) -> List
     requests_metric_name = f"{METRIC_PREFIX}_requests_total"
     lines += exposition_header(
         requests_metric_name,
-        "counter",
+        "gauge",
         "Requests observed in the sliding window",
     )
     for row in reqrows:
@@ -45,7 +45,7 @@ def render_counters(metric_calculator: MetricCalculator, winsecs: float) -> List
     bytesrows = metric_calculator.aggregate_bytes_served_total_window(winsecs)
     lines += exposition_header(
         bytes_metric_name,
-        "counter",
+        "gauge",
         "Bytes served in the sliding window",
     )
     for row in bytesrows:
