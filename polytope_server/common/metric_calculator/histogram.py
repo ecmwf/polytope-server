@@ -63,21 +63,13 @@ class HistogramBuilder:
             ds = r.get("datasource", "")
             # Build label ID tuple
             lid: Tuple[Any, ...]
-            if include_status:
-                lid = (
-                    r["status"],
-                    r["collection"],
-                    ds,
-                    r.get("realm", ""),
-                    tuple(r.get("cr", {}).get(k, "") for k in product_labels),
-                )
-            else:
-                lid = (
-                    r["collection"],
-                    ds,
-                    r.get("realm", ""),
-                    tuple(r.get("cr", {}).get(k, "") for k in product_labels),
-                )
+            tail = (
+                r["collection"],
+                ds,
+                r.get("realm", ""),
+                tuple(r.get("cr", {}).get(k, "") for k in product_labels),
+            )
+            lid = ((r["status"],) if include_status else ()) + tail
 
             dur = float(r.get(duration_key, 0.0))
 
@@ -90,36 +82,34 @@ class HistogramBuilder:
         sum_rows: List[Dict[str, Any]] = []
         count_rows: List[Dict[str, Any]] = []
 
-        for lid in durations_map.keys():
-            # Unpack label tuple
-            base: Dict[str, Any]
-            if include_status:
-                status, collection, datasource, realm, prod = lid
-                prodmap = dict(zip(product_labels, prod))
-                base = {
-                    "status": status,
-                    "collection": collection,
-                    "datasource": datasource,
-                    "realm": realm,
-                    **prodmap,
-                }
-            else:
-                collection, datasource, realm, prod = lid
-                prodmap = dict(zip(product_labels, prod))
-                base = {"collection": collection, "datasource": datasource, "realm": realm, **prodmap}
+        for lid, durations in durations_map.items():
+            # tail is always the same shape
+            collection, datasource, realm, prod = lid[-4:]
+            prodmap = dict(zip(product_labels, prod))
 
-            # Calculate cumulative bucket counts
-            durations = durations_map[lid]
+            base: Dict[str, Any] = {
+                "collection": collection,
+                "datasource": datasource,
+                "realm": realm,
+                **prodmap,
+            }
+            if include_status:
+                base["status"] = lid[0]
+
+            # Sort durations once and compute cumulative counts per bucket
+            sorted_durations = sorted(durations)
+            idx = 0
+            n = len(sorted_durations)
             for b in bnds:
-                count = sum(1 for d in durations if d <= b)
+                while idx < n and sorted_durations[idx] <= b:
+                    idx += 1
                 buckets_rows.append(
                     {
                         "labels": {"le": le_str(b), **base},
-                        "value": count,
+                        "value": idx,
                     }
                 )
 
-            # Emit sum and count
             sum_rows.append({"labels": base, "value": sum_map[lid]})
             count_rows.append({"labels": base, "value": cnt_map[lid]})
 
