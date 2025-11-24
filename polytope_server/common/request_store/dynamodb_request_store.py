@@ -302,9 +302,6 @@ class DynamoDBRequestStore(request_store.RequestStore):
     def wipe(self):
         warnings.warn("wipe is not implemented for DynamoDBRequestStore")
 
-    def collect_metric_info(self):
-        return {}
-
     def remove_old_requests(self, cutoff: dt.datetime):
         cutoff_timestamp = cutoff.timestamp()
 

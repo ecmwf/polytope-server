@@ -21,9 +21,8 @@
 import datetime
 import importlib
 from abc import ABC, abstractmethod
-from typing import Dict, List, Union
+from typing import List
 
-from ..metric import MetricType
 from ..request import PolytopeRequest, Status
 from ..user import User
 
@@ -90,12 +89,6 @@ class RequestStore(ABC):
     @abstractmethod
     def wipe(self) -> None:
         """Wipe the request store"""
-
-    @abstractmethod
-    def collect_metric_info(
-        self,
-    ) -> Dict[str, Union[None, int, float, str, Status, MetricType]]:
-        """Collect dictionary of metrics"""
 
     @abstractmethod
     def remove_old_requests(self, cutoff: datetime.datetime) -> int:

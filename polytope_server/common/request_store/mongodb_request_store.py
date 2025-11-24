@@ -27,7 +27,6 @@ from .. import metric_store, mongo_client_factory
 from ..exceptions import ForbiddenRequest, NotFound, UnauthorizedRequest
 from ..metric import MetricType, RequestStatusChange
 from ..metric_calculator.mongo import MongoMetricCalculator
-from ..metric_collector import MongoRequestStoreMetricCollector
 from ..request import PolytopeRequest, Status
 from . import request_store
 
@@ -49,7 +48,6 @@ class MongoRequestStore(request_store.RequestStore):
         if metric_store_config:
             self.metric_store = metric_store.create_metric_store(metric_store_config)
 
-        self.request_store_metric_collector = MongoRequestStoreMetricCollector()
         # fast metric calculation queries
         metrics_collection = self.metric_store.store if self.metric_store else None
         self.metric_calculator = MongoMetricCalculator(
@@ -198,10 +196,6 @@ class MongoRequestStore(request_store.RequestStore):
                 )
 
         self.database.drop_collection(self.store.name)
-
-    def collect_metric_info(self):
-        metric = self.request_store_metric_collector.collect().serialize()
-        return metric
 
     def remove_old_requests(self, cutoff):
         cutoff = cutoff.timestamp()
