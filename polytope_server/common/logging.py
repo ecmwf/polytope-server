@@ -126,9 +126,10 @@ def propagate_context(func):
             # baggage will be available here even in a different thread
             pass
     """
+    # Capture context at decoration/wrapping time
+    ctx = get_current()
 
     def wrapper(*args, **kwargs):
-        ctx = get_current()
         token = attach(ctx)
         try:
             return func(*args, **kwargs)
