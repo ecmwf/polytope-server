@@ -134,6 +134,13 @@ class MongoMetricCalculator(MetricCalculator):
             name="ix_last_modified_desc",
         )
 
+        # For user-specific queries
+        safe_create_index(
+            self.collection,
+            [("user.id", ASCENDING), ("last_modified", DESCENDING)],
+            name="ix_requests_by_user_last_modified",
+        )
+
         # Dynamic product-label index based on TELEMETRY_PRODUCT_LABELS
         keys = (
             [
@@ -547,6 +554,8 @@ class MongoMetricCalculator(MetricCalculator):
             "id": 1,
             "status": 1,
             "collection": 1,
+            "datasource": 1,
+            "url": 1,
             "user.id": 1,
             "user.realm": 1,
             "user.username": 1,
@@ -582,6 +591,8 @@ class MongoMetricCalculator(MetricCalculator):
             "id": 1,
             "status": 1,
             "collection": 1,
+            "datasource": 1,
+            "url": 1,
             "user.id": 1,
             "user.realm": 1,
             "user.username": 1,
