@@ -21,15 +21,16 @@
 import importlib
 import logging
 from abc import ABC, abstractmethod
+from typing import Dict
 
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 
 from ..common.auth import AuthHelper
-from ..common.collection import create_collections
-from ..common.request_store import create_request_store
-from ..common.staging import create_staging
+from ..common.collection import Collection, create_collections
+from ..common.request_store import RequestStore, create_request_store
+from ..common.staging import Staging, create_staging
 
 trace.set_tracer_provider(TracerProvider(resource=Resource.create({"service.name": "frontend"})))
 
@@ -38,11 +39,18 @@ tracer = trace.get_tracer(__name__)
 
 class FrontendHandler(ABC):
     @abstractmethod
-    def create_handler(self):
+    def create_handler(
+        self,
+        request_store: RequestStore,
+        auth: AuthHelper,
+        staging: Staging,
+        collections: Dict[str, Collection],
+        proxy_support: bool,
+    ):
         pass
 
     @abstractmethod
-    def run_server(self):
+    def run_server(self, handler, server_type: str, host: str, port: str):
         pass
 
 
