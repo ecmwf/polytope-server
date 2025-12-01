@@ -63,7 +63,7 @@ class DataSource(ABC):
         """
         # check datasource specific roles
         roles = ds_config.get("roles", [])
-        if roles and not user.is_authorized(roles):
+        if roles and not user.has_access(roles):
             return f"Skipping datasource {DataSource.repr(ds_config)}: user not authorized."
 
         # apply defaults
