@@ -145,7 +145,7 @@ class FlaskHandler(frontend.FrontendHandler):
             user = auth.authenticate(get_auth_header(request))
             with with_baggage_items({"user.username": user.username}) as _:
                 if request.method == "POST":
-                    if not user.is_authorized(collections[collection].roles):
+                    if not user.has_access(collections[collection].roles):
                         raise ForbiddenRequest("User %s cannot access collection %s" % (user.username, collection))
 
                     if "verb" not in request.json:
@@ -213,7 +213,7 @@ class FlaskHandler(frontend.FrontendHandler):
         def list_collections():
             user = auth.authenticate(get_auth_header(request))
             with with_baggage_items({"user.username": user.username}) as _:
-                authorized_collections = [name for name, col in collections.items() if user.is_authorized(col.roles)]
+                authorized_collections = [name for name, col in collections.items() if user.has_access(col.roles)]
                 return RequestSucceeded(authorized_collections)
 
         # New handler

@@ -72,4 +72,4 @@ class Authotron:
     def has_admin_access(self, user: User) -> bool:
         """Authenticate and authorize user, testing if they have admin rights"""
         roles = self.admin_roles.get(user.realm, [])
-        return user.is_authorized(roles)
+        return user.has_access(roles)

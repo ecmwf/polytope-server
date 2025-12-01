@@ -72,7 +72,7 @@ class User:
     def __str__(self):
         return f"User({self.realm}:{self.username})"
 
-    def is_authorized(self, roles: list | set | dict | str) -> bool:
+    def has_access(self, roles: list | set | dict | str) -> bool:
         """Checks if the user has any of the provided roles"""
         logging.debug(f"User roles: {self.roles}")
         logging.debug(f"Allowed roles {roles}")
