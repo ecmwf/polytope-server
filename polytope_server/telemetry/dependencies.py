@@ -20,8 +20,9 @@
 
 
 import logging
+from typing import Optional
 
-from fastapi import HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, status
 
 from ..common.auth import AuthHelper
 from ..common.exceptions import ForbiddenRequest, UnauthorizedRequest
@@ -29,6 +30,7 @@ from ..common.metric_calculator.base import MetricCalculator
 from ..common.metric_store import create_metric_store
 from ..common.request_store import create_request_store
 from ..common.staging import create_staging
+from ..common.user import User
 from .config import config
 from .helpers import TelemetryLogSuppressor
 
@@ -38,6 +40,37 @@ logger = logging.getLogger(__name__)
 log_suppression_ttl = config.get("telemetry", {}).get("basic_auth", {}).get("log_suppression_ttl", 300)
 
 _telemetry_log_suppressor = TelemetryLogSuppressor(log_suppression_ttl)
+
+
+def _load_telemetry_allowed_roles() -> list[str]:
+    """
+    Read allowed telemetry roles from config.
+
+    Example:
+
+      telemetry:
+        allowed_roles:
+          - polytope-telemetry
+          - polytope-admin
+    """
+    tele_cfg = config.get("telemetry", {}) or {}
+    raw = tele_cfg.get("allowed_roles")
+
+    # Default if nothing configured
+    if raw is None:
+        return ["polytope-telemetry", "polytope-admin"]
+
+    if isinstance(raw, str):
+        # also allow "role1,role2" as a single string
+        return [p.strip() for p in raw.split(",") if p.strip()]
+
+    if isinstance(raw, (list, tuple, set)):
+        return [str(r) for r in raw]
+
+    return ["polytope-telemetry", "polytope-admin"]
+
+
+TELEMETRY_ALLOWED_ROLES = _load_telemetry_allowed_roles()
 
 
 def initialize_resources(config):
@@ -120,3 +153,28 @@ def metrics_auth(request: Request):
             detail=detail_msg,
             headers={"WWW-Authenticate": "Basic"},
         )
+
+
+def require_telemetry_user(user: Optional[User] = Depends(metrics_auth)) -> User:
+    """
+    For endpoints that require telemetry roles.
+
+    - Reuses metrics_auth for Basic Auth + Auth-o-tron.
+    - Then enforces TELEMETRY_ALLOWED_ROLES via User.has_access().
+    - If auth is disabled or missing (metrics_auth returned None), we still
+      require credentials → 401.
+    """
+    if user is None:
+        # metrics_auth did not return a user (no/misconfigured auth) – reject
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required for telemetry requests",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+
+    if not user.has_access(TELEMETRY_ALLOWED_ROLES):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Telemetry access denied",
+        )
+    return user
