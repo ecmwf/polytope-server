@@ -22,6 +22,7 @@ from copy import deepcopy
 from datetime import datetime, timedelta
 
 import pytest  # noqa: F401
+
 from polytope_server.common.datasource import DataSource
 
 
