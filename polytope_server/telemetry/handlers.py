@@ -28,8 +28,14 @@ from prometheus_client import CONTENT_TYPE_LATEST
 
 from ..common.metric import MetricType
 from ..common.metric_calculator.base import MetricCalculator
+from ..common.user import User
 from .config import config
-from .dependencies import get_metric_calculator, get_metric_store, metrics_auth
+from .dependencies import (
+    get_metric_calculator,
+    get_metric_store,
+    metrics_auth,
+    require_telemetry_user,
+)
 from .enums import StatusEnum
 from .exceptions import (
     OutputFormatError,
@@ -114,6 +120,7 @@ async def all_requests(
     includetrace: bool = Query(False),
     metric_calculator: MetricCalculator = Depends(get_metric_calculator),
     metricstore=Depends(get_metric_store),
+    _user: User = Depends(require_telemetry_user),
 ):
     try:
         rows = metric_calculator.list_requests(
@@ -155,6 +162,7 @@ async def user_requests(
     status: Optional[StatusEnum] = Query(None, description="Filter by status"),
     limit: Optional[int] = Query(None, ge=0, description="Max items (0 or None means no limit)"),
     metric_calculator: MetricCalculator = Depends(get_metric_calculator),
+    _user: User = Depends(require_telemetry_user),
 ):
     try:
         rows = metric_calculator.list_requests_by_user(
