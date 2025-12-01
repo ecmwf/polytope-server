@@ -22,7 +22,6 @@ from copy import deepcopy
 from datetime import datetime, timedelta
 
 import pytest  # noqa: F401
-
 from polytope_server.common.datasource import DataSource
 
 
@@ -51,7 +50,7 @@ class TestDataSourceMatching:
         }
 
     def _mock_auth(self, monkeypatch):
-        monkeypatch.setattr("polytope_server.common.user.User.is_authorized", lambda *args, **kwargs: True)
+        monkeypatch.setattr("polytope_server.common.user.User.has_access", lambda *args, **kwargs: True)
 
     def test_mars_created_correctly(self, monkeypatch, user_request):
         self._mock_auth(monkeypatch)
