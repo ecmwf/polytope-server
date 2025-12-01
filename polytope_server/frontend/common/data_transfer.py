@@ -40,6 +40,48 @@ class DataTransfer:
         self.request_store = request_store
         self.staging = staging
 
+    def _resolve_object_id(self, request: PolytopeRequest) -> str:
+        """
+        Single place that decides how a request id maps to a staging object id.
+        """
+        object_id = request.id
+        url = request.url or ""
+
+        if url:
+            url_path = PurePosixPath(urlparse(url).path)
+            ext = url_path.suffix
+            if ext:
+                object_id = f"{request.id}{ext}"
+
+        return object_id
+
+    def _ensure_content_metadata(self, request: PolytopeRequest, strict: bool = False) -> None:
+        """
+        Population of content_type/content_length from staging.
+
+        - Only runs for processed requests.
+        - If content_length/content_type are already set, it does nothing.
+        """
+        if request.status != Status.PROCESSED:
+            return
+
+        if request.content_length is not None and request.content_type is not None:
+            return
+
+        object_id = self._resolve_object_id(request)
+
+        try:
+            content_type, content_length = self.staging.stat(object_id)
+            request.content_type = content_type
+            request.content_length = content_length
+            self.request_store.update_request(request)
+        except Exception:
+            logging.exception(
+                "Error while querying/updating content metadata for request %s (object_id=%s)",
+                request.id,
+                object_id,
+            )
+
     def request_download(self, http_request: Request, user: User, collection):
         payload = http_request.json
         request = PolytopeRequest(
@@ -87,16 +129,22 @@ class DataTransfer:
     def query_request(self, user: User, id: str) -> Response:
         request = self.get_request(id)
         if not request:
-            raise NotFound("Request {} not found".format(id))
+            raise NotFound(f"Request {id} not found")
         if request.user != user:
             logging.warning(
-                "User {} attempted to access request {} owned by {}".format(user.username, id, request.user.username)
+                "User %s attempted to access request %s owned by %s",
+                user.username,
+                id,
+                request.user.username,
             )
-            raise NotFound("Request {} not found".format(id))
+            raise NotFound(f"Request {id} not found")
         if request.status == Status.FAILED:
-            raise BadRequest("Request failed with error:\n{}".format(request.user_message))
+            raise BadRequest(f"Request failed with error:\n{request.user_message}")
 
         if request.status == Status.PROCESSED:
+            # Try to ensure metadata is stored
+            self._ensure_content_metadata(request)
+
             if request.verb == Verb.RETRIEVE:
                 return self.process_download(request)
             else:
@@ -108,17 +156,19 @@ class DataTransfer:
         return RequestAccepted(response)
 
     def download(self, id: str) -> Response:
-
         if id.startswith(self.staging.get_url_prefix()):
             id = id.replace(self.staging.get_url_prefix(), "", 1)
 
         request = self.get_request(id)
         if request:
             if request.verb != Verb.RETRIEVE:
-                raise BadRequest("Request {} is not a download".format(id))
+                raise BadRequest(f"Request {id} is not a download")
             if request.status == Status.PROCESSED:
-                return self.create_download_response(id)
-        raise BadRequest("Request {} not ready for download yet".format(id))
+                # Backfill metadata if missing
+                self._ensure_content_metadata(request)
+                object_id = self._resolve_object_id(request)
+                return self.create_download_response(object_id)
+        raise BadRequest(f"Request {id} not ready for download yet")
 
     def upload(self, id: str, http_request: Request) -> Response:
         request = self.get_request(id)
@@ -139,37 +189,21 @@ class DataTransfer:
         request.set_status(Status.WAITING)
         request.url = self.staging.get_internal_url(id)
 
-        # Update content length and type
-        stored_content_type, stored_size = self.staging.stat(id)
-        request.content_type = stored_content_type
-        request.content_length = stored_size
+        # Try to populate metadata for uploads
+        self._ensure_content_metadata(request)
 
         self.request_store.update_request(request)
         response = self.construct_response(request)
         return RequestAccepted(response)
 
     def process_download(self, request: PolytopeRequest) -> Response:
-        try:
-            object_id = request.id
-
-            if request.url is not None and request.url != "":
-                # TODO: temporary fix for Content-Disposition earthkit issues
-                url_path = PurePosixPath(urlparse(request.url).path)
-                extension = url_path.suffix
-                if extension is not None and len(extension) > 0:
-                    object_id = request.id + extension
-            content_type, content_length = self.staging.stat(object_id)
-            request.content_type = content_type
-            request.content_length = content_length
-            self.request_store.update_request(request)
-
-        except Exception:
-            logging.exception("Error while querying data staging with {}".format(object_id))
-            raise ServerError("Error while querying data staging with {}".format(object_id))
+        # Best-effort metadata backfill (will be a no-op if already set)
+        self._ensure_content_metadata(request)
 
         response = self.construct_response(request)
         logging.info(
-            "Request succeeded, redirecting to {}".format(response["location"]),
+            "Request succeeded, redirecting to %s",
+            response["location"],
             extra={"request_id": request.id, "location": response["location"]},
         )
         return RequestRedirected(response)
@@ -237,10 +271,10 @@ class DataTransfer:
             raise ServerError("Error while fetching from the request store")
         return request
 
-    def create_download_response(self, id: str) -> Response:
-        content_type, content_size = self.staging.stat(id)
+    def create_download_response(self, object_id: str) -> Response:
+        content_type, content_size = self.staging.stat(object_id)
         try:
-            data = self.staging.read(id)
+            data = self.staging.read(object_id)
         except Exception:
             logging.exception("Error while reading data from data staging")
             raise ServerError("Error while reading data from data staging")
