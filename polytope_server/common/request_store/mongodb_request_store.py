@@ -177,10 +177,11 @@ class MongoRequestStore(request_store.RequestStore):
                 update_doc[field] = PolytopeRequest.serialize_slot(field, val)
 
         if not update_doc:
-            update_doc = request.serialize()
-            if "id" in update_doc:
-                del update_doc["id"]
-
+            logging.warning(
+                "No dirty fields to update for request ID %s. Skipping database update.",
+                request.id,
+            )
+            return None
         res = self.store.find_one_and_update(
             {"id": request.id},
             {"$set": update_doc},

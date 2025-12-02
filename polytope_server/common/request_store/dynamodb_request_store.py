@@ -328,7 +328,7 @@ class DynamoDBRequestStore(request_store.RequestStore):
                 UpdateExpression=update_expression,
                 ExpressionAttributeNames=expr_names,
                 ExpressionAttributeValues=expr_values,
-                ConditionExpression=Attr("id").exists(),
+                ConditionExpression=Attr("id").eq(request.id),
             )
         except botocore.exceptions.ClientError as e:
             if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
