@@ -21,10 +21,8 @@
 import logging
 import uuid
 
-from .dirty_mixin import DirtyTrackingMixin
 
-
-class User(DirtyTrackingMixin):
+class User:
 
     __slots__ = ["id", "username", "realm", "roles", "attributes"]
 

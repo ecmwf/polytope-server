@@ -22,6 +22,11 @@ class DirtyTrackingMixin:
 
         super().__setattr__(key, value)
 
+    def mark_dirty(self, key):
+        if not hasattr(self, "_dirty_fields"):
+            object.__setattr__(self, "_dirty_fields", set())
+        self._dirty_fields.add(key)
+
     def get_dirty_fields(self):
         if not hasattr(self, "_dirty_fields"):
             return set()

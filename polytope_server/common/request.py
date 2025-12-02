@@ -90,12 +90,16 @@ class PolytopeRequest(DirtyTrackingMixin):
         for k, v in kwargs.items():
             self.__setattr__(k, v)
 
+        # After initialization, clear dirty fields, request store has a separate add_request method
+        self.clear_dirty()
+
     def set_status(self, value: Status) -> None:
         self.status = value
         now_ts = datetime.datetime.now(datetime.timezone.utc).timestamp()
         if self.status_history is None:
             self.status_history = {}
         self.status_history.setdefault(value.value, now_ts)
+        self.mark_dirty("status_history")
         logging.info("Request %s status set to %s.", self.id, value.value)
 
     @classmethod

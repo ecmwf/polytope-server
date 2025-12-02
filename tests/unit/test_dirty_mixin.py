@@ -1,7 +1,7 @@
 import pytest
 
 from polytope_server.common.dirty_mixin import DirtyTrackingMixin
-from polytope_server.common.request import PolytopeRequest
+from polytope_server.common.request import PolytopeRequest, Status
 
 
 class TestDirtyTrackingMixin:
@@ -38,3 +38,26 @@ class TestDirtyTrackingMixin:
         # i.e. it doesn't create a __dict__
         with pytest.raises(AttributeError):
             _ = req.__dict__
+
+    def test_status_history_dirty(self):
+        """Test that status_history is marked dirty when status changes"""
+        req = PolytopeRequest()
+        req.clear_dirty()
+
+        # Change status
+        req.set_status(Status.PROCESSING)
+
+        dirty = req.get_dirty_fields()
+        assert "status" in dirty
+        assert "status_history" in dirty
+
+        # Verify status_history content
+        assert Status.PROCESSING.value in req.status_history
+
+    def test_mark_dirty_explicit(self):
+        """Test explicit mark_dirty"""
+        req = PolytopeRequest()
+        req.clear_dirty()
+
+        req.mark_dirty("user_message")
+        assert "user_message" in req.get_dirty_fields()
