@@ -166,11 +166,28 @@ class MongoRequestStore(request_store.RequestStore):
 
     def update_request(self, request):
         request.last_modified = datetime.datetime.now(datetime.timezone.utc).timestamp()
+
+        update_doc = {}
+        dirty_fields = request.get_dirty_fields()
+        for field in dirty_fields:
+            if field == "id":
+                continue
+            if field in request.__slots__:
+                val = getattr(request, field)
+                update_doc[field] = PolytopeRequest.serialize_slot(field, val)
+
+        if not update_doc:
+            update_doc = request.serialize()
+            if "id" in update_doc:
+                del update_doc["id"]
+
         res = self.store.find_one_and_update(
             {"id": request.id},
-            {"$set": request.serialize()},
+            {"$set": update_doc},
             return_document=pymongo.ReturnDocument.AFTER,
         )
+
+        request.clear_dirty()
 
         if res is None:
             raise NotFound("Request {} not found in request store".format(request.id))

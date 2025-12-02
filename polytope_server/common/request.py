@@ -23,6 +23,7 @@ import enum
 import logging
 import uuid
 
+from .dirty_mixin import DirtyTrackingMixin
 from .user import User
 
 
@@ -40,7 +41,7 @@ class Verb(enum.Enum):
     ARCHIVE = "archive"
 
 
-class PolytopeRequest:
+class PolytopeRequest(DirtyTrackingMixin):
     """A sealed class representing a request"""
 
     __slots__ = [

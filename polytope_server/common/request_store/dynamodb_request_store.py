@@ -287,12 +287,55 @@ class DynamoDBRequestStore(request_store.RequestStore):
     def update_request(self, request):
         now = dt.datetime.now(dt.timezone.utc)
         request.last_modified = now.timestamp()
+
+        dirty_fields = request.get_dirty_fields()
+        updates = {}
+        for field in dirty_fields:
+            if field == "id":
+                continue
+            if field in request.__slots__:
+                val = getattr(request, field)
+                serialized = PolytopeRequest.serialize_slot(field, val)
+                updates[field] = serialized
+                if field == "user" and val is not None:
+                    updates["user_id"] = str(val.id)
+
+        if not updates:
+            updates = request.serialize()
+            if request.user:
+                updates["user_id"] = str(request.user.id)
+            if "id" in updates:
+                del updates["id"]
+
+        updates = _convert_numbers(updates)
+
+        update_parts = []
+        expr_names = {}
+        expr_values = {}
+
+        for k, v in updates.items():
+            safe_k = f"#{k}"
+            safe_v = f":{k}"
+            update_parts.append(f"{safe_k} = {safe_v}")
+            expr_names[safe_k] = k
+            expr_values[safe_v] = v
+
+        update_expression = "SET " + ", ".join(update_parts)
+
         try:
-            self.table.put_item(Item=_dump(request), ConditionExpression=Attr("id").eq(request.id))
+            self.table.update_item(
+                Key={"id": request.id},
+                UpdateExpression=update_expression,
+                ExpressionAttributeNames=expr_names,
+                ExpressionAttributeValues=expr_values,
+                ConditionExpression=Attr("id").exists(),
+            )
         except botocore.exceptions.ClientError as e:
             if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
                 raise NotFound("Request {} not found in request store".format(request.id)) from e
             raise
+
+        request.clear_dirty()
 
         if self.metric_store:
             self.metric_store.add_metric(RequestStatusChange(request_id=request.id, status=request.status))
