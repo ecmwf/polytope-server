@@ -26,7 +26,7 @@ from typing import Dict
 
 import flask
 import yaml
-from flask import Flask, g, request
+from flask import Flask, Request, g, request
 from flask_swagger_ui import get_swaggerui_blueprint
 from opentelemetry import baggage
 from opentelemetry.context import attach, detach
@@ -141,7 +141,7 @@ class FlaskHandler(frontend.FrontendHandler):
         # corresponds to:
         # @handler.route("/api/v1/requests/<collection>", methods = ['POST'])
         # see: @handler.route("/api/v1/requests/<collection_or_request_id>", methods = ['GET','POST','DELETE'])
-        def handle_requests(request, collection):
+        def handle_requests(request: Request, collection: str):
             user = auth.authenticate(get_auth_header(request))
             with with_baggage_items({"user.username": user.username}) as _:
                 if request.method == "POST":
@@ -173,7 +173,7 @@ class FlaskHandler(frontend.FrontendHandler):
         # corresponds to:
         # @handler.route("/api/v1/requests/<request_id>", methods = ['GET','DELETE'])
         # see: @handler.route("/api/v1/requests/<collection_or_request_id>", methods = ['GET','POST','DELETE'])
-        def handle_specific_request(request, request_id):
+        def handle_specific_request(request: Request, request_id: str):
             user = auth.authenticate(get_auth_header(request))
             with with_baggage_items({"user.username": user.username, "request_id": request_id}) as _:
                 if request.method == "GET":
@@ -196,9 +196,8 @@ class FlaskHandler(frontend.FrontendHandler):
         @handler.route("/api/v1/downloads/<path:request_id>", methods=["GET", "HEAD"])
         def downloads(request_id):
             with with_baggage_items({"request_id": request_id}) as _:
-                logging.warning("Serving download data directly through frontend")
                 if request.method == "GET":
-                    return data_transfer.download(request_id)
+                    return handle_specific_request(request, request_id)
 
         @handler.route("/api/v1/uploads/<request_id>", methods=["GET", "POST"])
         def uploads(request_id):
