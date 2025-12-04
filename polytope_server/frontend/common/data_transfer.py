@@ -164,37 +164,6 @@ class DataTransfer:
         response = self.construct_response(request)
         return RequestAccepted(response)
 
-    def download(self, id: str) -> Response:
-        """
-        Serves a download for a completed retrieve request by getting
-        the data from staging onto the frontend pod
-        """
-        if id.startswith(self.staging.get_url_prefix()):
-            id = id.replace(self.staging.get_url_prefix(), "", 1)
-
-        request = self.get_request(id)
-        if request:
-            if request.verb != Verb.RETRIEVE:
-                raise BadRequest(f"Request {id} is not a download")
-            if request.status == Status.PROCESSED:
-                # Backfill metadata if missing
-                self._ensure_content_metadata(request)
-                object_id = self._resolve_object_id(request)
-
-                try:
-                    data = self.staging.read(object_id)
-                except Exception:
-                    logging.exception("Error while reading data from data staging")
-                    raise ServerError("Error while reading data from data staging")
-
-                data_checksum = hashlib.md5(data).hexdigest()
-                response = Response(data)
-                response.headers.set("Content-Type", request.content_type)
-                response.headers["Content-MD5"] = data_checksum
-                response.status_code = 200
-                return response
-        raise BadRequest(f"Request {id} not ready for download yet")
-
     def upload(self, id: str, http_request: Request) -> Response:
         """
         Uploads the http_request.data to staging for a pending archive request
