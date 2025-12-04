@@ -83,6 +83,9 @@ class DataTransfer:
             )
 
     def request_download(self, http_request: Request, user: User, collection):
+        """
+        Creates a polytope retrieve request object and adds it to the request store (accepts it)
+        """
         payload = http_request.json
         request = PolytopeRequest(
             user=user,
@@ -102,6 +105,9 @@ class DataTransfer:
         return RequestAccepted(response)
 
     def request_upload(self, http_request: Request, user: User, collection: str):
+        """
+        Creates a polytope archive request object and adds it to the request store (accepts it)
+        """
         payload = http_request.json
         url = payload.get("url", None)
         request = PolytopeRequest(
@@ -127,6 +133,9 @@ class DataTransfer:
         return RequestAccepted(response)
 
     def query_request(self, user: User, id: str) -> Response:
+        """
+        Gets the status of a request and, if complete, provides download/upload information
+        """
         request = self.get_request(id)
         if not request:
             raise NotFound(f"Request {id} not found")
@@ -156,6 +165,10 @@ class DataTransfer:
         return RequestAccepted(response)
 
     def download(self, id: str) -> Response:
+        """
+        Serves a download for a completed retrieve request by getting
+        the data from staging onto the frontend pod
+        """
         if id.startswith(self.staging.get_url_prefix()):
             id = id.replace(self.staging.get_url_prefix(), "", 1)
 
@@ -167,10 +180,25 @@ class DataTransfer:
                 # Backfill metadata if missing
                 self._ensure_content_metadata(request)
                 object_id = self._resolve_object_id(request)
-                return self.create_download_response(object_id)
+
+                try:
+                    data = self.staging.read(object_id)
+                except Exception:
+                    logging.exception("Error while reading data from data staging")
+                    raise ServerError("Error while reading data from data staging")
+
+                data_checksum = hashlib.md5(data).hexdigest()
+                response = Response(data)
+                response.headers.set("Content-Type", request.content_type)
+                response.headers["Content-MD5"] = data_checksum
+                response.status_code = 200
+                return response
         raise BadRequest(f"Request {id} not ready for download yet")
 
     def upload(self, id: str, http_request: Request) -> Response:
+        """
+        Uploads the http_request.data to staging for a pending archive request
+        """
         request = self.get_request(id)
         if not request:
             raise BadRequest("Request {} does not exist".format(id))
@@ -184,19 +212,34 @@ class DataTransfer:
         if checksum != hashlib.md5(data).hexdigest():
             raise BadRequest("Uploaded data checksum does not agree with header X-Checksum")
 
-        self.upload_to_staging(data, id)
+        try:
+            url = self.staging.create(id, [data], "application/octet-stream")
+            assert url is not None
+        except Exception:
+            logging.exception("Error while attempting to write to data staging")
+            raise ServerError("Error writing to data staging")
 
         request.set_status(Status.WAITING)
         request.url = self.staging.get_internal_url(id)
 
         # Try to populate metadata for uploads
-        self._ensure_content_metadata(request)
+        try:
+            self._ensure_content_metadata(request)
+            if request.content_length != (sys.getsizeof(data) - sys.getsizeof(b"")):
+                raise ServerError("Size of data uploaded to staging area did not match size of user-uploaded data")
+        except Exception:
+            logging.exception("Error while backfilling metadata for upload")
+            raise ServerError("Error while backfilling metadata for upload")
 
         self.request_store.update_request(request)
         response = self.construct_response(request)
         return RequestAccepted(response)
 
     def process_download(self, request: PolytopeRequest) -> Response:
+        """
+        Processes a completed retrieve request by preparing a redirect response
+        to the location where the data can be downloaded.
+        """
         # Best-effort metadata backfill (will be a no-op if already set)
         self._ensure_content_metadata(request)
 
@@ -208,27 +251,12 @@ class DataTransfer:
         )
         return RequestRedirected(response)
 
-    def upload_to_staging(self, data, id):
-        url = None
-
-        try:
-            url = self.staging.create(id, [data], "application/octet-stream")
-            assert url is not None
-        except Exception:
-            logging.exception("Error while attempting to write to data staging")
-            raise ServerError("Error writing to data staging")
-
-        try:
-            staged_content_type, staged_size = self.staging.stat(id)
-            if staged_size != (sys.getsizeof(data) - sys.getsizeof(b"")):
-                raise ServerError("Size of data uploaded to staging area did not match size of user-uploaded data")
-        except Exception:
-            logging.exception("Error reading uploaded data from data staging")
-            raise ServerError("Error reading uploaded data from data staging")
-
-        return url
-
     def construct_response(self, request: PolytopeRequest) -> dict:
+        """
+        Constructs a response dictionary for a given request
+
+        Resolves the location based on request status, verb and url.
+        """
 
         location = "./{}".format(request.id)
 
@@ -270,18 +298,3 @@ class DataTransfer:
             logging.exception("Error while fetching from the request store")
             raise ServerError("Error while fetching from the request store")
         return request
-
-    def create_download_response(self, object_id: str) -> Response:
-        content_type, content_size = self.staging.stat(object_id)
-        try:
-            data = self.staging.read(object_id)
-        except Exception:
-            logging.exception("Error while reading data from data staging")
-            raise ServerError("Error while reading data from data staging")
-
-        data_checksum = hashlib.md5(data).hexdigest()
-        response = Response(data)
-        response.headers.set("Content-Type", content_type)
-        response.headers["Content-MD5"] = data_checksum
-        response.status_code = 200
-        return response
