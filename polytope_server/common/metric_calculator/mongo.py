@@ -245,61 +245,68 @@ class MongoMetricCalculator(MetricCalculator):
 
         logger.debug("Aggregating usage metrics for cutoffs %s", cutoff_timestamps)
 
-        # Get all-time totals for processed requests
-        # Count unique request_ids that reached processed state
-        total_requests = len(
-            self.metric_collection.distinct(
-                "request_id",
-                {
-                    "type": "request_status_change",
-                    "status": "processed",
-                },
-            )
-        )
+        # Prepare group stages for counting
+        # We want to count total, and for each window
+        requests_counts = {
+            "_id": None,
+            "total": {"$sum": 1},
+        }
+        users_counts = {
+            "_id": None,
+            "total": {"$sum": 1},
+        }
 
-        # Get unique users count (all-time)
-        unique_users = self.metric_collection.distinct(
-            "user_id",
+        for name, cutoff in cutoff_timestamps.items():
+            cond = {"$cond": [{"$gte": ["$ts", cutoff]}, 1, 0]}
+            requests_counts[name] = {"$sum": cond}
+            users_counts[name] = {"$sum": cond}
+
+        facets = {
+            "requests": [
+                {"$group": {"_id": "$request_id", "ts": {"$max": "$timestamp"}}},
+                {"$group": requests_counts},
+            ],
+            "users": [
+                {"$match": {"user_id": {"$exists": True, "$type": "string"}}},
+                {"$group": {"_id": "$user_id", "ts": {"$max": "$timestamp"}}},
+                {"$group": users_counts},
+            ],
+        }
+
+        pipeline = [
             {
-                "type": "request_status_change",
-                "status": "processed",
-                "user_id": {"$exists": True, "$type": "string"},
+                "$match": {
+                    "type": "request_status_change",
+                    "status": "processed",
+                }
             },
-        )
+            {"$facet": facets},
+        ]
 
-        # Calculate per-window metrics
+        assert self.metric_collection is not None
+        result_list = list(self.metric_collection.aggregate(pipeline))
+        facet_results = result_list[0] if result_list else {}
+
+        # Extract results
+        req_res = facet_results.get("requests", [])
+        req_data = req_res[0] if req_res else {}
+
+        user_res = facet_results.get("users", [])
+        user_data = user_res[0] if user_res else {}
+
+        total_requests = req_data.get("total", 0)
+        unique_users = user_data.get("total", 0)
+
         timeframe_metrics = {}
-        for framename, cutoff in cutoff_timestamps.items():
-            # Count unique request_ids for this timeframe
-            unique_request_ids = self.metric_collection.distinct(
-                "request_id",
-                {
-                    "type": "request_status_change",
-                    "status": "processed",
-                    "timestamp": {"$gte": cutoff},
-                },
-            )
-            requests_count = len(unique_request_ids)
-
-            # Count unique users for this timeframe
-            unique_users_in_window = self.metric_collection.distinct(
-                "user_id",
-                {
-                    "type": "request_status_change",
-                    "status": "processed",
-                    "timestamp": {"$gte": cutoff},
-                    "user_id": {"$exists": True, "$type": "string"},
-                },
-            )
-
+        for framename in cutoff_timestamps.keys():
             timeframe_metrics[framename] = {
-                "requests": requests_count,
-                "unique_users": len(unique_users_in_window),
+                "requests": req_data.get(framename, 0),
+                "unique_users": user_data.get(framename, 0),
             }
 
         result = {
             "total_requests": total_requests,
-            "unique_users": len(unique_users),
+            "unique_users": unique_users,
             "timeframe_metrics": timeframe_metrics,
         }
 
