@@ -252,6 +252,7 @@ class Worker:
             # upload result data
             if datasource is not None:
                 request.url = self.staging.create(id, datasource.result(request), datasource.mime_type())
+                request.content_type, request.content_length = self.staging.stat(request.url.split("/")[-1])
 
         except Exception as e:
             logging.exception("Failed to finalize request", extra={"exception": repr(e)})
