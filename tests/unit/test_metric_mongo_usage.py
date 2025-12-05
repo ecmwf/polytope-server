@@ -17,80 +17,110 @@
 # granted to it by virtue of its status as an intergovernmental organisation nor
 # does it submit to any jurisdiction.
 #
-from typing import Any, Dict, List, Protocol, cast
+from typing import cast
 
+import mongomock
 from pymongo.collection import Collection
 
 from polytope_server.common.metric_calculator.mongo import MongoMetricCalculator
 
 
-class CollectionProtocol(Protocol):
-    """Protocol for collection-like objects."""
-
-    name: str
-
-    def create_index(self, keys, name=None, **kwargs) -> None: ...
-
-
-class DummyCollection:
-    """Minimal stub for the main request collection."""
-
-    def __init__(self) -> None:
-        self.name = "dummy_requests"
-        self.created_indexes: List[Dict[str, Any]] = []
-
-    def create_index(self, keys, name=None, **kwargs) -> None:
-        self.created_indexes.append({"keys": keys, "name": name, "kwargs": kwargs})
-
-
-class DummyMetricCollection:
-    """Stub for the metric_collection used by get_usage_metrics_aggregated."""
-
-    def __init__(self) -> None:
-        self.name = "dummy_metrics"
-        self.distinct_calls: List[Dict[str, Any]] = []
-
-    def distinct(self, field: str, filter: Dict[str, Any]) -> List[str]:
-        self.distinct_calls.append({"field": field, "filter": filter})
-        # We only care that different cutoff timestamps map to different values,
-        # not about the filter content itself. So we branch on the presence of timestamp.
-        has_timestamp = "timestamp" in filter
-
-        if not has_timestamp and field == "request_id":
-            return ["r1", "r2", "r3", "r4"]
-        if not has_timestamp and field == "user_id":
-            return ["u1", "u2", "u3"]
-
-        # For per-timeframe metrics, just return different fixed sizes.
-        if has_timestamp and field == "request_id":
-            return ["req_a", "req_b"]
-        if has_timestamp and field == "user_id":
-            return ["user_x", "user_y"]
-
-        return []
-
-
 def test_get_usage_metrics_aggregated_basic() -> None:
-    request_coll = DummyCollection()
-    metric_coll = DummyMetricCollection()
+    client = mongomock.MongoClient()
+    db = client.testdb
+    request_coll = db.requests
+    metric_coll = db.metrics
+
+    # Populate metric collection
+    # We need: type="request_status_change", status="processed", timestamp, request_id, user_id
+
+    # Cutoffs: last_1h -> 10000, last_24h -> 5000
+
+    docs = [
+        # Inside last_1h (>= 10000)
+        {
+            "type": "request_status_change",
+            "status": "processed",
+            "timestamp": 12000,
+            "request_id": "r1",
+            "user_id": "u1",
+        },
+        {
+            "type": "request_status_change",
+            "status": "processed",
+            "timestamp": 12000,
+            "request_id": "r2",
+            "user_id": "u1",
+        },
+        {
+            "type": "request_status_change",
+            "status": "processed",
+            "timestamp": 11000,
+            "request_id": "r3",
+            "user_id": "u2",
+        },
+        # Inside last_24h (>= 5000) but not last_1h
+        {
+            "type": "request_status_change",
+            "status": "processed",
+            "timestamp": 8000,
+            "request_id": "r4",
+            "user_id": "u1",
+        },
+        {
+            "type": "request_status_change",
+            "status": "processed",
+            "timestamp": 6000,
+            "request_id": "r5",
+            "user_id": "u3",
+        },
+        # Older (< 5000)
+        {
+            "type": "request_status_change",
+            "status": "processed",
+            "timestamp": 1000,
+            "request_id": "r6",
+            "user_id": "u4",
+        },
+        # Ignored docs (wrong type or status)
+        {
+            "type": "other",
+            "status": "processed",
+            "timestamp": 12000,
+            "request_id": "r_bad1",
+            "user_id": "u1",
+        },
+        {
+            "type": "request_status_change",
+            "status": "failed",
+            "timestamp": 12000,
+            "request_id": "r_bad2",
+            "user_id": "u1",
+        },
+    ]
+    metric_coll.insert_many(docs)
 
     calc = MongoMetricCalculator(
         collection=cast(Collection, request_coll), metric_collection=cast(Collection, metric_coll)
     )
     cutoffs = {
-        "last_1h": 1000.0,
-        "last_24h": 2000.0,
+        "last_1h": 10000.0,
+        "last_24h": 5000.0,
     }
 
     res = calc.get_usage_metrics_aggregated(cutoffs)
-    # Top-level totals from the "no timestamp" distinct calls
-    assert res["total_requests"] == 4
-    assert res["unique_users"] == 3
 
-    # Per-timeframe metrics come from the "has timestamp" calls.
-    # We returned 2 request_ids and 2 user_ids for any timestamp filter.
+    # Total requests: 6 valid processed requests
+    assert res["total_requests"] == 6
+    # Unique users: u1, u2, u3, u4 -> 4
+    assert res["unique_users"] == 4
+
     tf = res["timeframe_metrics"]
-    assert tf["last_1h"]["requests"] == 2
+
+    # last_1h (>= 10000): r1, r2, r3 -> 3 requests. u1, u2 -> 2 users.
+    assert tf["last_1h"]["requests"] == 3
     assert tf["last_1h"]["unique_users"] == 2
-    assert tf["last_24h"]["requests"] == 2
-    assert tf["last_24h"]["unique_users"] == 2
+
+    # last_24h (>= 5000): r1..r5 -> 5 requests. u1, u2, u3 -> 3 users.
+    assert tf["last_24h"]["requests"] == 5
+    assert tf["last_24h"]["unique_users"] == 3
