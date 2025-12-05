@@ -161,7 +161,7 @@ class ConfigParser:
 
         except pykwalify.errors.SchemaError:
             # NB logging formatter is not set up yet
-            logging.error(
+            logging.exception(
                 "Configuration did not validate against schema:\n - {}".format(
                     "\n - ".join(schema_check.validation_errors)
                 )
