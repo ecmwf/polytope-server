@@ -188,25 +188,17 @@ paths:
           schema:
             type: string
       responses:
-        '200':
-          description: data
+        '303':
+          description: redirects
+          headers:
+            location:
+              description: URI where the client can download the data.
+              schema:
+                type: string
           content:
-            application/x-grib:
+            application/json:
               schema:
-                type: string
-                format: binary
-            application/netcdf:
-              schema:
-                type: string
-                format: binary
-            application/prs.coverage+json:
-              schema:
-                type: string
-                format: binary
-            application/octet-stream:
-              schema:
-                type: string
-                format: binary
+                $ref: '#/components/schemas/response'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
