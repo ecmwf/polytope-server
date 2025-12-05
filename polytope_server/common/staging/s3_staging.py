@@ -27,6 +27,7 @@ import boto3
 import botocore
 from botocore.exceptions import ClientError
 
+from ..exceptions import NotFound
 from . import staging
 
 
@@ -104,7 +105,7 @@ class S3Staging(staging.Staging):
         except self.s3_client.exceptions.BucketAlreadyOwnedByYou:
             logging.info(f"Bucket {self.bucket} already exists and owned by you.")
         except ClientError as e:
-            logging.error(f"Error creating bucket: {e}")
+            logging.exception(f"Error creating bucket: {e}")
         # Set bucket policy
         if self.should_set_policy:
             self.set_bucket_policy()
@@ -169,7 +170,7 @@ class S3Staging(staging.Staging):
             return self.get_url(name)
 
         except ClientError as e:
-            logging.error(f"Failed to upload {name}: {e}")
+            logging.exception(f"Failed to upload {name}: {e}")
             if "upload_id" in locals():
                 self.s3_client.abort_multipart_upload(Bucket=self.bucket, Key=name, UploadId=upload_id)
             raise
@@ -224,16 +225,16 @@ class S3Staging(staging.Staging):
             response = self.s3_client.get_object(Bucket=self.bucket, Key=name)
             return response["Body"].read()
         except ClientError as e:
-            logging.error(f"Could not read object {name}: {e}")
-            raise KeyError(name)
+            logging.exception(f"Could not read object {name}: {e}")
+            raise NotFound(name)
 
     def delete(self, name):
         try:
             self.s3_client.delete_object(Bucket=self.bucket, Key=name)
             return True
         except ClientError as e:
-            logging.error(f"Could not delete object {name}: {e}")
-            raise KeyError(name)
+            logging.exception(f"Could not delete object {name}: {e}")
+            raise NotFound(name)
 
     def query(self, name):
         try:
@@ -247,8 +248,8 @@ class S3Staging(staging.Staging):
             response = self.s3_client.head_object(Bucket=self.bucket, Key=name)
             return response["ContentType"], response["ContentLength"]
         except ClientError as e:
-            logging.error(f"Could not stat object {name}: {e}")
-            raise KeyError(name)
+            logging.exception(f"Could not stat object {name}: {e}")
+            raise NotFound(name)
 
     def get_url(self, name):
         if self.use_presigned_url:
@@ -283,7 +284,7 @@ class S3Staging(staging.Staging):
                 resources.append(staging.ResourceInfo(o["Key"], o["Size"]))
             return resources
         except ClientError as e:
-            logging.error(f"Failed to list objects: {e}")
+            logging.exception(f"Failed to list objects: {e}")
             raise
 
     def wipe(self):
@@ -294,7 +295,7 @@ class S3Staging(staging.Staging):
                 logging.info(f"Deleting {len(delete_objects)} : {delete_objects} objects from {self.bucket}")
                 self.s3_client.delete_objects(Bucket=self.bucket, Delete={"Objects": delete_objects})
             except ClientError as e:
-                logging.error(f"Error deleting objects: {e}")
+                logging.exception(f"Error deleting objects: {e}")
                 raise
 
     def get_url_prefix(self):
