@@ -21,8 +21,6 @@
 import hashlib
 import logging
 import sys
-from pathlib import PurePosixPath
-from urllib.parse import urlparse
 
 # TODO: Remove flask from this module, it should be agnostic
 from flask import Request, Response
@@ -39,48 +37,6 @@ class DataTransfer:
     def __init__(self, request_store: RequestStore, staging: Staging):
         self.request_store = request_store
         self.staging = staging
-
-    def _resolve_object_id(self, request: PolytopeRequest) -> str:
-        """
-        Single place that decides how a request id maps to a staging object id.
-        """
-        object_id = request.id
-        url = request.url or ""
-
-        if url:
-            url_path = PurePosixPath(urlparse(url).path)
-            ext = url_path.suffix
-            if ext:
-                object_id = f"{request.id}{ext}"
-
-        return object_id
-
-    def _ensure_content_metadata(self, request: PolytopeRequest, strict: bool = False) -> None:
-        """
-        Population of content_type/content_length from staging.
-
-        - Only runs for processed requests.
-        - If content_length/content_type are already set, it does nothing.
-        """
-        if request.status != Status.PROCESSED:
-            return
-
-        if request.content_length is not None and request.content_type is not None:
-            return
-
-        object_id = self._resolve_object_id(request)
-
-        try:
-            content_type, content_length = self.staging.stat(object_id)
-            request.content_type = content_type
-            request.content_length = content_length
-            self.request_store.update_request(request)
-        except Exception:
-            logging.exception(
-                "Error while querying/updating content metadata for request %s (object_id=%s)",
-                request.id,
-                object_id,
-            )
 
     def request_download(self, http_request: Request, user: User, collection):
         """
@@ -151,9 +107,6 @@ class DataTransfer:
             raise BadRequest(f"Request failed with error:\n{request.user_message}")
 
         if request.status == Status.PROCESSED:
-            # Try to ensure metadata is stored
-            self._ensure_content_metadata(request)
-
             if request.verb == Verb.RETRIEVE:
                 return self.process_download(request)
             else:
@@ -183,6 +136,7 @@ class DataTransfer:
 
         try:
             url = self.staging.create(id, [data], "application/octet-stream")
+            request.content_type, request.content_length = self.staging.stat(id)
             assert url is not None
         except Exception:
             logging.exception("Error while attempting to write to data staging")
@@ -191,14 +145,8 @@ class DataTransfer:
         request.set_status(Status.WAITING)
         request.url = self.staging.get_internal_url(id)
 
-        # Try to populate metadata for uploads
-        try:
-            self._ensure_content_metadata(request)
-            if request.content_length != (sys.getsizeof(data) - sys.getsizeof(b"")):
-                raise ServerError("Size of data uploaded to staging area did not match size of user-uploaded data")
-        except Exception:
-            logging.exception("Error while backfilling metadata for upload")
-            raise ServerError("Error while backfilling metadata for upload")
+        if request.content_length != (sys.getsizeof(data) - sys.getsizeof(b"")):
+            raise ServerError("Size of data uploaded to staging area did not match size of user-uploaded data")
 
         self.request_store.update_request(request)
         response = self.construct_response(request)
@@ -209,8 +157,6 @@ class DataTransfer:
         Processes a completed retrieve request by preparing a redirect response
         to the location where the data can be downloaded.
         """
-        # Best-effort metadata backfill (will be a no-op if already set)
-        self._ensure_content_metadata(request)
 
         response = self.construct_response(request)
         logging.info(
