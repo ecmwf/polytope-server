@@ -164,6 +164,10 @@ class MongoRequestStore(request_store.RequestStore):
             return res
         return []
 
+    def get_active_requests(self):
+        cursor = self.store.find({"status": {"$in": [Status.PROCESSING.value, Status.QUEUED.value]}}, {"_id": False})
+        return [PolytopeRequest(from_dict=i) for i in cursor]
+
     def update_request(self, request):
         request.last_modified = datetime.datetime.now(datetime.timezone.utc).timestamp()
         res = self.store.find_one_and_update(

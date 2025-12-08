@@ -96,3 +96,31 @@ def _test_remove_old_requests(store):
     assert store.get_request(old_failed_req.id) is None
     assert store.get_request(old_processing_req.id) is not None
     assert store.get_request(recent_processed_req.id) is not None
+
+
+def _test_get_active_requests(store):
+    # Create a test user
+    test_user = user.User("test-user", "test-realm")
+    # Create requests with different statuses
+    req_queued = request.PolytopeRequest(status=request.Status.QUEUED, user=test_user)
+    req_processing = request.PolytopeRequest(status=request.Status.PROCESSING, user=test_user)
+    req_processed = request.PolytopeRequest(status=request.Status.PROCESSED, user=test_user)
+    req_failed = request.PolytopeRequest(status=request.Status.FAILED, user=test_user)
+    req_waiting = request.PolytopeRequest(status=request.Status.WAITING, user=test_user)
+
+    store.add_request(req_queued)
+    store.add_request(req_processing)
+    store.add_request(req_processed)
+    store.add_request(req_failed)
+    store.add_request(req_waiting)
+
+    active_requests = store.get_active_requests()
+
+    # Check that only QUEUED and PROCESSING requests are returned
+    active_ids = [req.id for req in active_requests]
+    assert len(active_ids) == 2
+    assert req_queued.id in active_ids
+    assert req_processing.id in active_ids
+    assert req_processed.id not in active_ids
+    assert req_failed.id not in active_ids
+    assert req_waiting.id not in active_ids
