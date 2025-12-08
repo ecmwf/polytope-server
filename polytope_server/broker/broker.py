@@ -78,6 +78,12 @@ class Broker:
                 self.request_store.set_request_status(ar, Status.WAITING)
             active_requests = set()
 
+        if len(active_requests) > self.max_queue_size:
+            logging.warning(
+                f"Number of active requests ({len(active_requests)}) exceeds max queue size ({self.max_queue_size})."
+                + "This suggests some requests may be stuck."
+            )
+
         # Loop through requests queuing anything that meets QoS requirements
         for wr in waiting_requests:  # should break if queue full
 
