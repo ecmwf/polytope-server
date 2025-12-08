@@ -72,6 +72,16 @@ class Broker:
             set(self.request_store.get_requests(status=Status.PROCESSING)),
         )
 
+        # if the queue is empty, then the "active" requests are stuck and should be put back to waiting
+        if self.queue.count() == 0:
+            for ar in active_requests:
+                logging.info(
+                    f"Request {ar.id} appears stuck in {ar.status}, setting back to WAITING",
+                    extra={"request_id": ar.id},
+                )
+                self.request_store.set_request_status(ar, Status.WAITING)
+            active_requests = set()
+
         # Loop through requests queuing anything that meets QoS requirements
         for wr in waiting_requests:  # should break if queue full
 
