@@ -66,11 +66,7 @@ class Broker:
             return
 
         # Find all requests which have already been queued
-        active_requests = set.union(
-            # order is important, so we don't miss a request transitioning Queued -> Processing
-            set(self.request_store.get_requests(status=Status.QUEUED)),
-            set(self.request_store.get_requests(status=Status.PROCESSING)),
-        )
+        active_requests = self.request_store.get_active_requests()
 
         # if the queue is empty, then the "active" requests are stuck and should be put back to waiting
         if self.queue.count() == 0:

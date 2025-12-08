@@ -47,6 +47,10 @@ class RequestStore(ABC):
         ascending/descenging keys (e.g. ascending = 'timestamp')"""
 
     @abstractmethod
+    def get_active_requests(self) -> List[PolytopeRequest]:
+        """Returns requests with status PROCESSING or QUEUED"""
+
+    @abstractmethod
     def remove_request(self, id: str) -> None:
         """Remove a request from the request store."""
 
