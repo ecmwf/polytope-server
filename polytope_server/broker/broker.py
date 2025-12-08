@@ -76,6 +76,7 @@ class Broker:
                     extra={"request_id": ar.id},
                 )
                 self.request_store.set_request_status(ar, Status.WAITING)
+                waiting_requests.append(ar)
             active_requests = set()
 
         if len(active_requests) > self.max_queue_size:
