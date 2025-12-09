@@ -20,14 +20,15 @@
 
 import logging
 import time
+from typing import Iterable
 
 from ..common import collection, queue, request_store
 from ..common.logging import with_baggage_items
-from ..common.request import Status
+from ..common.request import PolytopeRequest, Status
 
 
 class Broker:
-    def __init__(self, config):
+    def __init__(self, config: dict):
 
         queue_config = config.get("queue")
         self.queue = queue.create_queue(queue_config)
@@ -60,7 +61,7 @@ class Broker:
 
         # Find all requests that are waiting to be queued (oldest first)
         waiting_requests = self.request_store.get_requests(ascending="timestamp", status=Status.WAITING)
-        logging.info("Found {} waiting requests".format(len(waiting_requests)))
+        logging.debug("Found {} waiting requests".format(len(waiting_requests)))
 
         if len(waiting_requests) == 0:
             return
@@ -69,6 +70,7 @@ class Broker:
         active_requests = self.request_store.get_active_requests()
 
         # if the queue is empty, then the "active" requests are stuck and should be put back to waiting
+        requeued_requests = []
         if self.queue.count() == 0:
             for ar in active_requests:
                 logging.info(
@@ -76,12 +78,14 @@ class Broker:
                     extra={"request_id": ar.id},
                 )
                 self.request_store.set_request_status(ar, Status.WAITING)
-                waiting_requests.append(ar)
-            active_requests = set()
+                requeued_requests.append(ar)
+            active_requests = []
+        requeued_requests.sort(key=lambda r: r.timestamp)
+        waiting_requests = requeued_requests + waiting_requests
 
         if len(active_requests) > self.max_queue_size:
             logging.warning(
-                f"Number of active requests ({len(active_requests)}) exceeds max queue size ({self.max_queue_size})."
+                f"Number of active requests ({len(active_requests)}) exceeds max queue size ({self.max_queue_size}). "
                 + "This suggests some requests may be stuck."
             )
 
@@ -90,14 +94,14 @@ class Broker:
 
             if self.check_limits(active_requests, wr):
                 assert wr.status == Status.WAITING
-                active_requests.add(wr)
+                active_requests.append(wr)
                 self.enqueue(wr)
 
             if self.queue.count() >= self.max_queue_size:
                 logging.info("Queue is full")
                 return
 
-    def check_limits(self, active_requests, request):
+    def check_limits(self, active_requests: Iterable, request: PolytopeRequest):
         with with_baggage_items({"request_id": request.id}):
             logging.debug(f"Checking limits for request {request.id}")
 
@@ -140,7 +144,7 @@ class Broker:
             logging.debug(f"No limit for user {request.user} in collection {request.collection}")
             return True
 
-    def enqueue(self, request):
+    def enqueue(self, request: PolytopeRequest):
         with with_baggage_items({"request_id": request.id}):
             logging.info("Queuing request")
 
