@@ -48,7 +48,7 @@ build:
         developer_mode: '{{ default "false" .developer_mode }}'
         # mars_client_c_version: 6.33.20.2
         gribjump_version: '{{ default "0.10.2" .gribjump_version }}'
-        mars_client_cpp_version: 7.1.6.3
+        mars_client_cpp_version: 7.1.8.2
         # ecbuild_version: 3.8.2
         # eccodes_version: 2.33.1
         # eckit_version: 1.28.0
