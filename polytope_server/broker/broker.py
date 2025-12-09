@@ -152,7 +152,7 @@ class Broker:
                 # Must update request_store before queue, worker checks request status immediately
                 request.set_status(Status.QUEUED)
                 self.request_store.update_request(request)
-                msg = queue.Message(request.serialize())
+                msg = queue.Message(body={"id": request.id})
                 self.queue.enqueue(msg)
             except Exception as e:
                 # If we fail to call this, the request will be stuck (POLY-21)
