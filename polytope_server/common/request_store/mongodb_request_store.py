@@ -179,13 +179,8 @@ class MongoRequestStore(request_store.RequestStore):
         if res is None:
             raise NotFound("Request {} not found in request store".format(request.id))
 
-        if self.metric_store and request.status == Status.PROCESSED:
-            self.metric_store.add_metric(
-                RequestStatusChange(request_id=request.id, status=request.status, user_id=request.user.id)
-            )
-
         logging.info(
-            "Request ID {} updated on request store. Status set to {}.".format(request.id, request.status),
+            "Request ID {} updated on request store. Status is {}.".format(request.id, request.status),
             extra={"request": request.serialize()},
         )
 

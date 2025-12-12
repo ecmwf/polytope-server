@@ -23,6 +23,7 @@ import importlib
 from abc import ABC, abstractmethod
 from typing import List
 
+from ..metric import RequestStatusChange
 from ..request import PolytopeRequest, Status
 from ..user import User
 
@@ -84,6 +85,11 @@ class RequestStore(ABC):
     def set_request_status(self, request: PolytopeRequest, status: Status) -> None:
         """Set the status of a request and update the request store"""
         request.set_status(status)
+
+        if self.metric_store and request.status == Status.PROCESSED:
+            self.metric_store.add_metric(
+                RequestStatusChange(request_id=request.id, status=request.status, user_id=request.user.id)
+            )
         self.update_request(request)
 
     @abstractmethod
