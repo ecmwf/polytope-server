@@ -97,6 +97,14 @@ def test_get_usage_metrics_aggregated_basic() -> None:
             "request_id": "r_bad2",
             "user_id": "u1",
         },
+        # duplicate processed for same request (should not happen, but test anyway)
+        {
+            "type": "request_status_change",
+            "status": "processed",
+            "timestamp": 12000,
+            "request_id": "r1",
+            "user_id": "u1",
+        },
     ]
     metric_coll.insert_many(docs)
 
@@ -110,17 +118,17 @@ def test_get_usage_metrics_aggregated_basic() -> None:
 
     res = calc.get_usage_metrics_aggregated(cutoffs)
 
-    # Total requests: 6 valid processed requests
-    assert res["total_requests"] == 6
+    # Total requests: 7 valid processed requests (including duplicate)
+    assert res["total_requests"] == 7
     # Unique users: u1, u2, u3, u4 -> 4
     assert res["unique_users"] == 4
 
     tf = res["timeframe_metrics"]
 
-    # last_1h (>= 10000): r1, r2, r3 -> 3 requests. u1, u2 -> 2 users.
-    assert tf["last_1h"]["requests"] == 3
+    # last_1h (>= 10000): r1, r2, r3, r1(dup) -> 4 requests. u1, u2 -> 2 users.
+    assert tf["last_1h"]["requests"] == 4
     assert tf["last_1h"]["unique_users"] == 2
 
-    # last_24h (>= 5000): r1..r5 -> 5 requests. u1, u2, u3 -> 3 users.
-    assert tf["last_24h"]["requests"] == 5
+    # last_24h (>= 5000): r1..r5 + r1(dup) -> 6 requests. u1, u2, u3 -> 3 users.
+    assert tf["last_24h"]["requests"] == 6
     assert tf["last_24h"]["unique_users"] == 3
