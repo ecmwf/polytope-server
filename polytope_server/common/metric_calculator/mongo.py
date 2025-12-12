@@ -19,6 +19,7 @@
 #
 
 import logging
+import time
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from pymongo import ASCENDING, DESCENDING
@@ -245,64 +246,52 @@ class MongoMetricCalculator(MetricCalculator):
 
         logger.debug("Aggregating usage metrics for cutoffs %s", cutoff_timestamps)
 
-        # Prepare group stages for counting
-        # We want to count total, and for each window
-        requests_counts = {
-            "_id": None,
-            "total": {"$sum": 1},
-        }
-        users_counts = {
-            "_id": None,
-            "total": {"$sum": 1},
+        base_filter = {
+            "type": "request_status_change",
+            "status": "processed",
         }
 
-        for name, cutoff in cutoff_timestamps.items():
-            req_cond = {"$cond": [{"$gte": ["$timestamp", cutoff]}, 1, 0]}
-            requests_counts[name] = {"$sum": req_cond}
+        # Total number of requests
+        # Assume no duplicates
+        t0 = time.time()
+        total_requests = self.metric_collection.count_documents(base_filter)
+        logger.debug("Total requests count took %.4fs", time.time() - t0)
 
-            user_cond = {"$cond": [{"$gte": ["$ts", cutoff]}, 1, 0]}
-            users_counts[name] = {"$sum": user_cond}
-
-        facets = {
-            "requests": [
-                {"$group": requests_counts},
-            ],
-            "users": [
-                {"$match": {"user_id": {"$exists": True, "$type": "string"}}},
-                {"$group": {"_id": "$user_id", "ts": {"$max": "$timestamp"}}},
-                {"$group": users_counts},
-            ],
-        }
-
-        pipeline = [
-            {
-                "$match": {
-                    "type": "request_status_change",
-                    "status": "processed",
-                }
-            },
-            {"$facet": facets},
+        # Total number of unique users
+        t0 = time.time()
+        user_pipeline = [
+            {"$match": base_filter},
+            {"$group": {"_id": "$user_id"}},
+            {"$count": "total"},
         ]
-
-        assert self.metric_collection is not None
-        result_list = list(self.metric_collection.aggregate(pipeline))
-        facet_results = result_list[0] if result_list else {}
-
-        # Extract results
-        req_res = facet_results.get("requests", [])
-        req_data = req_res[0] if req_res else {}
-
-        user_res = facet_results.get("users", [])
-        user_data = user_res[0] if user_res else {}
-
-        total_requests = req_data.get("total", 0)
-        unique_users = user_data.get("total", 0)
+        user_res = list(self.metric_collection.aggregate(user_pipeline, allowDiskUse=True))
+        unique_users = user_res[0]["total"] if user_res else 0
+        logger.debug("Total unique users count took %.4fs", time.time() - t0)
 
         timeframe_metrics = {}
-        for framename in cutoff_timestamps.keys():
-            timeframe_metrics[framename] = {
-                "requests": req_data.get(framename, 0),
-                "unique_users": user_data.get(framename, 0),
+
+        # Per-window metrics
+        for name, cutoff in cutoff_timestamps.items():
+            window_filter = base_filter.copy()
+            window_filter["timestamp"] = {"$gte": cutoff}
+
+            t0 = time.time()
+            req_count = self.metric_collection.count_documents(window_filter)
+            logger.debug("Request count for window %s took %.4fs", name, time.time() - t0)
+
+            t0 = time.time()
+            window_user_pipeline = [
+                {"$match": window_filter},
+                {"$group": {"_id": "$user_id"}},
+                {"$count": "total"},
+            ]
+            window_user_res = list(self.metric_collection.aggregate(window_user_pipeline, allowDiskUse=True))
+            user_count = window_user_res[0]["total"] if window_user_res else 0
+            logger.debug("User count for window %s took %.4fs", name, time.time() - t0)
+
+            timeframe_metrics[name] = {
+                "requests": req_count,
+                "unique_users": user_count,
             }
 
         result = {
