@@ -302,10 +302,18 @@ class DynamoDBRequestStore(request_store.RequestStore):
                 raise NotFound("Request {} not found in request store".format(request.id)) from e
             raise
 
-        if self.metric_store:
-            self.metric_store.add_metric(RequestStatusChange(request_id=request.id, status=request.status))
-
         logger.info("Request ID %s status set to %s.", request.id, request.status)
+
+    def set_request_status(self, request: PolytopeRequest, status: Status) -> None:
+        """Set the status of a request and update the request store"""
+        request.set_status(status)
+
+        # NOTE: important difference dynamodb saves all request status metrics, mongo does only on PROCESSED
+        if self.metric_store:
+            self.metric_store.add_metric(
+                RequestStatusChange(request_id=request.id, status=request.status, user_id=request.user.id)
+            )
+        self.update_request(request)
 
     def wipe(self):
         warnings.warn("wipe is not implemented for DynamoDBRequestStore")
