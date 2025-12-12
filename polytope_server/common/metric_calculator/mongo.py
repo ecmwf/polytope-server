@@ -257,13 +257,14 @@ class MongoMetricCalculator(MetricCalculator):
         }
 
         for name, cutoff in cutoff_timestamps.items():
-            cond = {"$cond": [{"$gte": ["$ts", cutoff]}, 1, 0]}
-            requests_counts[name] = {"$sum": cond}
-            users_counts[name] = {"$sum": cond}
+            req_cond = {"$cond": [{"$gte": ["$timestamp", cutoff]}, 1, 0]}
+            requests_counts[name] = {"$sum": req_cond}
+
+            user_cond = {"$cond": [{"$gte": ["$ts", cutoff]}, 1, 0]}
+            users_counts[name] = {"$sum": user_cond}
 
         facets = {
             "requests": [
-                {"$group": {"_id": "$request_id", "ts": {"$max": "$timestamp"}}},
                 {"$group": requests_counts},
             ],
             "users": [
