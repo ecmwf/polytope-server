@@ -45,6 +45,8 @@ class MARSDataSource(datasource.DataSource):
 
         self.subprocess = None
         self.fifo = None
+        self.output_file = None
+        self.use_file_io = config.get("use_file_io", False)
 
         self.mars_binary = config.get("binary", "mars")
 
@@ -84,12 +86,18 @@ class MARSDataSource(datasource.DataSource):
 
     def retrieve(self, request):
 
-        # Open a FIFO for MARS output
-        self.fifo = FIFO("MARS-FIFO-" + request.id)
+        if self.use_file_io:
+            with tempfile.NamedTemporaryFile(delete=False) as tmp:
+                self.output_file = tmp.name
+            target = self.output_file
+        else:
+            # Open a FIFO for MARS output
+            self.fifo = FIFO("MARS-FIFO-" + request.id)
+            target = self.fifo.path
 
         # Parse the user request as YAML, and add the FIFO as target
         r = copy.deepcopy(request.coerced_request) or {}
-        r["target"] = '"' + self.fifo.path + '"'
+        r["target"] = '"' + target + '"'
 
         # Make a temporary file for the request
         with tempfile.NamedTemporaryFile(delete=False) as tmp:
@@ -106,6 +114,13 @@ class MARSDataSource(datasource.DataSource):
         )
 
         logging.info("MARS subprocess started with PID {}".format(self.subprocess.subprocess.pid))
+
+        if self.use_file_io:
+            while self.subprocess.running():
+                self.subprocess.read_output(request, self.mars_error_filter)
+            logging.info("MARS process finished.")
+            return True
+
         # Poll until the FIFO has been opened by MARS, watch in case the spawned process dies before opening the FIFO
         try:
             while self.subprocess.running():
@@ -127,6 +142,21 @@ class MARSDataSource(datasource.DataSource):
         return True
 
     def result(self, request):
+
+        if self.use_file_io:
+            with open(self.output_file, "rb") as f:
+                while True:
+                    data = f.read(1024 * 1024)
+                    if not data:
+                        break
+                    yield data
+
+            try:
+                self.subprocess.finalize(request, self.mars_error_filter)
+            except CalledProcessError as e:
+                logging.exception("MARS subprocess failed: {}".format(e))
+                raise Exception("MARS retrieval failed unexpectedly with error code {}".format(e.returncode))
+            return
 
         # The FIFO will get EOF if MARS exits unexpectedly, so we will break out of this loop automatically
         for x in self.fifo.data():
@@ -153,7 +183,11 @@ class MARSDataSource(datasource.DataSource):
         except Exception:
             pass
         try:
-            self.fifo.delete()
+            if self.use_file_io:
+                if self.output_file:
+                    os.unlink(self.output_file)
+            else:
+                self.fifo.delete()
         except Exception:
             pass
 
