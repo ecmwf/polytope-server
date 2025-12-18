@@ -69,20 +69,6 @@ class Broker:
         # Find all requests which have already been queued
         active_requests = self.request_store.get_active_requests()
 
-        # if the queue is empty, then the "active" requests are stuck and should be put back to waiting
-        requeued_requests = []
-        if self.queue.count() == 0:
-            for ar in active_requests:
-                logging.info(
-                    f"Request {ar.id} appears stuck in {ar.status}, setting back to WAITING",
-                    extra={"request_id": ar.id},
-                )
-                self.request_store.set_request_status(ar, Status.WAITING)
-                requeued_requests.append(ar)
-            active_requests = []
-        requeued_requests.sort(key=lambda r: r.timestamp)
-        waiting_requests = requeued_requests + waiting_requests
-
         if len(active_requests) > self.max_queue_size:
             logging.warning(
                 f"Number of active requests ({len(active_requests)}) exceeds max queue size ({self.max_queue_size}). "
