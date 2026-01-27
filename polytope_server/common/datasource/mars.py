@@ -24,6 +24,7 @@ import os
 import tempfile
 from subprocess import CalledProcessError
 
+import requests
 import yaml
 
 from ..io.fifo import FIFO
@@ -37,6 +38,9 @@ class MARSDataSource(datasource.DataSource):
         assert config["type"] == "mars"
         self.config = config
         self.type = config.get("type")
+        self.protocol = config.get("protocol", "dhs")
+
+        # Default to direct client invocation; wrapper is no longer used.
         self.command = config.get("command", "/usr/local/bin/mars")
         self.tmp_dir = config.get("tmp_dir", "/tmp")
 
@@ -47,10 +51,6 @@ class MARSDataSource(datasource.DataSource):
         self.fifo = None
         self.output_file = None
         self.use_file_io = config.get("use_file_io", False)
-
-        self.mars_binary = config.get("binary", "mars")
-
-        self.protocol = config.get("protocol", "dhs")
 
         self.mars_error_filter = config.get("mars_error_filter", "mars - EROR")
 
@@ -196,6 +196,59 @@ class MARSDataSource(datasource.DataSource):
 
     #######################################################
 
+    def _build_dhs_env(self):
+        """Build DHS callback environment from the pod's Kubernetes service."""
+
+        token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        ca_path = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+        port_file = "/persistent/last_mars_port"
+
+        with open(token_path, "r") as file:
+            token = file.read().strip()
+
+        headers = {"Authorization": "Bearer " + token}
+
+        node_name = os.environ["K8S_NODE_NAME"]
+        pod_name = os.environ["K8S_POD_NAME"]
+        namespace = os.environ["K8S_NAMESPACE"]
+
+        service_url = (
+            f"https://{os.environ['KUBERNETES_SERVICE_HOST']}:"
+            f"{os.environ['KUBERNETES_PORT_443_TCP_PORT']}/api/v1/namespaces/"
+            f"{namespace}/services/{pod_name}"
+        )
+        response = requests.get(service_url, headers=headers, verify=ca_path)
+        response.raise_for_status()
+        service = response.json()["spec"]
+
+        try:
+            with open(port_file, "rt") as f:
+                last_port_id = int(f.read())
+        except FileNotFoundError:
+            last_port_id = 0
+
+        ports = service.get("ports", [])
+        if not ports:
+            raise RuntimeError("No ports defined for DHS service")
+
+        port_id = (last_port_id + 1) % len(ports)
+
+        with open(port_file, "w+") as f:
+            f.write(str(port_id))
+
+        node_port = ports[port_id]["nodePort"]
+        local_port = ports[port_id]["port"]
+
+        logging.info("DHS callback configured on %s:%s (local %s)", node_name, node_port, local_port)
+
+        return {
+            "MARS_ENVIRON_ORIGIN": "polytope",
+            "MARS_DHS_CALLBACK_HOST": node_name,
+            "MARS_DHS_CALLBACK_PORT": str(node_port),
+            "MARS_DHS_LOCALPORT": str(local_port),
+            "MARS_DHS_LOCALHOST": pod_name,
+        }
+
     def make_env(self, request):
         """Make the environment for the MARS subprocess, primarily for setting credentials"""
         try:
@@ -215,12 +268,15 @@ class MARSDataSource(datasource.DataSource):
                 **os.environ,
                 "MARS_USER_EMAIL": mars_user,
                 "MARS_USER_TOKEN": mars_token,
-                "ECMWF_MARS_COMMAND": self.mars_binary,
+                "ECMWF_MARS_COMMAND": self.command,
                 "FDB5_CONFIG": yaml.dump(self.fdb_config),
             }
 
             if self.mars_config is not None:
                 env["MARS_HOME"] = self.mars_home
+
+            if self.protocol == "dhs":
+                env.update(self._build_dhs_env())
 
             logging.info("Accessing MARS on behalf of user {} with token {}".format(mars_user, mars_token))
 
