@@ -35,12 +35,13 @@ type_to_class_map = {
 
 
 class ResourceInfo:
-    def __init__(self, name, size):
+    def __init__(self, name, size, last_modified=None):
         self.name = name
         self.size = size
+        self.last_modified = last_modified
 
     def __repr__(self):
-        return f"ResourceInfo({self.name}, {self.size})"
+        return f"ResourceInfo({self.name}, {self.size}, {self.last_modified})"
 
 
 class Staging(ABC):

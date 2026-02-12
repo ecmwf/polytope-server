@@ -117,39 +117,24 @@ class GarbageCollector:
             )
         )
 
-        all_objects_by_age = {}
-
-        for data in all_objects:
-
-            # TODO: fix properly
-            # remove file extension if it exists
-            if "." in data.name:
-                data.name = data.name.split(".")[0]
-
-            request = self.request_store.get_request(id=data.name)
-
-            if request is None:
-                logging.info(f"Skipping request {data.name}, not found in request store.")
-                continue
-
-            all_objects_by_age[data.name] = {
-                "size": data.size,
-                "last_modified": request.last_modified,
-            }
-
         if total_size < self.threshold:
             return
 
         # If we reached the total size limit, start deleting old data
         # Delete objects in ascending last_modified order (oldest first)
-        for name, v in sorted(all_objects_by_age.items(), key=lambda x: x[1]["last_modified"]):
+
+        all_objects_by_age = {
+            d.name: {"size": d.size, "last_modified": d.last_modified}
+            for d in sorted(all_objects, key=lambda x: x.last_modified)
+        }
+
+        for name, v in all_objects_by_age.items():
             logging.info("Deleting {} because threshold reached and it is the oldest request.".format(name))
             try:
                 self.staging.delete(name)
             except KeyError:
                 logging.info("Data {} not found in staging.".format(name))
 
-            # TODO: fix properly
             if "." in name:
                 name = name.split(".")[0]
 
