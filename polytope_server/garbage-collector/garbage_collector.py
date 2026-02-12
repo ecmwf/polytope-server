@@ -127,7 +127,7 @@ class GarbageCollector:
             d.name: {"size": d.size, "last_modified": d.last_modified}
             for d in sorted(all_objects, key=lambda x: x.last_modified)
         }
-
+        removed_requests = []
         for name, v in all_objects_by_age.items():
             logging.info("Deleting {} because threshold reached and it is the oldest request.".format(name))
             try:
@@ -138,11 +138,15 @@ class GarbageCollector:
             if "." in name:
                 name = name.split(".")[0]
 
-            self.request_store.remove_request(name)
+            removed_requests.append(name)
             total_size -= v["size"]
             logging.info("Size of staging is {}/{}".format(format_bytes(total_size), format_bytes(self.threshold)))
             if total_size < self.threshold:
-                return
+                break
+
+        logging.info("Removing {} requests from request store.".format(len(removed_requests)))
+        for request_id in removed_requests:
+            self.request_store.remove_request(request_id)
 
 
 ##################################################################################
