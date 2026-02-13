@@ -281,7 +281,7 @@ class S3Staging(staging.Staging):
             if "Contents" not in data:  # No objects in the bucket
                 return resources
             for o in data["Contents"]:
-                resources.append(staging.ResourceInfo(o["Key"], o["Size"]))
+                resources.append(staging.ResourceInfo(o["Key"], o["Size"], o["LastModified"].timestamp()))
             return resources
         except ClientError as e:
             logging.exception(f"Failed to list objects: {e}")

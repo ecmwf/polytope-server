@@ -10,6 +10,7 @@ from polytope_server.common.request_store import dynamodb_request_store
 from .test_metric_store import _test_remove_old_metrics
 from .test_request_store import (
     _test_get_active_requests,
+    _test_get_request_ids,
     _test_remove_old_requests,
     _test_revoke_request,
     _test_update_request,
@@ -145,6 +146,11 @@ def test_remove_old_requests(mocked_aws):
 def test_get_active_requests(mocked_aws):
     store = dynamodb_request_store.DynamoDBRequestStore()
     _test_get_active_requests(store)
+
+
+def test_get_request_ids(mocked_aws):
+    store = dynamodb_request_store.DynamoDBRequestStore()
+    _test_get_request_ids(store)
 
 
 def test_remove_old_metrics(mocked_aws):

@@ -34,10 +34,8 @@ class LegacyAuthHelper:
     """A helper to encapsulate checking user authentication and authorization"""
 
     def __init__(self, config):
-        logging.warning(
-            "LegacyAuthHelper has been deprecated and will be removed in a future version. \
-                Please consider using Auth-o-tron"
-        )
+        logging.warning("LegacyAuthHelper has been deprecated and will be removed in a future version. \
+                Please consider using Auth-o-tron")
         self.config = config
 
         self.authenticators = []

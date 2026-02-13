@@ -124,3 +124,16 @@ def _test_get_active_requests(store):
     assert req_processed.id not in active_ids
     assert req_failed.id not in active_ids
     assert req_waiting.id not in active_ids
+
+
+def _test_get_request_ids(store):
+    test_user = user.User("test-user", "test-realm")
+    req_a = request.PolytopeRequest(status=request.Status.QUEUED, user=test_user)
+    req_b = request.PolytopeRequest(status=request.Status.PROCESSED, user=test_user)
+
+    store.add_request(req_a)
+    store.add_request(req_b)
+
+    ids = set(store.get_request_ids())
+    assert req_a.id in ids
+    assert req_b.id in ids

@@ -78,20 +78,17 @@ class GarbageCollector:
 
     def remove_dangling_data(self):
         """As a failsafe, removes data which has no corresponding request."""
+        logging.info("Removing dangling data with no corresponding request.")
         all_objects = self.staging.list()
+        if not all_objects:
+            return
+
+        request_ids = set(self.request_store.get_request_ids())
+
         for data in all_objects:
+            request_id = data.name.rsplit(".", 1)[0]
 
-            # logging.info(f"Checking {data.name}")
-
-            # TODO: fix properly
-            # remove file extension if it exists
-            request_id = data.name
-            if "." in request_id:
-                request_id = request_id.split(".")[0]
-
-            request = self.request_store.get_request(id=request_id)
-
-            if request is None:
+            if request_id not in request_ids:
                 logging.info("Deleting {} because it has no matching request.".format(request_id))
                 try:
                     self.staging.delete(data.name)  # TODO temporary fix for content-disposition error
@@ -117,47 +114,36 @@ class GarbageCollector:
             )
         )
 
-        all_objects_by_age = {}
-
-        for data in all_objects:
-
-            # TODO: fix properly
-            # remove file extension if it exists
-            if "." in data.name:
-                data.name = data.name.split(".")[0]
-
-            request = self.request_store.get_request(id=data.name)
-
-            if request is None:
-                logging.info(f"Skipping request {data.name}, not found in request store.")
-                continue
-
-            all_objects_by_age[data.name] = {
-                "size": data.size,
-                "last_modified": request.last_modified,
-            }
-
         if total_size < self.threshold:
             return
 
         # If we reached the total size limit, start deleting old data
         # Delete objects in ascending last_modified order (oldest first)
-        for name, v in sorted(all_objects_by_age.items(), key=lambda x: x[1]["last_modified"]):
+
+        all_objects_by_age = {
+            d.name: {"size": d.size, "last_modified": d.last_modified}
+            for d in sorted(all_objects, key=lambda x: x.last_modified)
+        }
+        removed_requests = []
+        for name, v in all_objects_by_age.items():
             logging.info("Deleting {} because threshold reached and it is the oldest request.".format(name))
             try:
                 self.staging.delete(name)
             except KeyError:
                 logging.info("Data {} not found in staging.".format(name))
 
-            # TODO: fix properly
             if "." in name:
                 name = name.split(".")[0]
 
-            self.request_store.remove_request(name)
+            removed_requests.append(name)
             total_size -= v["size"]
             logging.info("Size of staging is {}/{}".format(format_bytes(total_size), format_bytes(self.threshold)))
             if total_size < self.threshold:
-                return
+                break
+
+        logging.info("Removing {} requests from request store.".format(len(removed_requests)))
+        for request_id in removed_requests:
+            self.request_store.remove_request(request_id)
 
 
 ##################################################################################
