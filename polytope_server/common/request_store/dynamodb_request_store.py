@@ -189,10 +189,7 @@ class DynamoDBRequestStore(request_store.RequestStore):
             return 0
 
         if self.metric_store:
-            for request_id in ids:
-                items = self.metric_store.get_metrics(request_id=request_id)
-                for item in items:
-                    self.metric_store.remove_metric(item.uuid)
+            self.metric_store.remove_metrics_by_request_ids(ids)
 
         with self.table.batch_writer() as batch:
             for request_id in ids:

@@ -40,3 +40,22 @@ def _test_remove_old_metrics(store: MetricStore):
     assert store.get_metric(old_metric.uuid) is None
     assert store.get_metric(new_metric.uuid) is not None
     assert deleted_count == 1
+
+
+def _test_remove_metrics_by_request_ids(store: MetricStore):
+    req_id = "req-bulk"
+    m_processed = RequestStatusChange(status=Status.PROCESSED, request_id=req_id, user_id="u1")
+    m_failed = RequestStatusChange(status=Status.FAILED, request_id=req_id, user_id="u1")
+    store.add_metric(m_processed)
+    store.add_metric(m_failed)
+
+    # Without include_processed, keep processed metric
+    deleted = store.remove_metrics_by_request_ids([req_id], include_processed=False)
+    assert deleted == 1
+    assert store.get_metric(m_failed.uuid) is None
+    assert store.get_metric(m_processed.uuid) is not None
+
+    # Now remove remaining (processed) metric
+    deleted = store.remove_metrics_by_request_ids([req_id], include_processed=True)
+    assert deleted == 1
+    assert store.get_metric(m_processed.uuid) is None

@@ -4,7 +4,8 @@ from unittest import mock
 import pytest
 from moto import mock_aws
 
-from polytope_server.common import request, user
+from polytope_server.common import metric, request, user
+from polytope_server.common.metric_store import dynamodb_metric_store
 from polytope_server.common.request_store import dynamodb_request_store
 
 from .test_metric_store import _test_remove_old_metrics
@@ -164,6 +165,24 @@ def test_remove_old_metrics(mocked_aws):
         metric_store_config={"dynamodb": {"table_name": "metrics"}}
     ).metric_store
     _test_remove_old_metrics(store)
+
+
+def test_remove_metrics_by_request_ids(mocked_aws):
+    store = dynamodb_metric_store.DynamoDBMetricStore()
+    req_id = "req-bulk"
+    m_processed = metric.RequestStatusChange(status=request.Status.PROCESSED, request_id=req_id, user_id="u1")
+    m_failed = metric.RequestStatusChange(status=request.Status.FAILED, request_id=req_id, user_id="u1")
+    store.add_metric(m_processed)
+    store.add_metric(m_failed)
+
+    deleted = store.remove_metrics_by_request_ids([req_id], include_processed=False)
+    assert deleted == 1
+    assert store.get_metric(m_failed.uuid) is None
+    assert store.get_metric(m_processed.uuid) is not None
+
+    deleted = store.remove_metrics_by_request_ids([req_id], include_processed=True)
+    assert deleted == 1
+    assert store.get_metric(m_processed.uuid) is None
 
 
 def test_inexact(mocked_aws):
