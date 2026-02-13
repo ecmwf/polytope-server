@@ -137,3 +137,21 @@ def _test_get_request_ids(store):
     ids = set(store.get_request_ids())
     assert req_a.id in ids
     assert req_b.id in ids
+
+
+def _test_remove_requests(store):
+    test_user = user.User("test-user", "test-realm")
+    req_a = request.PolytopeRequest(status=request.Status.FAILED, user=test_user)
+    req_b = request.PolytopeRequest(status=request.Status.PROCESSED, user=test_user)
+    req_c = request.PolytopeRequest(status=request.Status.WAITING, user=test_user)
+
+    store.add_request(req_a)
+    store.add_request(req_b)
+    store.add_request(req_c)
+
+    removed = store.remove_requests([req_a.id, req_b.id])
+    assert removed == 2
+
+    assert store.get_request(req_a.id) is None
+    assert store.get_request(req_b.id) is None
+    assert store.get_request(req_c.id) is not None

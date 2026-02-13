@@ -60,6 +60,10 @@ class RequestStore(ABC):
         """Remove a request from the request store."""
 
     @abstractmethod
+    def remove_requests(self, ids: List[str]) -> int:
+        """Remove multiple requests and return the number removed."""
+
+    @abstractmethod
     def revoke_request(self, user: User, id: str) -> int:
         """
         Revoke a queued but unstarted request from the request store.

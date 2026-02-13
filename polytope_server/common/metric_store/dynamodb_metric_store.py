@@ -165,6 +165,38 @@ class DynamoDBMetricStore(MetricStore):
                 raise KeyError("Request does not exist in request store") from e
             raise
 
+    def remove_metrics_by_request_ids(self, request_ids, include_processed=False):
+        logging.info(
+            f"Removing metrics with include_processed={include_processed}",
+            extra={"deleted_metrics_request_ids": request_ids},
+        )
+        ids = list({str(i) for i in request_ids})
+        if not ids:
+            return 0
+
+        filter_expr = Attr("request_id").is_in(ids)
+        if not include_processed:
+            filter_expr = filter_expr & Attr("status").ne("processed")
+
+        to_delete = [
+            item["uuid"]
+            for item in _iter_items(
+                self.table.scan,
+                FilterExpression=filter_expr,
+                ProjectionExpression="#u",
+                ExpressionAttributeNames={"#u": "uuid"},
+            )
+        ]
+
+        if not to_delete:
+            return 0
+
+        with self.table.batch_writer() as batch:
+            for uuid in to_delete:
+                batch.delete_item(Key={"uuid": str(uuid)})
+
+        return len(to_delete)
+
     def get_metric(self, uuid):
         response = self.table.get_item(Key={"uuid": str(uuid)})
         if "Item" in response:
