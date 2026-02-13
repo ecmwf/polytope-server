@@ -166,6 +166,10 @@ class DynamoDBMetricStore(MetricStore):
             raise
 
     def remove_metrics_by_request_ids(self, request_ids, include_processed=False):
+        logging.info(
+            f"Removing metrics with include_processed={include_processed}",
+            extra={"deleted_metrics_request_ids": request_ids},
+        )
         ids = list({str(i) for i in request_ids})
         if not ids:
             return 0
