@@ -49,6 +49,10 @@ class MetricStore(ABC):
     def remove_metric(self, uuid: str) -> None:
         """Remove a metric from the metric store"""
 
+    @abstractmethod
+    def remove_metrics_by_request_ids(self, request_ids: List[str], include_processed: bool = False) -> int:
+        """Remove metrics tied to any of the given request_ids. Returns number removed."""
+
     # @abstractmethod
     # def update_metric(self, metric: Metric) -> None:
     #    """ Updates a stored metric """

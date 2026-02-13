@@ -89,10 +89,7 @@ class MongoRequestStore(request_store.RequestStore):
             return 0
 
         if self.metric_store:
-            for request_id in ids:
-                res = self.metric_store.get_metrics(type=MetricType.REQUEST_STATUS_CHANGE, request_id=request_id)
-                for i in res:
-                    self.metric_store.remove_metric(i.uuid)
+            self.metric_store.remove_metrics_by_request_ids(ids)
 
         result = self.store.delete_many({"id": {"$in": ids}})
         logging.info("Removed %s requests in bulk.", result.deleted_count)

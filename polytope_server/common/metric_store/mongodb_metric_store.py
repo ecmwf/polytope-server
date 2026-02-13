@@ -79,6 +79,18 @@ class MongoMetricStore(MetricStore):
         if result is None:
             raise KeyError("Metric does not exist in request store")
 
+    def remove_metrics_by_request_ids(self, request_ids, include_processed=False):
+        ids = list({str(i) for i in request_ids})
+        if not ids:
+            return 0
+
+        query = {"request_id": {"$in": ids}}
+        if not include_processed:
+            query["status"] = {"$ne": "processed"}
+
+        result = self.store.delete_many(query)
+        return result.deleted_count
+
     def get_metric(self, uuid):
         result = self.store.find_one({"uuid": uuid}, {"_id": False})
         if result:

@@ -4,7 +4,10 @@ import mongomock
 
 from polytope_server.common.metric_store.mongodb_metric_store import MongoMetricStore
 
-from .test_metric_store import _test_remove_old_metrics
+from .test_metric_store import (
+    _test_remove_metrics_by_request_ids,
+    _test_remove_old_metrics,
+)
 
 
 def test_remove_old_metrics():
@@ -22,3 +25,16 @@ def test_remove_old_metrics():
         store.store = mock_collection
 
         _test_remove_old_metrics(store)
+
+
+def test_remove_metrics_by_request_ids():
+    mock_client = mongomock.MongoClient()
+    mock_collection = mock_client.db.metrics
+
+    with patch("pymongo.MongoClient") as mock_mongo_class:
+        mock_mongo_class.return_value = mock_client
+
+        store = MongoMetricStore({})
+        store.store = mock_collection
+
+        _test_remove_metrics_by_request_ids(store)
