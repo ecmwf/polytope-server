@@ -52,6 +52,10 @@ class RequestStore(ABC):
         """Returns requests with status PROCESSING or QUEUED"""
 
     @abstractmethod
+    def get_request_ids(self) -> List[str]:
+        """Return all request ids present in the store."""
+
+    @abstractmethod
     def remove_request(self, id: str) -> None:
         """Remove a request from the request store."""
 

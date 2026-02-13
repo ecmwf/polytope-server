@@ -78,20 +78,17 @@ class GarbageCollector:
 
     def remove_dangling_data(self):
         """As a failsafe, removes data which has no corresponding request."""
+        logging.info("Removing dangling data with no corresponding request.")
         all_objects = self.staging.list()
+        if not all_objects:
+            return
+
+        request_ids = set(self.request_store.get_request_ids())
+
         for data in all_objects:
+            request_id = data.name.rsplit(".", 1)[0]
 
-            # logging.info(f"Checking {data.name}")
-
-            # TODO: fix properly
-            # remove file extension if it exists
-            request_id = data.name
-            if "." in request_id:
-                request_id = request_id.split(".")[0]
-
-            request = self.request_store.get_request(id=request_id)
-
-            if request is None:
+            if request_id not in request_ids:
                 logging.info("Deleting {} because it has no matching request.".format(request_id))
                 try:
                     self.staging.delete(data.name)  # TODO temporary fix for content-disposition error

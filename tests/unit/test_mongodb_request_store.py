@@ -5,6 +5,7 @@ from polytope_server.common.request_store.mongodb_request_store import MongoRequ
 
 from .test_request_store import (
     _test_get_active_requests,
+    _test_get_request_ids,
     _test_remove_old_requests,
     _test_revoke_request,
     _test_update_request,
@@ -46,3 +47,7 @@ def test_remove_old_requests(mongomock_request_store):
 
 def test_get_active_requests(mongomock_request_store):
     _test_get_active_requests(mongomock_request_store)
+
+
+def test_get_request_ids(mongomock_request_store):
+    _test_get_request_ids(mongomock_request_store)

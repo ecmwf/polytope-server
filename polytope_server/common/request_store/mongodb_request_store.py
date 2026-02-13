@@ -168,6 +168,10 @@ class MongoRequestStore(request_store.RequestStore):
         cursor = self.store.find({"status": {"$in": [Status.PROCESSING.value, Status.QUEUED.value]}}, {"_id": False})
         return [PolytopeRequest(from_dict=i) for i in cursor]
 
+    def get_request_ids(self):
+        cursor = self.store.find({}, {"_id": False, "id": True})
+        return [doc["id"] for doc in cursor if "id" in doc]
+
     def update_request(self, request):
         request.last_modified = datetime.datetime.now(datetime.timezone.utc).timestamp()
         res = self.store.find_one_and_update(
@@ -201,4 +205,5 @@ class MongoRequestStore(request_store.RequestStore):
         result = self.store.delete_many(
             {"status": {"$in": [Status.FAILED.value, Status.PROCESSED.value]}, "last_modified": {"$lt": cutoff}}
         )
+        logging.info("Removed {} old requests from request store.".format(result.deleted_count))
         return result.deleted_count

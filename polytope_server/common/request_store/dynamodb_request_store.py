@@ -292,6 +292,9 @@ class DynamoDBRequestStore(request_store.RequestStore):
             )
         ]
 
+    def get_request_ids(self):
+        return [item["id"] for item in _iter_items(self.table.scan, ProjectionExpression="id") if "id" in item]
+
     def update_request(self, request):
         now = dt.datetime.now(dt.timezone.utc)
         request.last_modified = now.timestamp()
