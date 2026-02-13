@@ -141,9 +141,9 @@ class GarbageCollector:
             if total_size < self.threshold:
                 break
 
-        logging.info("Removing {} requests from request store.".format(len(removed_requests)))
-        for request_id in removed_requests:
-            self.request_store.remove_request(request_id)
+        if removed_requests:
+            logging.info("Removing {} requests from request store.".format(len(removed_requests)))
+            self.request_store.remove_requests(removed_requests)
 
 
 ##################################################################################

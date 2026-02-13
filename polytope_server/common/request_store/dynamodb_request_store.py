@@ -183,6 +183,24 @@ class DynamoDBRequestStore(request_store.RequestStore):
 
         logger.info("Request ID %s removed.", id)
 
+    def remove_requests(self, ids):
+        ids = list({str(i) for i in ids})
+        if not ids:
+            return 0
+
+        if self.metric_store:
+            for request_id in ids:
+                items = self.metric_store.get_metrics(request_id=request_id)
+                for item in items:
+                    self.metric_store.remove_metric(item.uuid)
+
+        with self.table.batch_writer() as batch:
+            for request_id in ids:
+                batch.delete_item(Key={"id": request_id})
+
+        logger.info("Removed %s requests in bulk.", len(ids))
+        return len(ids)
+
     def revoke_request(self, user: User, id: str):
         if id == "all":
             # Query the status index for WAITING and QUEUED requests for this user
