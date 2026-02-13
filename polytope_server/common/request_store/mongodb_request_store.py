@@ -83,6 +83,21 @@ class MongoRequestStore(request_store.RequestStore):
                 self.metric_store.remove_metric(i.uuid)
         logging.info("Request ID %s removed.", id)
 
+    def remove_requests(self, ids):
+        ids = list(set(ids))
+        if not ids:
+            return 0
+
+        if self.metric_store:
+            for request_id in ids:
+                res = self.metric_store.get_metrics(type=MetricType.REQUEST_STATUS_CHANGE, request_id=request_id)
+                for i in res:
+                    self.metric_store.remove_metric(i.uuid)
+
+        result = self.store.delete_many({"id": {"$in": ids}})
+        logging.info("Removed %s requests in bulk.", result.deleted_count)
+        return result.deleted_count
+
     def revoke_request(self, user, id):
         if id == "all":
             # Revoke all requests of the user that are waiting or queued

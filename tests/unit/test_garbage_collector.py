@@ -45,6 +45,10 @@ class _DummyRequestStore:
     def remove_request(self, request_id):
         self.calls.append(("remove_request", request_id))
 
+    def remove_requests(self, ids):
+        self.calls.append(("remove_requests", list(ids)))
+        return len(ids)
+
     def get_request_ids(self):  # pragma: no cover - not used here
         return []
 
@@ -160,5 +164,4 @@ def test_remove_by_size_deletes_oldest_first():
 
     # total was 120 > 80 so deletes oldest (30) then second (50) to drop to 40
     assert staging.deleted == ["delete-oldest", "delete-second"]
-    assert [call for call, _ in store.calls] == ["remove_request", "remove_request"]
-    assert {req_id for _, req_id in store.calls} == {"delete-oldest", "delete-second"}
+    assert store.calls == [("remove_requests", ["delete-oldest", "delete-second"])]
