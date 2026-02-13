@@ -121,6 +121,13 @@ class MongoMetricCalculator(MetricCalculator):
             },
         )
 
+        # Direct id lookups/deletions
+        safe_create_index(
+            self.collection,
+            [("id", ASCENDING)],
+            name="ix_request_id",
+        )
+
         # Generic descending timestamp + last_modified index
         safe_create_index(
             self.collection,
