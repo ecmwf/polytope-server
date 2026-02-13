@@ -76,7 +76,7 @@ class HTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
         if path.endswith("/"):
             self._set_headers()
             output = {}
-            (_, _, filenames) = next(os.walk(path))
+            _, _, filenames = next(os.walk(path))
             for f in filenames:
                 if not f.endswith(".meta"):
                     output[f] = os.path.getsize(path + f)

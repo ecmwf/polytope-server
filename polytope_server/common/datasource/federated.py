@@ -71,13 +71,9 @@ class FederatedDataSource(datasource.DataSource):
         response = requests.post(url, json=body, headers=headers)
 
         if response.status_code != HTTPStatus.ACCEPTED:
-            raise Exception(
-                "Request could not be POSTed to remote Polytope at {}.\n\
+            raise Exception("Request could not be POSTed to remote Polytope at {}.\n\
                              HTTP error code {}.\n\
-                             Message: {}".format(
-                    url, response.status_code, response.content
-                )
-            )
+                             Message: {}".format(url, response.status_code, response.content))
 
         url = response.headers["location"]
 
@@ -93,13 +89,9 @@ class FederatedDataSource(datasource.DataSource):
         )
 
         if response.status_code != HTTPStatus.ACCEPTED:
-            raise Exception(
-                "Data could not be POSTed for upload to remote Polytope at {}.\n\
+            raise Exception("Data could not be POSTed for upload to remote Polytope at {}.\n\
                              HTTP error code {}.\n\
-                             Message: {}".format(
-                    url, response.status_code, response.content
-                )
-            )
+                             Message: {}".format(url, response.status_code, response.content))
 
         url = response.headers["location"]
         time.sleep(int(float(response.headers["retry-after"])))
@@ -117,13 +109,9 @@ class FederatedDataSource(datasource.DataSource):
                 time.sleep(int(float(response.headers["retry-after"])))
 
         if status != HTTPStatus.OK:
-            raise Exception(
-                "Request failed on remote Polytope at {}.\n\
+            raise Exception("Request failed on remote Polytope at {}.\n\
                             HTTP error code {}.\n\
-                            Message: {}".format(
-                    url, status, response.json()["message"]
-                )
-            )
+                            Message: {}".format(url, status, response.json()["message"]))
 
         return True
 
@@ -154,13 +142,9 @@ class FederatedDataSource(datasource.DataSource):
         response = requests.post(url, json=body, headers=headers)
 
         if response.status_code != HTTPStatus.ACCEPTED:
-            raise Exception(
-                "Request could not be POSTed to remote Polytope at {}.\n\
+            raise Exception("Request could not be POSTed to remote Polytope at {}.\n\
                              HTTP error code {}.\n\
-                             Message: {}".format(
-                    url, response.status_code, response.content
-                )
-            )
+                             Message: {}".format(url, response.status_code, response.content))
 
         url = response.headers["location"]
         time.sleep(int(float(response.headers["retry-after"])))
@@ -177,13 +161,9 @@ class FederatedDataSource(datasource.DataSource):
                 time.sleep(int(float(response.headers["retry-after"])))
 
         if status != HTTPStatus.SEE_OTHER:
-            raise Exception(
-                "Request failed on remote Polytope at {}.\n\
+            raise Exception("Request failed on remote Polytope at {}.\n\
                             HTTP error code {}.\n\
-                            Message: {}".format(
-                    url, status, response.json()["message"]
-                )
-            )
+                            Message: {}".format(url, status, response.json()["message"]))
 
         self.result_url = url
 

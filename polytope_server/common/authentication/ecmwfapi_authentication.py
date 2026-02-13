@@ -84,12 +84,8 @@ def retrieve_ecmwfapi_user(key, url, status_url, proxy=""):
     if response.status_code == 403:
         raise KeyError("Invalid Key")
     elif response.status_code >= 500:
-        raise ServiceUnavailable(
-            "URL {} is temporarily unavailable, could not authenticate. \
-             See {}".format(
-                url, status_url
-            )
-        )
+        raise ServiceUnavailable("URL {} is temporarily unavailable, could not authenticate. \
+             See {}".format(url, status_url))
     response.raise_for_status()
 
     result = response.json()
