@@ -116,31 +116,31 @@ def test_date_coercion():
 
 
 @pytest.mark.parametrize(
-    "value, expected, should_raise",
+    "value, expected, should_work",
     [
-        (2, "2", False),
-        ("1", "1", False),
-        (10, "10", False),
-        (0, "0", False),
-        ("0", "0", False),
-        ("70m", "70m", False),
-        ("1h15m", "1h15m", False),
-        ("2h", "2h", False),
-        ("1-2", "1-2", False),
-        ("1h-3h", "1h-3h", False),
-        ("1h30m-32", "1h30m-32", False),
-        ("1m30s-3m", "1m30s-3m", False),
-        ("3d", "3d", False),
-        (-1, None, True),
-        (1.0, None, True),
-        ([], None, True),
-        ({}, None, True),
-        ("1h-3s30m", None, True),
-        ("3m20d", None, True),
+        (2, "2", True),
+        ("1", "1", True),
+        (10, "10", True),
+        (0, "0", True),
+        ("0", "0", True),
+        ("70m", "70m", True),
+        ("1h15m", "1h15m", True),
+        ("2h", "2h", True),
+        ("1-2", "1-2", True),
+        ("1h-3h", "1h-3h", True),
+        ("1h30m-32", "1h30m-32", True),
+        ("1m30s-3m", "1m30s-3m", True),
+        ("3d", "3d", True),
+        (-1, None, False),
+        (1.0, None, False),
+        ([], None, False),
+        ({}, None, False),
+        ("1h-3s30m", None, False),
+        ("3m20d", None, False),
     ],
 )
-def test_step_coercion(value, expected, should_raise):
-    if should_raise:
+def test_step_coercion(value, expected, should_work):
+    if not should_work:
         with pytest.raises(CoercionError):
             coerce_step(value)
         return
