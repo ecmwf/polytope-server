@@ -115,30 +115,38 @@ def test_date_coercion():
             coerce_date(value)
 
 
-def test_step_coercion():
-
-    # Should accept integer or string, converted to string
-    ok = [
-        (2, "2"),
-        ("1", "1"),
-        (10, "10"),
-        (0, "0"),
-        ("0", "0"),
-        ("70m", "70m"),
-        ("1h15m", "1h15m"),
-        ("2h", "2h"),
-        ("1-2", "1-2"),
-    ]
-
-    fail = [-1, 1.0, [], {}]
-
-    for value, expected in ok:
-        result = coerce_step(value)
-        assert result == expected
-
-    for value in fail:
+@pytest.mark.parametrize(
+    "value, expected, should_raise",
+    [
+        (2, "2", False),
+        ("1", "1", False),
+        (10, "10", False),
+        (0, "0", False),
+        ("0", "0", False),
+        ("70m", "70m", False),
+        ("1h15m", "1h15m", False),
+        ("2h", "2h", False),
+        ("1-2", "1-2", False),
+        ("1h-3h", "1h-3h", False),
+        ("1h30m-32", "1h30m-32", False),
+        ("1m30s-3m", "1m30s-3m", False),
+        ("3d", "3d", False),
+        (-1, None, True),
+        (1.0, None, True),
+        ([], None, True),
+        ({}, None, True),
+        ("1h-3s30m", None, True),
+        ("3m20d", None, True),
+    ],
+)
+def test_step_coercion(value, expected, should_raise):
+    if should_raise:
         with pytest.raises(CoercionError):
             coerce_step(value)
+        return
+
+    result = coerce_step(value)
+    assert result == expected
 
 
 def test_number_coercion():
