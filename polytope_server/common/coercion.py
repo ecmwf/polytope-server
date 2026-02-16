@@ -136,24 +136,33 @@ def coerce_step(value: Any) -> str:
         else:
             return str(value)
     elif isinstance(value, str):
-        try:
-            if int(value) < 0:
-                raise CoercionError("Step must be greater than or equal to 0.")
-            else:
-                return value
-        except ValueError:
-            # value cannot be converted to a digit, but we would like to match step ranges too
-            step_pattern = r"^\d+-\d+$"
-            step_match = re.match(step_pattern, value)
-            h_match = re.search(r"(\d+)\s*h", value)
-            m_match = re.search(r"(\d+)\s*m", value)
-
-            if not h_match and not m_match and not step_match:
-                raise CoercionError("Invalid type, expected integer step, step range or sub-hourly step.")
-            else:
-                return value
+        if _is_valid_step(value):
+            return value
+        # check step ranges
+        step_range_pattern = r"^(.*)-(.*)$"
+        step_match = re.match(step_range_pattern, value)
+        if step_match and _is_valid_step(step_match.group(1)) and _is_valid_step(step_match.group(2)):
+            return value
+        raise CoercionError(
+            "Invalid step format, expected integer, sub-hourly step (e.g., '1h', '30m', '1h30m'),"
+            + " or a range of these formats (e.g., '1h-3')."
+        )
     else:
         raise CoercionError("Invalid type, expected integer or string.")
+
+
+def _is_valid_step(value: str) -> bool:
+    """
+    Checks if the single step value (not range) is valid. Valid formats include:
+    - Integer (e.g., "6")
+    - Sub-hourly step (e.g., "1h", "30m", "1h30m", "30s" etc.)
+    """
+    print(f"Validating step value: {value}")
+    units = ["d", "h", "m", "s"]
+    pattern = r"^\d+" + r"?".join(rf"(\d*{unit})" for unit in units) + r"?$"
+    print(pattern)
+    # pattern = r"^\d+(\d*d)(\d*h)?(\d*m)?(\d*s)?$" # left for readability, above expands to this
+    return re.match(pattern, value) is not None
 
 
 def coerce_number(value: Any) -> str:
