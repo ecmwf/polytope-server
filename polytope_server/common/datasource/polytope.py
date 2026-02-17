@@ -162,35 +162,27 @@ def change_grids(request, config):
 
     # This only holds for climate dt data
     elif request.get("dataset", None) == "climate-dt":
-        # all resolution=standard have h128
         if request["resolution"] == "standard":
             res = 128
-            return change_config_grid_res(config, res)
 
-        if request["generation"] == "1":
-            # for activity CMIP6 and experiment hist, all models except ifs-nemo have h512 and ifs-nemo has h1024
-            if request["activity"] == "cmip6" and request["experiment"] == "hist":
-                # if request["model"] == "ifs-nemo":
-                #     res = 1024
-                # else:
-                #     res = 512
+        else:
+            # activity scenariomip is only used in generation 1 so don't need to specify generation 1 here
+            # This is the nextgems under class d1 run in generation 1
+            # In generation 2, runs with realization 2,3,4 used H512.
+            if request["realization"] != "1":
+                res = 512
+
+            # IFS-FESOM under generation 1 highresmip is H512
+            elif request["activity"] == "highresmip" and request["model"] == "ifs-fesom":
+                res = 512
+
+            # All story nudging runs here are H512
+            elif request["activity"] == "story-nudging":
+                res = 512
+
+            # Catch all for others that don't fit into exception cases above
+            elif request["activity"] in ["baseline", "cmip6", "highresmip", "projections", "scenariomip"]:
                 res = 1024
-
-            if request["activity"] == "story-nudging":
-                res = 512
-
-            if request["activity"] in ["baseline", "projections", "scenariomip"]:
-                res = 1024
-
-            if request["realization"] == "2" and request["model"] == "ifs-fesom":
-                res = 512
-
-            if (
-                request["activity"] == "highresmip"
-                and request["experiment"] == "cont"
-                and request["model"] == "ifs-fesom"
-            ):
-                res = 512
 
     elif request.get("dataset", None) == "extremes-dt":
         if request["stream"] == "wave":
