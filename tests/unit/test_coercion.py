@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from unittest.mock import patch
 
 import pytest
 
@@ -148,7 +149,7 @@ def test_step_coercion_fail(value):
         coerce_step(value)
 
 
-@pytest.mark.parametrize("value, expected", [(2, "2"), ("1", "1"), (10, "10"), (0, "0"), ("0", "0")])
+@pytest.mark.parametrize("value, expected", [(2, "2"), ("1", "1"), (10, "10")])
 def test_number_coercion_ok(value, expected):
     result = coerce_number(value)
     assert result == expected
@@ -158,6 +159,11 @@ def test_number_coercion_ok(value, expected):
 def test_number_coercion_fail(value):
     with pytest.raises(CoercionError):
         coerce_number(value)
+
+
+@patch("polytope_server.common.coercion.get_config", lambda: {"number_allow_zero": True})
+def test_number_coercion_allow_zero():
+    assert coerce_number(0) == "0"
 
 
 @pytest.mark.parametrize(
