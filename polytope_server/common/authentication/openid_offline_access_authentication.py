@@ -124,7 +124,8 @@ class OpenIDOfflineAuthentication(authentication.Authentication):
 
             user = User(token["sub"], self.realm())
 
-            roles = token.get("resource_access", {}).get(self.public_client_id, {}).get("roles", [])
+            key = self.jwt_aud if self.jwt_aud is not None else self.public_client_id
+            roles = token.get("resource_access", {}).get(key, {}).get("roles", [])
             user.roles.extend(roles)
             roles = token.get("realm_access", {}).get("roles", [])
             user.roles.extend(roles)
