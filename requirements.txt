@@ -1,6 +1,6 @@
 attrdict==2.0.1
 boto3==1.35.19
-covjsonkit==0.2.9
+covjsonkit==0.2.10
 deepmerge==2.0
 docker==7.1.0
 ecmwf-api-client==1.6.3
