@@ -26,7 +26,9 @@ import os
 import signal
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import PurePath
 from typing import NoReturn
+from urllib.parse import urlparse
 
 import requests
 from opentelemetry import trace
@@ -252,7 +254,11 @@ class Worker:
             # upload result data
             if datasource is not None:
                 request.url = self.staging.create(id, datasource.result(request), datasource.mime_type())
-                request.content_type, request.content_length = self.staging.stat(request.url.split("/")[-1])
+                # Getting key (name + ext) from url
+                url_path = PurePath(urlparse(request.url).path)
+                extension = url_path.suffix
+                # Getting data size in bytes
+                request.content_type, request.content_length = self.staging.stat(f"{id}{extension}")
 
         except Exception as e:
             logging.exception("Failed to finalize request", extra={"exception": repr(e)})
