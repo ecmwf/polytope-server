@@ -28,10 +28,12 @@ from subprocess import CalledProcessError
 class Subprocess:
     def __init__(self):
         self.subprocess = None
+        self._stdout_buffer = []
+        self._stderr_buffer = []
 
     def run(self, cmd, cwd=None, env=None):
-        env = {**os.environ, **(env or None)}
-        logging.info("Calling {} in directory {} with env {}".format(cmd, cwd, env))
+        env = {**os.environ, **(env or {})}
+        logging.info("Calling {} in directory {}".format(cmd, cwd), extra={"env": env})
         self.subprocess = subprocess.Popen(
             cmd,
             env=env,
@@ -50,12 +52,7 @@ class Subprocess:
                 line = fd.readline()
                 if line:
                     line = line.decode().strip()
-                    if fd == self.subprocess.stdout:
-                        logging.info(line)
-                    elif fd == self.subprocess.stderr:
-                        logging.error(line)
-                    if err_filter and err_filter in line:
-                        request.user_message += line + "\n"
+                    self._handle_line(fd, line, request, err_filter)
             if not self.running():
                 break
             ret = select.select(reads, [], [], 0)
@@ -68,7 +65,6 @@ class Subprocess:
 
     def finalize(self, request, err_filter):
         """Close subprocess and decode output"""
-        logging.info("Finalizing subprocess")
         # fifo has been closed so this process should finish, but sometimes hangs so we set a timeout
         try:
             returncode = self.subprocess.wait(60)
@@ -77,20 +73,42 @@ class Subprocess:
             self.subprocess.kill()
             returncode = self.subprocess.returncode
         logging.info("Subprocess finished with return code: {}".format(returncode))
-        logging.info("Subprocess stdout:")
         for line in self.subprocess.stdout:
             line = line.decode().strip()
-            if err_filter and err_filter in line:
-                request.user_message += line + "\n"
-                logging.error(line)
-            else:
-                logging.info(line)
-        logging.info("Subprocess stderr:")
+            self._handle_line(self.subprocess.stdout, line, request, err_filter)
         for line in self.subprocess.stderr:
             line = line.decode().strip()
-            if err_filter and err_filter in line:
-                request.user_message += line + "\n"
-            logging.error(line)
+            self._handle_line(self.subprocess.stderr, line, request, err_filter)
+
+        self._flush_buffers(request, err_filter)
 
         if returncode != 0:
             raise CalledProcessError(returncode, self.subprocess.args)
+
+    def _handle_line(self, fd, line, request, err_filter):
+        buffer, log_func = self._get_buffer_and_logger(fd)
+        if line.startswith("mars") and buffer:
+            self._flush_buffer(buffer, log_func, request, err_filter)
+        buffer.append(line)
+
+    def _flush_buffers(self, request, err_filter):
+        for buffer, log_func in [
+            (self._stdout_buffer, logging.info),
+            (self._stderr_buffer, logging.error),
+        ]:
+            self._flush_buffer(buffer, log_func, request, err_filter)
+
+    def _flush_buffer(self, buffer, log_func, request, err_filter):
+        if not buffer:
+            return
+        message = "\n".join(buffer)
+        log_method = logging.error if err_filter and err_filter in message else log_func
+        log_method(message)
+        if err_filter and err_filter in message:
+            request.user_message += message + "\n"
+        buffer.clear()
+
+    def _get_buffer_and_logger(self, fd):
+        if fd == self.subprocess.stdout:
+            return self._stdout_buffer, logging.info
+        return self._stderr_buffer, logging.error
