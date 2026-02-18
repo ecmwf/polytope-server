@@ -107,20 +107,6 @@ class Worker:
         self.status = new_status
         self.status_time = 0.0
 
-        logging.info(
-            "Worker status update",
-            extra={
-                "worker": {
-                    "status": self.status,
-                    "request_id": self.processing_id,
-                    "requests_processed": self.requests_processed,
-                    "requests_failed": self.requests_failed,
-                    "total_idle_time": self.total_idle_time,
-                    "total_processing_time": self.total_processing_time,
-                }
-            },
-        )
-
     async def keep_alive(self) -> NoReturn:
         if self.queue is None:
             raise RuntimeError("queue was not initialised")
@@ -265,7 +251,7 @@ class Worker:
 
         if datasource is None:
             # request.user_message += "Failed to process request."
-            logging.info(request.user_message)
+            logging.debug(request.user_message)
             raise Exception("Request was not accepted by any datasources.")
         else:
             request.user_message += "Success"
@@ -299,14 +285,14 @@ class Worker:
         """Called when the request processing exits cleanly"""
 
         self.request.user_message = "Success"  # Do not report log history on successful request
-        logging.info("Request completed successfully.")
+        logging.debug("Request completed successfully.")
         self.request_store.set_request_status(self.request, Status.PROCESSED)
         self.requests_processed += 1
 
     def on_request_fail(self, exception: Exception) -> None:
         """Called when the request processing raises an exception"""
 
-        logging.exception("Request failed with exception.")
+        logging.debug("Request failed with exception.")
         error_message = self.request.user_message + "\n" + str(exception)
         self.request.user_message = error_message
         self.request_store.set_request_status(self.request, Status.FAILED)
@@ -324,5 +310,5 @@ class Worker:
                     self.request_store.set_request_status(self.request, Status.QUEUED)
                     self.queue.nack(self.queue_msg)
                 else:
-                    logging.info("Worker shutting down", extra={"request": self.request.serialize()})
                     self.request_store.update_request(self.request)
+                    logging.info("Worker shutting down")
