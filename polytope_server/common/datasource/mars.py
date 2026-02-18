@@ -27,6 +27,7 @@ from subprocess import CalledProcessError
 import requests
 import yaml
 
+from ...telemetry.helpers import obfuscate_apikey
 from ..io.fifo import FIFO
 from ..subprocess import Subprocess
 from . import datasource
@@ -102,7 +103,7 @@ class MARSDataSource(datasource.DataSource):
         # Make a temporary file for the request
         with tempfile.NamedTemporaryFile(delete=False) as tmp:
             self.request_file = tmp.name
-            logging.info("Writing request to tempfile {}".format(self.request_file))
+            logging.debug("Writing request to tempfile {}".format(self.request_file))
             tmp.write(convert_to_mars_request(r, "retrieve").encode())
 
         # Call MARS
@@ -113,7 +114,7 @@ class MARSDataSource(datasource.DataSource):
             env=self.make_env(request),
         )
 
-        logging.info("MARS subprocess started with PID {}".format(self.subprocess.subprocess.pid))
+        logging.debug("MARS subprocess started with PID {}".format(self.subprocess.subprocess.pid))
 
         if self.use_file_io:
             while self.subprocess.running():
@@ -126,7 +127,7 @@ class MARSDataSource(datasource.DataSource):
             while self.subprocess.running():
                 # logging.debug("Checking if MARS process has opened FIFO.")  # this floods the logs
                 if self.fifo.ready():
-                    logging.info("FIFO is ready for reading.")
+                    logging.debug("FIFO is ready for reading.")
                     break
 
                 self.subprocess.read_output(request, self.mars_error_filter)
@@ -301,7 +302,7 @@ class MARSDataSource(datasource.DataSource):
                 mars_user = request.user.attributes.get("ecmwf-email", "no-email")
 
             if self.override_mars_apikey:
-                logging.info("Overriding MARS_USER_TOKEN with {}".format(self.override_mars_apikey))
+                logging.info("Overriding MARS_USER_TOKEN with {}".format(obfuscate_apikey(self.override_mars_apikey)))
                 mars_token = self.override_mars_apikey
             else:
                 mars_token = request.user.attributes.get("ecmwf-apikey", "no-api-key")
@@ -320,7 +321,9 @@ class MARSDataSource(datasource.DataSource):
             if self.protocol == "dhs":
                 env.update(self._build_dhs_env())
 
-            logging.info("Accessing MARS on behalf of user {} with token {}".format(mars_user, mars_token))
+            logging.info(
+                "Accessing MARS on behalf of user {} with token {}".format(mars_user, obfuscate_apikey(mars_token))
+            )
 
         except Exception as e:
             logging.error("MARS request aborted because user does not have associated ECMWF credentials")
