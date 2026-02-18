@@ -41,7 +41,7 @@ class Authotron:
         """Forwards the header to Auth-o-tron.
         Returns authenticated User, or raises UnauthorizedRequest"""
 
-        logging.info("Authenticating user with header: {}".format(auth_header))
+        logging.debug("Authenticating user with header: {}".format(auth_header))
 
         if auth_header.startswith("EmailKey "):
             logging.debug("Converting EmailKey to Bearer token")
