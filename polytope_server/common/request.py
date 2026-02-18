@@ -95,7 +95,7 @@ class PolytopeRequest:
         if self.status_history is None:
             self.status_history = {}
         self.status_history.setdefault(value.value, now_ts)
-        logging.info("Request %s status set to %s.", self.id, value.value)
+        logging.debug("Request %s status set to %s.", self.id, value.value)
 
     @classmethod
     def serialize_slot(cls, key, value):
