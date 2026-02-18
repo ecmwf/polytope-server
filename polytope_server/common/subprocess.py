@@ -24,6 +24,8 @@ import select
 import subprocess
 from subprocess import CalledProcessError
 
+from ..telemetry.helpers import obfuscate_apikey
+
 
 class Subprocess:
     def __init__(self):
@@ -33,7 +35,8 @@ class Subprocess:
 
     def run(self, cmd, cwd=None, env=None):
         env = {**os.environ, **(env or {})}
-        logging.info("Calling {} in directory {}".format(cmd, cwd), extra={"env": env})
+        obfuscated_env = {k: (obfuscate_apikey(v) if "KEY" in k or "TOKEN" in k else v) for k, v in env.items()}
+        logging.info("Calling {} in directory {}".format(cmd, cwd), extra={"env": obfuscated_env})
         self.subprocess = subprocess.Popen(
             cmd,
             env=env,
