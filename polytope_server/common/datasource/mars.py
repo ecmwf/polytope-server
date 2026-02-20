@@ -197,11 +197,53 @@ class MARSDataSource(datasource.DataSource):
     #######################################################
 
     def _build_dhs_env(self):
-        """Build DHS callback environment from the pod's Kubernetes service."""
+        """Build DHS callback environment from pre-set env vars or Kubernetes service."""
+
+        required_dhs_keys = [
+            "MARS_DHS_CALLBACK_HOST",
+            "MARS_DHS_CALLBACK_PORT",
+            "MARS_DHS_LOCALPORT",
+            "MARS_DHS_LOCALHOST",
+        ]
+
+        provided_env = {key: os.environ.get(key) for key in required_dhs_keys}
+        if all(provided_env.values()):
+            logging.info("Using existing MARS_DHS_* environment variables.")
+            environ_origin = os.environ.get("MARS_ENVIRON_ORIGIN", "polytope")
+            return {
+                "MARS_ENVIRON_ORIGIN": environ_origin,
+                **{key: str(value) for key, value in provided_env.items()},
+            }
+
+        if any(provided_env.values()):
+            missing_keys = [key for key, value in provided_env.items() if not value]
+            raise RuntimeError(
+                "MARS DHS environment partially configured via environment; missing: {}".format(", ".join(missing_keys))
+            )
 
         token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
         ca_path = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
         port_file = "/persistent/last_mars_port"
+
+        required_k8s_keys = [
+            "K8S_NODE_NAME",
+            "K8S_POD_NAME",
+            "K8S_NAMESPACE",
+            "KUBERNETES_SERVICE_HOST",
+            "KUBERNETES_PORT_443_TCP_PORT",
+        ]
+        missing_k8s = [key for key in required_k8s_keys if not os.environ.get(key)]
+        if missing_k8s:
+            raise RuntimeError("MARS DHS environment requires Kubernetes variables: {}".format(", ".join(missing_k8s)))
+
+        for path, description in [
+            (token_path, "serviceaccount token"),
+            (ca_path, "serviceaccount CA certificate"),
+        ]:
+            if not os.path.exists(path):
+                raise FileNotFoundError(
+                    "MARS DHS environment expected {} at {} but it was not found".format(description, path)
+                )
 
         with open(token_path, "r") as file:
             token = file.read().strip()
