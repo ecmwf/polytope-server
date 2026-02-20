@@ -144,7 +144,7 @@ def coerce_step(value: Any) -> str:
         if step_match and _is_valid_step(step_match.group(1)) and _is_valid_step(step_match.group(2)):
             return value
         raise CoercionError(
-            "Invalid step format, expected integer, sub-hourly step (e.g., '1h', '30m', '1h30m'),"
+            "Invalid step format, expected integer, steps with units (e.g., '1h', '30m', '1h30m', '2d', '30s'),"
             + " or a range of these formats (e.g., '1h-3')."
         )
     else:
@@ -155,13 +155,11 @@ def _is_valid_step(value: str) -> bool:
     """
     Checks if the single step value (not range) is valid. Valid formats include:
     - Integer (e.g., "6")
-    - Sub-hourly step (e.g., "1h", "30m", "1h30m", "30s" etc.)
+    - Step with time units (e.g., "1h", "30m", "1h30m", "30s", "3d" etc.)
     """
-    print(f"Validating step value: {value}")
     units = ["d", "h", "m", "s"]
     pattern = r"^\d+" + r"?".join(rf"(\d*{unit})" for unit in units) + r"?$"
-    print(pattern)
-    # pattern = r"^\d+(\d*d)(\d*h)?(\d*m)?(\d*s)?$" # left for readability, above expands to this
+    # pattern = r"^\d+(\d*d)?(\d*h)?(\d*m)?(\d*s)?$"  # left for readability, above expands to this
     return re.match(pattern, value) is not None
 
 
