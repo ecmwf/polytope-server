@@ -1,3 +1,6 @@
+from datetime import datetime, timedelta
+from unittest.mock import patch
+
 import pytest
 
 from polytope_server.common.coercion import (
@@ -74,121 +77,118 @@ def test_coerce():
         assert r == request_out
 
 
-def test_date_coercion():
-
-    from datetime import datetime, timedelta
-
-    today = datetime.today()
-    yyyymmdd = today.strftime("%Y%m%d")
-    yyyy_mm_dd = today.strftime("%Y-%m-%d")
-    yesterday = (today + timedelta(days=-1)).strftime("%Y%m%d")
-    today = today.strftime("%Y%m%d")
-
-    ok = [
+@pytest.mark.parametrize(
+    "value, expected",
+    [
         (20241114, "20241114"),
         ("20241114", "20241114"),
         ("2024-11-14", "20241114"),
-        (int(yyyymmdd), yyyymmdd),
-        (yyyymmdd, yyyymmdd),
-        (yyyy_mm_dd, yyyymmdd),
-        (-1, yesterday),
-        (0, today),
-        ("-1", yesterday),
-        ("0", today),
-    ]
+        (-1, (datetime.today() + timedelta(days=-1)).strftime("%Y%m%d")),
+        (0, datetime.today().strftime("%Y%m%d")),
+        ("-1", (datetime.today() + timedelta(days=-1)).strftime("%Y%m%d")),
+        ("0", datetime.today().strftime("%Y%m%d")),
+    ],
+)
+def test_date_coercion_ok(value, expected):
+    result = coerce_date(value)
+    assert result == expected
 
-    fail = [
+
+@pytest.mark.parametrize(
+    "value",
+    [
         "2024-11-14T00:00:00",
         202401,
         2024010,
         1.0,
         [],
         {},
-    ]
-
-    for value, expected in ok:
-        result = coerce_date(value)
-        assert result == expected
-
-    for value in fail:
-        with pytest.raises(CoercionError):
-            coerce_date(value)
+    ],
+)
+def test_date_coercion_fail(value):
+    with pytest.raises(CoercionError):
+        coerce_date(value)
 
 
 @pytest.mark.parametrize(
-    "value, expected, should_work",
+    "value, expected",
     [
-        (2, "2", True),
-        ("1", "1", True),
-        (10, "10", True),
-        (0, "0", True),
-        ("0", "0", True),
-        ("70m", "70m", True),
-        ("1h15m", "1h15m", True),
-        ("2h", "2h", True),
-        ("1-2", "1-2", True),
-        ("1h-3h", "1h-3h", True),
-        ("1h30m-32", "1h30m-32", True),
-        ("1m30s-3m", "1m30s-3m", True),
-        ("3d", "3d", True),
-        (-1, None, False),
-        (1.0, None, False),
-        ([], None, False),
-        ({}, None, False),
-        ("1h-3s30m", None, False),
-        ("3m20d", None, False),
+        (2, "2"),
+        ("1", "1"),
+        (10, "10"),
+        (0, "0"),
+        ("0", "0"),
+        ("70m", "70m"),
+        ("1h15m", "1h15m"),
+        ("2h", "2h"),
+        ("1-2", "1-2"),
+        ("1h-3h", "1h-3h"),
+        ("1h30m-32", "1h30m-32"),
+        ("1m30s-3m", "1m30s-3m"),
+        ("3d", "3d"),
     ],
 )
-def test_step_coercion(value, expected, should_work):
-    if not should_work:
-        with pytest.raises(CoercionError):
-            coerce_step(value)
-        return
-
+def test_step_coercion_ok(value, expected):
     result = coerce_step(value)
     assert result == expected
 
 
-def test_number_coercion():
+@pytest.mark.parametrize(
+    "value",
+    [
+        -1,
+        1.0,
+        [],
+        {},
+        "1h-3s30m",
+        "3m20d",
+    ],
+)
+def test_step_coercion_fail(value):
+    with pytest.raises(CoercionError):
+        coerce_step(value)
 
-    # Should accept integer or string, converted to string
-    ok = [(2, "2"), ("1", "1"), (10, "10")]
 
-    fail = [-1, 0, 1.0, [], {}]
-
-    for value, expected in ok:
-        result = coerce_number(value)
-        assert result == expected
-
-    for value in fail:
-        with pytest.raises(CoercionError):
-            coerce_number(value)
+@pytest.mark.parametrize("value, expected", [(2, "2"), ("1", "1"), (10, "10")])
+def test_number_coercion_ok(value, expected):
+    result = coerce_number(value)
+    assert result == expected
 
 
-def test_param_coercion():
+@pytest.mark.parametrize("value", [-1, 0, 1.0, [], {}])
+def test_number_coercion_fail(value):
+    with pytest.raises(CoercionError):
+        coerce_number(value)
 
-    # OK, but should be converted
-    ok = [
+
+@patch("polytope_server.common.coercion.get_config", lambda: {"number_allow_zero": True})
+def test_number_coercion_allow_zero():
+    assert coerce_number(0) == "0"
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
         (100, "100"),
         ("100", "100"),
         ("100.200", "100.200"),
         ("2t", "2t"),
-    ]
-    fail = [[], {}, 1.0]
-
-    for value, expected in ok:
-        result = coerce_param(value)
-        assert result == expected
-
-    for value in fail:
-        with pytest.raises(CoercionError):
-            coerce_param(value)
+    ],
+)
+def test_param_coercion_ok(value, expected):
+    result = coerce_param(value)
+    assert result == expected
 
 
-def test_time_coercion():
+@pytest.mark.parametrize("value", [[], {}, 1.0])
+def test_param_coercion_fail(value):
+    with pytest.raises(CoercionError):
+        coerce_param(value)
 
-    # OK, but should be converted
-    ok = [
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
         ("1200", "1200"),
         ("12", "1200"),
         ("1", "0100"),
@@ -197,8 +197,16 @@ def test_time_coercion():
         (0, "0000"),
         (12, "1200"),
         (1200, "1200"),
-    ]
-    fail = [
+    ],
+)
+def test_time_coercion_ok(value, expected):
+    result = coerce_time(value)
+    assert result == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
         "abc",
         25,
         2400,
@@ -207,48 +215,42 @@ def test_time_coercion():
         -10,
         [],
         {},
-    ]
-
-    for value, expected in ok:
-        result = coerce_time(value)
-        assert result == expected
-
-    for value in fail:
-        with pytest.raises(CoercionError):
-            coerce_time(value)
-
-
-def test_expver_coercion():
-    expvers = [
-        "0001",
-        "001",
-        "01",
-        "1",
-        1,
-    ]
-
-    for expver in expvers:
-        result = coerce_expver(expver)
-        assert result == "0001"
-
-    assert coerce_expver("abcd") == "abcd"
-    assert coerce_expver(10) == "0010"
-    assert coerce_expver("1abc") == "1abc"
-
+    ],
+)
+def test_time_coercion_fail(value):
     with pytest.raises(CoercionError):
-        coerce_expver("abcde")  # too long
+        coerce_time(value)
 
-    with pytest.raises(CoercionError):
-        coerce_expver("abc")  # too short
 
-    with pytest.raises(CoercionError):
-        coerce_expver(1.0)  # float
+@pytest.mark.parametrize("value", ["0001", "001", "01", "1", 1])
+def test_expver_coercion_ok_padded(value):
+    result = coerce_expver(value)
+    assert result == "0001"
 
-    with pytest.raises(CoercionError):
-        coerce_expver([])
 
-    with pytest.raises(CoercionError):
-        coerce_expver({})
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        ("abcd", "abcd"),
+        (10, "0010"),
+        ("1abc", "1abc"),
+    ],
+)
+def test_expver_coercion_ok_passthrough(value, expected):
+    assert coerce_expver(value) == expected
 
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "abcde",
+        "abc",
+        1.0,
+        [],
+        {},
+        ["a", "b", "c", "d"],
+    ],
+)
+def test_expver_coercion_fail(value):
     with pytest.raises(CoercionError):
-        coerce_expver(["a", "b", "c", "d"])
+        coerce_expver(value)

@@ -1,4 +1,5 @@
 import copy
+import logging
 import re
 from datetime import datetime, timedelta
 from typing import Any, Dict
@@ -16,10 +17,19 @@ default_config = {
     "number_allow_zero": False,
 }
 
-config = polytope_config.global_config.get("coercion", {}) if polytope_config.global_config else {}
-allow_ranges = config.get("allow_ranges", default_config["allow_ranges"])
-allow_lists = config.get("allow_lists", default_config["allow_lists"])
-number_allow_zero = config.get("number_allow_zero", default_config["number_allow_zero"])
+config = None
+
+
+def get_config():
+    global config
+    if config is None:
+        config = (
+            polytope_config.global_config.get("coercion", default_config)
+            if polytope_config.global_config
+            else default_config
+        )
+        logging.debug(f"Coercion config: {config}")
+    return config
 
 
 def coerce(request: Dict[str, Any] | str | int | None) -> Dict[str, Any]:
@@ -56,7 +66,7 @@ def coerce_value(key: str, value: Any) -> Any:
             coerced_values = [coerce_value(key, v) for v in value]
             return coerced_values
         elif isinstance(value, str):
-            if "/to/" in value and key in allow_ranges:
+            if "/to/" in value and key in get_config().get("allow_ranges", []):
                 # Handle ranges with possible "/by/" suffix
                 start_value, rest = value.split("/to/", 1)
                 if not rest:
@@ -74,7 +84,7 @@ def coerce_value(key: str, value: Any) -> Any:
                 end_coerced = coercer_func(end_value)
 
                 return f"{start_coerced}/to/{end_coerced}{suffix}"
-            elif "/" in value and key in allow_lists:
+            elif "/" in value and key in get_config().get("allow_lists", []):
                 # Handle lists
                 coerced_values = [coercer_func(v) for v in value.split("/")]
                 return coerced_values
@@ -164,7 +174,7 @@ def _is_valid_step(value: str) -> bool:
 
 
 def coerce_number(value: Any) -> str:
-    min_value = 0 if number_allow_zero else 1
+    min_value = 0 if get_config().get("number_allow_zero", False) else 1
     if isinstance(value, int):
         if value < min_value:
             raise CoercionError(f"Number must be >= {min_value}.")
