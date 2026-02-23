@@ -23,10 +23,8 @@ config = None
 def get_config():
     global config
     if config is None:
-        config = (
-            polytope_config.global_config.get("coercion", default_config)
-            if polytope_config.global_config
-            else default_config
+        config = polytope_config.merge(
+            default_config, polytope_config.global_config.get("coercion", {}) if polytope_config.global_config else {}
         )
         logging.debug(f"Coercion config: {config}")
     return config
