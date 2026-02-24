@@ -28,9 +28,10 @@ from typing import Callable, Iterator, Optional
 
 
 class FIFO:
-    """Creates a named pipe (FIFO) and reads data from it"""
+    """Creates a named pipe (FIFO) and reads data from it."""
 
     def __init__(self, name: str, dir: Optional[str] = None) -> None:
+        """Create a FIFO at the provided directory with a non-blocking reader."""
 
         if dir is None:
             dir = tempfile.gettempdir()
@@ -52,6 +53,7 @@ class FIFO:
         poll_interval: float = 0.1,
         on_idle: Optional[Callable[[], None]] = None,
     ) -> Iterator[bytes]:
+        """Yield buffered FIFO data in chunks, with optional idle callbacks/timeouts."""
         buffer = b""
         last_data = time.monotonic()
 
@@ -92,6 +94,7 @@ class FIFO:
             pass
 
     def read_raw(self, max_read: int = 2 * 1024 * 1024) -> Optional[bytes]:
+        """Read a raw chunk from the FIFO, returning None on EOF."""
         while True:
             try:
                 buf = os.read(self.fifo, max_read)

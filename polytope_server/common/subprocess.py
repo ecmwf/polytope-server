@@ -27,7 +27,10 @@ from typing import Any, Mapping, Optional, Sequence
 
 
 class Subprocess:
+    """Wrapper around subprocess execution with non-blocking log draining."""
+
     def __init__(self) -> None:
+        """Initialize the subprocess wrapper."""
         self.subprocess: Optional[subprocess.Popen] = None
 
     def run(
@@ -36,6 +39,7 @@ class Subprocess:
         cwd: Optional[str] = None,
         env: Optional[Mapping[str, str]] = None,
     ) -> None:
+        """Start a subprocess with stdout/stderr pipes."""
         env = {**os.environ, **(env or None)}
         logging.info("Calling {} in directory {} with env {}".format(cmd, cwd, env))
         self.subprocess = subprocess.Popen(
@@ -48,7 +52,7 @@ class Subprocess:
         )
 
     def read_output(self, request: Any, err_filter: Optional[str] = None) -> None:
-        """Read and log output from the subprocess without blocking"""
+        """Read and log output from the subprocess without blocking."""
         reads = [i for i in [self.subprocess.stdout, self.subprocess.stderr] if i]
         ret = select.select(reads, [], [], 0)
         while ret[0]:
@@ -67,13 +71,15 @@ class Subprocess:
             ret = select.select(reads, [], [], 0)
 
     def running(self) -> bool:
+        """Return True while the subprocess is still running."""
         return self.subprocess.poll() is None
 
     def returncode(self) -> Optional[int]:
+        """Return the subprocess exit code if it has terminated."""
         return self.subprocess.poll()
 
     def finalize(self, request: Any, err_filter: Optional[str]) -> None:
-        """Close subprocess and decode output"""
+        """Wait for completion (60s timeout), log output, and raise on failure."""
         logging.info("Finalizing subprocess")
         # fifo has been closed so this process should finish, but sometimes hangs so we set a timeout
         try:
