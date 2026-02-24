@@ -23,12 +23,15 @@ import logging
 import os
 import select
 import tempfile
+import time
+from typing import Callable, Iterator, Optional
 
 
 class FIFO:
-    """Creates a named pipe (FIFO) and reads data from it"""
+    """Creates a named pipe (FIFO) and reads data from it."""
 
-    def __init__(self, name, dir=None):
+    def __init__(self, name: str, dir: Optional[str] = None) -> None:
+        """Create a FIFO at the provided directory with a non-blocking reader."""
 
         if dir is None:
             dir = tempfile.gettempdir()
@@ -39,17 +42,34 @@ class FIFO:
         self.fifo = os.open(self.path, os.O_RDONLY | os.O_NONBLOCK)
         logging.info("FIFO created")
 
-    def ready(self):
+    def ready(self) -> bool:
         """Wait until FIFO is ready for reading -- i.e. opened by the writing process (man select)"""
         return len(select.select([self.fifo], [], [], 0)[0]) == 1
 
-    def data(self, buffer_size=2 * 1024 * 1024):
+    def data(
+        self,
+        buffer_size: int = 2 * 1024 * 1024,
+        idle_timeout: Optional[float] = 30,
+        poll_interval: float = 0.1,
+        on_idle: Optional[Callable[[], None]] = None,
+    ) -> Iterator[bytes]:
+        """Yield buffered FIFO data in chunks, with optional idle callbacks/timeouts."""
         buffer = b""
+        last_data = time.monotonic()
 
         while True:
+            ready = select.select([self.fifo], [], [], poll_interval)[0]
+            if not ready:
+                if on_idle:
+                    on_idle()
+                if idle_timeout is not None and time.monotonic() - last_data > idle_timeout:
+                    raise TimeoutError(f"FIFO read timed out after {idle_timeout} seconds")
+                continue
+
             data = self.read_raw()
             if data is None:
                 break
+            last_data = time.monotonic()
             buffer += data
             while len(buffer) >= buffer_size:
                 output, leftover = buffer[:buffer_size], buffer[buffer_size:]
@@ -59,7 +79,7 @@ class FIFO:
         if buffer != b"":
             yield buffer
 
-    def delete(self):
+    def delete(self) -> None:
         """Close and delete FIFO"""
         logging.info("Deleting FIFO.")
         try:
@@ -73,7 +93,8 @@ class FIFO:
             logging.info(f"Deleting FIFO had an exception {e}")
             pass
 
-    def read_raw(self, max_read=2 * 1024 * 1024):
+    def read_raw(self, max_read: int = 2 * 1024 * 1024) -> Optional[bytes]:
+        """Read a raw chunk from the FIFO, returning None on EOF."""
         while True:
             try:
                 buf = os.read(self.fifo, max_read)

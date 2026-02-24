@@ -23,18 +23,23 @@ import logging
 import os
 import tempfile
 from subprocess import CalledProcessError
+from typing import Any, Dict, Iterator, Optional
 
 import requests
 import yaml
 
 from ..io.fifo import FIFO
+from ..request import PolytopeRequest
 from ..subprocess import Subprocess
 from . import datasource
 from .datasource import convert_to_mars_request
 
 
 class MARSDataSource(datasource.DataSource):
-    def __init__(self, config):
+    """Datasource implementation that streams MARS retrieval output."""
+
+    def __init__(self, config: Dict[str, Any]) -> None:
+        """Initialize the MARS datasource from configuration."""
         assert config["type"] == "mars"
         self.config = config
         self.type = config.get("type")
@@ -47,12 +52,14 @@ class MARSDataSource(datasource.DataSource):
         self.override_mars_email = config.get("override_email")
         self.override_mars_apikey = config.get("override_apikey")
 
-        self.subprocess = None
-        self.fifo = None
-        self.output_file = None
+        self.subprocess: Optional[Subprocess] = None
+        self.fifo: Optional[FIFO] = None
+        self.output_file: Optional[str] = None
         self.use_file_io = config.get("use_file_io", False)
 
         self.mars_error_filter = config.get("mars_error_filter", "mars - EROR")
+        self.fifo_read_timeout = config.get("fifo_read_timeout")
+        self.fifo_poll_interval = config.get("fifo_poll_interval", 0.1)
 
         # self.fdb_config = None
         self.fdb_config = config.get("fdb_config", {})
@@ -78,13 +85,16 @@ class MARSDataSource(datasource.DataSource):
             self.mars_home = None
             self.mars_config = None
 
-    def get_type(self):
+    def get_type(self) -> str:
+        """Return the datasource type string."""
         return self.type
 
-    def archive(self, request):
+    def archive(self, request: PolytopeRequest) -> None:
+        """Archiving is not supported for this datasource."""
         raise NotImplementedError("Archiving not implemented for MARS data source")
 
-    def retrieve(self, request):
+    def retrieve(self, request: PolytopeRequest) -> bool:
+        """Launch a MARS retrieval subprocess and prepare output streaming."""
 
         if self.use_file_io:
             with tempfile.NamedTemporaryFile(delete=False) as tmp:
@@ -141,7 +151,8 @@ class MARSDataSource(datasource.DataSource):
 
         return True
 
-    def result(self, request):
+    def result(self, request: PolytopeRequest) -> Iterator[bytes]:
+        """Yield retrieval data from FIFO or file until MARS completes."""
 
         if self.use_file_io:
             with open(self.output_file, "rb") as f:
@@ -158,11 +169,22 @@ class MARSDataSource(datasource.DataSource):
                 raise Exception("MARS retrieval failed unexpectedly with error code {}".format(e.returncode))
             return
 
-        # The FIFO will get EOF if MARS exits unexpectedly, so we will break out of this loop automatically
-        for x in self.fifo.data():
-            # logging.debug("Yielding data from FIFO.")  # this floods the logs
+        def on_idle():
             self.subprocess.read_output(request, self.mars_error_filter)
-            yield x
+
+        # The FIFO will get EOF if MARS exits unexpectedly, so we will break out of this loop automatically
+        try:
+            for x in self.fifo.data(
+                idle_timeout=self.fifo_read_timeout,
+                poll_interval=self.fifo_poll_interval,
+                on_idle=on_idle,
+            ):
+                # logging.debug("Yielding data from FIFO.")  # this floods the logs
+                self.subprocess.read_output(request, self.mars_error_filter)
+                yield x
+        except TimeoutError as e:
+            logging.error("FIFO read timed out: %s", e)
+            raise Exception("MARS retrieval timed out while waiting for data.")
 
         logging.info("FIFO reached EOF.")
 
@@ -172,7 +194,8 @@ class MARSDataSource(datasource.DataSource):
             logging.exception("MARS subprocess failed: {}".format(e))
             raise Exception("MARS retrieval failed unexpectedly with error code {}".format(e.returncode))
 
-    def destroy(self, request):
+    def destroy(self, request: PolytopeRequest) -> None:
+        """Finalize the subprocess and delete temporary files/FIFO."""
         try:
             self.subprocess.finalize(request, self.mars_error_filter)  # Will raise if non-zero return
         except Exception as e:
@@ -192,12 +215,22 @@ class MARSDataSource(datasource.DataSource):
             pass
 
     def mime_type(self) -> str:
+        """Return the MIME type for MARS retrievals."""
         return "application/x-grib"
 
     #######################################################
 
-    def _build_dhs_env(self):
-        """Build DHS callback environment from pre-set env vars or Kubernetes service."""
+    def _build_dhs_env(self) -> Dict[str, str]:
+        """Build DHS callback environment from pre-set environment variables or Kubernetes services.
+
+        Returns a dictionary with
+        - MARS_DHS_CALLBACK_HOST: the host for DHS to call back to (Kubernetes node name)
+        - MARS_DHS_CALLBACK_PORT: the port for DHS to call back to (from Kubernetes service)
+        - MARS_DHS_LOCALPORT: the local port that DHS should listen on (from Kubernetes service)
+        - MARS_DHS_LOCALHOST: the local host that DHS should listen on (Kubernetes pod name)
+        - MARS_ENVIRON_ORIGIN: a string indicating the origin of the environment variables
+            (set to "polytope" if generated here, or passed through from existing env vars)
+        """
 
         required_dhs_keys = [
             "MARS_DHS_CALLBACK_HOST",
@@ -291,8 +324,8 @@ class MARSDataSource(datasource.DataSource):
             "MARS_DHS_LOCALHOST": pod_name,
         }
 
-    def make_env(self, request):
-        """Make the environment for the MARS subprocess, primarily for setting credentials"""
+    def make_env(self, request: PolytopeRequest) -> Dict[str, str]:
+        """Build environment variables for the MARS subprocess. (FDB5_CONFIG and credentials, dhs config if needed)"""
         try:
             if self.override_mars_email:
                 logging.info("Overriding MARS_USER_EMAIL with {}".format(self.override_mars_email))

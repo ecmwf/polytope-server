@@ -453,6 +453,15 @@
           "description": "path to mars client script",
           "default": "/usr/local/bin/mars"
         },
+        "fifo_read_timeout": {
+          "type": "number",
+          "description": "seconds to wait for FIFO data before timing out; null disables timeout"
+        },
+        "fifo_poll_interval": {
+          "type": "number",
+          "description": "polling interval in seconds while waiting for FIFO data",
+          "default": 0.1
+        },
         "match": {
           "$ref": "#/definitions/DatasourcesConfig-Datasource-MARS-Match",
           "description": "filters requests based on presence of specific key=value pair in user request"
@@ -465,6 +474,8 @@
       "preferredOrder": [
         "type",
         "command",
+        "fifo_read_timeout",
+        "fifo_poll_interval",
         "match",
         "patch"
       ],
