@@ -53,6 +53,8 @@ class MARSDataSource(datasource.DataSource):
         self.use_file_io = config.get("use_file_io", False)
 
         self.mars_error_filter = config.get("mars_error_filter", "mars - EROR")
+        self.fifo_read_timeout = config.get("fifo_read_timeout")
+        self.fifo_poll_interval = config.get("fifo_poll_interval", 0.1)
 
         # self.fdb_config = None
         self.fdb_config = config.get("fdb_config", {})
@@ -158,11 +160,22 @@ class MARSDataSource(datasource.DataSource):
                 raise Exception("MARS retrieval failed unexpectedly with error code {}".format(e.returncode))
             return
 
-        # The FIFO will get EOF if MARS exits unexpectedly, so we will break out of this loop automatically
-        for x in self.fifo.data():
-            # logging.debug("Yielding data from FIFO.")  # this floods the logs
+        def on_idle():
             self.subprocess.read_output(request, self.mars_error_filter)
-            yield x
+
+        # The FIFO will get EOF if MARS exits unexpectedly, so we will break out of this loop automatically
+        try:
+            for x in self.fifo.data(
+                idle_timeout=self.fifo_read_timeout,
+                poll_interval=self.fifo_poll_interval,
+                on_idle=on_idle,
+            ):
+                # logging.debug("Yielding data from FIFO.")  # this floods the logs
+                self.subprocess.read_output(request, self.mars_error_filter)
+                yield x
+        except TimeoutError as e:
+            logging.error("FIFO read timed out: %s", e)
+            raise Exception("MARS retrieval timed out while waiting for data.")
 
         logging.info("FIFO reached EOF.")
 

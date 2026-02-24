@@ -23,6 +23,7 @@ import logging
 import os
 import select
 import tempfile
+import time
 
 
 class FIFO:
@@ -43,13 +44,23 @@ class FIFO:
         """Wait until FIFO is ready for reading -- i.e. opened by the writing process (man select)"""
         return len(select.select([self.fifo], [], [], 0)[0]) == 1
 
-    def data(self, buffer_size=2 * 1024 * 1024):
+    def data(self, buffer_size=2 * 1024 * 1024, idle_timeout=30, poll_interval=0.1, on_idle=None):
         buffer = b""
+        last_data = time.monotonic()
 
         while True:
+            ready = select.select([self.fifo], [], [], poll_interval)[0]
+            if not ready:
+                if on_idle:
+                    on_idle()
+                if idle_timeout is not None and time.monotonic() - last_data > idle_timeout:
+                    raise TimeoutError(f"FIFO read timed out after {idle_timeout} seconds")
+                continue
+
             data = self.read_raw()
             if data is None:
                 break
+            last_data = time.monotonic()
             buffer += data
             while len(buffer) >= buffer_size:
                 output, leftover = buffer[:buffer_size], buffer[buffer_size:]
