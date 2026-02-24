@@ -24,12 +24,13 @@ import os
 import select
 import tempfile
 import time
+from typing import Callable, Iterator, Optional
 
 
 class FIFO:
     """Creates a named pipe (FIFO) and reads data from it"""
 
-    def __init__(self, name, dir=None):
+    def __init__(self, name: str, dir: Optional[str] = None) -> None:
 
         if dir is None:
             dir = tempfile.gettempdir()
@@ -40,11 +41,17 @@ class FIFO:
         self.fifo = os.open(self.path, os.O_RDONLY | os.O_NONBLOCK)
         logging.info("FIFO created")
 
-    def ready(self):
+    def ready(self) -> bool:
         """Wait until FIFO is ready for reading -- i.e. opened by the writing process (man select)"""
         return len(select.select([self.fifo], [], [], 0)[0]) == 1
 
-    def data(self, buffer_size=2 * 1024 * 1024, idle_timeout=30, poll_interval=0.1, on_idle=None):
+    def data(
+        self,
+        buffer_size: int = 2 * 1024 * 1024,
+        idle_timeout: Optional[float] = 30,
+        poll_interval: float = 0.1,
+        on_idle: Optional[Callable[[], None]] = None,
+    ) -> Iterator[bytes]:
         buffer = b""
         last_data = time.monotonic()
 
@@ -70,7 +77,7 @@ class FIFO:
         if buffer != b"":
             yield buffer
 
-    def delete(self):
+    def delete(self) -> None:
         """Close and delete FIFO"""
         logging.info("Deleting FIFO.")
         try:
@@ -84,7 +91,7 @@ class FIFO:
             logging.info(f"Deleting FIFO had an exception {e}")
             pass
 
-    def read_raw(self, max_read=2 * 1024 * 1024):
+    def read_raw(self, max_read: int = 2 * 1024 * 1024) -> Optional[bytes]:
         while True:
             try:
                 buf = os.read(self.fifo, max_read)

@@ -23,18 +23,20 @@ import logging
 import os
 import tempfile
 from subprocess import CalledProcessError
+from typing import Any, Dict, Iterator, Optional
 
 import requests
 import yaml
 
 from ..io.fifo import FIFO
+from ..request import PolytopeRequest
 from ..subprocess import Subprocess
 from . import datasource
 from .datasource import convert_to_mars_request
 
 
 class MARSDataSource(datasource.DataSource):
-    def __init__(self, config):
+    def __init__(self, config: Dict[str, Any]) -> None:
         assert config["type"] == "mars"
         self.config = config
         self.type = config.get("type")
@@ -47,9 +49,9 @@ class MARSDataSource(datasource.DataSource):
         self.override_mars_email = config.get("override_email")
         self.override_mars_apikey = config.get("override_apikey")
 
-        self.subprocess = None
-        self.fifo = None
-        self.output_file = None
+        self.subprocess: Optional[Subprocess] = None
+        self.fifo: Optional[FIFO] = None
+        self.output_file: Optional[str] = None
         self.use_file_io = config.get("use_file_io", False)
 
         self.mars_error_filter = config.get("mars_error_filter", "mars - EROR")
@@ -80,13 +82,13 @@ class MARSDataSource(datasource.DataSource):
             self.mars_home = None
             self.mars_config = None
 
-    def get_type(self):
+    def get_type(self) -> str:
         return self.type
 
-    def archive(self, request):
+    def archive(self, request: PolytopeRequest) -> None:
         raise NotImplementedError("Archiving not implemented for MARS data source")
 
-    def retrieve(self, request):
+    def retrieve(self, request: PolytopeRequest) -> bool:
 
         if self.use_file_io:
             with tempfile.NamedTemporaryFile(delete=False) as tmp:
@@ -143,7 +145,7 @@ class MARSDataSource(datasource.DataSource):
 
         return True
 
-    def result(self, request):
+    def result(self, request: PolytopeRequest) -> Iterator[bytes]:
 
         if self.use_file_io:
             with open(self.output_file, "rb") as f:
@@ -185,7 +187,7 @@ class MARSDataSource(datasource.DataSource):
             logging.exception("MARS subprocess failed: {}".format(e))
             raise Exception("MARS retrieval failed unexpectedly with error code {}".format(e.returncode))
 
-    def destroy(self, request):
+    def destroy(self, request: PolytopeRequest) -> None:
         try:
             self.subprocess.finalize(request, self.mars_error_filter)  # Will raise if non-zero return
         except Exception as e:
@@ -209,7 +211,7 @@ class MARSDataSource(datasource.DataSource):
 
     #######################################################
 
-    def _build_dhs_env(self):
+    def _build_dhs_env(self) -> Dict[str, str]:
         """Build DHS callback environment from pre-set env vars or Kubernetes service."""
 
         required_dhs_keys = [
@@ -304,7 +306,7 @@ class MARSDataSource(datasource.DataSource):
             "MARS_DHS_LOCALHOST": pod_name,
         }
 
-    def make_env(self, request):
+    def make_env(self, request: PolytopeRequest) -> Dict[str, str]:
         """Make the environment for the MARS subprocess, primarily for setting credentials"""
         try:
             if self.override_mars_email:

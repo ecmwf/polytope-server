@@ -23,13 +23,19 @@ import os
 import select
 import subprocess
 from subprocess import CalledProcessError
+from typing import Any, Mapping, Optional, Sequence
 
 
 class Subprocess:
-    def __init__(self):
-        self.subprocess = None
+    def __init__(self) -> None:
+        self.subprocess: Optional[subprocess.Popen] = None
 
-    def run(self, cmd, cwd=None, env=None):
+    def run(
+        self,
+        cmd: Sequence[str],
+        cwd: Optional[str] = None,
+        env: Optional[Mapping[str, str]] = None,
+    ) -> None:
         env = {**os.environ, **(env or None)}
         logging.info("Calling {} in directory {} with env {}".format(cmd, cwd, env))
         self.subprocess = subprocess.Popen(
@@ -41,7 +47,7 @@ class Subprocess:
             stdout=subprocess.PIPE,
         )
 
-    def read_output(self, request, err_filter=None):
+    def read_output(self, request: Any, err_filter: Optional[str] = None) -> None:
         """Read and log output from the subprocess without blocking"""
         reads = [i for i in [self.subprocess.stdout, self.subprocess.stderr] if i]
         ret = select.select(reads, [], [], 0)
@@ -60,13 +66,13 @@ class Subprocess:
                 break
             ret = select.select(reads, [], [], 0)
 
-    def running(self):
+    def running(self) -> bool:
         return self.subprocess.poll() is None
 
-    def returncode(self):
+    def returncode(self) -> Optional[int]:
         return self.subprocess.poll()
 
-    def finalize(self, request, err_filter):
+    def finalize(self, request: Any, err_filter: Optional[str]) -> None:
         """Close subprocess and decode output"""
         logging.info("Finalizing subprocess")
         # fifo has been closed so this process should finish, but sometimes hangs so we set a timeout
