@@ -59,6 +59,7 @@ class Subprocess:
             if not self.running():
                 break
             ret = select.select(reads, [], [], 0)
+        self._flush_buffers(request, err_filter)
 
     def running(self):
         return self.subprocess.poll() is None
@@ -90,8 +91,6 @@ class Subprocess:
 
     def _handle_line(self, fd, line, request, err_filter):
         buffer, log_func = self._get_buffer_and_logger(fd)
-        if line.startswith("mars") and buffer:
-            self._flush_buffer(buffer, log_func, request, err_filter)
         buffer.append(line)
 
     def _flush_buffers(self, request, err_filter):
