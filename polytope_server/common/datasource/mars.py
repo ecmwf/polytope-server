@@ -321,7 +321,7 @@ class MARSDataSource(datasource.DataSource):
             if self.protocol == "dhs":
                 env.update(self._build_dhs_env())
 
-            logging.info(
+            logging.debug(
                 "Accessing MARS on behalf of user {} with token {}".format(mars_user, obfuscate_apikey(mars_token))
             )
 

@@ -72,7 +72,7 @@ def setup(config, source_name):
     logger.addHandler(handler)
     logger.setLevel(level)
 
-    logger.info("Logging Initialized")
+    logger.debug("Logging Initialized")
 
 
 def optional_json_dumps(mode="json"):

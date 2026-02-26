@@ -248,7 +248,7 @@ def create_datasource(config: dict) -> DataSource:
     constructor = getattr(module, datasource_class)
     datasource = constructor(config)
 
-    logging.info("Datasource {} initialized [{}].".format(config["name"], datasource_class))
+    logging.debug("Datasource {} initialized [{}].".format(config["name"], datasource_class))
 
     return datasource
 
