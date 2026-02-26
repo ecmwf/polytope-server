@@ -1,4 +1,5 @@
 import copy
+import logging
 import re
 from datetime import datetime, timedelta
 from typing import Any, Dict
@@ -16,10 +17,17 @@ default_config = {
     "number_allow_zero": False,
 }
 
-config = polytope_config.global_config.get("coercion", {}) if polytope_config.global_config else {}
-allow_ranges = config.get("allow_ranges", default_config["allow_ranges"])
-allow_lists = config.get("allow_lists", default_config["allow_lists"])
-number_allow_zero = config.get("number_allow_zero", default_config["number_allow_zero"])
+config = None
+
+
+def get_config():
+    global config
+    if config is None:
+        config = polytope_config.merge(
+            default_config, polytope_config.global_config.get("coercion", {}) if polytope_config.global_config else {}
+        )
+        logging.debug(f"Coercion config: {config}")
+    return config
 
 
 def coerce(request: Dict[str, Any] | str | int | None) -> Dict[str, Any]:
@@ -56,7 +64,7 @@ def coerce_value(key: str, value: Any) -> Any:
             coerced_values = [coerce_value(key, v) for v in value]
             return coerced_values
         elif isinstance(value, str):
-            if "/to/" in value and key in allow_ranges:
+            if "/to/" in value and key in get_config().get("allow_ranges", []):
                 # Handle ranges with possible "/by/" suffix
                 start_value, rest = value.split("/to/", 1)
                 if not rest:
@@ -74,7 +82,7 @@ def coerce_value(key: str, value: Any) -> Any:
                 end_coerced = coercer_func(end_value)
 
                 return f"{start_coerced}/to/{end_coerced}{suffix}"
-            elif "/" in value and key in allow_lists:
+            elif "/" in value and key in get_config().get("allow_lists", []):
                 # Handle lists
                 coerced_values = [coercer_func(v) for v in value.split("/")]
                 return coerced_values
@@ -136,28 +144,35 @@ def coerce_step(value: Any) -> str:
         else:
             return str(value)
     elif isinstance(value, str):
-        try:
-            if int(value) < 0:
-                raise CoercionError("Step must be greater than or equal to 0.")
-            else:
-                return value
-        except ValueError:
-            # value cannot be converted to a digit, but we would like to match step ranges too
-            step_pattern = r"^\d+-\d+$"
-            step_match = re.match(step_pattern, value)
-            h_match = re.search(r"(\d+)\s*h", value)
-            m_match = re.search(r"(\d+)\s*m", value)
-
-            if not h_match and not m_match and not step_match:
-                raise CoercionError("Invalid type, expected integer step, step range or sub-hourly step.")
-            else:
-                return value
+        if _is_valid_step(value):
+            return value
+        # check step ranges
+        step_range_pattern = r"^(.*)-(.*)$"
+        step_match = re.match(step_range_pattern, value)
+        if step_match and _is_valid_step(step_match.group(1)) and _is_valid_step(step_match.group(2)):
+            return value
+        raise CoercionError(
+            "Invalid step format, expected integer, steps with units (e.g., '1h', '30m', '1h30m', '2d', '30s'),"
+            + " or a range of these formats (e.g., '1h-3')."
+        )
     else:
         raise CoercionError("Invalid type, expected integer or string.")
 
 
+def _is_valid_step(value: str) -> bool:
+    """
+    Checks if the single step value (not range) is valid. Valid formats include:
+    - Integer (e.g., "6")
+    - Step with time units (e.g., "1h", "30m", "1h30m", "30s", "3d" etc.)
+    """
+    units = ["d", "h", "m", "s"]
+    pattern = r"^\d+" + r"?".join(rf"(\d*{unit})" for unit in units) + r"?$"
+    # pattern = r"^\d+(\d*d)?(\d*h)?(\d*m)?(\d*s)?$"  # left for readability, above expands to this
+    return re.match(pattern, value) is not None
+
+
 def coerce_number(value: Any) -> str:
-    min_value = 0 if number_allow_zero else 1
+    min_value = 0 if get_config().get("number_allow_zero", False) else 1
     if isinstance(value, int):
         if value < min_value:
             raise CoercionError(f"Number must be >= {min_value}.")

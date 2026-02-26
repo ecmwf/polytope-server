@@ -255,7 +255,7 @@ class DynamoDBRequestStore(request_store.RequestStore):
         return 1  # Successfully revoked one request
 
     def get_request(self, id):
-        response = self.table.get_item(Key={"id": id})
+        response = self.table.get_item(Key={"id": id}, ConsistentRead=True)
         if "Item" in response:
             return _load(response["Item"])
         return None
