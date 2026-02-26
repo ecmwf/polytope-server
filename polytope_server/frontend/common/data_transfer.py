@@ -115,7 +115,7 @@ class DataTransfer:
                 return RequestSucceeded(response)
 
         response = self.construct_response(request)
-        return RequestAccepted(response)
+        return RequestAccepted(response, info_log=False)
 
     def upload(self, id: str, http_request: Request) -> Response:
         """

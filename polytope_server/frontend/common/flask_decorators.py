@@ -39,7 +39,7 @@ def RequestSucceeded(response: collections.abc.Mapping | str) -> Response:
     return Response(response=json.dumps(response), status=status, mimetype="application/json")
 
 
-def RequestAccepted(response: collections.abc.Mapping | str) -> Response:
+def RequestAccepted(response: collections.abc.Mapping | str, info_log: bool = True) -> Response:
     if not isinstance(response, collections.abc.Mapping):
         response = {"message": response}
     if response["message"] == "":
@@ -48,7 +48,10 @@ def RequestAccepted(response: collections.abc.Mapping | str) -> Response:
         headers = {"Location": response["location"], "Retry-After": 5}
         response.pop("location")
     status = 202
-    logging.info(response["message"], extra={"response": response, "http.status": status})
+    if info_log:
+        logging.info(response["message"], extra={"response": response, "http.status": status})
+    else:
+        logging.debug(response["message"], extra={"response": response, "http.status": status})
     return Response(
         response=json.dumps(response),
         status=status,
