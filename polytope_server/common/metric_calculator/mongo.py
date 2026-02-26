@@ -96,9 +96,9 @@ class MongoMetricCalculator(MetricCalculator):
         self.collection = collection
         self.metric_collection = metric_collection
         self.histogram_builder = HistogramBuilder()
-        logger.info("Initialized MongoMetricCalculator for collection %s", collection.name)
+        logger.debug("Initialized MongoMetricCalculator for collection %s", collection.name)
         if metric_collection is not None:
-            logger.info("  with metric_collection %s", metric_collection.name)
+            logger.debug("  with metric_collection %s", metric_collection.name)
 
     def ensure_indexes(self) -> None:
         """Ensure all indexes needed for metric queries exist."""
@@ -185,7 +185,7 @@ class MongoMetricCalculator(MetricCalculator):
             name="ix_status_history_processing",
         )
 
-        logger.info("Metric aggregation indexes ensured successfully")
+        logger.debug("Metric aggregation indexes ensured successfully")
 
     def ensure_metric_indexes(self) -> None:
         """
@@ -196,8 +196,6 @@ class MongoMetricCalculator(MetricCalculator):
         if self.metric_collection is None:
             logger.warning("No metric_collection provided, skipping metric indexes")
             return
-
-        logger.info("Ensuring metric store indexes for collection: %s", self.metric_collection.name)
 
         # Index for type + status + timestamp queries
         safe_create_index(
@@ -224,7 +222,7 @@ class MongoMetricCalculator(MetricCalculator):
             },
         )
 
-        logger.info("Metric store indexes ensured successfully")
+        logger.debug("Metric store indexes ensured successfully")
 
     def get_usage_metrics_aggregated(self, cutoff_timestamps: Dict[str, float]) -> Dict[str, Any]:
         """

@@ -37,7 +37,7 @@ class FIFO:
 
         os.mkfifo(self.path, 0o600)
         self.fifo = os.open(self.path, os.O_RDONLY | os.O_NONBLOCK)
-        logging.info("FIFO created")
+        logging.debug("FIFO created")
 
     def ready(self):
         """Wait until FIFO is ready for reading -- i.e. opened by the writing process (man select)"""

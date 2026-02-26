@@ -101,7 +101,7 @@ class S3Staging(staging.Staging):
         try:
             self.s3_client.create_bucket(Bucket=self.bucket)
         except self.s3_client.exceptions.BucketAlreadyExists:
-            logging.info(f"Bucket {self.bucket} already exists.")
+            logging.debug(f"Bucket {self.bucket} already exists.")
         except self.s3_client.exceptions.BucketAlreadyOwnedByYou:
             logging.info(f"Bucket {self.bucket} already exists and owned by you.")
         except ClientError as e:
@@ -110,7 +110,7 @@ class S3Staging(staging.Staging):
         if self.should_set_policy:
             self.set_bucket_policy()
 
-        logging.info(f"Opened data staging at {self.host}:{self.port} with bucket {self.bucket}")
+        logging.debug(f"Opened data staging at {self.host}:{self.port} with bucket {self.bucket}")
 
     def create(self, name, data, content_type):
 
