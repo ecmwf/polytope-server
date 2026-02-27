@@ -18,6 +18,7 @@
 # does it submit to any jurisdiction.
 #
 
+import copy
 import logging
 from abc import ABC
 from importlib import import_module
@@ -66,6 +67,7 @@ class DataSource(ABC):
         if roles and not user.has_access(roles):
             return f"Skipping datasource {DataSource.repr(ds_config)}: user not authorized."
 
+        coerced_ur = copy.deepcopy(coerced_ur)  # don't want to modify the original request
         # apply defaults
         defaults = ds_config.get("defaults", {})
         if "date" not in defaults:
