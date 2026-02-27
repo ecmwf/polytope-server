@@ -35,7 +35,15 @@ class Subprocess:
 
     def run(self, cmd, cwd=None, env=None):
         env = {**os.environ, **(env or {})}
-        obfuscated_env = {k: (obfuscate_apikey(v) if "KEY" in k or "TOKEN" in k else v) for k, v in env.items()}
+        obfuscated_env = {}
+        for k, v in env.items():
+            if "KEY" in k or "TOKEN" in k:
+                if v is None:
+                    obfuscated_env[k] = None
+                else:
+                    obfuscated_env[k] = obfuscate_apikey(str(v))
+            else:
+                obfuscated_env[k] = v
         logging.info("Calling {} in directory {}".format(cmd, cwd), extra={"env": obfuscated_env})
         self.subprocess = subprocess.Popen(
             cmd,
