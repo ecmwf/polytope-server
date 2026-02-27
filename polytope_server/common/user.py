@@ -91,7 +91,7 @@ class User:
 
         for required_role in roles:
             if required_role in self.roles:
-                logging.info(f"User {self.username} is authorized with role {required_role}")
+                logging.debug(f"User {self.username} is authorized with role {required_role}")
                 return True
 
         return False
