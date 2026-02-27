@@ -67,23 +67,23 @@ class DataSource(ABC):
         if roles and not user.has_access(roles):
             return f"Skipping datasource {DataSource.repr(ds_config)}: user not authorized."
 
-        coerced_ur = copy.deepcopy(coerced_ur)  # don't want to modify the original request
+        coerced_ur_copy = copy.deepcopy(coerced_ur)  # don't want to modify the original request
         # apply defaults
         defaults = ds_config.get("defaults", {})
         if "date" not in defaults:
             defaults["date"] = "-1"  # today, default for mars
         for k, v in defaults.items():
-            if k not in coerced_ur:
-                coerced_ur[k] = coerce_value(k, v)
+            if k not in coerced_ur_copy:
+                coerced_ur_copy[k] = coerce_value(k, v)
 
         # check match rules
         if ds_config.get("type") == "polytope":
-            if "feature" not in coerced_ur:
+            if "feature" not in coerced_ur_copy:
                 return (
                     f"Skipping datasource {DataSource.repr(ds_config)}: "
                     "request does not contain expected key 'feature'"
                 )
-        elif "feature" in coerced_ur:
+        elif "feature" in coerced_ur_copy:
             return (
                 f"Skipping datasource {DataSource.repr(ds_config)}: "
                 "request contains key 'feature', but this is not expected by the datasource."
@@ -94,7 +94,7 @@ class DataSource(ABC):
 
             # An empty match rule means that the key must not be present
             if allowed_values is None or len(allowed_values) == 0:
-                if rule_key in coerced_ur:
+                if rule_key in coerced_ur_copy:
                     return (
                         f"Skipping datasource {DataSource.repr(ds_config)}: "
                         f"request containing key '{rule_key}' is not allowed."
@@ -103,7 +103,7 @@ class DataSource(ABC):
                     continue  # no more checks to do
 
             # Check that the required key exists
-            if rule_key not in coerced_ur:
+            if rule_key not in coerced_ur_copy:
                 return (
                     f"Skipping datasource {DataSource.repr(ds_config)}: "
                     f"request does not contain expected key '{rule_key}'"
@@ -112,7 +112,7 @@ class DataSource(ABC):
             # Process date rules
             if rule_key == "date":
                 try:
-                    date_check(coerced_ur["date"], allowed_values)
+                    date_check(coerced_ur_copy["date"], allowed_values)
                 except DateError as e:
                     return f"Skipping datasource {DataSource.repr(ds_config)}: {e}."
                 except Exception as e:
@@ -121,18 +121,24 @@ class DataSource(ABC):
 
             # check that all values in request are allowed
             request_values = (
-                [coerced_ur[rule_key]] if not isinstance(coerced_ur[rule_key], (list, tuple)) else coerced_ur[rule_key]
+                [coerced_ur_copy[rule_key]]
+                if not isinstance(coerced_ur_copy[rule_key], (list, tuple))
+                else coerced_ur_copy[rule_key]
             )
             if not set(request_values).issubset(set(coerce_value(rule_key, allowed_values))):
                 return (
                     f"Skipping datasource {DataSource.repr(ds_config)}: "
-                    f"got {rule_key} : {coerced_ur[rule_key]}, but expected one of {allowed_values}"
+                    f"got {rule_key} : {coerced_ur_copy[rule_key]}, but expected one of {allowed_values}"
                 )
         # If we reach here, the request matches the datasource
-        # Downstream expects MARS-like format of request
-        for key in coerced_ur:
-            if isinstance(coerced_ur[key], list):
-                coerced_ur[key] = "/".join(coerced_ur[key])
+        for patch_k, patch_v in ds_config.get("patch", {}).items():
+            coerced_ur_copy[patch_k] = patch_v
+        # Downstream expects MARS-like format of request, apply to original request object
+        for key in coerced_ur_copy:
+            if isinstance(coerced_ur_copy[key], list):
+                coerced_ur[key] = "/".join(coerced_ur_copy[key])
+            else:
+                coerced_ur[key] = str(coerced_ur_copy[key])
         return "success"
 
     @staticmethod
