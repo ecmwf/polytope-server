@@ -83,7 +83,7 @@ def create_collections(config) -> Dict[str, Collection]:
     collections = {}
     for k, v in config.items():
         collections[k] = Collection(k, v)
-    logging.info(
+    logging.debug(
         "Configured collections: {}".format(list(collections.keys())),
         extra={"collections": [col._serialize() for col in collections.values()]},
     )

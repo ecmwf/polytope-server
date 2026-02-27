@@ -221,7 +221,7 @@ class Worker:
         id = request.id
         collection = self.collections[request.collection]
 
-        logging.info(
+        logging.debug(
             "Processing request on collection {}".format(collection.name),
             extra={"collection": collection.name, "request": request.serialize()},
         )
