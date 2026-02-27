@@ -138,7 +138,7 @@ class DataSource(ABC):
             if isinstance(coerced_ur_copy[key], list):
                 coerced_ur[key] = "/".join(coerced_ur_copy[key])
             else:
-                coerced_ur[key] = str(coerced_ur_copy[key])
+                coerced_ur[key] = coerced_ur_copy[key]
         return "success"
 
     @staticmethod
