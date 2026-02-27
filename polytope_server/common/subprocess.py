@@ -104,10 +104,16 @@ class Subprocess:
         if not buffer:
             return
         message = "\n".join(buffer)
-        log_method = logging.error if err_filter and err_filter in message else log_func
+        if err_filter:
+            matching_lines = [line for line in buffer if err_filter in line]
+            has_error = bool(matching_lines)
+        else:
+            matching_lines = []
+            has_error = False
+        log_method = logging.error if has_error else log_func
         log_method(message)
-        if err_filter and err_filter in message:
-            request.user_message += message + "\n"
+        if matching_lines:
+            request.user_message += "\n".join(matching_lines) + "\n"
         buffer.clear()
 
     def _get_buffer_and_logger(self, fd):
