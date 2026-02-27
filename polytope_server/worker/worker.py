@@ -298,7 +298,7 @@ class Worker:
     def on_request_fail(self, exception: Exception) -> None:
         """Called when the request processing raises an exception"""
 
-        logging.debug("Request failed with exception.")
+        logging.exception("Request failed with exception.")
         error_message = self.request.user_message + "\n" + str(exception)
         self.request.user_message = error_message
         self.request_store.set_request_status(self.request, Status.FAILED)
