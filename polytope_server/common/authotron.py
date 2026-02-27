@@ -23,6 +23,7 @@ import logging
 import requests
 from jose import jwt
 
+from .caching import cache
 from .exceptions import UnauthorizedRequest
 from .user import User
 
@@ -37,6 +38,7 @@ class Authotron:
         if not self.secret:
             raise ValueError("Missing secret key")
 
+    @cache(lifetime=60)
     def authenticate(self, auth_header: str) -> User:
         """Forwards the header to Auth-o-tron.
         Returns authenticated User, or raises UnauthorizedRequest"""
