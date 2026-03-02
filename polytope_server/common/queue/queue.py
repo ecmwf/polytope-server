@@ -20,9 +20,6 @@
 
 from abc import ABC, abstractmethod
 
-from polytope_server.common.queue.rabbitmq_queue import RabbitmqQueue
-from polytope_server.common.queue.sqs_queue import SQSQueue
-
 
 class Message:
     def __init__(self, body, context=None):
@@ -79,11 +76,3 @@ class Queue(ABC):
         """Exit context manager and close connection"""
         self.close_connection()
         return False
-
-
-queue_types = {"rabbitmq": RabbitmqQueue, "sqs": SQSQueue}
-
-
-def create_queue(queue_config) -> Queue:
-    queue_type = next(iter(queue_config.keys()), "rabbitmq")
-    return queue_types[queue_type](queue_config[queue_type])
