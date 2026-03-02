@@ -71,6 +71,15 @@ class Queue(ABC):
     def get_type(self) -> str:
         """Get the implementation type"""
 
+    def __enter__(self):
+        """Enter context manager"""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Exit context manager and close connection"""
+        self.close_connection()
+        return False
+
 
 queue_types = {"rabbitmq": RabbitmqQueue, "sqs": SQSQueue}
 

@@ -205,12 +205,12 @@ class Worker:
             loop.remove_signal_handler(signal.SIGTERM)
 
     def run(self):
-        self.queue = polytope_queue.create_queue(self.config.get("queue"))
+        with polytope_queue.create_queue(self.config.get("queue")) as queue:
+            self.queue = queue
+            self.update_status("idle", time_spent=0)
 
-        self.update_status("idle", time_spent=0)
-
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            aio.run(self.schedule(executor))
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                aio.run(self.schedule(executor))
 
     def process_request(
         self,

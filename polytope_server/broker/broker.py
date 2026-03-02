@@ -30,8 +30,8 @@ from ..common.request import PolytopeRequest, Status
 class Broker:
     def __init__(self, config: dict):
 
-        queue_config = config.get("queue")
-        self.queue = queue.create_queue(queue_config)
+        self.queue_config = config.get("queue")
+        self.queue = None
 
         self.max_queue_size = config.get("deployment", {}).get("worker", {}).get("replicas", 40)
 
@@ -47,8 +47,14 @@ class Broker:
         logging.info("Starting broker...")
         logging.info("Maximum Queue Size: {}".format(self.max_queue_size))
 
-        while not time.sleep(self.scheduling_interval):
-            self.check_requests()
+        with queue.create_queue(self.queue_config) as q:
+            self.queue = q
+            try:
+                while not time.sleep(self.scheduling_interval):
+                    self.check_requests()
+            except KeyboardInterrupt:
+                logging.info("Broker shutdown requested")
+                raise
 
     def check_requests(self):
 
