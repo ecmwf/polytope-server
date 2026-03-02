@@ -47,14 +47,18 @@ class Broker:
         logging.info("Starting broker...")
         logging.info("Maximum Queue Size: {}".format(self.max_queue_size))
 
-        with queue.create_queue(self.queue_config) as q:
-            self.queue = q
+        q = queue.create_queue(self.queue_config)
+        self.queue = q
+        try:
             try:
                 while not time.sleep(self.scheduling_interval):
                     self.check_requests()
             except KeyboardInterrupt:
                 logging.info("Broker shutdown requested")
                 raise
+        finally:
+            q.close_connection()
+            self.request_store.close()
 
     def check_requests(self):
 
