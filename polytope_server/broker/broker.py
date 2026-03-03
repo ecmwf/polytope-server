@@ -50,12 +50,8 @@ class Broker:
         q = queue.create_queue(self.queue_config)
         self.queue = q
         try:
-            try:
-                while not time.sleep(self.scheduling_interval):
-                    self.check_requests()
-            except KeyboardInterrupt:
-                logging.info("Broker shutdown requested")
-                raise
+            while not time.sleep(self.scheduling_interval):
+                self.check_requests()
         finally:
             q.close_connection()
             self.request_store.close()
