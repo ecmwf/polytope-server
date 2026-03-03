@@ -136,14 +136,14 @@ class DynamoDBRequestStore(request_store.RequestStore):
         table_name = config.get("table_name", "requests")
 
         dynamodb = boto3.resource("dynamodb", region_name=region, endpoint_url=endpoint_url)
-        client = dynamodb.meta.client
+        self.client = dynamodb.meta.client
         self.table = dynamodb.Table(table_name)
 
         try:
-            response = client.describe_table(TableName=table_name)
+            response = self.client.describe_table(TableName=table_name)
             if response["Table"]["TableStatus"] != "ACTIVE":
                 raise RuntimeError(f"DynamoDB table {table_name} is not active.")
-        except client.exceptions.ResourceNotFoundException:
+        except self.client.exceptions.ResourceNotFoundException:
             _create_table(dynamodb, table_name)
 
         self.metric_store = None
@@ -355,3 +355,9 @@ class DynamoDBRequestStore(request_store.RequestStore):
                 batch.delete_item(Key={"id": id})
                 logger.info("Deleting request %s because it is older than cutoff.", id)
         return len(items_to_delete)
+
+    def close(self) -> None:
+        if self.metric_store is not None:
+            self.metric_store.close()
+        if self.client is not None:
+            self.client.close()

@@ -219,3 +219,9 @@ class MongoRequestStore(request_store.RequestStore):
         )
         logging.info("Removed {} old requests from request store.".format(result.deleted_count))
         return result.deleted_count
+
+    def close(self) -> None:
+        if self.metric_store is not None:
+            self.metric_store.close()
+        if self.mongo_client is not None:
+            self.mongo_client.close()

@@ -116,6 +116,10 @@ class RequestStore(ABC):
             int: Number of removed requests.
         """
 
+    @abstractmethod
+    def close(self) -> None:
+        """Close any resources held by the request store."""
+
 
 type_to_class_map = {"mongodb": "MongoRequestStore", "dynamodb": "DynamoDBRequestStore"}
 
