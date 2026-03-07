@@ -1,5 +1,5 @@
+mod api;
 mod config;
-mod routes;
 mod state;
 
 use std::sync::Arc;
@@ -38,17 +38,31 @@ async fn main() {
     let state = Arc::new(AppState { bits });
     let bind_addr = cfg.bind_addr();
 
-    let app = Router::new()
-        .route("/api/v1/test", get(routes::test))
-        .route("/api/v1/collections", get(routes::list_collections))
-        .route("/api/v1/requests", get(routes::list_requests))
+    // v1: legacy Polytope API, retained for backwards compatibility
+    let v1 = Router::new()
+        .route("/test", get(api::v1::test))
+        .route("/collections", get(api::v1::list_collections))
+        .route("/requests", get(api::v1::list_requests))
         .route(
-            "/api/v1/requests/{id}",
-            post(routes::submit_request)
-                .get(routes::get_request)
-                .delete(routes::delete_request),
+            "/requests/{id}",
+            post(api::v1::submit_request)
+                .get(api::v1::get_request)
+                .delete(api::v1::delete_request),
         )
-        .route("/api/v1/downloads/{id}", get(routes::downloads_deprecated))
+        .route("/downloads/{id}", get(api::v1::downloads_deprecated));
+
+    // v2: idiomatic bits API
+    let v2 = Router::new()
+        .route("/test", get(api::v2::test))
+        .route("/requests", post(api::v2::submit))
+        .route(
+            "/requests/{id}",
+            get(api::v2::poll).delete(api::v2::cancel),
+        );
+
+    let app = Router::new()
+        .nest("/api/v1", v1)
+        .nest("/api/v2", v2)
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(&bind_addr).await.unwrap_or_else(|e| {

@@ -196,3 +196,70 @@ def test_retrieve_unknown_collection_still_works(client):
         assert Path(output).read_bytes() == FAKE_GRIB
     finally:
         os.unlink(output)
+
+
+# ---------------------------------------------------------------------------
+# v2 tests (direct HTTP — no polytope-client wrapper needed)
+# ---------------------------------------------------------------------------
+
+
+def test_v2_health(polytope_server):
+    import urllib.request
+    with urllib.request.urlopen(f"{polytope_server}/api/v2/test") as r:
+        assert r.read().decode() == "Polytope server is alive"
+
+
+def test_v2_no_collections_endpoint(polytope_server):
+    import urllib.error, urllib.request
+    try:
+        urllib.request.urlopen(f"{polytope_server}/api/v2/collections")
+        assert False, "expected 404"
+    except urllib.error.HTTPError as e:
+        assert e.code == 404
+
+
+def test_v2_submit_and_retrieve(polytope_server):
+    import json, urllib.request
+
+    # POST → 303 → poll loop → 200 with data, all followed automatically.
+    req = urllib.request.Request(
+        f"{polytope_server}/api/v2/requests",
+        data=json.dumps({"class": "od", "stream": "oper"}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req) as r:
+        assert r.status == 200
+        assert r.read() == FAKE_GRIB
+
+
+def test_v2_cancel(polytope_server):
+    import json, urllib.request, urllib.error
+
+    # Submit without following redirects so we can read the Location header.
+    class NoRedirect(urllib.request.HTTPErrorProcessor):
+        def http_response(self, request, response):
+            return response
+        https_response = http_response
+
+    opener = urllib.request.build_opener(NoRedirect)
+    req = urllib.request.Request(
+        f"{polytope_server}/api/v2/requests",
+        data=json.dumps({"class": "od"}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with opener.open(req) as r:
+        assert r.status == 303
+        location = r.headers.get("Location")
+
+    job_id = location.split("/")[-1]
+
+    # Cancel
+    cancel_req = urllib.request.Request(
+        f"{polytope_server}/api/v2/requests/{job_id}",
+        method="DELETE",
+    )
+    with urllib.request.urlopen(cancel_req) as r:
+        assert r.status == 200
+        assert json.loads(r.read())["status"] == "cancelled"
