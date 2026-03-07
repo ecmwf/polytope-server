@@ -1,0 +1,9 @@
+server:
+  host: "0.0.0.0"   # optional, default 0.0.0.0
+  port: 3000         # optional, default 3000
+
+bits:
+  routes:
+    default:
+      - target::http:
+          url: "http://your-backend/"   # replace with real target

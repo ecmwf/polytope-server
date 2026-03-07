@@ -30,12 +30,14 @@ pub struct SubmitBody {
 struct Accepted {
     status: &'static str,
     id: String,
+    message: &'static str,
 }
 
 #[derive(Serialize)]
 struct Queued {
     status: &'static str,
     id: String,
+    message: &'static str,
 }
 
 // ---------------------------------------------------------------------------
@@ -63,7 +65,7 @@ pub async fn list_collections() -> impl IntoResponse {
 // ---------------------------------------------------------------------------
 
 pub async fn list_requests() -> impl IntoResponse {
-    Json(json!([]))
+    Json(json!({"message": []}))
 }
 
 // ---------------------------------------------------------------------------
@@ -82,13 +84,17 @@ pub async fn submit_request(
     });
 
     let job = Job::new(request);
-    let handle = state.bits.submit(job);
+    let id = job.id.clone();
+    state.bits.submit(job);
 
+    let location = format!("/api/v1/requests/{}", id);
     (
         StatusCode::ACCEPTED,
+        [(header::LOCATION, location)],
         Json(Accepted {
             status: "queued",
-            id: handle.id,
+            id,
+            message: "Request accepted",
         }),
     )
 }
@@ -101,12 +107,13 @@ pub async fn get_request(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Response {
-    match state.bits.poll(&id, POLL_TIMEOUT).await {
+    match state.bits.poll(&id, Some(POLL_TIMEOUT)).await {
         PollOutcome::Pending { id } => (
             StatusCode::ACCEPTED,
             Json(Queued {
                 status: "queued",
                 id,
+                message: "Request is being processed",
             }),
         )
             .into_response(),
@@ -120,13 +127,17 @@ pub async fn get_request(
         PollOutcome::Ready(result) => match result {
             JobResult::Success {
                 content_type,
+                size,
                 stream,
-                ..
-            } => Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, content_type)
-                .body(Body::from_stream(stream))
-                .unwrap(),
+            } => {
+                let mut builder = Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, content_type);
+                if size >= 0 {
+                    builder = builder.header(header::CONTENT_LENGTH, size);
+                }
+                builder.body(Body::from_stream(stream)).unwrap()
+            }
 
             JobResult::Redirect { location, message } => Response::builder()
                 .status(StatusCode::SEE_OTHER)
@@ -136,13 +147,25 @@ pub async fn get_request(
 
             JobResult::Error { message } => (
                 StatusCode::BAD_REQUEST,
-                Json(json!({"error": message})),
+                Json(json!({"status": "failed", "message": message})),
             )
                 .into_response(),
 
             JobResult::Failed { reason } => (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": reason})),
+                Json(json!({"status": "failed", "message": reason})),
+            )
+                .into_response(),
+
+            JobResult::Cancelled => (
+                StatusCode::OK,
+                Json(json!({"status": "cancelled"})),
+            )
+                .into_response(),
+
+            JobResult::ClientGone => (
+                StatusCode::GONE,
+                Json(json!({"error": "request abandoned: client disconnected"})),
             )
                 .into_response(),
         },
@@ -153,12 +176,14 @@ pub async fn get_request(
 // DELETE /api/v1/requests/:id
 // ---------------------------------------------------------------------------
 
-pub async fn delete_request(Path(id): Path<String>) -> impl IntoResponse {
-    // Cancellation is not yet implemented in bits.
-    tracing::warn!(id, "delete_request called but cancellation is not implemented");
+pub async fn delete_request(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    state.bits.cancel(&id);
     (
         StatusCode::OK,
-        Json(json!({"status": "deleted", "id": id})),
+        Json(json!({"status": "cancelled", "id": id})),
     )
 }
 
