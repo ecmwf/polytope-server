@@ -1,0 +1,12 @@
+name: Release (disabled)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  disabled:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Release disabled during image testing
+        run: |
+          echo "polytope-server release publishing is temporarily disabled to avoid clashing with production images."

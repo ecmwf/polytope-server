@@ -1,0 +1,12 @@
+name: CI (disabled)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  disabled:
+    runs-on: ubuntu-latest
+    steps:
+      - name: CI disabled during image testing
+        run: |
+          echo "polytope-server CI is temporarily disabled to avoid conflicting with production image workflows."

@@ -4,7 +4,10 @@ mod state;
 
 use std::sync::Arc;
 
-use axum::{routing::{get, post}, Router};
+use axum::{
+    routing::{get, post},
+    Router,
+};
 use clap::Parser;
 use state::AppState;
 
@@ -55,20 +58,19 @@ async fn main() {
     let v2 = Router::new()
         .route("/test", get(api::v2::test))
         .route("/requests", post(api::v2::submit))
-        .route(
-            "/requests/{id}",
-            get(api::v2::poll).delete(api::v2::cancel),
-        );
+        .route("/requests/{id}", get(api::v2::poll).delete(api::v2::cancel));
 
     let app = Router::new()
         .nest("/api/v1", v1)
         .nest("/api/v2", v2)
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind(&bind_addr).await.unwrap_or_else(|e| {
-        eprintln!("Failed to bind to {}: {}", bind_addr, e);
-        std::process::exit(1);
-    });
+    let listener = tokio::net::TcpListener::bind(&bind_addr)
+        .await
+        .unwrap_or_else(|e| {
+            eprintln!("Failed to bind to {}: {}", bind_addr, e);
+            std::process::exit(1);
+        });
     tracing::info!("Listening on {}", listener.local_addr().unwrap());
     axum::serve(listener, app).await.unwrap();
 }

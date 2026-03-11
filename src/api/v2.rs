@@ -57,10 +57,7 @@ pub async fn submit(
 //   500  — system failure
 // ---------------------------------------------------------------------------
 
-pub async fn poll(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Response {
+pub async fn poll(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> Response {
     match state.bits.poll(&id, Some(POLL_TIMEOUT)).await {
         // 303 back to self: redirect-following clients (curl -L, etc.) will
         // re-issue the GET and long-poll again, looping until 200 or an error.
@@ -70,9 +67,13 @@ pub async fn poll(
             .body(Body::empty())
             .unwrap(),
 
-        PollOutcome::NotFound => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "not found"})),
+        PollOutcome::NotFound => {
+            (StatusCode::NOT_FOUND, Json(json!({"error": "not found"}))).into_response()
+        }
+
+        PollOutcome::JobLost => (
+            StatusCode::GONE,
+            Json(json!({"error": "request state expired or was lost"})),
         )
             .into_response(),
 
@@ -97,11 +98,9 @@ pub async fn poll(
                 .body(Body::from(message))
                 .unwrap(),
 
-            JobResult::Error { message } => (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": message})),
-            )
-                .into_response(),
+            JobResult::Error { message } => {
+                (StatusCode::BAD_REQUEST, Json(json!({"error": message}))).into_response()
+            }
 
             JobResult::Failed { reason } => (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -115,11 +114,9 @@ pub async fn poll(
             )
                 .into_response(),
 
-            JobResult::Cancelled => (
-                StatusCode::OK,
-                Json(json!({"status": "cancelled"})),
-            )
-                .into_response(),
+            JobResult::Cancelled => {
+                (StatusCode::OK, Json(json!({"status": "cancelled"}))).into_response()
+            }
         },
     }
 }
@@ -133,5 +130,8 @@ pub async fn cancel(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     state.bits.cancel(&id);
-    (StatusCode::OK, Json(json!({"id": id, "status": "cancelled"})))
+    (
+        StatusCode::OK,
+        Json(json!({"id": id, "status": "cancelled"})),
+    )
 }

@@ -13,4 +13,4 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde_yaml = "0.9"
 clap = { version = "4", features = ["derive"] }
-bits = { path = "../bits/bits" }
+bits = { git = "https://github.com/ecmwf/bits-broker", rev = "fb12a2c31be3f59ceed3be0c4be9586b2845caa2" }

@@ -103,10 +103,7 @@ pub async fn submit_request(
 // GET /api/v1/requests/:id
 // ---------------------------------------------------------------------------
 
-pub async fn get_request(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Response {
+pub async fn get_request(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> Response {
     match state.bits.poll(&id, Some(POLL_TIMEOUT)).await {
         PollOutcome::Pending { id } => (
             StatusCode::ACCEPTED,
@@ -121,6 +118,12 @@ pub async fn get_request(
         PollOutcome::NotFound => (
             StatusCode::NOT_FOUND,
             Json(json!({"error": "request not found"})),
+        )
+            .into_response(),
+
+        PollOutcome::JobLost => (
+            StatusCode::GONE,
+            Json(json!({"error": "request state expired or was lost"})),
         )
             .into_response(),
 
@@ -157,11 +160,9 @@ pub async fn get_request(
             )
                 .into_response(),
 
-            JobResult::Cancelled => (
-                StatusCode::OK,
-                Json(json!({"status": "cancelled"})),
-            )
-                .into_response(),
+            JobResult::Cancelled => {
+                (StatusCode::OK, Json(json!({"status": "cancelled"}))).into_response()
+            }
 
             JobResult::ClientGone => (
                 StatusCode::GONE,
@@ -195,6 +196,8 @@ pub async fn downloads_deprecated() -> impl IntoResponse {
     (
         StatusCode::GONE,
         [("Deprecation", "true")],
-        Json(json!({"error": "downloads endpoint is deprecated; poll /api/v1/requests/:id instead"})),
+        Json(
+            json!({"error": "downloads endpoint is deprecated; poll /api/v1/requests/:id instead"}),
+        ),
     )
 }

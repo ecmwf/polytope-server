@@ -14,6 +14,19 @@ cargo build --release
 
 The binary is written to `target/release/polytope-server`.
 
+### Local bits override
+
+By default this repository pulls `bits` from the `ecmwf/bits-broker` Git repository at a pinned revision, which keeps CI and releases reproducible.
+
+For local development against a sibling checkout, copy the provided Cargo patch template:
+
+```bash
+mkdir -p .cargo
+cp .cargo/config.toml.example .cargo/config.toml
+```
+
+That local override makes Cargo use `../bits/bits` instead of the pinned Git dependency.
+
 ## Configuration
 
 The server is configured with a single YAML file. The top-level `server` block controls the HTTP listener; the `bits` block is passed directly to the bits routing engine.

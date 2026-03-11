@@ -1,0 +1,25 @@
+apiVersion: skaffold/v4beta2
+kind: Config
+metadata:
+  name: polytope-server
+build:
+  local:
+    useBuildkit: true
+    concurrency: 1
+
+  tagPolicy:
+    envTemplate:
+      template: '{{default .CARGO_VERSION "dev"}}'
+
+  artifacts:
+    - image: "polytope-server"
+      context: .
+      docker:
+        dockerfile: Dockerfile
+        target: release
+
+    - image: "polytope-server-debug"
+      context: .
+      docker:
+        dockerfile: Dockerfile
+        target: debug
