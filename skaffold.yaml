@@ -12,13 +12,13 @@ build:
       template: '{{default .CARGO_VERSION "dev"}}'
 
   artifacts:
-    - image: "polytope-server"
+    - image: "eccr.ecmwf.int/polytope-server/polytope-server"
       context: .
       docker:
         dockerfile: Dockerfile
         target: release
 
-    - image: "polytope-server-debug"
+    - image: "eccr.ecmwf.int/polytope-server/polytope-server-debug"
       context: .
       docker:
         dockerfile: Dockerfile
