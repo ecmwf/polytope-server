@@ -12,41 +12,56 @@ class DateError(Exception):
     pass
 
 
-def date_check(date: str, allowed_values: list[str]):
+def date_check(date: str, rules: list[str]):
     """
     Process special match rules for DATE constraints.
 
     :param date: Date to check, can be a single, list or range of dates (Mars date format)
-    :param allowed_values: List of rules. All rules must be the same style:
+    :param rules: List of rules. All rules must be the same style:
 
-        Old style (e.g. ">30d", "<40d"):
+        - Comparative (e.g. ">30d", "<40d"):
             Each date must satisfy ALL rules (AND logic).
 
-        New style – Mars date strings (e.g. "-1/-5/-10", "-1/to/-20", "-4/to/-20/by/4"):
-            Each individual date must match AT LEAST ONE rule (OR logic).
+        - Mars date strings (e.g. "-1/-5/-10", "-1/to/-20" but without "by" in rules):
+            Each user date or date range must match AT LEAST ONE rule (OR logic).
     """
-    if not isinstance(allowed_values, list):
+    if not isinstance(rules, list):
         raise ServerError("Allowed values must be a list")
 
-    if not allowed_values:
+    if not rules:
         return True
 
-    are_old_rules = set(is_old_style_rule(rule) for rule in allowed_values)
-    if all(are_old_rules):
-        # Old-style: every rule must pass
-        for rule in allowed_values:
-            if not date_check_single_rule(date, rule):
+    are_comparative_rules = set(is_comparative_rule(rule) for rule in rules)
+    if all(are_comparative_rules):
+        # Comparative: every rule must pass
+        for rule in rules:
+            if not date_check_comparative_rule(date, rule):
                 return False
         return True
 
-    if any(are_old_rules):
-        raise ServerError("Cannot mix old-style and new-style date rules in a single match.")
+    if any(are_comparative_rules):
+        raise ServerError("Cannot mix comparative and new-style date rules in a single match.")
 
-    # New-style Mars date rules: each user date must match at least one rule
-    user_dates = expand_mars_dates(date)
-    for user_date in user_dates:
-        if not any(date_in_mars_rule(user_date, rule) for rule in allowed_values):
-            raise DateError(f"Date {user_date} does not match any allowed date rule: {allowed_values}")
+    # New-style Mars date rules.
+    date_parts = date.split("/")
+    if len(date_parts) >= 3 and date_parts[1].strip().lower() == "to":
+        # Range: both boundaries must be covered by the same rule.
+        start_d = parse_mars_date_token(date_parts[0]).date()
+        end_d = parse_mars_date_token(date_parts[2]).date()
+        if len(date_parts) == 5:
+            if date_parts[3].strip().lower() != "by":
+                raise DateError(f"Invalid Mars date string: {date!r}")
+        elif len(date_parts) != 3:
+            raise DateError(f"Invalid Mars date string: {date!r}")
+        if not any(date_in_mars_rule(start_d, rule) and date_in_mars_rule(end_d, rule) for rule in rules):
+            raise DateError(
+                f"Date range {start_d} to {end_d} is not fully covered by any single allowed date rule: {rules}"
+            )
+    else:
+        # List or single: each date must match at least one rule (OR logic).
+        for user_date in [parse_mars_date_token(p).date() for p in date_parts]:
+            if not any(date_in_mars_rule(user_date, rule) for rule in rules):
+                raise DateError(f"Date {user_date} does not match any allowed date rule: {rules}")
 
     return True
 
@@ -93,8 +108,8 @@ def parse_relativedelta(time_str):
     return relativedelta(days=time_dict["d"], hours=time_dict["h"], minutes=time_dict["m"])
 
 
-def is_old_style_rule(rule: str) -> bool:
-    """Returns True if rule is old-style (starts with > or <)."""
+def is_comparative_rule(rule: str) -> bool:
+    """Returns True if rule is comparative (starts with > or <)."""
     return rule.strip()[0] in (">", "<")
 
 
@@ -131,7 +146,7 @@ def parse_mars_date_token(token: str) -> datetime:
 def expand_mars_dates(date_str: str) -> list:
     """Expand a Mars date string to a list of date objects.
 
-    Handles single dates, lists, ranges, and ranges with step.
+    Handles single dates, lists, ranges, and ranges with "by".
 
     Examples:
         "-1"                             -> [date(-1)]
@@ -141,18 +156,20 @@ def expand_mars_dates(date_str: str) -> list:
         "20250125/-5/2023-04-23"         -> [date(20250125), date(-5), date(2023-04-23)]
         "2024-02-21/to/2025-03-01/by/10" -> dates every 10 days across the range
     """
-    parts = date_str.split("/")
+    date_parts = date_str.split("/")
 
     # Range syntax: second element is 'to'
-    if len(parts) >= 3 and parts[1].strip().lower() == "to":
-        start_d = parse_mars_date_token(parts[0]).date()
-        end_d = parse_mars_date_token(parts[2]).date()
-        step = 1
-        if len(parts) == 5:
-            if parts[3].strip().lower() != "by":
+    if len(date_parts) >= 3 and date_parts[1].strip().lower() == "to":
+        start_d = parse_mars_date_token(date_parts[0]).date()
+        end_d = parse_mars_date_token(date_parts[2]).date()
+        by = 1
+        if len(date_parts) == 5:
+            if date_parts[3].strip().lower() != "by":
                 raise DateError(f"Invalid Mars date string: {date_str!r}")
-            step = abs(int(parts[4].strip()))
-        elif len(parts) != 3:
+            by = abs(int(date_parts[4].strip()))
+            if by == 0:
+                raise DateError(f"By value cannot be zero in Mars date string: {date_str!r}")
+        elif len(date_parts) != 3:
             raise DateError(f"Invalid Mars date string: {date_str!r}")
 
         dates = []
@@ -160,61 +177,52 @@ def expand_mars_dates(date_str: str) -> list:
             current = start_d
             while current <= end_d:
                 dates.append(current)
-                current += timedelta(days=step)
+                current += timedelta(days=by)
         else:
             current = start_d
             while current >= end_d:
                 dates.append(current)
-                current -= timedelta(days=step)
+                current -= timedelta(days=by)
         return dates
 
     # List or single date
-    return [parse_mars_date_token(p).date() for p in parts]
+    return [parse_mars_date_token(p).date() for p in date_parts]
 
 
 def date_in_mars_rule(date_d, rule_str: str) -> bool:
     """Check whether a single date (a date object) is covered by a Mars date rule string.
 
     The rule string follows the same Mars date syntax:
-    - Single:     '-1', '20250125', '2023-04-23'
-    - List:       '-1/-5/-10', '20250125/-5/2023-04-23'
-    - Range:      '-1/to/-20', '2024-02-21/to/2025-03-01'
-    - Range+step: '-4/to/-20/by/4', '2024-02-21/to/2025-03-01/by/10'
+    - Single:  '-1', '20250125', '2023-04-23'
+    - List:    '-1/-5/-10', '20250125/-5/2023-04-23'
+    - Range:   '-1/to/-20', '2024-02-21/to/2025-03-01'
+
+    Note: 'by' is not supported in rules. Use it only in user-supplied dates.
     """
-    parts = rule_str.split("/")
+    rule_parts = rule_str.split("/")
 
     # Range syntax
-    if len(parts) >= 3 and parts[1].strip().lower() == "to":
-        start_d = parse_mars_date_token(parts[0]).date()
-        end_d = parse_mars_date_token(parts[2]).date()
-        step = 1
-        if len(parts) == 5:
-            if parts[3].strip().lower() != "by":
-                raise DateError(f"Invalid Mars date rule: {rule_str!r}")
-            step = abs(int(parts[4].strip()))
-        elif len(parts) != 3:
-            raise DateError(f"Invalid Mars date rule: {rule_str!r}")
-
-        min_d = min(start_d, end_d)
-        max_d = max(start_d, end_d)
-        if not (min_d <= date_d <= max_d):
-            return False
-        # Date must fall on a step boundary from start
-        return abs((date_d - start_d).days) % step == 0
+    if len(rule_parts) >= 3 and rule_parts[1].strip().lower() == "to":
+        if len(rule_parts) != 3:
+            raise DateError(f"'by' is not supported in date rules: {rule_str!r}")
+        start_d = parse_mars_date_token(rule_parts[0]).date()
+        end_d = parse_mars_date_token(rule_parts[2]).date()
+        return min(start_d, end_d) <= date_d <= max(start_d, end_d)
 
     # List or single: date must equal one of the listed tokens
-    for part in parts:
+    for part in rule_parts:
         if parse_mars_date_token(part).date() == date_d:
             return True
     return False
 
 
-def date_check_single_rule(date, allowed_values: str):
+def date_check_comparative_rule(date, comp_rule: str):
     """
-    Process special match rules for DATE constraints (old-style rules only).
+    Process special match rules for DATE constraints (comparative rules only).
 
     :param date: Date to check, can be a string or list of strings
-    :param allowed_values: Allowed values for the date in the format >1d, <2d, >1m, <2h, r"(\\d+)([dhm])".
+    :param comp_rule: Comparative rule for the date in the format >1d, <2d, >1m, <2h, r"(\\d+)([dhm])".
+
     """
     # if type of date is list
     if isinstance(date, list):
@@ -222,8 +230,8 @@ def date_check_single_rule(date, allowed_values: str):
     date = str(date)
 
     # Parse allowed values
-    comp = allowed_values[0]
-    offset = allowed_values[1:].strip()
+    comp = comp_rule[0]
+    offset = comp_rule[1:].strip()
     if comp == "<":
         after = False
     elif comp == ">":

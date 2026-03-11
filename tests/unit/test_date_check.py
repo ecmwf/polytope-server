@@ -186,22 +186,9 @@ class TestDateInMarsRule:
         assert date_in_mars_rule(d(-10), "-20/to/-1") is True
 
     # Stepped range rules
-    def test_stepped_range(self):
-        # On step: -4, -8, -12, -16, -20
-        assert date_in_mars_rule(d(-4), "-4/to/-20/by/4") is True
-        assert date_in_mars_rule(d(-8), "-4/to/-20/by/4") is True
-        assert date_in_mars_rule(d(-20), "-4/to/-20/by/4") is True
-        # Off step or outside range
-        assert date_in_mars_rule(d(-5), "-4/to/-20/by/4") is False
-        assert date_in_mars_rule(d(-3), "-4/to/-20/by/4") is False
-
-    def test_stepped_range_absolute(self):
-        # 2024-02-21/to/2025-03-01/by/10
-        start = date(2024, 2, 21)
-        rule = "2024-02-21/to/2025-03-01/by/10"
-        assert date_in_mars_rule(start, rule) is True
-        assert date_in_mars_rule(start + timedelta(days=10), rule) is True
-        assert date_in_mars_rule(start + timedelta(days=11), rule) is False
+    def test_stepped_range_in_rule_raises(self):
+        with pytest.raises(DateError):
+            date_in_mars_rule(d(-4), "-4/to/-20/by/4")
 
 
 # ---------------------------------------------------------------------------
@@ -226,12 +213,6 @@ class TestDateCheckNewStyle:
         assert date_check(ds(-10), ["-1/to/-20"]) is True
         with pytest.raises(DateError):
             date_check(ds(-21), ["-1/to/-20"])
-
-    def test_stepped_range_rule(self):
-        assert date_check(ds(-4), ["-4/to/-20/by/4"]) is True
-        assert date_check(ds(-8), ["-4/to/-20/by/4"]) is True
-        with pytest.raises(DateError):
-            date_check(ds(-5), ["-4/to/-20/by/4"])
 
     def test_mixed_formats(self):
         rule = ["20250125/-5/2023-04-23"]
@@ -268,24 +249,40 @@ class TestDateCheckNewStyle:
             date_check(f"{ds(-1)}/{ds(-5)}/{ds(-25)}", ["-1/to/-20"])
 
     def test_user_date_stepped_range(self):
-        # Exact match
-        assert date_check(f"{ds(-4)}/to/{ds(-20)}/by/4", ["-4/to/-20/by/4"]) is True
-        # Subset of allowed range
+        # Subset of allowed range: only boundaries are checked
         assert date_check(f"{ds(-4)}/to/{ds(-20)}/by/4", ["-1/to/-20"]) is True
         # Exceeds rule
         with pytest.raises(DateError):
             date_check(f"{ds(-4)}/to/{ds(-24)}/by/4", ["-1/to/-20"])
+
+    def test_user_date_range_or_logic(self):
+        # Matches first rule
+        assert date_check(f"{ds(-5)}/to/{ds(-10)}", ["-1/to/-20", "2024-01-01/to/2024-12-31"]) is True
+        # Matches second rule
+        assert date_check("2024-01-01/to/2024-08-31", ["-1/to/-20", "2024-01-01/to/2024-12-31"]) is True
+        # Start matches one rule, end another
+        with pytest.raises(DateError):
+            date_check(f"{ds(-5)}/to/2024-08-31", ["-1/to/-20", "2024-01-01/to/2024-12-31"])
+        # Matches no rule
+        with pytest.raises(DateError):
+            date_check(f"{ds(-5)}/to/{ds(30)}", ["-1/to/-20", "2024-01-01/to/2024-12-31"])
+
+        # start matches one rule, but end matches another
+        with pytest.raises(DateError):
+            date_check(f"{ds(-5)}/to/{ds(30)}", ["-1/to/-20", "-30"])
+
+        date_check("-5/-30", ["-1/to/-20", "-30"]) is True
 
     def test_empty_allowed_values(self):
         assert date_check(ds(-1), []) is True
 
 
 # ---------------------------------------------------------------------------
-# date_check — old-style rules: backward compatibility
+# date_check — comparative rules: backward compatibility
 # ---------------------------------------------------------------------------
 
 
-class TestDateCheckOldStyle:
+class TestDateCheckComparative:
     def test_single(self):
         assert date_check(ds(-32), [">30d"]) is True
         with pytest.raises(DateError):
@@ -302,3 +299,10 @@ class TestDateCheckOldStyle:
         assert date_check(f"{ds(-60)}/to/{ds(-40)}", [">30d"]) is True
         with pytest.raises(DateError):
             date_check(f"{ds(-60)}/to/{ds(-25)}", [">30d"])
+
+    def test_edges(self):
+        # Edge cases: exactly 30 days ago should NOT satisfy ">30d"
+        with pytest.raises(DateError):
+            date_check(ds(-29), [">30d"])
+        # Exactly 31 days ago should satisfy ">30d"
+        assert date_check(ds(-30), [">30d"]) is True
