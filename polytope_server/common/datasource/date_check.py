@@ -31,12 +31,16 @@ def date_check(date: str, allowed_values: list[str]):
     if not allowed_values:
         return True
 
-    if all(map(is_old_style_rule, allowed_values)):
+    are_old_rules = set(is_old_style_rule(rule) for rule in allowed_values)
+    if all(are_old_rules):
         # Old-style: every rule must pass
         for rule in allowed_values:
             if not date_check_single_rule(date, rule):
                 return False
         return True
+
+    if any(are_old_rules):
+        raise ServerError("Cannot mix old-style and new-style date rules in a single match.")
 
     # New-style Mars date rules: each user date must match at least one rule
     user_dates = expand_mars_dates(date)
