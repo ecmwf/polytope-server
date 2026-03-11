@@ -26,7 +26,6 @@ from polytope_server.common.datasource.date_check import (
     DateError,
     date_check,
     date_in_mars_rule,
-    expand_mars_dates,
     parse_mars_date_token,
 )
 
@@ -78,75 +77,6 @@ class TestParseMarsDateToken:
     def test_positive_integer_not_supported_as_relative(self):
         with pytest.raises(DateError):
             parse_mars_date_token("1")
-
-
-# ---------------------------------------------------------------------------
-# expand_mars_dates
-# ---------------------------------------------------------------------------
-
-
-class TestExpandMarsDates:
-    # Single dates
-    def test_single_relative(self):
-        assert expand_mars_dates("-1") == [d(-1)]
-        assert expand_mars_dates("0") == [d(0)]
-
-    def test_single_absolute(self):
-        assert expand_mars_dates("20250125") == [date(2025, 1, 25)]
-        assert expand_mars_dates("2023-04-23") == [date(2023, 4, 23)]
-
-    # Lists
-    def test_list_relative(self):
-        assert expand_mars_dates("-1/-5/-10") == [d(-1), d(-5), d(-10)]
-
-    def test_list_mixed_formats(self):
-        # from the spec: "20250125/-5/2023-04-23"
-        result = expand_mars_dates("20250125/-5/2023-04-23")
-        assert result == [date(2025, 1, 25), d(-5), date(2023, 4, 23)]
-
-    def test_list_two_elements(self):
-        # Two-element list must NOT be mistaken for a range
-        result = expand_mars_dates("-1/-20")
-        assert result == [d(-1), d(-20)]
-        assert len(result) == 2
-
-    # Ranges
-    def test_range(self):
-        # Ascending range
-        result = expand_mars_dates("2025-01-01/to/2025-01-05")
-        assert result == [date(2025, 1, i) for i in range(1, 6)]
-        # Descending range is valid: start > end in calendar terms
-        result = expand_mars_dates("2025-01-05/to/2025-01-01")
-        assert result == [date(2025, 1, i) for i in range(5, 0, -1)]
-        # Relative descending: -1/to/-20
-        result = expand_mars_dates("-1/to/-20")
-        assert result[0] == d(-1)
-        assert result[-1] == d(-20)
-        assert len(result) == 20
-
-    # Ranges with step
-    def test_stepped_range(self):
-        # Relative: -4/to/-20/by/4 -> -4, -8, -12, -16, -20
-        result = expand_mars_dates("-4/to/-20/by/4")
-        assert result == [d(-4), d(-8), d(-12), d(-16), d(-20)]
-        # Absolute: 2024-02-21/to/2025-03-01/by/10
-        result = expand_mars_dates("2024-02-21/to/2025-03-01/by/10")
-        assert result[0] == date(2024, 2, 21)
-        assert all((r - date(2024, 2, 21)).days % 10 == 0 for r in result)
-        # Symmetric: forward and backward should produce same set
-        fwd = set(expand_mars_dates("-4/to/-20/by/4"))
-        rev = set(expand_mars_dates("-20/to/-4/by/4"))
-        assert fwd == rev
-        # Uneven step: stops before reaching exact end
-        result = expand_mars_dates("-4/to/-21/by/4")
-        assert d(-20) in result
-        assert d(-21) not in result
-
-    def test_case_insensitive_to(self):
-        assert expand_mars_dates("-1/TO/-3") == expand_mars_dates("-1/to/-3")
-
-    def test_case_insensitive_by(self):
-        assert expand_mars_dates("-4/to/-20/BY/4") == expand_mars_dates("-4/to/-20/by/4")
 
 
 # ---------------------------------------------------------------------------
