@@ -17,9 +17,42 @@ build:
       docker:
         dockerfile: Dockerfile
         target: release
+        buildArgs:
+          PACKAGE_NAME: polytope-server
+          BIN_NAME: polytope-server
 
     - image: "eccr.ecmwf.int/polytope-server/polytope-server-debug"
       context: .
       docker:
         dockerfile: Dockerfile
         target: debug
+        buildArgs:
+          PACKAGE_NAME: polytope-server
+          BIN_NAME: polytope-server
+
+    - image: "eccr.ecmwf.int/polytope-server/polytope-worker"
+      context: .
+      docker:
+        dockerfile: Dockerfile.polytope-worker
+        target: release
+        buildArgs:
+          PACKAGE_NAME: polytope-worker
+          BIN_NAME: polytope-worker
+
+    - image: "eccr.ecmwf.int/polytope-server/fdb-worker"
+      context: .
+      docker:
+        dockerfile: Dockerfile
+        target: release
+        buildArgs:
+          PACKAGE_NAME: fdb-worker
+          BIN_NAME: fdb-worker
+
+    - image: "eccr.ecmwf.int/polytope-server/mars-worker"
+      context: .
+      docker:
+        dockerfile: Dockerfile
+        target: release
+        buildArgs:
+          PACKAGE_NAME: mars-worker
+          BIN_NAME: mars-worker
