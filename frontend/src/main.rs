@@ -11,10 +11,11 @@ use axum::{
 use clap::Parser;
 use state::AppState;
 
+use bits_ecmwf as _;
+
 #[derive(Parser)]
 #[command(name = "polytope-server", about = "Polytope data retrieval server")]
 struct Cli {
-    /// Path to the YAML configuration file.
     config: String,
 }
 
@@ -41,7 +42,6 @@ async fn main() {
     let state = Arc::new(AppState { bits });
     let bind_addr = cfg.bind_addr();
 
-    // v1: legacy Polytope API, retained for backwards compatibility
     let v1 = Router::new()
         .route("/test", get(api::v1::test))
         .route("/collections", get(api::v1::list_collections))
@@ -54,7 +54,6 @@ async fn main() {
         )
         .route("/downloads/{id}", get(api::v1::downloads_deprecated));
 
-    // v2: idiomatic bits API
     let v2 = Router::new()
         .route("/test", get(api::v2::test))
         .route("/requests", post(api::v2::submit))

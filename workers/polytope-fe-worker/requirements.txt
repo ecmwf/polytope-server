@@ -1,0 +1,4 @@
+polytope-mars==0.3.7
+polytope-python==2.1.2
+covjsonkit==0.2.10
+PyYAML==6.0.2

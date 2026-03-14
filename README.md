@@ -1,6 +1,18 @@
 # polytope-server
 
-A Rust implementation of the [Polytope](https://polytope.ecmwf.int) data retrieval API, backed by [bits](../bits) for request routing and processing.
+A Rust workspace containing a Polytope frontend plus separate worker crates, backed by [bits](../bits) for request routing and processing.
+
+## Workspace layout
+
+This repository is intentionally split so the frontend and workers can be moved independently later.
+
+- `frontend/` — the Polytope HTTP frontend crate (`polytope-server` binary)
+- `workers/common/` — shared remote-worker runtime and protocol client
+- `workers/polytope-fe-worker/` — Polytope worker crate
+- `workers/fdb-worker/` — FDB worker crate
+- `workers/mars-worker/` — Mars worker stub crate
+
+The frontend does not depend on worker crates. The only shared worker-side dependency is `workers/common/`.
 
 ## Prerequisites
 
@@ -8,33 +20,36 @@ A Rust implementation of the [Polytope](https://polytope.ecmwf.int) data retriev
 
 ## Build
 
+Build the whole workspace:
+
 ```bash
 cargo build --release
 ```
 
-The binary is written to `target/release/polytope-server`.
-
-### Local bits override
-
-By default this repository pulls `bits` from the `ecmwf/bits-broker` Git repository at a pinned revision, which keeps CI and releases reproducible.
-
-For local development against a sibling checkout, copy the provided Cargo patch template:
+Build a single crate:
 
 ```bash
-mkdir -p .cargo
-cp .cargo/config.toml.example .cargo/config.toml
+cargo build -p polytope-server
+cargo build -p polytope-worker
+cargo build -p fdb-worker
+cargo build -p mars-worker
 ```
 
-That local override makes Cargo use `../bits/bits` instead of the pinned Git dependency.
+The workspace produces separate binaries under `target/release/`:
+
+- `polytope-server`
+- `polytope-worker`
+- `fdb-worker`
+- `mars-worker`
 
 ## Configuration
 
-The server is configured with a single YAML file. The top-level `server` block controls the HTTP listener; the `bits` block is passed directly to the bits routing engine.
+The frontend is configured with a single YAML file. The top-level `server` block controls the HTTP listener; the `bits` block is passed directly to the bits routing engine.
 
 ```yaml
 server:
-  host: "0.0.0.0"   # optional, default 0.0.0.0
-  port: 3000         # optional, default 3000
+  host: "0.0.0.0"
+  port: 3000
 
 bits:
   routes:
@@ -42,68 +57,65 @@ bits:
       - type: noop
 ```
 
-See `config.example.yaml` for a starting point, and the [bits documentation](../bits) for the full `bits` config schema.
+See `config.example.yaml` for a starting point, and the [bits documentation](../bits) for the full bits config schema.
+
+For the remote-worker wire protocol and streaming completion endpoints, see `../bits/docs/src/external-workers.md`.
 
 ## Running
 
+Frontend:
+
 ```bash
-polytope-server config.yaml
+cargo run -p polytope-server -- config.yaml
 ```
 
-Or directly via Cargo:
+Workers:
 
 ```bash
-cargo run -- config.yaml
+cargo run -p polytope-worker -- --broker-url http://127.0.0.1:9001 --config-path worker-config.yaml
+cargo run -p fdb-worker -- --broker-url http://127.0.0.1:9001 --fdb-config-path /path/to/fdb.yaml
+cargo run -p mars-worker -- --broker-url http://127.0.0.1:9001
 ```
 
-Set the `RUST_LOG` environment variable to control log verbosity:
+Set `RUST_LOG` to control log verbosity:
 
 ```bash
-RUST_LOG=info polytope-server config.yaml
+RUST_LOG=info cargo run -p polytope-server -- config.yaml
 ```
 
 ## API
 
-All endpoints are under `/api/v1`.
+The frontend exposes the legacy v1 and newer v2 HTTP APIs.
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/v1/test` | Health check — returns `"Polytope server is alive"` |
-| `GET` | `/api/v1/collections` | Returns `["all"]` _(deprecated)_ |
-| `POST` | `/api/v1/requests/:collection` | Submit a request. The collection is ignored; routing is determined by the bits config. |
-| `GET` | `/api/v1/requests/:id` | Poll for a result. Long-polls for up to 30 s, then returns `202` if still pending. |
-| `DELETE` | `/api/v1/requests/:id` | Cancel a request. |
-| `GET` | `/api/v1/downloads/:id` | _(deprecated — returns 410)_ |
+- `GET /api/v1/test`
+- `GET /api/v1/collections`
+- `POST /api/v1/requests/:collection`
+- `GET /api/v1/requests/:id`
+- `DELETE /api/v1/requests/:id`
+- `GET /api/v2/test`
+- `POST /api/v2/requests`
+- `GET /api/v2/requests/:id`
+- `DELETE /api/v2/requests/:id`
 
-### Submitting a request
+Successful responses are streamed back to the client over HTTP.
 
-```
-POST /api/v1/requests/any-collection
-Content-Type: application/json
+## Images
 
-{
-  "verb": "retrieve",
-  "request": {
-    "class": "od",
-    "stream": "oper"
-  }
-}
-```
+`skaffold.yaml` builds separate images for the frontend and each worker. The Docker build is workspace-aware:
 
-Response (`202 Accepted`):
+- `PACKAGE_NAME=polytope-server`, `BIN_NAME=polytope-server`
+- `PACKAGE_NAME=polytope-worker`, `BIN_NAME=polytope-worker`
+- `PACKAGE_NAME=fdb-worker`, `BIN_NAME=fdb-worker`
+- `PACKAGE_NAME=mars-worker`, `BIN_NAME=mars-worker`
 
-```json
-{ "status": "queued", "id": "a1b2c3d4-..." }
-```
+That mapping is what keeps the images separate even though they live in one workspace.
 
-### Polling for a result
+## Future extraction
 
-```
-GET /api/v1/requests/a1b2c3d4-...
-```
+The current layout is designed so the crates can be moved later with minimal churn:
 
-- `202 Accepted` — still processing, retry
-- `200 OK` — complete, body contains the result stream
-- `303 See Other` — result available at `Location` header
-- `400 Bad Request` — request-level error
-- `500 Internal Server Error` — system failure
+- the frontend is self-contained under `frontend/`
+- each worker is self-contained under its own directory
+- the only in-repo worker dependency is `workers/common/`
+
+If a worker needs to move to its own repository later, it should mostly be a matter of copying that crate plus `workers/common/` (or publishing `workers/common/` as its own crate).

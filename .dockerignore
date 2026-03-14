@@ -3,3 +3,4 @@
 /.github
 /.pytest_cache
 /.venv
+.cargo/

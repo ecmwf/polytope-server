@@ -4,7 +4,6 @@ use serde::Deserialize;
 pub struct ServerConfig {
     #[serde(default)]
     pub server: HttpConfig,
-    /// Passed verbatim to bits as YAML.
     pub bits: serde_yaml::Value,
 }
 
@@ -35,12 +34,9 @@ fn default_port() -> u16 {
 
 impl ServerConfig {
     pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let content = std::fs::read_to_string(path)?;
-        let config: ServerConfig = serde_yaml::from_str(&content)?;
-        Ok(config)
+        Ok(serde_yaml::from_str(&std::fs::read_to_string(path)?)?)
     }
 
-    /// Serialise the `bits` section back to a YAML string for `Bits::from_config`.
     pub fn bits_yaml(&self) -> Result<String, serde_yaml::Error> {
         serde_yaml::to_string(&self.bits)
     }

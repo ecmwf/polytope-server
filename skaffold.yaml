@@ -1,58 +1,138 @@
-apiVersion: skaffold/v4beta2
+apiVersion: skaffold/v4beta13
 kind: Config
 metadata:
   name: polytope-server
+
 build:
-  local:
-    useBuildkit: true
-    concurrency: 1
-
-  tagPolicy:
-    envTemplate:
-      template: '{{default .CARGO_VERSION "dev"}}'
-
   artifacts:
-    - image: "eccr.ecmwf.int/polytope-server/polytope-server"
+    # ── Broker (frontend) ──────────────────────────────────────────────────────
+    - image: eccr.ecmwf.int/polytope/polytope-server
       context: .
       docker:
-        dockerfile: Dockerfile
+        dockerfile: frontend/Dockerfile
         target: release
         buildArgs:
-          PACKAGE_NAME: polytope-server
           BIN_NAME: polytope-server
-
-    - image: "eccr.ecmwf.int/polytope-server/polytope-server-debug"
+          GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+          PACKAGE_NAME: polytope-server
+    - image: eccr.ecmwf.int/polytope/polytope-server-debug
       context: .
       docker:
-        dockerfile: Dockerfile
+        dockerfile: frontend/Dockerfile
         target: debug
         buildArgs:
-          PACKAGE_NAME: polytope-server
           BIN_NAME: polytope-server
+          GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+          PACKAGE_NAME: polytope-server
 
-    - image: "eccr.ecmwf.int/polytope-server/polytope-worker"
+    # ── Polytope FE worker (FDB + GribJump + Python) ──────────────────────────
+    - image: eccr.ecmwf.int/polytope/polytope-fe-worker
       context: .
       docker:
-        dockerfile: Dockerfile.polytope-worker
+        dockerfile: workers/polytope-fe-worker/Dockerfile
         target: release
         buildArgs:
-          PACKAGE_NAME: polytope-worker
-          BIN_NAME: polytope-worker
+          BIN_NAME: polytope-fe-worker
+          GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+          PACKAGE_NAME: polytope-fe-worker
+          rpm_repo: '{{ .rpm_repo }}'
 
-    - image: "eccr.ecmwf.int/polytope-server/fdb-worker"
+    # ── FDB worker ─────────────────────────────────────────────────────────────
+    - image: eccr.ecmwf.int/polytope/fdb-worker
       context: .
       docker:
-        dockerfile: Dockerfile
+        dockerfile: workers/fdb-worker/Dockerfile
         target: release
         buildArgs:
-          PACKAGE_NAME: fdb-worker
           BIN_NAME: fdb-worker
+          GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+          PACKAGE_NAME: fdb-worker
 
-    - image: "eccr.ecmwf.int/polytope-server/mars-worker"
+    # ── MARS worker (C++ client) ──────────────────────────────────────────────
+    - image: eccr.ecmwf.int/polytope/mars-worker
       context: .
       docker:
-        dockerfile: Dockerfile
+        dockerfile: workers/mars-worker/Dockerfile
         target: release
         buildArgs:
-          PACKAGE_NAME: mars-worker
           BIN_NAME: mars-worker
+          GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+          PACKAGE_NAME: mars-worker
+          rpm_repo: '{{ .rpm_repo }}'
+
+  tagPolicy:
+    customTemplate:
+      template: '{{.PREFIX}}{{.GIT_TAG}}'
+      components:
+        - name: PREFIX
+          envTemplate:
+            template: '{{default "" .PREFIX}}'
+        - name: GIT_TAG
+          gitCommit:
+            ignoreChanges: true
+  platforms:
+    - linux/amd64
+  local:
+    # Required: Skaffold shells out to docker/podman CLI to pass --build-context flags.
+    useDockerCLI: true
+    concurrency: 1
+
+# ── Deploy ─────────────────────────────────────────────────────────────────────
+# Skaffold injects the built image tag into the Helm chart via setValueTemplates.
+# All images share the same git-commit tag, so we only need one.
+deploy:
+  helm:
+    releases:
+      - name: polytope-majh
+        chartPath: ../polytope-chart
+        valuesFiles:
+          - ../polytope-config/majh-dev.yaml
+        setValueTemplates:
+          image.tag: '{{.IMAGE_TAG_eccr_ecmwf_int_polytope_polytope_server}}'
+
+# ── Profiles ───────────────────────────────────────────────────────────────────
+# Default: Cargo.toml git deps are fetched from GitHub inside the Docker build.
+#          GH_TOKEN is required for private repos (bits-broker, rsfdb).
+#          Dockerfiles define empty `FROM scratch AS bits/rsfdb/rsfindlibs` stages
+#          so `COPY --from=bits` is a no-op.
+#
+# -p local: Build from sibling repos on disk (../bits, ../rsfdb, ../rsfindlibs).
+#           --build-context overrides the scratch stages with real directories.
+#           LOCAL_DEPS=1 tells the Dockerfile to generate Cargo [patch] config
+#           pointing at the container-local paths (/ecmwf/bits, etc).
+profiles:
+  - name: local
+    patches:
+      - op: add
+        path: /build/artifacts/0/docker/cliFlags
+        value: &local-contexts
+          - --build-context=bits=../bits
+          - --build-context=rsfdb=../rsfdb
+          - --build-context=rsfindlibs=../rsfindlibs
+      - op: add
+        path: /build/artifacts/1/docker/cliFlags
+        value: *local-contexts
+      - op: add
+        path: /build/artifacts/2/docker/cliFlags
+        value: *local-contexts
+      - op: add
+        path: /build/artifacts/3/docker/cliFlags
+        value: *local-contexts
+      - op: add
+        path: /build/artifacts/4/docker/cliFlags
+        value: *local-contexts
+      - op: add
+        path: /build/artifacts/0/docker/buildArgs/LOCAL_DEPS
+        value: "1"
+      - op: add
+        path: /build/artifacts/1/docker/buildArgs/LOCAL_DEPS
+        value: "1"
+      - op: add
+        path: /build/artifacts/2/docker/buildArgs/LOCAL_DEPS
+        value: "1"
+      - op: add
+        path: /build/artifacts/3/docker/buildArgs/LOCAL_DEPS
+        value: "1"
+      - op: add
+        path: /build/artifacts/4/docker/buildArgs/LOCAL_DEPS
+        value: "1"

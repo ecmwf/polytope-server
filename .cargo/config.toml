@@ -1,0 +1,12 @@
+[net]
+git-fetch-with-cli = true
+
+[patch."https://github.com/ecmwf/bits-broker"]
+bits = { path = "../bits/bits" }
+bits-ecmwf = { path = "../bits/bits-ecmwf" }
+
+[patch."https://github.com/ecmwf/rsfdb"]
+rsfdb = { path = "../rsfdb" }
+
+[patch."https://github.com/ecmwf/rsfindlibs"]
+rsfindlibs = { path = "../rsfindlibs" }

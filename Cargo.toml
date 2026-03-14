@@ -1,16 +1,27 @@
-[package]
-name = "polytope-server"
-version = "0.1.0"
-edition = "2021"
+[workspace]
+members = [
+    "frontend",
+    "workers/common",
+    "workers/polytope-fe-worker",
+    "workers/fdb-worker",
+    "workers/mars-worker",
+]
+resolver = "2"
 
-[dependencies]
+[workspace.dependencies]
+async-trait = "0.1"
 axum = "0.8"
-tokio = { version = "1", features = ["full"] }
+bits = { git = "https://github.com/ecmwf/bits-broker", branch = "main" }
+bits-ecmwf = { git = "https://github.com/ecmwf/bits-broker", branch = "main" }
+bytes = "1"
+clap = { version = "4", features = ["derive"] }
+futures = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-futures = "0.3"
+serde_yaml = "0.9"
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+tokio-util = { version = "0.7", features = ["io"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-serde_yaml = "0.9"
-clap = { version = "4", features = ["derive"] }
-bits = { git = "https://github.com/ecmwf/bits-broker", rev = "fb12a2c31be3f59ceed3be0c4be9586b2845caa2" }
