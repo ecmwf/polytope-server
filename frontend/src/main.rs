@@ -59,9 +59,12 @@ async fn main() {
         .route("/requests", post(api::v2::submit))
         .route("/requests/{id}", get(api::v2::poll).delete(api::v2::cancel));
 
+    let openmeteo = api::openmeteo::router();
+
     let app = Router::new()
         .nest("/api/v1", v1)
         .nest("/api/v2", v2)
+        .nest("/openmeteo/v1", openmeteo)
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(&bind_addr)

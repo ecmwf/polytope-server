@@ -104,8 +104,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let py_path: Vec<String> = path.extract()?;
         info!(sys_path = ?py_path, "python sys.path configured");
 
-        py.import("run_polytope_worker")?;
+        let wrapper = py.import("run_polytope_worker")?;
         info!("run_polytope_worker module imported");
+
+        wrapper.call_method1("_get_datasource", (&cli.config_path,))?;
+        info!("polytope datasource initialized");
         Ok(())
     })?;
 
