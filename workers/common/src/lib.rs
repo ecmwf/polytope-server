@@ -58,6 +58,7 @@ impl Completion {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
 enum CompletionRequest {
     Redirect { location: String, message: String },
     Reject { reason: String },

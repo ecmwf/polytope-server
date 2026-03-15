@@ -9,7 +9,7 @@ FROM docker.io/library/rust:1.90-slim-bookworm AS chef
 ARG GIT_AUTH_TOKEN=""
 ARG LOCAL_DEPS=""
 RUN cargo install cargo-chef --locked
-RUN apt-get update && apt-get install -y git pkg-config build-essential && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-dev python3-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /ecmwf/polytope-server
 COPY --from=bits . /ecmwf/bits/
 COPY --from=rsfdb . /ecmwf/rsfdb/
@@ -26,7 +26,7 @@ FROM docker.io/library/rust:1.90-slim-bookworm AS cacher
 ARG GIT_AUTH_TOKEN=""
 ARG LOCAL_DEPS=""
 RUN cargo install cargo-chef --locked
-RUN apt-get update && apt-get install -y git pkg-config build-essential && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-dev python3-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /ecmwf/polytope-server
 COPY --from=bits . /ecmwf/bits/
 COPY --from=rsfdb . /ecmwf/rsfdb/
@@ -42,7 +42,7 @@ RUN cargo chef cook --release --recipe-path recipe.json
 FROM docker.io/library/rust:1.90-slim-bookworm AS builder
 ARG GIT_AUTH_TOKEN=""
 ARG LOCAL_DEPS=""
-RUN apt-get update && apt-get install -y git pkg-config build-essential && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-dev python3-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /ecmwf/polytope-server
 ARG PACKAGE_NAME=polytope-fe-worker
 ARG BIN_NAME=polytope-fe-worker
@@ -62,8 +62,9 @@ RUN cargo build --release -p ${PACKAGE_NAME}
 FROM python:3.11-bookworm AS fdb-build
 ARG ecbuild_version=3.8.2
 ARG eccodes_version=2.33.1
-ARG eckit_version=1.28.0
-ARG fdb_version=5.13.2
+ARG eckit_version=1.28.3
+ARG fdb_version=5.14.0
+ARG gribjump_version=0.10.2
 ARG pyfdb_version=0.1.0
 
 RUN apt-get update && apt-get install -y cmake gnupg build-essential net-tools bison flex git libaec-dev && rm -rf /var/lib/apt/lists/*
@@ -88,7 +89,18 @@ RUN git clone --depth 1 --branch 1.11.22 https://github.com/ecmwf/metkit.git /so
 
 RUN git clone --depth 1 --branch ${fdb_version} https://github.com/ecmwf/fdb.git /source/fdb \
     && mkdir -p /build/fdb && cd /build/fdb \
-    && ecbuild --prefix=/opt/fdb -- -DCMAKE_PREFIX_PATH="/opt/fdb;/opt/fdb/eckit;/opt/fdb/metkit" /source/fdb \
+    && ecbuild --prefix=/opt/fdb -- -DCMAKE_PREFIX_PATH="/opt/fdb;/opt/fdb/eckit;/opt/fdb/metkit" -DCMAKE_CXX_FLAGS=-fpermissive /source/fdb \
+    && make -j4 && make install
+
+RUN git clone --depth 1 --branch v1.1.3 https://github.com/Deutsches-Klimarechenzentrum/libaec.git /source/libaec \
+    && mkdir -p /build/libaec && cd /build/libaec \
+    && cmake -DCMAKE_INSTALL_PREFIX=/opt/fdb /source/libaec \
+    && make -j4 && make install \
+    && rm -rf /source/libaec /build/libaec
+
+RUN git clone --depth 1 --branch ${gribjump_version} https://github.com/ecmwf/gribjump.git /source/gribjump \
+    && mkdir -p /build/gribjump && cd /build/gribjump \
+    && ecbuild --prefix=/opt/fdb -- -DCMAKE_PREFIX_PATH=/opt/fdb /source/gribjump \
     && make -j4 && make install
 
 RUN rm -rf /source /build
@@ -96,24 +108,6 @@ RUN rm -rf /source /build
 RUN git clone --single-branch --branch ${pyfdb_version} https://github.com/ecmwf/pyfdb.git \
     && python -m pip install "numpy<2.0" --user \
     && python -m pip install ./pyfdb --user
-
-###############################
-# GribJump Build (from RPM)
-###############################
-FROM python:3.11-bookworm AS gribjump-build
-ARG rpm_repo
-ARG gribjump_version=0.10.2
-
-RUN apt-get update && apt-get install -y gnupg2 curl ca-certificates git \
-    && curl -fsSL "${rpm_repo}/private-raw-repos-config/debian/bookworm/stable/public.gpg.key" | gpg --dearmor -o /usr/share/keyrings/mars-archive-keyring.gpg \
-    && echo "deb [signed-by=/usr/share/keyrings/mars-archive-keyring.gpg] ${rpm_repo}/private-debian-bookworm-stable/ bookworm main" | tee /etc/apt/sources.list.d/mars.list \
-    && apt-get update \
-    && apt-get install -y gribjump-server=${gribjump_version}-gribjumpserver \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN git clone --single-branch --branch ${gribjump_version} https://github.com/ecmwf/gribjump.git \
-    && cd /gribjump && python -m pip install . --user \
-    && rm -rf /gribjump
 
 
 
@@ -137,16 +131,14 @@ ARG PACKAGE_NAME=polytope-fe-worker
 ARG BIN_NAME=polytope-fe-worker
 LABEL version=$VERSION
 
-RUN apt-get update && apt-get install -y ca-certificates libgomp1 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y ca-certificates libgomp1 libaec0 libcurl4 libopenjp2-7 && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
 COPY --from=fdb-build /opt/fdb/ /opt/fdb/
 COPY --from=fdb-build /root/.local /root/.local
-COPY --from=gribjump-build /opt/ecmwf/gribjump-server/ /opt/ecmwf/gribjump-server/
-COPY --from=gribjump-build /root/.local /root/.local
 COPY --from=python-deps /root/.venv /root/.local
 
-ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/opt/fdb/lib:/opt/ecmwf/gribjump-server/lib
+ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/opt/fdb/lib:/usr/local/lib
 
 COPY --from=builder /ecmwf/polytope-server/target/release/${BIN_NAME} /app/polytope-fe-worker
 COPY workers/polytope-fe-worker/run_polytope_worker.py /app/
@@ -162,16 +154,14 @@ ARG PACKAGE_NAME=polytope-fe-worker
 ARG BIN_NAME=polytope-fe-worker
 LABEL version=$VERSION
 
-RUN apt-get update && apt-get install -y ca-certificates libgomp1 bash && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y ca-certificates libgomp1 libaec0 libcurl4 libopenjp2-7 bash && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
 COPY --from=fdb-build /opt/fdb/ /opt/fdb/
 COPY --from=fdb-build /root/.local /root/.local
-COPY --from=gribjump-build /opt/ecmwf/gribjump-server/ /opt/ecmwf/gribjump-server/
-COPY --from=gribjump-build /root/.local /root/.local
 COPY --from=python-deps /root/.venv /root/.local
 
-ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/opt/fdb/lib:/opt/ecmwf/gribjump-server/lib
+ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/opt/fdb/lib:/usr/local/lib
 
 COPY --from=builder /ecmwf/polytope-server/target/release/${BIN_NAME} /app/polytope-fe-worker
 COPY workers/polytope-fe-worker/run_polytope_worker.py /app/

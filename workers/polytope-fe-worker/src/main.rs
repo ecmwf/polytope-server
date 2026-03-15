@@ -1,19 +1,20 @@
 use async_trait::async_trait;
 use clap::Parser;
 use polytope_worker_common::{run_worker_loop, Completion, Processor, WorkItem, WorkerConfig};
+use pyo3::prelude::*;
+use pyo3::types::{PyBytes, PyTuple};
 use serde_json::json;
-use tokio::process::Command;
-use tokio_util::io::ReaderStream;
+use tracing::{error, info};
 
 struct PolytopeProcessor {
-    python: String,
-    wrapper: String,
     config_path: String,
 }
 
 #[async_trait]
 impl Processor for PolytopeProcessor {
     async fn process(&self, work: WorkItem) -> Completion {
+        info!(job_id = %work.job_id, "processing request");
+
         let payload = json!({
             "request": work.request,
             "user": work.user,
@@ -21,54 +22,55 @@ impl Processor for PolytopeProcessor {
             "config_path": self.config_path,
         });
 
-        let child = Command::new(&self.python)
-            .arg(&self.wrapper)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .and_then(|mut child| {
-                let input = serde_json::to_vec(&payload).unwrap();
-                if let Some(mut stdin) = child.stdin.take() {
-                    tokio::spawn(async move {
-                        use tokio::io::AsyncWriteExt;
-                        let _ = stdin.write_all(&input).await;
-                    });
-                }
-                Ok(child)
-            });
-
-        let mut child = match child {
-            Ok(child) => child,
+        let payload_str = match serde_json::to_string(&payload) {
+            Ok(s) => s,
             Err(err) => {
-                return Completion::error(format!("failed to spawn polytope wrapper: {err}"))
+                error!(job_id = %work.job_id, error = %err, "failed to serialize payload");
+                return Completion::error(format!("failed to serialize payload: {err}"));
             }
         };
 
-        let stdout = match child.stdout.take() {
-            Some(stdout) => stdout,
-            None => return Completion::error("polytope wrapper did not expose stdout"),
-        };
+        let job_id = work.job_id.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            Python::with_gil(|py| -> PyResult<(Vec<u8>, String)> {
+                let wrapper = py.import("run_polytope_worker")?;
+                let result = wrapper.call_method1("process", (&payload_str,))?;
+                let tuple = result.downcast::<PyTuple>().map_err(|e| {
+                    pyo3::exceptions::PyTypeError::new_err(format!(
+                        "expected (bytes, str) from process(), got: {e}"
+                    ))
+                })?;
+                let item0 = tuple.get_item(0)?;
+                let py_bytes = item0.downcast::<PyBytes>().map_err(|e| {
+                    pyo3::exceptions::PyTypeError::new_err(format!(
+                        "expected bytes at index 0, got: {e}"
+                    ))
+                })?;
+                let timings: String = tuple.get_item(1)?.extract()?;
+                Ok((py_bytes.as_bytes().to_vec(), timings))
+            })
+        })
+        .await;
 
-        if let Some(stderr) = child.stderr.take() {
-            tokio::spawn(async move {
-                let _ = tokio::io::AsyncReadExt::read_to_end(
-                    &mut tokio::io::BufReader::new(stderr),
-                    &mut Vec::new(),
+        match result {
+            Ok(Ok((bytes, timings))) => {
+                let len = bytes.len() as u64;
+                info!(job_id = %job_id, bytes = len, timings = %timings, "request completed");
+                Completion::complete(
+                    "application/prs.coverage+json",
+                    Some(len),
+                    reqwest::Body::from(bytes),
                 )
-                .await;
-            });
+            }
+            Ok(Err(py_err)) => {
+                error!(job_id = %job_id, error = %py_err, "python error");
+                Completion::error(format!("{py_err}"))
+            }
+            Err(join_err) => {
+                error!(job_id = %job_id, error = %join_err, "task join error");
+                Completion::error(format!("task join error: {join_err}"))
+            }
         }
-
-        tokio::spawn(async move {
-            let _ = child.wait().await;
-        });
-
-        Completion::complete(
-            "application/prs.coverage+json",
-            None,
-            reqwest::Body::wrap_stream(ReaderStream::new(stdout)),
-        )
     }
 }
 
@@ -80,11 +82,9 @@ struct Cli {
     poll_timeout_ms: u64,
     #[arg(long, default_value_t = 10.0)]
     heartbeat_secs: f64,
-    #[arg(long, default_value = "python3")]
-    python: String,
-    #[arg(long, default_value = "workers/polytope-fe-worker/run_polytope_worker.py")]
-    wrapper: String,
-    #[arg(long)]
+    #[arg(long, default_value = "/app")]
+    python_path: String,
+    #[arg(long, default_value = "/etc/worker/config.yaml")]
     config_path: String,
 }
 
@@ -92,6 +92,25 @@ struct Cli {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
+
+    info!(python_path = %cli.python_path, config_path = %cli.config_path, "initializing python interpreter");
+
+    pyo3::prepare_freethreaded_python();
+    Python::with_gil(|py| -> PyResult<()> {
+        let sys = py.import("sys")?;
+        let path = sys.getattr("path")?;
+        path.call_method1("insert", (0i32, &cli.python_path))?;
+
+        let py_path: Vec<String> = path.extract()?;
+        info!(sys_path = ?py_path, "python sys.path configured");
+
+        py.import("run_polytope_worker")?;
+        info!("run_polytope_worker module imported");
+        Ok(())
+    })?;
+
+    info!(broker_url = %cli.broker_url, "connecting to broker");
+
     run_worker_loop(
         WorkerConfig {
             broker_url: cli.broker_url,
@@ -100,8 +119,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             retry_backoff: std::time::Duration::from_secs(1),
         },
         PolytopeProcessor {
-            python: cli.python,
-            wrapper: cli.wrapper,
             config_path: cli.config_path,
         },
     )
@@ -114,47 +131,61 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    fn temp_path(name: &str, ext: &str) -> PathBuf {
+    fn temp_dir() -> PathBuf {
         let mut path = std::env::temp_dir();
         path.push(format!(
-            "polytope-worker-{name}-{}-{}.{}",
+            "polytope-worker-test-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos(),
-            ext,
         ));
         path
     }
 
     #[tokio::test]
-    async fn polytope_worker_uses_python_wrapper_contract() {
-        let script = temp_path("wrapper", "py");
+    async fn pyo3_round_trip() {
+        let dir = temp_dir();
+        std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
-            &script,
-            r#"#!/usr/bin/env python3
-import json, sys
-payload = json.load(sys.stdin)
-sys.stdout.write(json.dumps({"echo": payload["request"]}))
+            dir.join("run_polytope_worker.py"),
+            r#"
+import json
+
+def process(payload_json):
+    payload = json.loads(payload_json)
+    output = json.dumps({"echo": payload["request"]}).encode("utf-8")
+    return (output, '{"total_ms": 0}')
 "#,
         )
         .unwrap();
 
-        let result = PolytopeProcessor {
-            python: "python3".into(),
-            wrapper: script.display().to_string(),
-            config_path: "/tmp/unused.yaml".into(),
-        }
-        .process(WorkItem {
-            job_id: "job-1".into(),
-            request: json!({"class": "od"}),
-            user: json!({}),
-            metadata: json!({}),
-        })
-        .await;
+        pyo3::prepare_freethreaded_python();
+        Python::with_gil(|py| {
+            let sys = py.import("sys").unwrap();
+            // Clear any previously cached module
+            let modules = sys.getattr("modules").unwrap();
+            let _ = modules.call_method1("pop", ("run_polytope_worker",));
+            let path = sys.getattr("path").unwrap();
+            path.call_method1("insert", (0i32, dir.display().to_string()))
+                .unwrap();
+        });
 
-        std::fs::remove_file(script).ok();
+        let processor = PolytopeProcessor {
+            config_path: "/tmp/unused.yaml".into(),
+        };
+
+        let result = processor
+            .process(WorkItem {
+                job_id: "job-1".into(),
+                request: json!({"class": "od"}),
+                user: json!({}),
+                metadata: json!({}),
+            })
+            .await;
+
+        std::fs::remove_dir_all(&dir).ok();
 
         match result {
             Completion::Complete {
@@ -163,9 +194,9 @@ sys.stdout.write(json.dumps({"echo": payload["request"]}))
                 ..
             } => {
                 assert_eq!(content_type, "application/prs.coverage+json");
-                assert_eq!(content_length, None);
+                assert!(content_length.is_some());
             }
-            other => panic!("expected streaming completion, got {other:?}"),
+            other => panic!("expected complete, got {other:?}"),
         }
     }
 }

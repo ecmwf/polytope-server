@@ -62,8 +62,11 @@ build:
 
   tagPolicy:
     customTemplate:
-      template: '{{.PREFIX}}{{.GIT_TAG}}'
+      template: '{{if .FIXED_TAG}}{{.FIXED_TAG}}{{else}}{{.PREFIX}}{{.GIT_TAG}}{{end}}'
       components:
+        - name: FIXED_TAG
+          envTemplate:
+            template: '{{default "" .FIXED_TAG}}'
         - name: PREFIX
           envTemplate:
             template: '{{default "" .PREFIX}}'

@@ -112,9 +112,7 @@ def polytope_server(mock_backend):
                   url: "http://127.0.0.1:{mock_backend}/"
     """)
 
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".yaml", delete=False
-    ) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         f.write(config)
         config_path = f.name
 
@@ -136,7 +134,9 @@ def polytope_server(mock_backend):
 @pytest.fixture()
 def client(polytope_server):
     # Import here so the venv is active when this runs
-    sys.path.insert(0, str(REPO_ROOT / ".venv" / "lib" / "python3.12" / "site-packages"))
+    sys.path.insert(
+        0, str(REPO_ROOT / ".venv" / "lib" / "python3.12" / "site-packages")
+    )
     from polytope.api import Client
 
     return Client(
@@ -155,15 +155,17 @@ def client(polytope_server):
 
 def test_health(polytope_server):
     import urllib.request
+
     with urllib.request.urlopen(f"{polytope_server}/api/v1/test") as r:
         assert r.read().decode() == "Polytope server is alive"
 
 
 def test_collections(polytope_server):
     import json, urllib.request
+
     with urllib.request.urlopen(f"{polytope_server}/api/v1/collections") as r:
         body = json.loads(r.read())
-    assert body == ["all"]
+    assert body == {"message": ["all"]}
 
 
 def test_retrieve(client):
@@ -205,12 +207,14 @@ def test_retrieve_unknown_collection_still_works(client):
 
 def test_v2_health(polytope_server):
     import urllib.request
-    with urllib.request.urlopen(f"{polytope_server}/api/v2/test") as r:
+
+    with urllib.request.urlopen(f"{polytope_server}/api/v2/health") as r:
         assert r.read().decode() == "Polytope server is alive"
 
 
 def test_v2_no_collections_endpoint(polytope_server):
     import urllib.error, urllib.request
+
     try:
         urllib.request.urlopen(f"{polytope_server}/api/v2/collections")
         assert False, "expected 404"
@@ -234,28 +238,19 @@ def test_v2_submit_and_retrieve(polytope_server):
 
 
 def test_v2_cancel(polytope_server):
-    import json, urllib.request, urllib.error
+    import json, urllib.request
 
-    # Submit without following redirects so we can read the Location header.
-    class NoRedirect(urllib.request.HTTPErrorProcessor):
-        def http_response(self, request, response):
-            return response
-        https_response = http_response
-
-    opener = urllib.request.build_opener(NoRedirect)
+    # Submit via v1 to get a job ID without blocking on inline poll.
     req = urllib.request.Request(
-        f"{polytope_server}/api/v2/requests",
-        data=json.dumps({"class": "od"}).encode(),
+        f"{polytope_server}/api/v1/requests/all",
+        data=json.dumps({"verb": "retrieve", "request": {"class": "od"}}).encode(),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with opener.open(req) as r:
-        assert r.status == 303
-        location = r.headers.get("Location")
+    with urllib.request.urlopen(req) as r:
+        assert r.status == 202
+        job_id = json.loads(r.read())["id"]
 
-    job_id = location.split("/")[-1]
-
-    # Cancel
     cancel_req = urllib.request.Request(
         f"{polytope_server}/api/v2/requests/{job_id}",
         method="DELETE",

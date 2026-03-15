@@ -11,6 +11,7 @@ polytope-worker-common = { path = "../common" }
 reqwest.workspace = true
 rsfdb = { git = "https://github.com/ecmwf/rsfdb", branch = "develop" }
 serde_json.workspace = true
+tracing.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 tracing-subscriber.workspace = true

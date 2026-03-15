@@ -4,26 +4,23 @@ use clap::Parser;
 use polytope_worker_common::{run_worker_loop, Completion, Processor, WorkItem, WorkerConfig};
 use rsfdb::{request::Request, FDB};
 use tokio_stream::wrappers::ReceiverStream;
+use tracing::info;
+
+const DEFAULT_CONFIG_PATH: &str = "/etc/worker/config.yaml";
 
 struct FdbProcessor {
-    fdb_config_path: Option<String>,
+    fdb_config: String,
 }
 
 #[async_trait]
 impl Processor for FdbProcessor {
     async fn process(&self, work: WorkItem) -> Completion {
-        let fdb_config = match &self.fdb_config_path {
-            Some(path) => match std::fs::read_to_string(path) {
-                Ok(config) => Some(config),
-                Err(err) => return Completion::error(format!("failed to read FDB config: {err}")),
-            },
-            None => None,
-        };
+        let fdb_config = self.fdb_config.clone();
 
         let request = work.request;
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(16);
         tokio::task::spawn_blocking(move || {
-            let fdb = match FDB::new(fdb_config.as_deref()) {
+            let fdb = match FDB::new(Some(&fdb_config)) {
                 Ok(fdb) => fdb,
                 Err(err) => {
                     let _ = tx.blocking_send(Err(std::io::Error::other(err)));
@@ -88,6 +85,12 @@ struct Cli {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
+    let config_path = cli
+        .fdb_config_path
+        .unwrap_or_else(|| DEFAULT_CONFIG_PATH.to_string());
+    let fdb_config = std::fs::read_to_string(&config_path)
+        .unwrap_or_else(|err| panic!("failed to read FDB config at {config_path}: {err}"));
+    info!(path = config_path, config = fdb_config.as_str(), "loaded FDB config");
     run_worker_loop(
         WorkerConfig {
             broker_url: cli.broker_url,
@@ -95,9 +98,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             heartbeat_interval: std::time::Duration::from_secs_f64(cli.heartbeat_secs),
             retry_backoff: std::time::Duration::from_secs(1),
         },
-        FdbProcessor {
-            fdb_config_path: cli.fdb_config_path,
-        },
+        FdbProcessor { fdb_config },
     )
     .await?;
     Ok(())
@@ -105,25 +106,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[tokio::test]
-    async fn fdb_worker_surfaces_config_errors() {
-        let result = FdbProcessor {
-            fdb_config_path: Some("/definitely/missing/fdb.yaml".into()),
-        }
-        .process(WorkItem {
-            job_id: "job-1".into(),
-            request: json!({"class": "od"}),
-            user: json!({}),
-            metadata: json!({}),
-        })
-        .await;
-
-        match result {
-            Completion::Error { message } => assert!(message.contains("failed to read FDB config")),
-            other => panic!("expected error completion, got {other:?}"),
-        }
+    #[test]
+    fn missing_config_panics() {
+        let result = std::panic::catch_unwind(|| {
+            std::fs::read_to_string("/definitely/missing/fdb.yaml")
+                .unwrap_or_else(|err| panic!("failed to read FDB config: {err}"));
+        });
+        assert!(result.is_err());
     }
 }

@@ -9,6 +9,8 @@ use axum::{
     Json,
 };
 use bits::{Job, JobResult, PollOutcome};
+use bytes::BytesMut;
+use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -44,7 +46,7 @@ pub async fn list_collections() -> impl IntoResponse {
     (
         StatusCode::OK,
         [("Deprecation", "true")],
-        Json(json!(["all"])),
+        Json(json!({"message": ["all"]})),
     )
 }
 
@@ -102,13 +104,27 @@ pub async fn get_request(State(state): State<Arc<AppState>>, Path(id): Path<Stri
                 size,
                 stream,
             } => {
-                let mut builder = Response::builder()
-                    .status(StatusCode::OK)
-                    .header(header::CONTENT_TYPE, content_type);
                 if size >= 0 {
-                    builder = builder.header(header::CONTENT_LENGTH, size);
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header(header::CONTENT_TYPE, content_type)
+                        .header(header::CONTENT_LENGTH, size)
+                        .body(Body::from_stream(stream))
+                        .unwrap()
+                } else {
+                    let mut buf = BytesMut::new();
+                    tokio::pin!(stream);
+                    while let Some(chunk) = stream.try_next().await.unwrap_or(None) {
+                        buf.extend_from_slice(&chunk);
+                    }
+                    let body = buf.freeze();
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header(header::CONTENT_TYPE, content_type)
+                        .header(header::CONTENT_LENGTH, body.len())
+                        .body(Body::from(body))
+                        .unwrap()
                 }
-                builder.body(Body::from_stream(stream)).unwrap()
             }
             JobResult::Redirect { location, message } => Response::builder()
                 .status(StatusCode::SEE_OTHER)

@@ -9,7 +9,7 @@ FROM docker.io/library/rust:1.90-slim-bookworm AS chef
 ARG GIT_AUTH_TOKEN=""
 ARG LOCAL_DEPS=""
 RUN cargo install cargo-chef --locked
-RUN apt-get update && apt-get install -y git pkg-config build-essential && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /ecmwf/polytope-server
 COPY --from=bits . /ecmwf/bits/
 COPY --from=rsfdb . /ecmwf/rsfdb/
@@ -26,7 +26,7 @@ FROM docker.io/library/rust:1.90-slim-bookworm AS cacher
 ARG GIT_AUTH_TOKEN=""
 ARG LOCAL_DEPS=""
 RUN cargo install cargo-chef --locked
-RUN apt-get update && apt-get install -y git pkg-config build-essential && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /ecmwf/polytope-server
 COPY --from=bits . /ecmwf/bits/
 COPY --from=rsfdb . /ecmwf/rsfdb/
@@ -42,7 +42,7 @@ RUN cargo chef cook --release --recipe-path recipe.json
 FROM docker.io/library/rust:1.90-slim-bookworm AS builder
 ARG GIT_AUTH_TOKEN=""
 ARG LOCAL_DEPS=""
-RUN apt-get update && apt-get install -y git pkg-config build-essential && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /ecmwf/polytope-server
 ARG PACKAGE_NAME=fdb-worker
 ARG BIN_NAME=fdb-worker
@@ -60,10 +60,10 @@ RUN cargo build --release -p ${PACKAGE_NAME}
 # FDB Build (from source)
 ###############################
 FROM python:3.11-bookworm AS fdb-build
-ARG ecbuild_version=3.8.2
-ARG eccodes_version=2.33.1
-ARG eckit_version=1.28.0
-ARG fdb_version=5.13.2
+ARG ecbuild_version=3.12.0
+ARG eccodes_version=2.46.0
+ARG eckit_version=1.33.1
+ARG fdb_version=5.19.2
 ARG pyfdb_version=0.1.0
 
 RUN apt-get update && apt-get install -y cmake gnupg build-essential net-tools bison flex git libaec-dev && rm -rf /var/lib/apt/lists/*
@@ -78,10 +78,10 @@ RUN git clone --depth 1 --branch ${eckit_version} https://github.com/ecmwf/eckit
 
 RUN git clone --depth 1 --branch ${eccodes_version} https://github.com/ecmwf/eccodes.git /source/eccodes \
     && mkdir -p /build/eccodes && cd /build/eccodes \
-    && ecbuild --prefix=/opt/fdb -- -DENABLE_FORTRAN=OFF -DCMAKE_PREFIX_PATH=/opt/fdb /source/eccodes \
+    && ecbuild --prefix=/opt/fdb -- -DENABLE_FORTRAN=OFF -DENABLE_AEC=OFF -DCMAKE_PREFIX_PATH=/opt/fdb /source/eccodes \
     && make -j4 && make install
 
-RUN git clone --depth 1 --branch 1.11.22 https://github.com/ecmwf/metkit.git /source/metkit \
+RUN git clone --depth 1 --branch 1.17.0 https://github.com/ecmwf/metkit.git /source/metkit \
     && mkdir -p /build/metkit && cd /build/metkit \
     && ecbuild --prefix=/opt/fdb -- -DCMAKE_PREFIX_PATH=/opt/fdb /source/metkit \
     && make -j4 && make install
@@ -105,7 +105,7 @@ FROM docker.io/library/debian:bookworm-slim AS release
 ARG VERSION
 ARG BIN_NAME=fdb-worker
 LABEL version=$VERSION
-RUN apt-get update && apt-get install -y ca-certificates libgomp1 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y ca-certificates libgomp1 libaec0 libcurl4 libopenjp2-7 && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=fdb-base-final /opt/fdb/ /opt/fdb/
 ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/opt/fdb/lib
@@ -119,7 +119,7 @@ FROM docker.io/library/debian:bookworm-slim AS debug
 ARG VERSION
 ARG BIN_NAME=fdb-worker
 LABEL version=$VERSION
-RUN apt-get update && apt-get install -y ca-certificates libgomp1 bash && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y ca-certificates libgomp1 libaec0 libcurl4 libopenjp2-7 bash && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=fdb-base-final /opt/fdb/ /opt/fdb/
 ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/opt/fdb/lib

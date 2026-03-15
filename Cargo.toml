@@ -11,7 +11,7 @@ resolver = "2"
 [workspace.dependencies]
 async-trait = "0.1"
 axum = "0.8"
-bits = { git = "https://github.com/ecmwf/bits-broker", branch = "main" }
+bits = { git = "https://github.com/ecmwf/bits-broker", branch = "main", features = ["tikv"] }
 bits-ecmwf = { git = "https://github.com/ecmwf/bits-broker", branch = "main" }
 bytes = "1"
 clap = { version = "4", features = ["derive"] }

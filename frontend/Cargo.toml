@@ -6,6 +6,8 @@ edition = "2021"
 [dependencies]
 axum.workspace = true
 bits.workspace = true
+bytes.workspace = true
+futures.workspace = true
 bits-ecmwf.workspace = true
 clap.workspace = true
 serde.workspace = true

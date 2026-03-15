@@ -55,7 +55,7 @@ async fn main() {
         .route("/downloads/{id}", get(api::v1::downloads_deprecated));
 
     let v2 = Router::new()
-        .route("/test", get(api::v2::test))
+        .route("/health", get(api::v2::health))
         .route("/requests", post(api::v2::submit))
         .route("/requests/{id}", get(api::v2::poll).delete(api::v2::cancel));
 

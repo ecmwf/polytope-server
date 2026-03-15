@@ -9,7 +9,7 @@ FROM docker.io/library/rust:1.90-slim-bookworm AS chef
 ARG GIT_AUTH_TOKEN=""
 ARG LOCAL_DEPS=""
 RUN cargo install cargo-chef --locked
-RUN apt-get update && apt-get install -y git pkg-config build-essential && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /ecmwf/polytope-server
 COPY --from=bits . /ecmwf/bits/
 COPY --from=rsfdb . /ecmwf/rsfdb/
@@ -26,7 +26,7 @@ FROM docker.io/library/rust:1.90-slim-bookworm AS cacher
 ARG GIT_AUTH_TOKEN=""
 ARG LOCAL_DEPS=""
 RUN cargo install cargo-chef --locked
-RUN apt-get update && apt-get install -y git pkg-config build-essential && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /ecmwf/polytope-server
 COPY --from=bits . /ecmwf/bits/
 COPY --from=rsfdb . /ecmwf/rsfdb/
@@ -42,7 +42,7 @@ RUN cargo chef cook --release --recipe-path recipe.json
 FROM docker.io/library/rust:1.90-slim-bookworm AS builder
 ARG GIT_AUTH_TOKEN=""
 ARG LOCAL_DEPS=""
-RUN apt-get update && apt-get install -y git pkg-config build-essential && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /ecmwf/polytope-server
 ARG PACKAGE_NAME=polytope-server
 ARG BIN_NAME=polytope-server

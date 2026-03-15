@@ -59,7 +59,15 @@ class PolytopeDataSource:
             os.environ["FDB5_CONFIG_FILE"] = self.fdb_config_file
 
     def retrieve(self, request):
+        import time
+
+        t0 = time.monotonic()
+
         r = copy.deepcopy(request.coerced_request)
+
+        for k, v in list(r.items()):
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                r[k] = str(v)
 
         pre_path = {}
         for k, v in r.items():
@@ -83,6 +91,8 @@ class PolytopeDataSource:
         if self.separate_datetime:
             unmerge_date_time_options(r, polytope_mars_config)
 
+        t_coerce = time.monotonic()
+
         polytope_mars = PolytopeMars(
             polytope_mars_config,
             log_context={
@@ -91,13 +101,23 @@ class PolytopeDataSource:
             },
         )
 
+        t_mars_init = time.monotonic()
+
         try:
             self.output = polytope_mars.extract(r)
+            t_extract = time.monotonic()
             self.output = json.dumps(self.output).encode("utf-8")
+            t_encode = time.monotonic()
         except PolytopeError as e:
             raise Exception("Polytope Feature Extraction Error: {}".format(e.message))
 
-        return True
+        return {
+            "coerce_ms": round((t_coerce - t0) * 1000, 1),
+            "mars_init_ms": round((t_mars_init - t_coerce) * 1000, 1),
+            "extract_ms": round((t_extract - t_mars_init) * 1000, 1),
+            "encode_ms": round((t_encode - t_extract) * 1000, 1),
+            "retrieve_ms": round((t_encode - t0) * 1000, 1),
+        }
 
     def result(self, request):
         logging.debug("Getting result")
