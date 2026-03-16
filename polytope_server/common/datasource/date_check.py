@@ -194,15 +194,19 @@ def date_in_mars_rule(date_d: date, rule_str: str) -> bool:
     if len(rule_parts) >= 3 and rule_parts[1].strip().lower() == "to":
         if len(rule_parts) != 3:
             raise ServerError(f"'by' is not supported in date rules: {rule_str!r}")
-        start_d = parse_mars_date_token(rule_parts[0]).date()
-        end_d = parse_mars_date_token(rule_parts[2]).date()
+        try:
+            start_d = parse_mars_date_token(rule_parts[0]).date()
+            end_d = parse_mars_date_token(rule_parts[2]).date()
+        except DateError as e:
+            raise ServerError(f"Invalid date token in rule {rule_str!r}: {e}") from e
         return min(start_d, end_d) <= date_d <= max(start_d, end_d)
 
-    # List or single: date must equal one of the listed tokens
-    for part in rule_parts:
-        if parse_mars_date_token(part).date() == date_d:
-            return True
-    return False
+    # List or single: validate all tokens first (malformed rule = ServerError), then match
+    try:
+        parsed_rule_parts = [parse_mars_date_token(part).date() for part in rule_parts]
+    except DateError as e:
+        raise ServerError(f"Invalid date token in rule {rule_str!r}: {e}") from e
+    return date_d in parsed_rule_parts
 
 
 def date_check_comparative_rule(date: str | list[str], comp_rule: str) -> bool:
