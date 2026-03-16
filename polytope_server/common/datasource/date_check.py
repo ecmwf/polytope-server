@@ -148,7 +148,7 @@ def _is_comparative_rule(rule: str) -> bool:
 def _is_mars_range_rule(rule_str: str) -> bool:
     """Returns True if the Mars rule is a range (A/to/B)."""
     parts = rule_str.split("/")
-    return len(parts) >= 2 and parts[1].strip().lower() == "to"
+    return len(parts) >= 3 and parts[1].strip().lower() == "to"
 
 
 def parse_mars_date_token(token: str) -> datetime:
