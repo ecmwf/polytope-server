@@ -1,8 +1,8 @@
 import re
+from collections.abc import Sequence
 from datetime import date, datetime, timedelta
 
 from dateutil.relativedelta import relativedelta
-from collections.abc import Sequence
 
 from ..exceptions import ServerError
 
