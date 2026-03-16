@@ -2,6 +2,7 @@ import re
 from datetime import date, datetime, timedelta
 
 from dateutil.relativedelta import relativedelta
+from collections.abc import Sequence
 
 from ..exceptions import ServerError
 
@@ -12,14 +13,14 @@ class DateError(Exception):
     pass
 
 
-def validate_date_match(date: str, rules: list[str]) -> None:
+def validate_date_match(date: str, rules: Sequence[str]) -> None:
     """
     Check a Mars-format date string against a list of allowed date rules.
 
     :param date: Date to check. Accepts a single date, a slash-separated list, or a
         range in Mars date format (e.g. ``-1``, ``-1/-5/-10``,
         ``20250101/to/20250131``, ``20250101/to/20250131/by/7``).
-    :param rules: List of rules. All rules must be the same style:
+    :param rules: List or tuple of rules. All rules must be the same style:
 
         - Comparative (e.g. ``>30d``, ``<40d``, ``>1h``, ``<2m``):
             Each date must satisfy ALL rules (AND logic).
@@ -30,11 +31,11 @@ def validate_date_match(date: str, rules: list[str]) -> None:
             rule (OR logic).
 
     :returns: ``None``. Returns normally when the date passes all checks.
-    :raises ServerError: If ``rules`` is not a list, or if comparative and
-        Mars-style rules are mixed.
+    :raises ServerError: If ``rules`` is not a list-like sequence, or if comparative
+        and Mars-style rules are mixed.
     :raises DateError: If the date does not satisfy the rules.
     """
-    if not isinstance(rules, list):
+    if not isinstance(rules, Sequence) or isinstance(rules, (str, bytes)):
         raise ServerError("Allowed values must be a list")
 
     if not rules:
