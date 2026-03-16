@@ -12,7 +12,7 @@ class DateError(Exception):
     pass
 
 
-def date_check(date: str, rules: list[str]) -> bool:
+def validate_date_match(date: str, rules: list[str]) -> None:
     """
     Check a Mars-format date string against a list of allowed date rules.
 
@@ -29,7 +29,7 @@ def date_check(date: str, rules: list[str]) -> bool:
             Each user date or date range must be fully covered by AT LEAST ONE
             rule (OR logic).
 
-    :returns: ``True`` if the date passes all checks.
+    :returns: ``None``. Returns normally when the date passes all checks.
     :raises ServerError: If ``rules`` is not a list, or if comparative and
         Mars-style rules are mixed.
     :raises DateError: If the date does not satisfy the rules.
@@ -44,9 +44,8 @@ def date_check(date: str, rules: list[str]) -> bool:
     if all(are_comparative_rules):
         # Comparative: every rule must pass
         for rule in rules:
-            if not date_check_comparative_rule(date, rule):
-                return False
-        return True
+            validate_comparative_date_rule(date, rule)
+        return
 
     if any(are_comparative_rules):
         raise ServerError("Cannot mix comparative and new-style date rules in a single match.")
@@ -76,7 +75,7 @@ def date_check(date: str, rules: list[str]) -> bool:
             if not any(date_in_mars_rule(user_date, rule) for rule in rules):
                 raise DateError(f"Date {user_date} does not match any allowed date rule: {rules}")
 
-    return True
+    return
 
 
 def _check_single_date_comparative_rule(date: str, offset: datetime, offset_fmted: str, after: bool = False) -> None:
@@ -219,7 +218,7 @@ def date_in_mars_rule(date_d: date, rule_str: str) -> bool:
     return date_d in parsed_rule_parts
 
 
-def date_check_comparative_rule(date: str | list[str], comp_rule: str) -> bool:
+def validate_comparative_date_rule(date: str | list[str], comp_rule: str) -> None:
     """
     Check a date (or list/range of dates) against a single comparative rule.
 
@@ -228,7 +227,7 @@ def date_check_comparative_rule(date: str | list[str], comp_rule: str) -> bool:
     :param comp_rule: A comparative rule in the form ``>Nd``, ``<Nd``, ``>Nh``, or
         ``<Nm`` where ``N`` is a positive integer and the suffix is ``d`` (days),
         ``h`` (hours), or ``m`` (minutes). For example: ``">30d"``, ``"<2h"``.
-    :returns: ``True`` if all dates in ``date`` satisfy the rule.
+    :returns: ``None``. Returns normally if all dates in ``date`` satisfy the rule.
     :raises DateError: If a date is invalid or falls outside the allowed range.
     :raises ServerError: If the comparison operator is not ``<`` or ``>``.
     """
@@ -255,7 +254,7 @@ def date_check_comparative_rule(date: str | list[str], comp_rule: str) -> bool:
     # YYYYMMDD
     if len(split) == 1:
         _check_single_date_comparative_rule(split[0], offset, offset_fmted, after)
-        return True
+        return
 
     # YYYYMMDD/to/YYYYMMDD -- check end and start date
     # YYYYMMDD/to/YYYYMMDD/by/N -- check end and start date
@@ -266,10 +265,10 @@ def date_check_comparative_rule(date: str | list[str], comp_rule: str) -> bool:
 
             _check_single_date_comparative_rule(split[0], offset, offset_fmted, after)
             _check_single_date_comparative_rule(split[2], offset, offset_fmted, after)
-            return True
+            return
 
     # YYYYMMDD/YYYYMMDD/YYYYMMDD/... -- check each date
     for s in split:
         _check_single_date_comparative_rule(s, offset, offset_fmted, after)
 
-    return True
+    return

@@ -24,10 +24,10 @@ import pytest
 
 from polytope_server.common.datasource.date_check import (
     DateError,
-    date_check,
-    date_check_comparative_rule,
     date_in_mars_rule,
     parse_mars_date_token,
+    validate_comparative_date_rule,
+    validate_date_match,
 )
 from polytope_server.common.exceptions import ServerError
 
@@ -139,105 +139,105 @@ class TestDateInMarsRule:
 
 class TestDateCheckNewStyle:
     def test_single_relative(self):
-        assert date_check(ds(-1), ["-1"]) is True
+        validate_date_match(ds(-1), ["-1"])
         with pytest.raises(DateError):
-            date_check(ds(-2), ["-1"])
+            validate_date_match(ds(-2), ["-1"])
 
     def test_list_rule(self):
-        assert date_check(ds(-1), ["-1/-5/-10"]) is True
-        assert date_check(ds(-5), ["-1/-5/-10"]) is True
+        validate_date_match(ds(-1), ["-1/-5/-10"])
+        validate_date_match(ds(-5), ["-1/-5/-10"])
         with pytest.raises(DateError):
-            date_check(ds(-3), ["-1/-5/-10"])
+            validate_date_match(ds(-3), ["-1/-5/-10"])
 
     def test_list_rule_range_input(self):
         with pytest.raises(DateError):
-            date_check(f"{ds(-1)}/to/{ds(-10)}", ["-1/-5/-10"])
+            validate_date_match(f"{ds(-1)}/to/{ds(-10)}", ["-1/-5/-10"])
 
     def test_range_rule(self):
-        assert date_check(ds(-1), ["-1/to/-20"]) is True
-        assert date_check(ds(-10), ["-1/to/-20"]) is True
+        validate_date_match(ds(-1), ["-1/to/-20"])
+        validate_date_match(ds(-10), ["-1/to/-20"])
         with pytest.raises(DateError):
-            date_check(ds(-21), ["-1/to/-20"])
+            validate_date_match(ds(-21), ["-1/to/-20"])
 
     def test_mixed_formats(self):
         rule = ["20250125/-5/2023-04-23"]
-        assert date_check("20250125", rule) is True
-        assert date_check(ds(-5), rule) is True
+        validate_date_match("20250125", rule)
+        validate_date_match(ds(-5), rule)
         with pytest.raises(DateError):
-            date_check("20250126", rule)
+            validate_date_match("20250126", rule)
 
     # --- Multiple rules: OR logic ---
 
     def test_or_logic(self):
         # Matches first rule
-        assert date_check(ds(-1), ["-1/-5/-10", "-20/to/-30"]) is True
+        validate_date_match(ds(-1), ["-1/-5/-10", "-20/to/-30"])
         # Matches second rule
-        assert date_check(ds(-25), ["-1/-5/-10", "-20/to/-30"]) is True
+        validate_date_match(ds(-25), ["-1/-5/-10", "-20/to/-30"])
         # Matches no rule
         with pytest.raises(DateError):
-            date_check(ds(-15), ["-1/-5/-10", "-20/to/-30"])
+            validate_date_match(ds(-15), ["-1/-5/-10", "-20/to/-30"])
 
     # --- User date as Mars string (range/list) ---
 
     def test_user_date_range(self):
         # All within rule
-        assert date_check(f"{ds(-5)}/to/{ds(-10)}", ["-1/to/-20"]) is True
+        validate_date_match(f"{ds(-5)}/to/{ds(-10)}", ["-1/to/-20"])
         # Partially outside rule
         with pytest.raises(DateError):
-            date_check(f"{ds(-1)}/to/{ds(-25)}", ["-1/to/-20"])
+            validate_date_match(f"{ds(-1)}/to/{ds(-25)}", ["-1/to/-20"])
 
     def test_user_date_list(self):
         # All match
-        assert date_check(f"{ds(-1)}/{ds(-5)}/{ds(-10)}", ["-1/to/-20"]) is True
+        validate_date_match(f"{ds(-1)}/{ds(-5)}/{ds(-10)}", ["-1/to/-20"])
         # One outside
         with pytest.raises(DateError):
-            date_check(f"{ds(-1)}/{ds(-5)}/{ds(-25)}", ["-1/to/-20"])
+            validate_date_match(f"{ds(-1)}/{ds(-5)}/{ds(-25)}", ["-1/to/-20"])
 
     def test_user_date_stepped_range(self):
         # Subset of allowed range: only boundaries are checked
-        assert date_check(f"{ds(-4)}/to/{ds(-20)}/by/4", ["-1/to/-20"]) is True
+        validate_date_match(f"{ds(-4)}/to/{ds(-20)}/by/4", ["-1/to/-20"])
         # Exceeds rule
         with pytest.raises(DateError):
-            date_check(f"{ds(-4)}/to/{ds(-24)}/by/4", ["-1/to/-20"])
+            validate_date_match(f"{ds(-4)}/to/{ds(-24)}/by/4", ["-1/to/-20"])
 
     def test_user_date_range_or_logic(self):
         # Matches first rule
-        assert date_check(f"{ds(-5)}/to/{ds(-10)}", ["-1/to/-20", "2024-01-01/to/2024-12-31"]) is True
+        validate_date_match(f"{ds(-5)}/to/{ds(-10)}", ["-1/to/-20", "2024-01-01/to/2024-12-31"])
         # Matches second rule
-        assert date_check("2024-01-01/to/2024-08-31", ["-1/to/-20", "2024-01-01/to/2024-12-31"]) is True
+        validate_date_match("2024-01-01/to/2024-08-31", ["-1/to/-20", "2024-01-01/to/2024-12-31"])
         # Start matches one rule, end another
         with pytest.raises(DateError):
-            date_check(f"{ds(-5)}/to/2024-08-31", ["-1/to/-20", "2024-01-01/to/2024-12-31"])
+            validate_date_match(f"{ds(-5)}/to/2024-08-31", ["-1/to/-20", "2024-01-01/to/2024-12-31"])
         # Matches no rule
         with pytest.raises(DateError):
-            date_check(f"{ds(-5)}/to/{ds(30)}", ["-1/to/-20", "2024-01-01/to/2024-12-31"])
+            validate_date_match(f"{ds(-5)}/to/{ds(30)}", ["-1/to/-20", "2024-01-01/to/2024-12-31"])
 
         # start matches one rule, but end matches another
         with pytest.raises(DateError):
-            date_check(f"{ds(-5)}/to/{ds(30)}", ["-1/to/-20", "-30"])
+            validate_date_match(f"{ds(-5)}/to/{ds(30)}", ["-1/to/-20", "-30"])
 
-        assert date_check("-5/-30", ["-1/to/-20", "-30"]) is True
+        validate_date_match("-5/-30", ["-1/to/-20", "-30"])
 
     def test_empty_allowed_values(self):
-        assert date_check(ds(-1), []) is True
+        validate_date_match(ds(-1), [])
 
     # --- ServerError cases ---
 
     def test_rules_not_a_list_raises_server_error(self):
         with pytest.raises(ServerError):
-            date_check(ds(-1), ">30d")
+            validate_date_match(ds(-1), ">30d")
 
     def test_mixed_rule_styles_raises_server_error(self):
         with pytest.raises(ServerError):
-            date_check(ds(-1), [">30d", "-1/to/-20"])
+            validate_date_match(ds(-1), [">30d", "-1/to/-20"])
 
     def test_invalid_token_in_rule_raises_server_error(self):
         with pytest.raises(ServerError):
-            date_check(ds(-1), ["notadate"])
+            validate_date_match(ds(-1), ["notadate"])
 
     def test_invalid_token_in_range_rule_raises_server_error(self):
         with pytest.raises(ServerError):
-            date_check(ds(-1), ["notadate/to/-20"])
+            validate_date_match(ds(-1), ["notadate/to/-20"])
 
 
 # ---------------------------------------------------------------------------
@@ -247,37 +247,37 @@ class TestDateCheckNewStyle:
 
 class TestDateCheckComparative:
     def test_single(self):
-        assert date_check(ds(-32), [">30d"]) is True
+        validate_date_match(ds(-32), [">30d"])
         with pytest.raises(DateError):
-            date_check(ds(-5), [">30d"])
+            validate_date_match(ds(-5), [">30d"])
 
     def test_multiple_and_logic(self):
         # Both conditions must be satisfied
-        assert date_check(ds(-32), [">30d", "<40d"]) is True
+        validate_date_match(ds(-32), [">30d", "<40d"])
         with pytest.raises(DateError):
-            date_check(ds(-32), [">30d", "<20d"])
+            validate_date_match(ds(-32), [">30d", "<20d"])
 
     def test_range(self):
         # All dates in range must satisfy rule
-        assert date_check(f"{ds(-60)}/to/{ds(-40)}", [">30d"]) is True
+        validate_date_match(f"{ds(-60)}/to/{ds(-40)}", [">30d"])
         with pytest.raises(DateError):
-            date_check(f"{ds(-60)}/to/{ds(-25)}", [">30d"])
+            validate_date_match(f"{ds(-60)}/to/{ds(-25)}", [">30d"])
 
     def test_edges(self):
         # Edge cases: exactly 30 days ago should NOT satisfy ">30d"
         with pytest.raises(DateError):
-            date_check(ds(-29), [">30d"])
+            validate_date_match(ds(-29), [">30d"])
         # Exactly 31 days ago should satisfy ">30d"
-        assert date_check(ds(-30), [">30d"]) is True
+        validate_date_match(ds(-30), [">30d"])
 
     def test_date_list(self):
-        assert date_check(f"{ds(-32)}/{ds(-40)}/{ds(-50)}", [">30d"]) is True
+        validate_date_match(f"{ds(-32)}/{ds(-40)}/{ds(-50)}", [">30d"])
         with pytest.raises(DateError):
-            date_check(f"{ds(-32)}/{ds(-40)}/{ds(-5)}", [">30d"])
+            validate_date_match(f"{ds(-32)}/{ds(-40)}/{ds(-5)}", [">30d"])
 
     def test_invalid_date_in_input_raises_date_error(self):
         with pytest.raises(DateError):
-            date_check("notadate", [">30d"])
+            validate_date_match("notadate", [">30d"])
 
 
 # ---------------------------------------------------------------------------
@@ -287,33 +287,33 @@ class TestDateCheckComparative:
 
 class TestDateCheckComparativeRule:
     def test_single_pass(self):
-        assert date_check_comparative_rule(ds(-32), ">30d") is True
+        validate_comparative_date_rule(ds(-32), ">30d")
 
     def test_single_fail(self):
         with pytest.raises(DateError):
-            date_check_comparative_rule(ds(-5), ">30d")
+            validate_comparative_date_rule(ds(-5), ">30d")
 
     def test_range_pass(self):
-        assert date_check_comparative_rule(f"{ds(-60)}/to/{ds(-40)}", ">30d") is True
+        validate_comparative_date_rule(f"{ds(-60)}/to/{ds(-40)}", ">30d")
 
     def test_range_fail(self):
         with pytest.raises(DateError):
-            date_check_comparative_rule(f"{ds(-60)}/to/{ds(-25)}", ">30d")
+            validate_comparative_date_rule(f"{ds(-60)}/to/{ds(-25)}", ">30d")
 
     def test_stepped_range_pass(self):
-        assert date_check_comparative_rule(f"{ds(-60)}/to/{ds(-40)}/by/7", ">30d") is True
+        validate_comparative_date_rule(f"{ds(-60)}/to/{ds(-40)}/by/7", ">30d")
 
     def test_stepped_range_fail(self):
         with pytest.raises(DateError):
-            date_check_comparative_rule(f"{ds(-60)}/to/{ds(-25)}/by/7", ">30d")
+            validate_comparative_date_rule(f"{ds(-60)}/to/{ds(-25)}/by/7", ">30d")
 
     def test_list_pass(self):
-        assert date_check_comparative_rule(f"{ds(-32)}/{ds(-40)}/{ds(-50)}", ">30d") is True
+        validate_comparative_date_rule(f"{ds(-32)}/{ds(-40)}/{ds(-50)}", ">30d")
 
     def test_list_fail(self):
         with pytest.raises(DateError):
-            date_check_comparative_rule(f"{ds(-32)}/{ds(-40)}/{ds(-5)}", ">30d")
+            validate_comparative_date_rule(f"{ds(-32)}/{ds(-40)}/{ds(-5)}", ">30d")
 
     def test_invalid_operator_raises_server_error(self):
         with pytest.raises(ServerError):
-            date_check_comparative_rule(ds(-32), "=30d")
+            validate_comparative_date_rule(ds(-32), "=30d")
