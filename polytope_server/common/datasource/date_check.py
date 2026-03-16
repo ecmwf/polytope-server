@@ -38,7 +38,7 @@ def validate_date_match(date: str, rules: list[str]) -> None:
         raise ServerError("Allowed values must be a list")
 
     if not rules:
-        return True
+        return
 
     are_comparative_rules = set(_is_comparative_rule(rule) for rule in rules)
     if all(are_comparative_rules):
