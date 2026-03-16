@@ -216,7 +216,7 @@ class TestDateCheckNewStyle:
         with pytest.raises(DateError):
             date_check(f"{ds(-5)}/to/{ds(30)}", ["-1/to/-20", "-30"])
 
-        date_check("-5/-30", ["-1/to/-20", "-30"]) is True
+        assert date_check("-5/-30", ["-1/to/-20", "-30"]) is True
 
     def test_empty_allowed_values(self):
         assert date_check(ds(-1), []) is True
