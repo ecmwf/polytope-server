@@ -28,7 +28,7 @@ from ..coercion import coerce_value
 from ..config import polytope_config
 from ..request import PolytopeRequest, Verb
 from ..user import User
-from .date_check import DateError, date_check
+from .date_check import DateError, validate_date_match
 
 #######################################################
 
@@ -112,7 +112,7 @@ class DataSource(ABC):
             # Process date rules
             if rule_key == "date":
                 try:
-                    date_check(coerced_ur_copy["date"], allowed_values)
+                    validate_date_match(coerced_ur_copy["date"], allowed_values)
                 except DateError as e:
                     return f"Skipping datasource {DataSource.repr(ds_config)}: {e}."
                 except Exception as e:

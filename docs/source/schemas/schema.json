@@ -348,7 +348,7 @@
         },
         "match": {
           "$ref": "#/definitions/DatasourcesConfig-Datasource-MARS-Match",
-          "description": "filters requests based on presence of specific key=value pair in user request"
+          "description": "filters requests based on request keys and values. Non-date keys accept scalar or list values. Date supports comparative rules (e.g. >30d, <40d) or MARS date rules (single/list/range). MARS rules do not support by-step."
         },
         "patch": {
           "$ref": "#/definitions/DatasourcesConfig-Datasource-MARS-Patch",
@@ -455,7 +455,7 @@
         },
         "match": {
           "$ref": "#/definitions/DatasourcesConfig-Datasource-MARS-Match",
-          "description": "filters requests based on presence of specific key=value pair in user request"
+          "description": "filters requests based on request keys and values. Non-date keys accept scalar or list values. Date supports comparative rules (e.g. >30d, <40d) or MARS date rules (single/list/range). MARS rules do not support by-step."
         },
         "patch": {
           "$ref": "#/definitions/DatasourcesConfig-Datasource-MARS-Patch",
@@ -474,26 +474,81 @@
     },
     "DatasourcesConfig-Datasource-MARS-Match": {
       "type": "object",
+      "description": "Datasource match rules keyed by request parameter. For non-date keys, scalar and list forms are supported. For date, use either comparative rules (all rules must pass) or MARS date rules (no mixing with comparative rules).",
       "properties": {
+        "date": {
+          "$ref": "#/definitions/DatasourcesConfig-Datasource-MARS-Match-DateValue",
+          "description": "Date matching rules. Comparative style (all rules must pass): >30d, <40d. MARS style (no mixing with comparative rules): single/list/range rules without by-step, e.g. -1/-5/-10 or -1/to/-20. User-supplied date ranges may include /by/N.",
+          "examples": [
+            ">30d",
+            [
+              ">30d",
+              "<40d"
+            ],
+            "-1/to/-20",
+            [
+              "-1/-5/-10",
+              "-20/to/-30"
+            ],
+            [
+              "2024-02-21/to/2025-03-01",
+              "-1/-5/-10"
+            ]
+          ]
+        },
         "key1": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "default": "[]",
-          "description": "value matches any in list"
+          "$ref": "#/definitions/DatasourcesConfig-Datasource-MARS-Match-Value",
+          "description": "Example non-date match key. Request values must be a subset of the allowed values."
         },
         "key2": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "default": "[]"
+          "$ref": "#/definitions/DatasourcesConfig-Datasource-MARS-Match-Value"
         }
       },
       "preferredOrder": [
+        "date",
         "key1",
         "key2"
+      ],
+      "additionalProperties": {
+        "$ref": "#/definitions/DatasourcesConfig-Datasource-MARS-Match-Value"
+      }
+    },
+    "DatasourcesConfig-Datasource-MARS-Match-Value": {
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              }
+            ]
+          },
+          "default": []
+        }
+      ]
+    },
+    "DatasourcesConfig-Datasource-MARS-Match-DateValue": {
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
       ]
     },
     "DatasourcesConfig-Datasource-MARS-Patch": {
@@ -1239,7 +1294,7 @@
           "default": 6379
         },
         "db": {
-          "type": "interger",
+          "type": "integer",
           "description": "id of the database to use",
           "default": 0
         }
