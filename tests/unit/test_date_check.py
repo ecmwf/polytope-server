@@ -149,6 +149,10 @@ class TestDateCheckNewStyle:
         with pytest.raises(DateError):
             date_check(ds(-3), ["-1/-5/-10"])
 
+    def test_list_rule_range_input(self):
+        with pytest.raises(DateError):
+            date_check(f"{ds(-1)}/to/{ds(-10)}", ["-1/-5/-10"])
+
     def test_range_rule(self):
         assert date_check(ds(-1), ["-1/to/-20"]) is True
         assert date_check(ds(-10), ["-1/to/-20"]) is True
