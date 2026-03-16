@@ -54,7 +54,8 @@ def date_check(date: str, rules: list[str]) -> bool:
     # New-style Mars date rules.
     date_parts = date.split("/")
     if len(date_parts) >= 3 and date_parts[1].strip().lower() == "to":
-        # Range: both boundaries must be covered by the same rule.
+        # Range: both boundaries must be covered by the same *range* rule.
+        # A list rule cannot cover a continuous range (intermediate dates would be unaccounted for).
         start_d = parse_mars_date_token(date_parts[0]).date()
         end_d = parse_mars_date_token(date_parts[2]).date()
         if len(date_parts) == 5:
@@ -62,7 +63,10 @@ def date_check(date: str, rules: list[str]) -> bool:
                 raise DateError(f"Invalid Mars date string: {date!r}")
         elif len(date_parts) != 3:
             raise DateError(f"Invalid Mars date string: {date!r}")
-        if not any(date_in_mars_rule(start_d, rule) and date_in_mars_rule(end_d, rule) for rule in rules):
+        if not any(
+            _is_mars_range_rule(rule) and date_in_mars_rule(start_d, rule) and date_in_mars_rule(end_d, rule)
+            for rule in rules
+        ):
             raise DateError(
                 f"Date range {start_d} to {end_d} is not fully covered by any single allowed date rule: {rules}"
             )
@@ -140,6 +144,12 @@ def _parse_relativedelta(time_str: str) -> relativedelta:
 def _is_comparative_rule(rule: str) -> bool:
     """Returns True if rule is comparative (starts with > or <)."""
     return rule.strip()[0] in (">", "<")
+
+
+def _is_mars_range_rule(rule_str: str) -> bool:
+    """Returns True if the Mars rule is a range (A/to/B)."""
+    parts = rule_str.split("/")
+    return len(parts) >= 2 and parts[1].strip().lower() == "to"
 
 
 def parse_mars_date_token(token: str) -> datetime:
