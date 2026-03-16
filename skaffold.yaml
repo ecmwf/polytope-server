@@ -80,19 +80,6 @@ build:
     useDockerCLI: true
     concurrency: 1
 
-# ── Deploy ─────────────────────────────────────────────────────────────────────
-# Skaffold injects the built image tag into the Helm chart via setValueTemplates.
-# All images share the same git-commit tag, so we only need one.
-deploy:
-  helm:
-    releases:
-      - name: polytope-majh
-        chartPath: ../polytope-chart
-        valuesFiles:
-          - ../polytope-config/majh-dev.yaml
-        setValueTemplates:
-          image.tag: '{{.IMAGE_TAG_eccr_ecmwf_int_polytope_polytope_server}}'
-
 # ── Profiles ───────────────────────────────────────────────────────────────────
 # Default: Cargo.toml git deps are fetched from GitHub inside the Docker build.
 #          GH_TOKEN is required for private repos (bits-broker, rsfdb).
