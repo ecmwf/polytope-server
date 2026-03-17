@@ -1,13 +1,72 @@
 use async_trait::async_trait;
+use bytes::Bytes;
 use clap::Parser;
+use mars_client::{Error as MarsError, MarsClient};
 use polytope_worker_common::{run_worker_loop, Completion, Processor, WorkItem, WorkerConfig};
+use tokio_stream::wrappers::ReceiverStream;
+use tracing::warn;
+
+mod convert;
 
 struct MarsProcessor;
 
 #[async_trait]
 impl Processor for MarsProcessor {
-    async fn process(&self, _work: WorkItem) -> Completion {
-        Completion::error("mars-worker is not implemented yet")
+    async fn process(&self, work: WorkItem) -> Completion {
+        let request_map = match convert::json_to_request(&work.request) {
+            Ok(m) => m,
+            Err(msg) => return Completion::error(msg),
+        };
+
+        let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(32);
+        tokio::task::spawn_blocking(move || {
+            let mut client = match MarsClient::new() {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = tx.blocking_send(Err(std::io::Error::other(e)));
+                    return;
+                }
+            };
+            let mut stream = match client.retrieve(request_map) {
+                Ok(s) => s,
+                Err(e) => {
+                    let _ = tx.blocking_send(Err(std::io::Error::other(e)));
+                    return;
+                }
+            };
+            let mut buf = vec![0u8; 256 * 1024];
+            loop {
+                match stream.read_bytes(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if tx
+                            .blocking_send(Ok(Bytes::copy_from_slice(&buf[..n])))
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Err(MarsError::Invalidated { offset }) => {
+                        warn!(offset, "mars stream invalidated — unrecoverable");
+                        let _ = tx.blocking_send(Err(std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            format!("stream invalidated at byte offset {offset}"),
+                        )));
+                        break;
+                    }
+                    Err(e) => {
+                        let _ = tx.blocking_send(Err(std::io::Error::other(e)));
+                        break;
+                    }
+                }
+            }
+        });
+
+        Completion::complete(
+            "application/x-grib",
+            None,
+            reqwest::Body::wrap_stream(ReceiverStream::new(rx)),
+        )
     }
 }
 
@@ -44,7 +103,7 @@ mod tests {
     use serde_json::json;
 
     #[tokio::test]
-    async fn mars_worker_is_explicit_stub() {
+    async fn process_returns_error_for_invalid_request() {
         let result = MarsProcessor
             .process(WorkItem {
                 job_id: "job-1".into(),

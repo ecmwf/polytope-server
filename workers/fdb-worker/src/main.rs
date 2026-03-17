@@ -41,7 +41,7 @@ impl Processor for FdbProcessor {
                     return;
                 }
             };
-            let mut buffer = vec![0u8; 64 * 1024];
+            let mut buffer = vec![0u8; 256 * 1024];
             loop {
                 match std::io::Read::read(&mut reader, &mut buffer) {
                     Ok(0) => break,
