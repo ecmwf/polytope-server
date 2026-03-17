@@ -39,6 +39,7 @@ COPY --from=rsfindlibs . /ecmwf/rsfindlibs/
 COPY --from=mars-client-bundle . /ecmwf/mars-client-bundle/
 COPY --from=chef /ecmwf/polytope-server/workers/mars-worker/recipe.json workers/mars-worker/recipe.json
 COPY --from=chef /ecmwf/polytope-server/.cargo/config.toml .cargo/config.toml
+COPY workers/common/ workers/common/
 RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi
 RUN cd workers/mars-worker && cargo chef cook --release --recipe-path recipe.json
 

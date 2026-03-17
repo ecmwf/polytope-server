@@ -4,6 +4,6 @@ server:
 
 bits:
   routes:
-    default:
-      - target::http:
-          url: "http://your-backend/"   # replace with real target
+    - default:
+        - target::http:
+            url: "http://your-backend/"   # replace with real target

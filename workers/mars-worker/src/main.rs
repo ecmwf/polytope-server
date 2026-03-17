@@ -62,7 +62,9 @@ impl Processor for MarsProcessor {
                             .blocking_send(Ok(Bytes::copy_from_slice(&buf[..n])))
                             .is_err()
                         {
-                            break;
+                            warn!("client disconnected, aborting mars stream");
+                            stream.close();
+                            return;
                         }
                     }
                     Err(MarsError::Invalidated { offset }) => {
@@ -73,11 +75,13 @@ impl Processor for MarsProcessor {
                         break;
                     }
                     Err(e) => {
+                        warn!("mars stream error: {e}");
                         let _ = tx.blocking_send(Err(std::io::Error::other(e)));
                         break;
                     }
                 }
             }
+            stream.close();
         });
 
         Completion::complete(

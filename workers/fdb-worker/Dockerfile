@@ -34,6 +34,7 @@ COPY --from=rsfdb . /ecmwf/rsfdb/
 COPY --from=rsfindlibs . /ecmwf/rsfindlibs/
 COPY --from=chef /ecmwf/polytope-server/workers/fdb-worker/recipe.json workers/fdb-worker/recipe.json
 COPY --from=chef /ecmwf/polytope-server/.cargo/config.toml .cargo/config.toml
+COPY workers/common/ workers/common/
 RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi
 RUN cd workers/fdb-worker && cargo chef cook --release --recipe-path recipe.json
 
