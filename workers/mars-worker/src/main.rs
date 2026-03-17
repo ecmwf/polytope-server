@@ -18,8 +18,27 @@ impl Processor for MarsProcessor {
             Err(msg) => return Completion::error(msg),
         };
 
+        let mars_email = work.user["attributes"]["ecmwf-email"]
+            .as_str()
+            .unwrap_or("no-email")
+            .to_owned();
+        let mars_token = work.user["attributes"]["ecmwf-apikey"]
+            .as_str()
+            .unwrap_or("no-api-key")
+            .to_owned();
+
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(32);
         tokio::task::spawn_blocking(move || {
+            // SAFETY: run_worker_loop processes one request at a time — no concurrent set_var.
+            unsafe {
+                std::env::set_var("MARS_USER_EMAIL", &mars_email);
+                std::env::set_var("MARS_USER_TOKEN", &mars_token);
+                if let Ok(node) = std::env::var("K8S_NODE_NAME") {
+                    std::env::set_var("MARS_DHS_CALLBACK_HOST", &node);
+                    std::env::set_var("MARS_DHS_LOCALHOST", &node);
+                }
+            }
+
             let mut client = match MarsClient::new() {
                 Ok(c) => c,
                 Err(e) => {

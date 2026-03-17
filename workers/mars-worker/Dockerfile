@@ -1,4 +1,3 @@
-# ARG before first FROM → global scope, available in FROM instruction below
 ARG MARS_BUILD_METHOD=rpm
 
 FROM scratch AS bits
@@ -13,16 +12,17 @@ FROM docker.io/library/rust:1.90-slim-bookworm AS chef
 ARG GIT_AUTH_TOKEN=""
 ARG LOCAL_DEPS=""
 RUN cargo install cargo-chef --locked
-RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-dev && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-dev python3-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /ecmwf/polytope-server
 COPY --from=bits . /ecmwf/bits/
 COPY --from=rsfdb . /ecmwf/rsfdb/
 COPY --from=rsfindlibs . /ecmwf/rsfindlibs/
 COPY --from=mars-client-bundle . /ecmwf/mars-client-bundle/
-COPY . .
+COPY workers/common/ workers/common/
+COPY workers/mars-worker/ workers/mars-worker/
 RUN mkdir -p .cargo && echo "[net]" > .cargo/config.toml && echo "git-fetch-with-cli = true" >> .cargo/config.toml && if [ "$LOCAL_DEPS" = "1" ]; then echo '[patch."https://github.com/ecmwf/bits-broker"]' >> .cargo/config.toml && echo 'bits = { path = "/ecmwf/bits/bits" }' >> .cargo/config.toml && echo 'bits-ecmwf = { path = "/ecmwf/bits/bits-ecmwf" }' >> .cargo/config.toml && echo '[patch."https://github.com/ecmwf/rsfdb"]' >> .cargo/config.toml && echo 'rsfdb = { path = "/ecmwf/rsfdb" }' >> .cargo/config.toml && echo '[patch."https://github.com/ecmwf/rsfindlibs"]' >> .cargo/config.toml && echo 'rsfindlibs = { path = "/ecmwf/rsfindlibs" }' >> .cargo/config.toml && echo '[patch."https://github.com/ecmwf/mars-client-bundle"]' >> .cargo/config.toml && echo 'mars-client = { path = "/ecmwf/mars-client-bundle/mars-client-cpp/bindings/rust/mars-client" }' >> .cargo/config.toml; fi
 RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi
-RUN cargo chef prepare --recipe-path recipe.json
+RUN cd workers/mars-worker && cargo chef prepare --recipe-path recipe.json
 
 ###############################
 # Stage 2: Cache Dependencies
@@ -31,16 +31,16 @@ FROM docker.io/library/rust:1.90-slim-bookworm AS cacher
 ARG GIT_AUTH_TOKEN=""
 ARG LOCAL_DEPS=""
 RUN cargo install cargo-chef --locked
-RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-dev && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-dev python3-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /ecmwf/polytope-server
 COPY --from=bits . /ecmwf/bits/
 COPY --from=rsfdb . /ecmwf/rsfdb/
 COPY --from=rsfindlibs . /ecmwf/rsfindlibs/
 COPY --from=mars-client-bundle . /ecmwf/mars-client-bundle/
-COPY --from=chef /ecmwf/polytope-server/recipe.json recipe.json
+COPY --from=chef /ecmwf/polytope-server/workers/mars-worker/recipe.json workers/mars-worker/recipe.json
 COPY --from=chef /ecmwf/polytope-server/.cargo/config.toml .cargo/config.toml
 RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi
-RUN cargo chef cook --release --recipe-path recipe.json
+RUN cd workers/mars-worker && cargo chef cook --release --recipe-path recipe.json
 
 ###############################
 # RPM-based MARS client library
@@ -59,7 +59,6 @@ FROM mars-base AS mars-base-cpp
 ARG mars_client_cpp_version=7.1.9.1
 RUN apt-get update && apt-get install -y mars-client-cpp=${mars_client_cpp_version} && rm -rf /var/lib/apt/lists/*
 
-# Normalize RPM install path to /opt/mars-client/
 FROM mars-base-cpp AS mars-libs-rpm
 RUN mkdir -p /opt/mars-client && cp -a /opt/ecmwf/mars-client-cpp/. /opt/mars-client/
 
@@ -71,7 +70,7 @@ ARG ecbuild_version=3.12.0
 
 RUN apt-get update && apt-get install -y \
     cmake build-essential git libaec-dev bison flex net-tools \
-    libssl-dev libnetcdf-dev \
+    libssl-dev libnetcdf-dev curl \
     && rm -rf /var/lib/apt/lists/*
 
 RUN git clone --depth 1 --branch ${ecbuild_version} https://github.com/ecmwf/ecbuild.git /ecbuild
@@ -109,7 +108,7 @@ FROM docker.io/library/rust:1.90-slim-bookworm AS builder
 ARG GIT_AUTH_TOKEN=""
 ARG LOCAL_DEPS=""
 ARG MARS_BUILD_METHOD=rpm
-RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-dev && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-dev python3-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /ecmwf/polytope-server
 ARG PACKAGE_NAME=mars-worker
 ARG BIN_NAME=mars-worker
@@ -118,9 +117,10 @@ COPY --from=rsfdb . /ecmwf/rsfdb/
 COPY --from=rsfindlibs . /ecmwf/rsfindlibs/
 COPY --from=mars-client-bundle . /ecmwf/mars-client-bundle/
 COPY --from=mars-libs /opt/mars-client /opt/mars-client
-COPY . .
+COPY workers/common/ workers/common/
+COPY workers/mars-worker/ workers/mars-worker/
 RUN mkdir -p .cargo && echo "[net]" > .cargo/config.toml && echo "git-fetch-with-cli = true" >> .cargo/config.toml && if [ "$LOCAL_DEPS" = "1" ]; then echo '[patch."https://github.com/ecmwf/bits-broker"]' >> .cargo/config.toml && echo 'bits = { path = "/ecmwf/bits/bits" }' >> .cargo/config.toml && echo 'bits-ecmwf = { path = "/ecmwf/bits/bits-ecmwf" }' >> .cargo/config.toml && echo '[patch."https://github.com/ecmwf/rsfdb"]' >> .cargo/config.toml && echo 'rsfdb = { path = "/ecmwf/rsfdb" }' >> .cargo/config.toml && echo '[patch."https://github.com/ecmwf/rsfindlibs"]' >> .cargo/config.toml && echo 'rsfindlibs = { path = "/ecmwf/rsfindlibs" }' >> .cargo/config.toml && echo '[patch."https://github.com/ecmwf/mars-client-bundle"]' >> .cargo/config.toml && echo 'mars-client = { path = "/ecmwf/mars-client-bundle/mars-client-cpp/bindings/rust/mars-client" }' >> .cargo/config.toml; fi
-COPY --from=cacher /ecmwf/polytope-server/target target
+COPY --from=cacher /ecmwf/polytope-server/workers/mars-worker/target workers/mars-worker/target
 COPY --from=cacher /usr/local/cargo /usr/local/cargo
 ENV MARS_CLIENT_LIB_DIR=/opt/mars-client/lib
 ENV MARS_CLIENT_INCLUDE_DIR=/opt/mars-client/include
@@ -129,7 +129,7 @@ ENV ECKIT_BUILD_INCLUDE_DIR=/opt/mars-client/include
 ENV METKIT_INCLUDE_DIR=/opt/mars-client/include
 ENV METKIT_BUILD_INCLUDE_DIR=/opt/mars-client/include
 RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi
-RUN cargo build --release -p ${PACKAGE_NAME}
+RUN cd workers/mars-worker && cargo build --release -p ${PACKAGE_NAME}
 
 ###############################
 # Stage 4: Production Release Image
@@ -146,7 +146,7 @@ COPY --from=mars-libs /opt/mars-client /opt/mars-client
 
 ENV LD_LIBRARY_PATH="/opt/mars-client/lib:${LD_LIBRARY_PATH}"
 
-COPY --from=builder /ecmwf/polytope-server/target/release/${BIN_NAME} /app/mars-worker
+COPY --from=builder /ecmwf/polytope-server/workers/mars-worker/target/release/${BIN_NAME} /app/mars-worker
 ENTRYPOINT ["/app/mars-worker"]
 
 ###############################
@@ -164,5 +164,5 @@ COPY --from=mars-libs /opt/mars-client /opt/mars-client
 
 ENV LD_LIBRARY_PATH="/opt/mars-client/lib:${LD_LIBRARY_PATH}"
 
-COPY --from=builder /ecmwf/polytope-server/target/release/${BIN_NAME} /app/mars-worker
+COPY --from=builder /ecmwf/polytope-server/workers/mars-worker/target/release/${BIN_NAME} /app/mars-worker
 ENTRYPOINT ["/app/mars-worker"]

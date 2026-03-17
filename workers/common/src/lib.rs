@@ -4,27 +4,11 @@ use async_trait::async_trait;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct User {
-    #[serde(default)]
-    pub version: i32,
-    #[serde(default)]
-    pub realm: String,
-    #[serde(default)]
-    pub username: String,
-    #[serde(default)]
-    pub roles: Vec<String>,
-    #[serde(default)]
-    pub attributes: std::collections::HashMap<String, String>,
-    #[serde(default)]
-    pub scopes: Option<std::collections::HashMap<String, Vec<String>>>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkItem {
     pub job_id: String,
     pub request: serde_json::Value,
-    pub user: User,
+    pub user: serde_json::Value,
     pub metadata: serde_json::Value,
 }
 
@@ -272,7 +256,7 @@ mod tests {
             Ok(axum::Json(WorkItem {
                 job_id: "job-1".into(),
                 request: serde_json::json!({"foo": "bar"}),
-                user: User::default(),
+                user: serde_json::json!({}),
                 metadata: serde_json::json!({}),
             }))
         }

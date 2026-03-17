@@ -14,10 +14,11 @@ WORKDIR /ecmwf/polytope-server
 COPY --from=bits . /ecmwf/bits/
 COPY --from=rsfdb . /ecmwf/rsfdb/
 COPY --from=rsfindlibs . /ecmwf/rsfindlibs/
-COPY . .
+COPY workers/common/ workers/common/
+COPY workers/polytope-fe-worker/ workers/polytope-fe-worker/
 RUN mkdir -p .cargo && echo "[net]" > .cargo/config.toml && echo "git-fetch-with-cli = true" >> .cargo/config.toml && if [ "$LOCAL_DEPS" = "1" ]; then echo '[patch."https://github.com/ecmwf/bits-broker"]' >> .cargo/config.toml && echo 'bits = { path = "/ecmwf/bits/bits" }' >> .cargo/config.toml && echo 'bits-ecmwf = { path = "/ecmwf/bits/bits-ecmwf" }' >> .cargo/config.toml && echo '[patch."https://github.com/ecmwf/rsfdb"]' >> .cargo/config.toml && echo 'rsfdb = { path = "/ecmwf/rsfdb" }' >> .cargo/config.toml && echo '[patch."https://github.com/ecmwf/rsfindlibs"]' >> .cargo/config.toml && echo 'rsfindlibs = { path = "/ecmwf/rsfindlibs" }' >> .cargo/config.toml; fi
 RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi
-RUN cargo chef prepare --recipe-path recipe.json
+RUN cd workers/polytope-fe-worker && cargo chef prepare --recipe-path recipe.json
 
 ###############################
 # Stage 2: Cache Dependencies
@@ -31,10 +32,10 @@ WORKDIR /ecmwf/polytope-server
 COPY --from=bits . /ecmwf/bits/
 COPY --from=rsfdb . /ecmwf/rsfdb/
 COPY --from=rsfindlibs . /ecmwf/rsfindlibs/
-COPY --from=chef /ecmwf/polytope-server/recipe.json recipe.json
+COPY --from=chef /ecmwf/polytope-server/workers/polytope-fe-worker/recipe.json workers/polytope-fe-worker/recipe.json
 COPY --from=chef /ecmwf/polytope-server/.cargo/config.toml .cargo/config.toml
 RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi
-RUN cargo chef cook --release --recipe-path recipe.json
+RUN cd workers/polytope-fe-worker && cargo chef cook --release --recipe-path recipe.json
 
 ###############################
 # Stage 3: Build the Project
@@ -49,12 +50,13 @@ ARG BIN_NAME=polytope-fe-worker
 COPY --from=bits . /ecmwf/bits/
 COPY --from=rsfdb . /ecmwf/rsfdb/
 COPY --from=rsfindlibs . /ecmwf/rsfindlibs/
-COPY . .
+COPY workers/common/ workers/common/
+COPY workers/polytope-fe-worker/ workers/polytope-fe-worker/
 RUN mkdir -p .cargo && echo "[net]" > .cargo/config.toml && echo "git-fetch-with-cli = true" >> .cargo/config.toml && if [ "$LOCAL_DEPS" = "1" ]; then echo '[patch."https://github.com/ecmwf/bits-broker"]' >> .cargo/config.toml && echo 'bits = { path = "/ecmwf/bits/bits" }' >> .cargo/config.toml && echo 'bits-ecmwf = { path = "/ecmwf/bits/bits-ecmwf" }' >> .cargo/config.toml && echo '[patch."https://github.com/ecmwf/rsfdb"]' >> .cargo/config.toml && echo 'rsfdb = { path = "/ecmwf/rsfdb" }' >> .cargo/config.toml && echo '[patch."https://github.com/ecmwf/rsfindlibs"]' >> .cargo/config.toml && echo 'rsfindlibs = { path = "/ecmwf/rsfindlibs" }' >> .cargo/config.toml; fi
-COPY --from=cacher /ecmwf/polytope-server/target target
+COPY --from=cacher /ecmwf/polytope-server/workers/polytope-fe-worker/target workers/polytope-fe-worker/target
 COPY --from=cacher /usr/local/cargo /usr/local/cargo
 RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi
-RUN cargo build --release -p ${PACKAGE_NAME}
+RUN cd workers/polytope-fe-worker && cargo build --release -p ${PACKAGE_NAME}
 
 ###############################
 # FDB Build (from source)
@@ -140,7 +142,7 @@ COPY --from=python-deps /root/.venv /root/.local
 
 ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/opt/fdb/lib:/usr/local/lib
 
-COPY --from=builder /ecmwf/polytope-server/target/release/${BIN_NAME} /app/polytope-fe-worker
+COPY --from=builder /ecmwf/polytope-server/workers/polytope-fe-worker/target/release/${BIN_NAME} /app/polytope-fe-worker
 COPY workers/polytope-fe-worker/run_polytope_worker.py /app/
 COPY workers/polytope-fe-worker/polytope.py /app/
 ENTRYPOINT ["/app/polytope-fe-worker"]
@@ -163,7 +165,7 @@ COPY --from=python-deps /root/.venv /root/.local
 
 ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/opt/fdb/lib:/usr/local/lib
 
-COPY --from=builder /ecmwf/polytope-server/target/release/${BIN_NAME} /app/polytope-fe-worker
+COPY --from=builder /ecmwf/polytope-server/workers/polytope-fe-worker/target/release/${BIN_NAME} /app/polytope-fe-worker
 COPY workers/polytope-fe-worker/run_polytope_worker.py /app/
 COPY workers/polytope-fe-worker/polytope.py /app/
 ENTRYPOINT ["/app/polytope-fe-worker"]

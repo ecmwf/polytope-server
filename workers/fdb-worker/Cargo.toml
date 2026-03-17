@@ -4,14 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-async-trait.workspace = true
-bytes.workspace = true
-clap.workspace = true
+async-trait = "0.1"
+bytes = "1"
+clap = { version = "4", features = ["derive"] }
 polytope-worker-common = { path = "../common" }
-reqwest.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 rsfdb = { git = "https://github.com/ecmwf/rsfdb", branch = "develop" }
-serde_json.workspace = true
-tracing.workspace = true
-tokio.workspace = true
-tokio-stream.workspace = true
-tracing-subscriber.workspace = true
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
