@@ -48,10 +48,9 @@ impl Processor for MarsProcessor {
                     }
                     Err(MarsError::Invalidated { offset }) => {
                         warn!(offset, "mars stream invalidated — unrecoverable");
-                        let _ = tx.blocking_send(Err(std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            format!("stream invalidated at byte offset {offset}"),
-                        )));
+                        let _ = tx.blocking_send(Err(std::io::Error::other(format!(
+                            "stream invalidated at byte offset {offset}"
+                        ))));
                         break;
                     }
                     Err(e) => {

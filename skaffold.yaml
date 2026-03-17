@@ -126,3 +126,9 @@ profiles:
       - op: add
         path: /build/artifacts/4/docker/buildArgs/LOCAL_DEPS
         value: "1"
+      - op: add
+        path: /build/artifacts/4/docker/cliFlags/-
+        value: --build-context=mars-client-bundle=../mars-client-bundle
+      - op: add
+        path: /build/artifacts/4/docker/buildArgs/MARS_BUILD_METHOD
+        value: "source"
