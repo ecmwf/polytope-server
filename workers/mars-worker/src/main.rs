@@ -1,12 +1,14 @@
 use async_trait::async_trait;
 use bytes::Bytes;
 use clap::Parser;
+use crate::k8s::NodePortManager;
 use mars_client::{Error as MarsError, MarsClient};
 use polytope_worker_common::{run_worker_loop, Completion, Processor, WorkItem, WorkerConfig};
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::warn;
 
 mod convert;
+mod k8s;
 
 struct MarsProcessor;
 
@@ -33,10 +35,6 @@ impl Processor for MarsProcessor {
             unsafe {
                 std::env::set_var("MARS_USER_EMAIL", &mars_email);
                 std::env::set_var("MARS_USER_TOKEN", &mars_token);
-                if let Ok(node) = std::env::var("K8S_NODE_NAME") {
-                    std::env::set_var("MARS_DHS_CALLBACK_HOST", &node);
-                    std::env::set_var("MARS_DHS_LOCALHOST", &node);
-                }
             }
 
             let mut client = match MarsClient::new() {
@@ -100,12 +98,25 @@ struct Cli {
     poll_timeout_ms: u64,
     #[arg(long, default_value_t = 10.0)]
     heartbeat_secs: f64,
+    #[arg(long, default_value_t = 8100)]
+    mars_dhs_local_port: u16,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
+
+    let manager = NodePortManager::new(cli.mars_dhs_local_port).await?;
+    // SAFETY: set once at startup before run_worker_loop spawns any processing threads;
+    // these env vars are never mutated afterwards.
+    unsafe {
+        std::env::set_var("MARS_DHS_LOCALPORT", manager.local_port().to_string());
+        std::env::set_var("MARS_DHS_CALLBACK_HOST", manager.node_name());
+        std::env::set_var("MARS_DHS_CALLBACK_PORT", manager.node_port().to_string());
+    }
+    tracing::info!(node_port = manager.node_port(), "NodePort service created, MARS DHS callback configured");
+
     run_worker_loop(
         WorkerConfig {
             broker_url: cli.broker_url,
@@ -116,6 +127,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         MarsProcessor,
     )
     .await?;
+
+    if let Err(e) = manager.cleanup().await {
+        tracing::warn!(error = %e, "Failed to cleanup NodePort service on shutdown");
+    }
+
     Ok(())
 }
 
