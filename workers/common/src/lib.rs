@@ -3,6 +3,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
+use tokio::signal::unix::{signal, SignalKind};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkItem {
@@ -128,14 +129,36 @@ pub async fn run_worker_loop<P: Processor>(
     processor: P,
 ) -> Result<(), reqwest::Error> {
     let client = reqwest::Client::builder().build()?;
+    let mut sigterm = signal(SignalKind::terminate()).expect("failed to register SIGTERM handler");
+    let mut shutting_down = false;
 
     loop {
-        let response = match client.get(config.work_url()).send().await {
-            Ok(response) => response,
-            Err(err) => {
-                tracing::warn!(error = %err, "worker poll failed");
-                tokio::time::sleep(config.retry_backoff).await;
+        if shutting_down {
+            tracing::info!("graceful shutdown complete");
+            break;
+        }
+
+        let response = tokio::select! {
+            biased;
+            _ = sigterm.recv() => {
+                tracing::info!("received shutdown signal, completing in-flight work then exiting");
+                shutting_down = true;
                 continue;
+            }
+            _ = tokio::signal::ctrl_c() => {
+                tracing::info!("received shutdown signal, completing in-flight work then exiting");
+                shutting_down = true;
+                continue;
+            }
+            result = client.get(config.work_url()).send() => {
+                match result {
+                    Ok(response) => response,
+                    Err(err) => {
+                        tracing::warn!(error = %err, "worker poll failed");
+                        tokio::time::sleep(config.retry_backoff).await;
+                        continue;
+                    }
+                }
             }
         };
 
@@ -226,6 +249,8 @@ pub async fn run_worker_loop<P: Processor>(
             tracing::warn!(status=%response.status(), job_id=%work.job_id, "worker completion returned unexpected status");
         }
     }
+
+    Ok(())
 }
 
 #[cfg(test)]
