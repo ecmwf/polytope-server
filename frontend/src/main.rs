@@ -1,10 +1,12 @@
 mod api;
+mod auth;
 mod config;
 mod state;
 
 use std::sync::Arc;
 
 use axum::{
+    middleware,
     routing::{get, post},
     Router,
 };
@@ -65,7 +67,21 @@ async fn main() {
         std::process::exit(1);
     });
 
-    let state = Arc::new(AppState { bits });
+    let auth_client = cfg
+        .authentication
+        .as_ref()
+        .map(auth::client::AuthClient::new);
+
+    if auth_client.is_some() {
+        tracing::info!("authentication enabled via auth-o-tron");
+    } else {
+        tracing::info!("authentication disabled (no config)");
+    }
+
+    let state = Arc::new(AppState {
+        bits,
+        auth_client,
+    });
     let bind_addr = cfg.bind_addr();
 
     let v1 = Router::new()
@@ -80,8 +96,7 @@ async fn main() {
         )
         .route("/downloads/{id}", get(api::v1::downloads_deprecated));
 
-    let v2 = Router::new()
-        .route("/health", get(api::v2::health))
+    let v2_protected = Router::new()
         .route("/requests", post(api::v2::submit))
         .route("/requests/{id}", get(api::v2::poll).delete(api::v2::cancel));
 
@@ -105,10 +120,21 @@ async fn main() {
         .allow_methods(Any)
         .allow_headers(Any);
 
-    let app = Router::new()
+    let mut protected = Router::new()
         .nest("/api/v1", v1)
-        .nest("/api/v2", v2)
-        .nest("/openmeteo/v1", openmeteo)
+        .nest("/api/v2", v2_protected)
+        .nest("/openmeteo/v1", openmeteo);
+
+    if state.auth_client.is_some() {
+        protected = protected.layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::middleware::auth_middleware,
+        ));
+    }
+
+    let app = Router::new()
+        .route("/api/v2/health", get(api::v2::health))
+        .merge(protected)
         .with_state(state);
 
     // Nest EDR router separately (it manages its own state internally)

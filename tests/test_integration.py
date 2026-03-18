@@ -107,9 +107,9 @@ def polytope_server(mock_backend):
 
         bits:
           routes:
-            default:
-              - target::http:
-                  url: "http://127.0.0.1:{mock_backend}/"
+            - default:
+                - target::http:
+                    url: "http://127.0.0.1:{mock_backend}/"
     """)
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
@@ -258,3 +258,201 @@ def test_v2_cancel(polytope_server):
     with urllib.request.urlopen(cancel_req) as r:
         assert r.status == 200
         assert json.loads(r.read())["status"] == "cancelled"
+
+
+# ---------------------------------------------------------------------------
+# Auth-o-tron integration
+# ---------------------------------------------------------------------------
+
+JWT_SECRET = "integration-test-secret"
+VALID_USER = "testuser"
+VALID_PASSWORD = "testpass"
+VALID_REALM = "testrealm"
+
+
+class AuthOTronHandler(BaseHTTPRequestHandler):
+    """Minimal auth-o-tron mock: validates Basic auth → returns signed JWT."""
+
+    def do_GET(self):
+        if self.path != "/authenticate":
+            self.send_error(404)
+            return
+
+        import base64
+        from jose import jwt
+
+        auth = self.headers.get("Authorization", "")
+        if not auth.startswith("Basic "):
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", 'Basic realm="test"')
+            self.end_headers()
+            return
+
+        try:
+            decoded = base64.b64decode(auth[6:]).decode()
+            user, password = decoded.split(":", 1)
+        except Exception:
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", "Bearer")
+            self.end_headers()
+            return
+
+        if user != VALID_USER or password != VALID_PASSWORD:
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", "Bearer")
+            self.end_headers()
+            return
+
+        token = jwt.encode(
+            {
+                "username": user,
+                "realm": VALID_REALM,
+                "roles": ["default"],
+                "exp": int(time.time()) + 3600,
+            },
+            JWT_SECRET,
+            algorithm="HS256",
+        )
+
+        self.send_response(200)
+        self.send_header("Authorization", f"Bearer {token}")
+        self.end_headers()
+        self.wfile.write(b"Authenticated successfully")
+
+    def log_message(self, *_):
+        pass
+
+
+def start_mock_authotron():
+    port = free_port()
+    server = HTTPServer(("127.0.0.1", port), AuthOTronHandler)
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    return port, server
+
+
+@pytest.fixture(scope="module")
+def mock_authotron():
+    port, server = start_mock_authotron()
+    yield port
+    server.shutdown()
+
+
+@pytest.fixture(scope="module")
+def authed_polytope_server(mock_backend, mock_authotron):
+    """polytope-server with auth-o-tron enabled."""
+    server_port = free_port()
+
+    config = textwrap.dedent(f"""\
+        server:
+          host: "127.0.0.1"
+          port: {server_port}
+
+        authentication:
+          url: "http://127.0.0.1:{mock_authotron}"
+          secret: "{JWT_SECRET}"
+
+        bits:
+          routes:
+            - default:
+                - target::http:
+                    url: "http://127.0.0.1:{mock_backend}/"
+    """)
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        f.write(config)
+        config_path = f.name
+
+    proc = subprocess.Popen(
+        [str(SERVER_BIN), config_path],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    try:
+        wait_for_port(server_port)
+        yield f"http://127.0.0.1:{server_port}"
+    finally:
+        proc.terminate()
+        proc.wait(timeout=5)
+        os.unlink(config_path)
+
+
+def test_auth_health_is_public(authed_polytope_server):
+    import urllib.request
+
+    with urllib.request.urlopen(f"{authed_polytope_server}/api/v2/health") as r:
+        assert r.status == 200
+
+
+def test_auth_reject_no_credentials(authed_polytope_server):
+    import json, urllib.error, urllib.request
+
+    req = urllib.request.Request(
+        f"{authed_polytope_server}/api/v2/requests",
+        data=json.dumps({"class": "od"}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        urllib.request.urlopen(req)
+        assert False, "expected 401"
+    except urllib.error.HTTPError as e:
+        assert e.code == 401
+        assert "WWW-Authenticate" in e.headers
+
+
+def test_auth_reject_bad_credentials(authed_polytope_server):
+    import base64, json, urllib.error, urllib.request
+
+    creds = base64.b64encode(b"wrong:creds").decode()
+    req = urllib.request.Request(
+        f"{authed_polytope_server}/api/v1/collections",
+        headers={"Authorization": f"Basic {creds}"},
+    )
+    try:
+        urllib.request.urlopen(req)
+        assert False, "expected 401"
+    except urllib.error.HTTPError as e:
+        assert e.code == 401
+
+
+def test_auth_valid_credentials_pass_through(authed_polytope_server):
+    import base64, urllib.request
+
+    creds = base64.b64encode(f"{VALID_USER}:{VALID_PASSWORD}".encode()).decode()
+    req = urllib.request.Request(
+        f"{authed_polytope_server}/api/v2/health",
+        headers={"Authorization": f"Basic {creds}"},
+    )
+    with urllib.request.urlopen(req) as r:
+        assert r.status == 200
+
+
+def test_auth_v2_submit_with_valid_credentials(authed_polytope_server):
+    import base64, json, urllib.request
+
+    creds = base64.b64encode(f"{VALID_USER}:{VALID_PASSWORD}".encode()).decode()
+    req = urllib.request.Request(
+        f"{authed_polytope_server}/api/v2/requests",
+        data=json.dumps({"class": "od", "stream": "oper"}).encode(),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Basic {creds}",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req) as r:
+        assert r.status == 200
+        assert r.read() == FAKE_GRIB
+
+
+def test_auth_v1_requires_auth(authed_polytope_server):
+    import urllib.error, urllib.request
+
+    for path in ["/api/v1/test", "/api/v1/collections", "/api/v1/requests"]:
+        try:
+            urllib.request.urlopen(f"{authed_polytope_server}{path}")
+            assert False, f"expected 401 for {path}"
+        except urllib.error.HTTPError as e:
+            assert e.code == 401, f"{path} returned {e.code}, expected 401"
