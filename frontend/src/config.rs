@@ -5,6 +5,7 @@ pub struct ServerConfig {
     #[serde(default)]
     pub server: HttpConfig,
     pub bits: serde_yaml::Value,
+    pub edr: Option<serde_yaml::Value>,
 }
 
 #[derive(Debug, Deserialize)]

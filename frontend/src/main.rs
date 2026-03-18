@@ -8,6 +8,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use tower_http::cors::{Any, CorsLayer};
 use clap::Parser;
 use state::AppState;
 
@@ -17,6 +18,31 @@ use bits_ecmwf as _;
 #[command(name = "polytope-server", about = "Polytope data retrieval server")]
 struct Cli {
     config: String,
+}
+
+/// BitsSubmitter wraps Arc<AppState> to implement the polytope_edr::RequestSubmitter trait.
+/// We hold Arc<AppState> (not bits::Bits directly) because bits::Bits is not Clone.
+struct BitsSubmitter {
+    state: Arc<AppState>,
+}
+
+impl polytope_edr::RequestSubmitter for BitsSubmitter {
+    fn submit(
+        &self,
+        request: serde_json::Value,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<polytope_edr::SubmitResponse, polytope_edr::SubmitError>> + Send>,
+    > {
+        let state = self.state.clone();
+        Box::pin(async move {
+            let job = bits::Job::new(request);
+            let handle = state.bits.submit(job);
+            Ok(polytope_edr::SubmitResponse {
+                id: handle.id.clone(),
+                poll_url: format!("/api/v2/requests/{}", handle.id),
+            })
+        })
+    }
 }
 
 #[tokio::main]
@@ -61,11 +87,38 @@ async fn main() {
 
     let openmeteo = api::openmeteo::router();
 
+    let edr_router = if let Some(edr_value) = cfg.edr {
+        let edr_config = polytope_edr::EdrConfig::from_value(edr_value)
+            .expect("Failed to parse edr config");
+        let submitter = Arc::new(BitsSubmitter {
+            state: state.clone(),
+        });
+        tracing::info!("EDR endpoints enabled ({} collections)", edr_config.collections.len());
+        Some(polytope_edr::router(edr_config, submitter, "/edr".to_string()))
+    } else {
+        tracing::info!("No edr config, EDR endpoints disabled");
+        None
+    };
+
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
+
     let app = Router::new()
         .nest("/api/v1", v1)
         .nest("/api/v2", v2)
         .nest("/openmeteo/v1", openmeteo)
         .with_state(state);
+
+    // Nest EDR router separately (it manages its own state internally)
+    let app = if let Some(edr) = edr_router {
+        app.nest("/edr", edr)
+    } else {
+        app
+    };
+
+    let app = app.layer(cors);
 
     let listener = tokio::net::TcpListener::bind(&bind_addr)
         .await

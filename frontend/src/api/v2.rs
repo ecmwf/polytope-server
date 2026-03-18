@@ -4,7 +4,7 @@ use std::time::Duration;
 use axum::{
     body::Body,
     extract::{Path, State},
-    http::{header, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
@@ -21,9 +21,24 @@ pub async fn health() -> &'static str {
 
 pub async fn submit(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
-    let id = state.bits.submit(Job::new(body)).id;
+    let mut job = Job::new(body);
+    if let Some(ip) = super::client_ip(&headers) {
+        job.user = json!({"client_ip": ip});
+    }
+    let proxy_proto_addr = headers
+        .get("x-proxy-protocol-addr")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("<not set>");
+    tracing::info!(
+        "client IP candidates: x-forwarded-for={:?}, x-real-ip={:?}, x-proxy-protocol-addr={:?}",
+        headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()),
+        headers.get("x-real-ip").and_then(|v| v.to_str().ok()),
+        proxy_proto_addr,
+    );
+    let id = state.bits.submit(job).id;
 
     match state.bits.poll(&id, Some(POLL_TIMEOUT)).await {
         PollOutcome::Pending { id } => Response::builder()

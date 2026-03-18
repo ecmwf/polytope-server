@@ -1,6 +1,7 @@
 FROM scratch AS bits
 FROM scratch AS rsfdb
 FROM scratch AS rsfindlibs
+FROM scratch AS polytope-edr
 
 ###############################
 # Stage 1: Prepare Cargo Chef Recipe
@@ -14,8 +15,14 @@ WORKDIR /ecmwf/polytope-server
 COPY --from=bits . /ecmwf/bits/
 COPY --from=rsfdb . /ecmwf/rsfdb/
 COPY --from=rsfindlibs . /ecmwf/rsfindlibs/
+COPY --from=polytope-edr . /ecmwf/polytope-edr/
 COPY frontend/ frontend/
-RUN mkdir -p .cargo && echo "[net]" > .cargo/config.toml && echo "git-fetch-with-cli = true" >> .cargo/config.toml && if [ "$LOCAL_DEPS" = "1" ]; then echo '[patch."https://github.com/ecmwf/bits-broker"]' >> .cargo/config.toml && echo 'bits = { path = "/ecmwf/bits/bits" }' >> .cargo/config.toml && echo 'bits-ecmwf = { path = "/ecmwf/bits/bits-ecmwf" }' >> .cargo/config.toml; fi
+RUN mkdir -p .cargo && echo '[net]' > .cargo/config.toml && echo 'git-fetch-with-cli = true' >> .cargo/config.toml
+RUN if [ "$LOCAL_DEPS" = "1" ]; then sed -i \
+      -e 's|bits = { git = "[^"]*"[^}]*features = \["\([^"]*\)"\] }|bits = { path = "/ecmwf/bits/bits", features = ["\1"] }|' \
+      -e 's|bits-ecmwf = { git = "[^"]*"[^}]* }|bits-ecmwf = { path = "/ecmwf/bits/bits-ecmwf" }|' \
+      -e 's|polytope-edr = { git = "[^"]*"[^}]* }|polytope-edr = { path = "/ecmwf/polytope-edr" }|' \
+      frontend/Cargo.toml; fi
 RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi
 RUN cd frontend && cargo chef prepare --recipe-path recipe.json
 
@@ -31,7 +38,8 @@ WORKDIR /ecmwf/polytope-server
 COPY --from=bits . /ecmwf/bits/
 COPY --from=rsfdb . /ecmwf/rsfdb/
 COPY --from=rsfindlibs . /ecmwf/rsfindlibs/
-COPY --from=chef /ecmwf/polytope-server/frontend/recipe.json frontend/recipe.json
+COPY --from=polytope-edr . /ecmwf/polytope-edr/
+COPY --from=chef /ecmwf/polytope-server/frontend/ frontend/
 COPY --from=chef /ecmwf/polytope-server/.cargo/config.toml .cargo/config.toml
 RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi
 RUN cd frontend && cargo chef cook --release --recipe-path recipe.json
@@ -49,8 +57,14 @@ ARG BIN_NAME=polytope-server
 COPY --from=bits . /ecmwf/bits/
 COPY --from=rsfdb . /ecmwf/rsfdb/
 COPY --from=rsfindlibs . /ecmwf/rsfindlibs/
+COPY --from=polytope-edr . /ecmwf/polytope-edr/
 COPY frontend/ frontend/
-RUN mkdir -p .cargo && echo "[net]" > .cargo/config.toml && echo "git-fetch-with-cli = true" >> .cargo/config.toml && if [ "$LOCAL_DEPS" = "1" ]; then echo '[patch."https://github.com/ecmwf/bits-broker"]' >> .cargo/config.toml && echo 'bits = { path = "/ecmwf/bits/bits" }' >> .cargo/config.toml && echo 'bits-ecmwf = { path = "/ecmwf/bits/bits-ecmwf" }' >> .cargo/config.toml; fi
+RUN mkdir -p .cargo && echo '[net]' > .cargo/config.toml && echo 'git-fetch-with-cli = true' >> .cargo/config.toml
+RUN if [ "$LOCAL_DEPS" = "1" ]; then sed -i \
+      -e 's|bits = { git = "[^"]*"[^}]*features = \["\([^"]*\)"\] }|bits = { path = "/ecmwf/bits/bits", features = ["\1"] }|' \
+      -e 's|bits-ecmwf = { git = "[^"]*"[^}]* }|bits-ecmwf = { path = "/ecmwf/bits/bits-ecmwf" }|' \
+      -e 's|polytope-edr = { git = "[^"]*"[^}]* }|polytope-edr = { path = "/ecmwf/polytope-edr" }|' \
+      frontend/Cargo.toml; fi
 COPY --from=cacher /ecmwf/polytope-server/frontend/target frontend/target
 COPY --from=cacher /usr/local/cargo /usr/local/cargo
 RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi

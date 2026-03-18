@@ -4,7 +4,7 @@ use std::time::Duration;
 use axum::{
     body::Body,
     extract::{Path, State},
-    http::{header, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json,
 };
@@ -56,6 +56,7 @@ pub async fn list_requests() -> impl IntoResponse {
 
 pub async fn submit_request(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(_collection): Path<String>,
     Json(body): Json<SubmitBody>,
 ) -> impl IntoResponse {
@@ -64,7 +65,11 @@ pub async fn submit_request(
         "request": body.request,
     });
 
-    let handle = state.bits.submit(Job::new(request));
+    let mut job = Job::new(request);
+    if let Some(ip) = super::client_ip(&headers) {
+        job.user = json!({"client_ip": ip});
+    }
+    let handle = state.bits.submit(job);
     let location = format!("/api/v1/requests/{}", handle.id);
     (
         StatusCode::ACCEPTED,

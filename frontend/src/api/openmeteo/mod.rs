@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use axum::{
     extract::{Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
     Json, Router,
@@ -49,6 +49,7 @@ pub fn router() -> Router<Arc<AppState>> {
 
 async fn forecast(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Query(params): Query<params::ForecastParams>,
 ) -> Response {
     let _ = (
@@ -146,6 +147,9 @@ async fn forecast(
 
         let mut job = Job::new(request);
         job.metadata = json!({"api": "openmeteo"});
+        if let Some(ref ip) = super::client_ip(&headers) {
+            job.user = json!({"client_ip": ip});
+        }
         let id = state.bits.submit(job).id;
         submitted.push((group, param_list, id));
     }

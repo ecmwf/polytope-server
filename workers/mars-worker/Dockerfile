@@ -67,20 +67,40 @@ RUN mkdir -p /opt/mars-client && cp -a /opt/ecmwf/mars-client-cpp/. /opt/mars-cl
 # Source-built MARS client library
 ###############################
 FROM debian:bookworm AS mars-build
-ARG ecbuild_version=3.12.0
+ARG MARS_CLIENT_CPP_BRANCH=feature/library-api
+ARG ECKIT_VERSION=1.33.0
+ARG ECCODES_VERSION=2.46.0
+ARG ODC_VERSION=1.6.2
+ARG METKIT_VERSION=1.17.0
+ARG ATLAS_VERSION=0.45.0
+ARG ATLAS_ORCA_VERSION=0.4.3
+ARG MIR_VERSION=1.23.7
+ARG FDB_VERSION=5.19.0
 
 RUN apt-get update && apt-get install -y \
     cmake build-essential git libaec-dev bison flex net-tools \
     libssl-dev libnetcdf-dev curl \
     && rm -rf /var/lib/apt/lists/*
 
-RUN git clone --depth 1 --branch ${ecbuild_version} https://github.com/ecmwf/ecbuild.git /ecbuild
+RUN git clone --depth 1 --branch 3.12.0 https://github.com/ecmwf/ecbuild.git /ecbuild
 ENV PATH=/ecbuild/bin:$PATH
 
 COPY --from=mars-client-bundle . /source/mars-client-bundle/
 RUN if [ ! -f /source/mars-client-bundle/CMakeLists.txt ]; then \
     git clone --single-branch --branch cpp https://github.com/ecmwf/mars-client-bundle.git /source/mars-client-bundle; \
     fi
+
+RUN sed -i \
+    -e "s|PROJECT eckit.*UPDATE)|PROJECT eckit GIT \"https://github.com/ecmwf/eckit\" TAG ${ECKIT_VERSION} UPDATE)|" \
+    -e "s|PROJECT eccodes.*UPDATE)|PROJECT eccodes GIT \"https://github.com/ecmwf/eccodes\" TAG ${ECCODES_VERSION} UPDATE)|" \
+    -e "s|PROJECT odc.*UPDATE)|PROJECT odc GIT \"https://github.com/ecmwf/odc\" TAG ${ODC_VERSION} UPDATE)|" \
+    -e "s|PROJECT metkit.*UPDATE)|PROJECT metkit GIT \"https://github.com/ecmwf/metkit\" TAG ${METKIT_VERSION} UPDATE)|" \
+    -e "s|PROJECT atlas .*UPDATE)|PROJECT atlas GIT \"https://github.com/ecmwf/atlas\" TAG ${ATLAS_VERSION} UPDATE)|" \
+    -e "s|PROJECT atlas-orca.*UPDATE)|PROJECT atlas-orca GIT \"https://github.com/ecmwf/atlas-orca\" TAG ${ATLAS_ORCA_VERSION} UPDATE)|" \
+    -e "s|PROJECT mir .*UPDATE)|PROJECT mir GIT \"https://github.com/ecmwf/mir\" TAG ${MIR_VERSION} UPDATE)|" \
+    -e "s|PROJECT fdb5.*UPDATE)|PROJECT fdb5 GIT \"https://github.com/ecmwf/fdb\" TAG ${FDB_VERSION} UPDATE)|" \
+    -e "s|PROJECT mars-client-cpp.*|PROJECT mars-client-cpp GIT \"https://github.com/ecmwf/mars-client-cpp\" BRANCH ${MARS_CLIENT_CPP_BRANCH} UPDATE)|" \
+    /source/mars-client-bundle/CMakeLists.txt
 
 RUN mkdir -p /build/mars-client-bundle && cd /build/mars-client-bundle \
     && ecbuild \

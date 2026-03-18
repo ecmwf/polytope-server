@@ -5,6 +5,8 @@ edition = "2021"
 
 [dependencies]
 axum = "0.8"
+tower-http = { version = "0.6", features = ["cors"] }
+polytope-edr = { git = "https://github.com/ecmwf/polytope-edr", branch = "master" }
 bits = { git = "https://github.com/ecmwf/bits-broker", branch = "main", features = ["tikv"] }
 bits-ecmwf = { git = "https://github.com/ecmwf/bits-broker", branch = "main" }
 bytes = "1"

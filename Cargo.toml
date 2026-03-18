@@ -7,3 +7,10 @@ members = [
     "workers/mars-worker",
 ]
 resolver = "2"
+
+[patch."https://github.com/ecmwf/polytope-edr"]
+polytope-edr = { path = "../polytope-edr" }
+
+[patch."https://github.com/ecmwf/bits-broker"]
+bits = { path = "../bits/bits" }
+bits-ecmwf = { path = "../bits/bits-ecmwf" }
