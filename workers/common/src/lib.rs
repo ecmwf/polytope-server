@@ -5,6 +5,10 @@ use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use tokio::signal::unix::{signal, SignalKind};
 
+pub mod delivery_config;
+pub mod delivery;
+pub mod encoding;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkItem {
     pub job_id: String,
@@ -17,6 +21,7 @@ pub struct WorkItem {
 pub enum Completion {
     Complete {
         content_type: String,
+        content_encoding: Option<String>,
         content_length: Option<u64>,
         body: reqwest::Body,
     },
@@ -35,11 +40,13 @@ pub enum Completion {
 impl Completion {
     pub fn complete(
         content_type: impl Into<String>,
+        content_encoding: Option<String>,
         content_length: Option<u64>,
         body: reqwest::Body,
     ) -> Self {
         Self::Complete {
             content_type: content_type.into(),
+            content_encoding,
             content_length,
             body,
         }
@@ -208,6 +215,7 @@ pub async fn run_worker_loop<P: Processor>(
         let response = match completion {
             Completion::Complete {
                 content_type,
+                content_encoding,
                 content_length,
                 body,
             } => {
@@ -217,6 +225,9 @@ pub async fn run_worker_loop<P: Processor>(
                     .body(body);
                 if let Some(content_length) = content_length {
                     request = request.header(reqwest::header::CONTENT_LENGTH, content_length);
+                }
+                if let Some(encoding) = content_encoding {
+                    request = request.header(reqwest::header::CONTENT_ENCODING, encoding);
                 }
                 request.send().await?
             }
@@ -260,7 +271,7 @@ mod tests {
         body::Bytes,
         extract::{Path, State},
         http::StatusCode,
-        routing::{get, post},
+        routing::{get, post, put},
         Router,
     };
     use futures::TryStreamExt;
@@ -308,6 +319,152 @@ mod tests {
         StatusCode::OK
     }
 
+    #[derive(Default)]
+    struct BrokerState {
+        delivered: Mutex<bool>,
+        completions: Mutex<Vec<(String, Vec<u8>)>>,
+    }
+
+    #[derive(Default)]
+    struct BobsState {
+        calls: Mutex<Vec<String>>,
+        writes: Mutex<Vec<Vec<u8>>>,
+    }
+
+    async fn broker_work(
+        State(state): State<Arc<BrokerState>>,
+    ) -> Result<axum::Json<WorkItem>, StatusCode> {
+        let mut delivered = state.delivered.lock().unwrap();
+        if *delivered {
+            Err(StatusCode::NO_CONTENT)
+        } else {
+            *delivered = true;
+            Ok(axum::Json(WorkItem {
+                job_id: "job-1".into(),
+                request: serde_json::json!({"foo": "bar"}),
+                user: serde_json::json!({}),
+                metadata: serde_json::json!({}),
+            }))
+        }
+    }
+
+    async fn broker_heartbeat(Path(_job_id): Path<String>) -> StatusCode {
+        StatusCode::OK
+    }
+
+    async fn broker_complete_data(
+        Path(_job_id): Path<String>,
+        State(state): State<Arc<BrokerState>>,
+        body: axum::body::Body,
+    ) -> StatusCode {
+        broker_complete("data", state, body).await
+    }
+
+    async fn broker_complete_redirect(
+        Path(_job_id): Path<String>,
+        State(state): State<Arc<BrokerState>>,
+        body: axum::body::Body,
+    ) -> StatusCode {
+        broker_complete("redirect", state, body).await
+    }
+
+    async fn broker_complete_reject(
+        Path(_job_id): Path<String>,
+        State(state): State<Arc<BrokerState>>,
+        body: axum::body::Body,
+    ) -> StatusCode {
+        broker_complete("reject", state, body).await
+    }
+
+    async fn broker_complete_error(
+        Path(_job_id): Path<String>,
+        State(state): State<Arc<BrokerState>>,
+        body: axum::body::Body,
+    ) -> StatusCode {
+        broker_complete("error", state, body).await
+    }
+
+    async fn broker_complete(
+        kind: &str,
+        state: Arc<BrokerState>,
+        body: axum::body::Body,
+    ) -> StatusCode {
+        let payload = body
+            .into_data_stream()
+            .try_fold(Vec::new(), |mut acc, chunk: Bytes| async move {
+                acc.extend_from_slice(&chunk);
+                Ok(acc)
+            })
+            .await
+            .unwrap();
+        state
+            .completions
+            .lock()
+            .unwrap()
+            .push((kind.to_string(), payload));
+        StatusCode::OK
+    }
+
+    async fn bobs_create(
+        State(state): State<Arc<BobsState>>,
+    ) -> (StatusCode, axum::Json<serde_json::Value>) {
+        state.calls.lock().unwrap().push("create".to_string());
+        (
+            StatusCode::CREATED,
+            axum::Json(serde_json::json!({ "key": "redirect-key" })),
+        )
+    }
+
+    async fn bobs_write(
+        Path((_key, _offset)): Path<(String, u64)>,
+        State(state): State<Arc<BobsState>>,
+        body: axum::body::Body,
+    ) -> StatusCode {
+        let payload = body
+            .into_data_stream()
+            .try_fold(Vec::new(), |mut acc, chunk: Bytes| async move {
+                acc.extend_from_slice(&chunk);
+                Ok(acc)
+            })
+            .await
+            .unwrap();
+        state.calls.lock().unwrap().push("write".to_string());
+        state.writes.lock().unwrap().push(payload);
+        StatusCode::OK
+    }
+
+    async fn bobs_complete(
+        Path(_key): Path<String>,
+        State(state): State<Arc<BobsState>>,
+    ) -> StatusCode {
+        state.calls.lock().unwrap().push("complete".to_string());
+        StatusCode::OK
+    }
+
+    struct DeliveryProcessor {
+        delivery_config: delivery_config::DeliveryConfig,
+    }
+
+    #[async_trait]
+    impl Processor for DeliveryProcessor {
+        async fn process(&self, _work: WorkItem) -> Completion {
+            let client = reqwest::Client::new();
+            let delivery = delivery::make_delivery(&self.delivery_config, client).await;
+            let stream = futures::stream::iter(vec![Ok::<bytes::Bytes, std::io::Error>(
+                bytes::Bytes::from(vec![1u8, 2, 3]),
+            )]);
+            let encoded = encoding::encode_stream(stream, &self.delivery_config.encoding);
+
+            delivery
+                .deliver(
+                    "application/octet-stream",
+                    self.delivery_config.encoding.content_encoding_header(),
+                    encoded,
+                )
+                .await
+        }
+    }
+
     struct StubProcessor;
 
     #[async_trait]
@@ -315,6 +472,7 @@ mod tests {
         async fn process(&self, _work: WorkItem) -> Completion {
             Completion::complete(
                 "application/octet-stream",
+                None,
                 Some(3),
                 reqwest::Body::from(vec![1, 2, 3]),
             )
@@ -353,5 +511,135 @@ mod tests {
 
         let completions = state.completions.lock().unwrap();
         assert_eq!(completions[0], vec![1, 2, 3]);
+    }
+
+    #[tokio::test]
+    async fn worker_with_bobs_delivery_posts_redirect_completion() {
+        let bobs_state = Arc::new(BobsState::default());
+        let bobs_app = Router::new()
+            .route("/create", put(bobs_create))
+            .route("/write/{key}/{offset}", post(bobs_write))
+            .route("/complete/{key}", post(bobs_complete))
+            .with_state(bobs_state.clone());
+        let bobs_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let bobs_addr = bobs_listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(bobs_listener, bobs_app).await.unwrap() });
+        let bobs_url = format!("http://{bobs_addr}");
+
+        let broker_state = Arc::new(BrokerState::default());
+        let broker_app = Router::new()
+            .route("/work", get(broker_work))
+            .route("/heartbeat/{job_id}", post(broker_heartbeat))
+            .route("/complete/data/{job_id}", post(broker_complete_data))
+            .route("/complete/redirect/{job_id}", post(broker_complete_redirect))
+            .route("/complete/reject/{job_id}", post(broker_complete_reject))
+            .route("/complete/error/{job_id}", post(broker_complete_error))
+            .with_state(broker_state.clone());
+        let broker_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let broker_addr = broker_listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(broker_listener, broker_app).await.unwrap() });
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        let config = WorkerConfig {
+            broker_url: format!("http://{broker_addr}"),
+            poll_timeout_ms: 10,
+            heartbeat_interval: Duration::from_millis(5),
+            retry_backoff: Duration::from_millis(5),
+        };
+
+        let processor = DeliveryProcessor {
+            delivery_config: delivery_config::DeliveryConfig {
+                delivery_type: delivery_config::DeliveryType::Bobs,
+                bobs_url: Some(bobs_url.clone()),
+                s3_bucket: None,
+                s3_region: None,
+                s3_endpoint_url: None,
+                s3_force_path_style: None,
+                s3_key_prefix: String::new(),
+                encoding: delivery_config::Codec::Identity,
+                encoding_threshold_bytes: 1024,
+            },
+        };
+
+        let run = tokio::spawn(run_worker_loop(config, processor));
+        for _ in 0..40 {
+            if !broker_state.completions.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        run.abort();
+
+        let completions = broker_state.completions.lock().unwrap();
+        assert_eq!(completions.len(), 1);
+        assert_eq!(completions[0].0, "redirect");
+        let body: serde_json::Value = serde_json::from_slice(&completions[0].1).unwrap();
+        assert_eq!(
+            body["location"].as_str().unwrap(),
+            format!("{bobs_url}/read/redirect-key")
+        );
+        assert_eq!(body["message"].as_str().unwrap(), "result available for download");
+
+        drop(completions);
+        let calls = bobs_state.calls.lock().unwrap();
+        assert_eq!(&*calls, &["create", "write", "complete"]);
+        drop(calls);
+        let writes = bobs_state.writes.lock().unwrap();
+        assert_eq!(writes.len(), 1);
+        assert_eq!(writes[0], vec![1, 2, 3]);
+    }
+
+    #[tokio::test]
+    async fn worker_with_direct_delivery_posts_data_completion() {
+        let broker_state = Arc::new(BrokerState::default());
+        let broker_app = Router::new()
+            .route("/work", get(broker_work))
+            .route("/heartbeat/{job_id}", post(broker_heartbeat))
+            .route("/complete/data/{job_id}", post(broker_complete_data))
+            .route("/complete/redirect/{job_id}", post(broker_complete_redirect))
+            .route("/complete/reject/{job_id}", post(broker_complete_reject))
+            .route("/complete/error/{job_id}", post(broker_complete_error))
+            .with_state(broker_state.clone());
+        let broker_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let broker_addr = broker_listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(broker_listener, broker_app).await.unwrap() });
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        let config = WorkerConfig {
+            broker_url: format!("http://{broker_addr}"),
+            poll_timeout_ms: 10,
+            heartbeat_interval: Duration::from_millis(5),
+            retry_backoff: Duration::from_millis(5),
+        };
+
+        let processor = DeliveryProcessor {
+            delivery_config: delivery_config::DeliveryConfig {
+                delivery_type: delivery_config::DeliveryType::Direct,
+                bobs_url: None,
+                s3_bucket: None,
+                s3_region: None,
+                s3_endpoint_url: None,
+                s3_force_path_style: None,
+                s3_key_prefix: String::new(),
+                encoding: delivery_config::Codec::Zstd,
+                encoding_threshold_bytes: 1024,
+            },
+        };
+
+        let run = tokio::spawn(run_worker_loop(config, processor));
+        for _ in 0..40 {
+            if !broker_state.completions.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        run.abort();
+
+        let completions = broker_state.completions.lock().unwrap();
+        assert_eq!(completions.len(), 1);
+        assert_eq!(completions[0].0, "data");
+        assert!(!completions[0].1.is_empty());
     }
 }
