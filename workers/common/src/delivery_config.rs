@@ -19,9 +19,6 @@ pub struct DeliveryConfig {
 
     pub bobs_url: Option<String>,
 
-    #[serde(default)]
-    pub bobs_public_url: Option<String>,
-
     /// S3 bucket name. Required when delivery_type = s3.
     pub s3_bucket: Option<String>,
 

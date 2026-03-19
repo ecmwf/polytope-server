@@ -34,11 +34,7 @@ pub async fn make_delivery(
                 .trim_start_matches("http://")
                 .trim_start_matches("https://");
             let api_base = format!("http://{host}");
-            let public_base = config
-                .bobs_public_url
-                .clone()
-                .unwrap_or_else(|| api_base.clone());
-            Box::new(BobsPush { api_base, public_base, client })
+            Box::new(BobsPush { api_base, client })
         }
         DeliveryType::S3 => {
             let shared_config = aws_config::load_defaults(BehaviorVersion::latest()).await;

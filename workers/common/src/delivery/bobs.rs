@@ -5,7 +5,6 @@ use crate::Completion;
 
 pub(super) struct BobsPush {
     pub(super) api_base: String,
-    pub(super) public_base: String,
     pub(super) client: reqwest::Client,
 }
 
@@ -74,7 +73,11 @@ impl BobsPush {
             return Err(format!("complete failed: {}", complete_resp.status()).into());
         }
 
-        Ok(format!("{}/read/{}", self.public_base, key))
+        let read_url = create_json["read_url"]
+            .as_str()
+            .ok_or("missing read_url in response")?
+            .to_string();
+        Ok(read_url)
     }
 }
 
@@ -100,8 +103,9 @@ mod tests {
         State(state): State<Arc<BobsState>>,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
         let key = "test-key-123".to_string();
+        let read_url = format!("http://public.example.com/read/{key}");
         state.created_keys.lock().unwrap().push(key.clone());
-        (StatusCode::CREATED, axum::Json(serde_json::json!({ "key": key })))
+        (StatusCode::CREATED, axum::Json(serde_json::json!({ "key": key, "read_url": read_url })))
     }
 
     async fn mock_write(
@@ -138,7 +142,6 @@ mod tests {
         let bobs_url = format!("http://{addr}");
         let push = BobsPush {
             api_base: bobs_url.clone(),
-            public_base: bobs_url.clone(),
             client: reqwest::Client::new(),
         };
         let data = b"hello bobs".to_vec();
@@ -152,7 +155,7 @@ mod tests {
 
         match result {
             Completion::Redirect { location, message } => {
-                assert_eq!(location, format!("{bobs_url}/read/test-key-123"));
+                assert_eq!(location, "http://public.example.com/read/test-key-123");
                 assert_eq!(message, "result available for download");
             }
             other => panic!("expected Redirect, got {other:?}"),
@@ -165,7 +168,6 @@ mod tests {
     async fn bobs_push_returns_error_when_unreachable() {
         let push = BobsPush {
             api_base: "http://127.0.0.1:1".to_string(),
-            public_base: "http://127.0.0.1:1".to_string(),
             client: reqwest::Client::new(),
         };
         let result = push
