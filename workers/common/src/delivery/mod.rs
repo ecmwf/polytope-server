@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use aws_config::BehaviorVersion;
 
 use crate::delivery_config::{DeliveryConfig, DeliveryType};
 use crate::Completion;
@@ -33,8 +34,8 @@ pub async fn make_delivery(
             client,
         }),
         DeliveryType::S3 => {
-            let mut s3_builder = aws_sdk_s3::config::Builder::new()
-                .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+            let shared_config = aws_config::load_defaults(BehaviorVersion::latest()).await;
+            let mut s3_builder = aws_sdk_s3::config::Builder::from(&shared_config)
                 .region(aws_sdk_s3::config::Region::new(
                     config
                         .s3_region
