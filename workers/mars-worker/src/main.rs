@@ -3,7 +3,10 @@ use bytes::Bytes;
 use clap::Parser;
 use crate::k8s::NodePortManager;
 use mars_client::{Error as MarsError, MarsClient};
-use polytope_worker_common::{run_worker_loop, Completion, Processor, WorkItem, WorkerConfig};
+use polytope_worker_common::{
+    run_worker_loop, ProcessResult, Processor, WorkItem, WorkerConfig,
+};
+use polytope_worker_common::delivery_config::DeliveryConfig;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::warn;
 
@@ -14,10 +17,10 @@ struct MarsProcessor;
 
 #[async_trait]
 impl Processor for MarsProcessor {
-    async fn process(&self, work: WorkItem) -> Completion {
+    async fn process(&self, work: WorkItem) -> ProcessResult {
         let request_map = match convert::json_to_request(&work.request) {
             Ok(m) => m,
-            Err(msg) => return Completion::error(msg),
+            Err(msg) => return ProcessResult::error(msg),
         };
 
         let mars_email = work.user["attributes"]["ecmwf-email"]
@@ -82,11 +85,8 @@ impl Processor for MarsProcessor {
             stream.close();
         });
 
-        Completion::complete(
-            "application/x-grib",
-            None,
-            reqwest::Body::wrap_stream(ReceiverStream::new(rx)),
-        )
+        let stream = ReceiverStream::new(rx);
+        ProcessResult::success("application/x-grib", Box::new(stream))
     }
 }
 
@@ -100,12 +100,19 @@ struct Cli {
     heartbeat_secs: f64,
     #[arg(long, default_value_t = 8100)]
     mars_dhs_local_port: u16,
+    #[arg(long)]
+    delivery_config_path: String,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
+
+    let delivery_config = DeliveryConfig::from_file(&cli.delivery_config_path)
+        .unwrap_or_else(|err| {
+            panic!("failed to read delivery config at {}: {err}", cli.delivery_config_path)
+        });
 
     let manager = NodePortManager::new(cli.mars_dhs_local_port).await?;
     // SAFETY: set once at startup before run_worker_loop spawns any processing threads;
@@ -124,6 +131,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             heartbeat_interval: std::time::Duration::from_secs_f64(cli.heartbeat_secs),
             retry_backoff: std::time::Duration::from_secs(1),
         },
+        delivery_config,
         MarsProcessor,
     )
     .await?;
@@ -142,7 +150,8 @@ mod tests {
 
     #[tokio::test]
     async fn process_returns_error_for_invalid_request() {
-        let result = MarsProcessor
+        let processor = MarsProcessor;
+        let result = processor
             .process(WorkItem {
                 job_id: "job-1".into(),
                 request: json!({}),
@@ -150,6 +159,6 @@ mod tests {
                 metadata: json!({}),
             })
             .await;
-        assert!(matches!(result, Completion::Error { .. }));
+        assert!(matches!(result, ProcessResult::Error { .. }));
     }
 }

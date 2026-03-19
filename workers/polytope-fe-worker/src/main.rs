@@ -1,6 +1,9 @@
 use async_trait::async_trait;
 use clap::Parser;
-use polytope_worker_common::{run_worker_loop, Completion, Processor, WorkItem, WorkerConfig};
+use polytope_worker_common::{
+    run_worker_loop, ProcessResult, Processor, WorkItem, WorkerConfig,
+};
+use polytope_worker_common::delivery_config::DeliveryConfig;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyTuple};
 use serde_json::json;
@@ -12,7 +15,7 @@ struct PolytopeProcessor {
 
 #[async_trait]
 impl Processor for PolytopeProcessor {
-    async fn process(&self, work: WorkItem) -> Completion {
+    async fn process(&self, work: WorkItem) -> ProcessResult {
         info!(job_id = %work.job_id, "processing request");
 
         let payload = json!({
@@ -26,7 +29,7 @@ impl Processor for PolytopeProcessor {
             Ok(s) => s,
             Err(err) => {
                 error!(job_id = %work.job_id, error = %err, "failed to serialize payload");
-                return Completion::error(format!("failed to serialize payload: {err}"));
+                return ProcessResult::error(format!("failed to serialize payload: {err}"));
             }
         };
 
@@ -56,19 +59,18 @@ impl Processor for PolytopeProcessor {
             Ok(Ok((bytes, timings))) => {
                 let len = bytes.len() as u64;
                 info!(job_id = %job_id, bytes = len, timings = %timings, "request completed");
-                Completion::complete(
-                    "application/prs.coverage+json",
-                    Some(len),
-                    reqwest::Body::from(bytes),
-                )
+                let stream = futures::stream::once(futures::future::ready(
+                    Ok::<bytes::Bytes, std::io::Error>(bytes::Bytes::from(bytes)),
+                ));
+                ProcessResult::success("application/prs.coverage+json", Box::new(stream))
             }
             Ok(Err(py_err)) => {
                 error!(job_id = %job_id, error = %py_err, "python error");
-                Completion::error(format!("{py_err}"))
+                ProcessResult::error(format!("{py_err}"))
             }
             Err(join_err) => {
                 error!(job_id = %job_id, error = %join_err, "task join error");
-                Completion::error(format!("task join error: {join_err}"))
+                ProcessResult::error(format!("task join error: {join_err}"))
             }
         }
     }
@@ -86,6 +88,8 @@ struct Cli {
     python_path: String,
     #[arg(long, default_value = "/etc/worker/config.yaml")]
     config_path: String,
+    #[arg(long)]
+    delivery_config_path: String,
 }
 
 #[tokio::main]
@@ -112,6 +116,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     })?;
 
+    let delivery_config = DeliveryConfig::from_file(&cli.delivery_config_path)
+        .unwrap_or_else(|err| {
+            panic!(
+                "failed to read delivery config at {}: {err}",
+                cli.delivery_config_path
+            )
+        });
+
     info!(broker_url = %cli.broker_url, "connecting to broker");
 
     run_worker_loop(
@@ -121,6 +133,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             heartbeat_interval: std::time::Duration::from_secs_f64(cli.heartbeat_secs),
             retry_backoff: std::time::Duration::from_secs(1),
         },
+        delivery_config,
         PolytopeProcessor {
             config_path: cli.config_path,
         },
@@ -191,15 +204,11 @@ def process(payload_json):
         std::fs::remove_dir_all(&dir).ok();
 
         match result {
-            Completion::Complete {
-                content_type,
-                content_length,
-                ..
-            } => {
+            ProcessResult::Success { content_type, .. } => {
                 assert_eq!(content_type, "application/prs.coverage+json");
-                assert!(content_length.is_some());
             }
-            other => panic!("expected complete, got {other:?}"),
+            ProcessResult::Reject { reason } => panic!("expected success, got reject: {reason}"),
+            ProcessResult::Error { message } => panic!("expected success, got error: {message}"),
         }
     }
 }

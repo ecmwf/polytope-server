@@ -1,7 +1,10 @@
 use async_trait::async_trait;
 use bytes::Bytes;
 use clap::Parser;
-use polytope_worker_common::{run_worker_loop, Completion, Processor, WorkItem, WorkerConfig};
+use polytope_worker_common::{
+    run_worker_loop, ProcessResult, Processor, WorkItem, WorkerConfig,
+};
+use polytope_worker_common::delivery_config::DeliveryConfig;
 use rsfdb::{request::Request, FDB};
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::info;
@@ -14,7 +17,7 @@ struct FdbProcessor {
 
 #[async_trait]
 impl Processor for FdbProcessor {
-    async fn process(&self, work: WorkItem) -> Completion {
+    async fn process(&self, work: WorkItem) -> ProcessResult {
         let fdb_config = self.fdb_config.clone();
 
         let request = work.request;
@@ -61,11 +64,8 @@ impl Processor for FdbProcessor {
             }
         });
 
-        Completion::complete(
-            "application/x-grib",
-            None,
-            reqwest::Body::wrap_stream(ReceiverStream::new(rx)),
-        )
+        let stream = ReceiverStream::new(rx);
+        ProcessResult::success("application/x-grib", Box::new(stream))
     }
 }
 
@@ -79,6 +79,8 @@ struct Cli {
     heartbeat_secs: f64,
     #[arg(long)]
     fdb_config_path: Option<String>,
+    #[arg(long)]
+    delivery_config_path: String,
 }
 
 #[tokio::main]
@@ -91,6 +93,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let fdb_config = std::fs::read_to_string(&config_path)
         .unwrap_or_else(|err| panic!("failed to read FDB config at {config_path}: {err}"));
     info!(path = config_path, config = fdb_config.as_str(), "loaded FDB config");
+    let delivery_config = DeliveryConfig::from_file(&cli.delivery_config_path)
+        .unwrap_or_else(|err| {
+            panic!(
+                "failed to read delivery config at {}: {err}",
+                cli.delivery_config_path
+            )
+        });
     run_worker_loop(
         WorkerConfig {
             broker_url: cli.broker_url,
@@ -98,7 +107,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             heartbeat_interval: std::time::Duration::from_secs_f64(cli.heartbeat_secs),
             retry_backoff: std::time::Duration::from_secs(1),
         },
-        FdbProcessor { fdb_config },
+        delivery_config,
+        FdbProcessor {
+            fdb_config,
+        },
     )
     .await?;
     Ok(())

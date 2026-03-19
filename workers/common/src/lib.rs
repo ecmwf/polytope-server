@@ -1,13 +1,50 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
+use futures::Stream;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use tokio::signal::unix::{signal, SignalKind};
 
-pub mod delivery_config;
 pub mod delivery;
+pub mod delivery_config;
 pub mod encoding;
+
+use crate::delivery::{make_delivery, ResultDelivery};
+use crate::delivery_config::{Codec, DeliveryConfig};
+use crate::encoding::encode_stream;
+
+pub type RawStream = Box<dyn Stream<Item = Result<bytes::Bytes, std::io::Error>> + Send + Unpin>;
+
+pub enum ProcessResult {
+    Success {
+        content_type: String,
+        body: RawStream,
+    },
+    Reject { reason: String },
+    Error { message: String },
+}
+
+impl ProcessResult {
+    pub fn success(content_type: impl Into<String>, body: RawStream) -> Self {
+        Self::Success {
+            content_type: content_type.into(),
+            body,
+        }
+    }
+
+    pub fn reject(reason: impl Into<String>) -> Self {
+        Self::Reject {
+            reason: reason.into(),
+        }
+    }
+
+    pub fn error(message: impl Into<String>) -> Self {
+        Self::Error {
+            message: message.into(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkItem {
@@ -128,14 +165,16 @@ impl WorkerConfig {
 
 #[async_trait]
 pub trait Processor: Send + Sync {
-    async fn process(&self, work: WorkItem) -> Completion;
+    async fn process(&self, work: WorkItem) -> ProcessResult;
 }
 
 pub async fn run_worker_loop<P: Processor>(
     config: WorkerConfig,
+    delivery_config: DeliveryConfig,
     processor: P,
 ) -> Result<(), reqwest::Error> {
     let client = reqwest::Client::builder().build()?;
+    let delivery: Box<dyn ResultDelivery> = make_delivery(&delivery_config, client.clone()).await;
     let mut sigterm = signal(SignalKind::terminate()).expect("failed to register SIGTERM handler");
     let mut shutting_down = false;
 
@@ -208,7 +247,21 @@ pub async fn run_worker_loop<P: Processor>(
             }
         });
 
-        let completion = processor.process(work.clone()).await;
+        let process_result = processor.process(work.clone()).await;
+
+        let completion = match process_result {
+            ProcessResult::Success { content_type, body } => {
+                let codec: &Codec = &delivery_config.encoding;
+                let content_encoding = codec.content_encoding_header().map(str::to_string);
+                let encoded = encode_stream(body, codec);
+                delivery
+                    .deliver(&content_type, content_encoding.as_deref(), encoded)
+                    .await
+            }
+            ProcessResult::Reject { reason } => Completion::Reject { reason },
+            ProcessResult::Error { message } => Completion::Error { message },
+        };
+
         stop.notify_one();
         let _ = heartbeat.await;
 
@@ -441,41 +494,48 @@ mod tests {
         StatusCode::OK
     }
 
-    struct DeliveryProcessor {
-        delivery_config: delivery_config::DeliveryConfig,
-    }
-
-    #[async_trait]
-    impl Processor for DeliveryProcessor {
-        async fn process(&self, _work: WorkItem) -> Completion {
-            let client = reqwest::Client::new();
-            let delivery = delivery::make_delivery(&self.delivery_config, client).await;
-            let stream = futures::stream::iter(vec![Ok::<bytes::Bytes, std::io::Error>(
-                bytes::Bytes::from(vec![1u8, 2, 3]),
-            )]);
-            let encoded = encoding::encode_stream(stream, &self.delivery_config.encoding);
-
-            delivery
-                .deliver(
-                    "application/octet-stream",
-                    self.delivery_config.encoding.content_encoding_header(),
-                    encoded,
-                )
-                .await
-        }
-    }
-
     struct StubProcessor;
 
     #[async_trait]
     impl Processor for StubProcessor {
-        async fn process(&self, _work: WorkItem) -> Completion {
-            Completion::complete(
-                "application/octet-stream",
-                None,
-                Some(3),
-                reqwest::Body::from(vec![1, 2, 3]),
-            )
+        async fn process(&self, _work: WorkItem) -> ProcessResult {
+            let stream = futures::stream::once(futures::future::ready(Ok::<
+                bytes::Bytes,
+                std::io::Error,
+            >(
+                bytes::Bytes::from(vec![1, 2, 3]),
+            )));
+            ProcessResult::success("application/octet-stream", Box::new(stream))
+        }
+    }
+
+    struct DirectStreamProcessor;
+
+    #[async_trait]
+    impl Processor for DirectStreamProcessor {
+        async fn process(&self, _work: WorkItem) -> ProcessResult {
+            let stream = futures::stream::iter(vec![Ok::<bytes::Bytes, std::io::Error>(
+                bytes::Bytes::from(vec![1u8, 2, 3]),
+            )]);
+            ProcessResult::success("application/octet-stream", Box::new(stream))
+        }
+    }
+
+    struct RejectProcessor;
+
+    #[async_trait]
+    impl Processor for RejectProcessor {
+        async fn process(&self, _work: WorkItem) -> ProcessResult {
+            ProcessResult::reject("bad request")
+        }
+    }
+
+    struct ErrorProcessor;
+
+    #[async_trait]
+    impl Processor for ErrorProcessor {
+        async fn process(&self, _work: WorkItem) -> ProcessResult {
+            ProcessResult::error("internal error")
         }
     }
 
@@ -500,7 +560,21 @@ mod tests {
             retry_backoff: Duration::from_millis(5),
         };
 
-        let run = tokio::spawn(run_worker_loop(config, StubProcessor));
+        let run = tokio::spawn(run_worker_loop(
+            config,
+            delivery_config::DeliveryConfig {
+                delivery_type: delivery_config::DeliveryType::Direct,
+                bobs_url: None,
+                s3_bucket: None,
+                s3_region: None,
+                s3_endpoint_url: None,
+                s3_force_path_style: None,
+                s3_key_prefix: String::new(),
+                encoding: delivery_config::Codec::Identity,
+                encoding_threshold_bytes: 1024,
+            },
+            StubProcessor,
+        ));
         for _ in 0..20 {
             if !state.completions.lock().unwrap().is_empty() {
                 break;
@@ -548,8 +622,9 @@ mod tests {
             retry_backoff: Duration::from_millis(5),
         };
 
-        let processor = DeliveryProcessor {
-            delivery_config: delivery_config::DeliveryConfig {
+        let run = tokio::spawn(run_worker_loop(
+            config,
+            delivery_config::DeliveryConfig {
                 delivery_type: delivery_config::DeliveryType::Bobs,
                 bobs_url: Some(bobs_url.clone()),
                 s3_bucket: None,
@@ -560,9 +635,8 @@ mod tests {
                 encoding: delivery_config::Codec::Identity,
                 encoding_threshold_bytes: 1024,
             },
-        };
-
-        let run = tokio::spawn(run_worker_loop(config, processor));
+            DirectStreamProcessor,
+        ));
         for _ in 0..40 {
             if !broker_state.completions.lock().unwrap().is_empty() {
                 break;
@@ -614,8 +688,9 @@ mod tests {
             retry_backoff: Duration::from_millis(5),
         };
 
-        let processor = DeliveryProcessor {
-            delivery_config: delivery_config::DeliveryConfig {
+        let run = tokio::spawn(run_worker_loop(
+            config,
+            delivery_config::DeliveryConfig {
                 delivery_type: delivery_config::DeliveryType::Direct,
                 bobs_url: None,
                 s3_bucket: None,
@@ -626,9 +701,8 @@ mod tests {
                 encoding: delivery_config::Codec::Zstd,
                 encoding_threshold_bytes: 1024,
             },
-        };
-
-        let run = tokio::spawn(run_worker_loop(config, processor));
+            StubProcessor,
+        ));
         for _ in 0..40 {
             if !broker_state.completions.lock().unwrap().is_empty() {
                 break;
@@ -641,5 +715,111 @@ mod tests {
         assert_eq!(completions.len(), 1);
         assert_eq!(completions[0].0, "data");
         assert!(!completions[0].1.is_empty());
+    }
+
+    #[tokio::test]
+    async fn worker_reject_skips_delivery() {
+        let broker_state = Arc::new(BrokerState::default());
+        let broker_app = Router::new()
+            .route("/work", get(broker_work))
+            .route("/heartbeat/{job_id}", post(broker_heartbeat))
+            .route("/complete/data/{job_id}", post(broker_complete_data))
+            .route("/complete/redirect/{job_id}", post(broker_complete_redirect))
+            .route("/complete/reject/{job_id}", post(broker_complete_reject))
+            .route("/complete/error/{job_id}", post(broker_complete_error))
+            .with_state(broker_state.clone());
+        let broker_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let broker_addr = broker_listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(broker_listener, broker_app).await.unwrap() });
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        let config = WorkerConfig {
+            broker_url: format!("http://{broker_addr}"),
+            poll_timeout_ms: 10,
+            heartbeat_interval: Duration::from_millis(5),
+            retry_backoff: Duration::from_millis(5),
+        };
+
+        let run = tokio::spawn(run_worker_loop(
+            config,
+            delivery_config::DeliveryConfig {
+                delivery_type: delivery_config::DeliveryType::Direct,
+                bobs_url: None,
+                s3_bucket: None,
+                s3_region: None,
+                s3_endpoint_url: None,
+                s3_force_path_style: None,
+                s3_key_prefix: String::new(),
+                encoding: delivery_config::Codec::Identity,
+                encoding_threshold_bytes: 1024,
+            },
+            RejectProcessor,
+        ));
+        for _ in 0..40 {
+            if !broker_state.completions.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        run.abort();
+
+        let completions = broker_state.completions.lock().unwrap();
+        assert_eq!(completions.len(), 1);
+        assert_eq!(completions[0].0, "reject");
+        assert!(!completions.iter().any(|(kind, _)| kind == "data"));
+    }
+
+    #[tokio::test]
+    async fn worker_error_skips_delivery() {
+        let broker_state = Arc::new(BrokerState::default());
+        let broker_app = Router::new()
+            .route("/work", get(broker_work))
+            .route("/heartbeat/{job_id}", post(broker_heartbeat))
+            .route("/complete/data/{job_id}", post(broker_complete_data))
+            .route("/complete/redirect/{job_id}", post(broker_complete_redirect))
+            .route("/complete/reject/{job_id}", post(broker_complete_reject))
+            .route("/complete/error/{job_id}", post(broker_complete_error))
+            .with_state(broker_state.clone());
+        let broker_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let broker_addr = broker_listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(broker_listener, broker_app).await.unwrap() });
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        let config = WorkerConfig {
+            broker_url: format!("http://{broker_addr}"),
+            poll_timeout_ms: 10,
+            heartbeat_interval: Duration::from_millis(5),
+            retry_backoff: Duration::from_millis(5),
+        };
+
+        let run = tokio::spawn(run_worker_loop(
+            config,
+            delivery_config::DeliveryConfig {
+                delivery_type: delivery_config::DeliveryType::Direct,
+                bobs_url: None,
+                s3_bucket: None,
+                s3_region: None,
+                s3_endpoint_url: None,
+                s3_force_path_style: None,
+                s3_key_prefix: String::new(),
+                encoding: delivery_config::Codec::Identity,
+                encoding_threshold_bytes: 1024,
+            },
+            ErrorProcessor,
+        ));
+        for _ in 0..40 {
+            if !broker_state.completions.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        run.abort();
+
+        let completions = broker_state.completions.lock().unwrap();
+        assert_eq!(completions.len(), 1);
+        assert_eq!(completions[0].0, "error");
+        assert!(!completions.iter().any(|(kind, _)| kind == "data"));
     }
 }

@@ -5,7 +5,9 @@ edition = "2021"
 
 [dependencies]
 async-trait = "0.1"
+bytes = "1"
 clap = { version = "4", features = ["derive"] }
+futures = "0.3"
 polytope-worker-common = { path = "../common" }
 pyo3 = { version = "0.23", features = ["auto-initialize"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "http2"] }
