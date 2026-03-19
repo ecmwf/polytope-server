@@ -46,12 +46,12 @@ impl BobsPush {
             .send()
             .await?;
         if !create_resp.status().is_success() {
-            return Err(format!("delivery create failed: {}", create_resp.status()).into());
+            return Err(format!("create failed: {}", create_resp.status()).into());
         }
         let create_json: serde_json::Value = create_resp.json().await?;
         let key = create_json["key"]
             .as_str()
-            .ok_or("missing key in delivery response")?
+            .ok_or("missing key in response")?
             .to_string();
 
         let write_resp = self
@@ -61,7 +61,7 @@ impl BobsPush {
             .send()
             .await?;
         if !write_resp.status().is_success() {
-            return Err(format!("delivery write failed: {}", write_resp.status()).into());
+            return Err(format!("write failed: {}", write_resp.status()).into());
         }
 
         let complete_resp = self
@@ -70,7 +70,7 @@ impl BobsPush {
             .send()
             .await?;
         if !complete_resp.status().is_success() {
-            return Err(format!("delivery complete failed: {}", complete_resp.status()).into());
+            return Err(format!("complete failed: {}", complete_resp.status()).into());
         }
 
         Ok(format!("{}/read/{}", self.bobs_url, key))
