@@ -485,7 +485,7 @@ mod tests {
         state.calls.lock().unwrap().push("create".to_string());
         (
             StatusCode::CREATED,
-            axum::Json(serde_json::json!({ "key": "redirect-key", "read_url": "https://polytope.example.com/download-0/read/redirect-key" })),
+            axum::Json(serde_json::json!({ "key": "redirect-key", "read_url": "https://polytope.example.com/download-0/redirect-key" })),
         )
     }
 
@@ -678,7 +678,7 @@ mod tests {
         let body: serde_json::Value = serde_json::from_slice(&completions[0].1).unwrap();
         assert_eq!(
             body["location"].as_str().unwrap(),
-            "https://polytope.example.com/download-0/read/redirect-key"
+            "https://polytope.example.com/download-0/redirect-key"
         );
         assert_eq!(body["message"].as_str().unwrap(), "result available for download");
 

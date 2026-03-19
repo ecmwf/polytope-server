@@ -103,7 +103,7 @@ mod tests {
         State(state): State<Arc<BobsState>>,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
         let key = "test-key-123".to_string();
-        let read_url = format!("http://public.example.com/read/{key}");
+        let read_url = format!("http://public.example.com/download-0/{key}");
         state.created_keys.lock().unwrap().push(key.clone());
         (StatusCode::CREATED, axum::Json(serde_json::json!({ "key": key, "read_url": read_url })))
     }
@@ -155,7 +155,7 @@ mod tests {
 
         match result {
             Completion::Redirect { location, message } => {
-                assert_eq!(location, "http://public.example.com/read/test-key-123");
+                assert_eq!(location, "http://public.example.com/download-0/test-key-123");
                 assert_eq!(message, "result available for download");
             }
             other => panic!("expected Redirect, got {other:?}"),
