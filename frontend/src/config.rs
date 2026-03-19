@@ -1,11 +1,31 @@
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Deserialize, Clone)]
 pub struct AuthConfig {
     pub url: String,
+    #[serde(default)]
     pub secret: String,
     #[serde(default = "default_timeout_ms")]
     pub timeout_ms: u64,
+}
+
+impl AuthConfig {
+    pub fn resolved_secret(&self) -> String {
+        std::env::var("AUTH_SECRET")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| self.secret.clone())
+    }
+}
+
+impl std::fmt::Debug for AuthConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthConfig")
+            .field("url", &self.url)
+            .field("secret", &"[REDACTED]")
+            .field("timeout_ms", &self.timeout_ms)
+            .finish()
+    }
 }
 
 fn default_timeout_ms() -> u64 {

@@ -20,6 +20,9 @@ pub enum AuthError {
     InvalidJwt {
         message: String,
     },
+    ServiceUnavailable {
+        message: String,
+    },
 }
 
 impl std::fmt::Display for AuthError {
@@ -27,6 +30,9 @@ impl std::fmt::Display for AuthError {
         match self {
             AuthError::Unauthorized { message, .. } => write!(f, "Unauthorized: {}", message),
             AuthError::InvalidJwt { message } => write!(f, "Invalid JWT: {}", message),
+            AuthError::ServiceUnavailable { message } => {
+                write!(f, "Service unavailable: {}", message)
+            }
         }
     }
 }

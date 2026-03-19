@@ -341,7 +341,6 @@ dependencies = [
  "chrono",
  "futures",
  "inventory",
- "reqwest 0.12.28",
  "roxmltree",
  "serde",
  "serde_json",

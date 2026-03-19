@@ -56,7 +56,7 @@ pub async fn auth_middleware(
 
     match auth_client.authenticate(&auth_header).await {
         Ok(user) => {
-            tracing::info!(
+            tracing::debug!(
                 username = user.username.as_str(),
                 realm = user.realm.as_str(),
                 "authenticated request"
@@ -78,6 +78,11 @@ pub async fn auth_middleware(
             StatusCode::UNAUTHORIZED,
             [(header::WWW_AUTHENTICATE, "Bearer")],
             Json(json!({"error": format!("invalid token: {}", message)})),
+        )
+            .into_response(),
+        Err(AuthError::ServiceUnavailable { message }) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error": message})),
         )
             .into_response(),
     }

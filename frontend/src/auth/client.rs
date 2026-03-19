@@ -27,10 +27,11 @@ impl AuthClient {
             .time_to_live(Duration::from_secs(60))
             .build();
 
+        let secret = config.resolved_secret();
         Self {
             http,
             url: config.url.clone(),
-            secret: config.secret.as_bytes().to_vec(),
+            secret: secret.as_bytes().to_vec(),
             cache,
         }
     }
@@ -44,13 +45,12 @@ impl AuthClient {
 
         let response = self
             .http
-            .get(format!("{}/authenticate", self.url))
+            .get(format!("{}/authenticate", self.url.trim_end_matches('/')))
             .header("Authorization", &converted)
             .send()
             .await
-            .map_err(|e| AuthError::Unauthorized {
+            .map_err(|e| AuthError::ServiceUnavailable {
                 message: format!("auth service error: {}", e),
-                www_authenticate: "Bearer".to_string(),
             })?;
 
         if !response.status().is_success() {
@@ -206,7 +206,7 @@ mod tests {
         let client = AuthClient::new(&config);
         let result = client.authenticate("Bearer token").await;
 
-        assert!(matches!(result, Err(AuthError::Unauthorized { .. })));
+        assert!(matches!(result, Err(AuthError::ServiceUnavailable { .. })));
     }
 
     #[tokio::test]
