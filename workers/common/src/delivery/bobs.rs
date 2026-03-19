@@ -4,7 +4,8 @@ use super::ResultDelivery;
 use crate::Completion;
 
 pub(super) struct BobsPush {
-    pub(super) bobs_url: String,
+    pub(super) api_base: String,
+    pub(super) public_base: String,
     pub(super) client: reqwest::Client,
 }
 
@@ -41,7 +42,7 @@ impl BobsPush {
         }
         let create_resp = self
             .client
-            .put(format!("{}/create", self.bobs_url))
+            .put(format!("{}/create", self.api_base))
             .json(&create_body)
             .send()
             .await?;
@@ -56,7 +57,7 @@ impl BobsPush {
 
         let write_resp = self
             .client
-            .post(format!("{}/write/{}/0", self.bobs_url, key))
+            .post(format!("{}/write/{}/0", self.api_base, key))
             .body(body)
             .send()
             .await?;
@@ -66,14 +67,14 @@ impl BobsPush {
 
         let complete_resp = self
             .client
-            .post(format!("{}/complete/{}", self.bobs_url, key))
+            .post(format!("{}/complete/{}", self.api_base, key))
             .send()
             .await?;
         if !complete_resp.status().is_success() {
             return Err(format!("complete failed: {}", complete_resp.status()).into());
         }
 
-        Ok(format!("{}/read/{}", self.bobs_url, key))
+        Ok(format!("{}/read/{}", self.public_base, key))
     }
 }
 
@@ -136,7 +137,8 @@ mod tests {
 
         let bobs_url = format!("http://{addr}");
         let push = BobsPush {
-            bobs_url: bobs_url.clone(),
+            api_base: bobs_url.clone(),
+            public_base: bobs_url.clone(),
             client: reqwest::Client::new(),
         };
         let data = b"hello bobs".to_vec();
@@ -162,7 +164,8 @@ mod tests {
     #[tokio::test]
     async fn bobs_push_returns_error_when_unreachable() {
         let push = BobsPush {
-            bobs_url: "http://127.0.0.1:1".to_string(),
+            api_base: "http://127.0.0.1:1".to_string(),
+            public_base: "http://127.0.0.1:1".to_string(),
             client: reqwest::Client::new(),
         };
         let result = push

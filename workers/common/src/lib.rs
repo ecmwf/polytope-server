@@ -586,6 +586,7 @@ mod tests {
             delivery_config::DeliveryConfig {
                 delivery_type: delivery_config::DeliveryType::Direct,
                 bobs_url: None,
+                bobs_public_url: None,
                 s3_bucket: None,
                 s3_region: None,
                 s3_endpoint_url: None,
@@ -650,6 +651,7 @@ mod tests {
             delivery_config::DeliveryConfig {
                 delivery_type: delivery_config::DeliveryType::Bobs,
                 bobs_url: Some(bobs_url.clone()),
+                bobs_public_url: None,
                 s3_bucket: None,
                 s3_region: None,
                 s3_endpoint_url: None,
@@ -720,6 +722,7 @@ mod tests {
             delivery_config::DeliveryConfig {
                 delivery_type: delivery_config::DeliveryType::Direct,
                 bobs_url: None,
+                bobs_public_url: None,
                 s3_bucket: None,
                 s3_region: None,
                 s3_endpoint_url: None,
@@ -775,6 +778,7 @@ mod tests {
             delivery_config::DeliveryConfig {
                 delivery_type: delivery_config::DeliveryType::Direct,
                 bobs_url: None,
+                bobs_public_url: None,
                 s3_bucket: None,
                 s3_region: None,
                 s3_endpoint_url: None,
@@ -830,6 +834,7 @@ mod tests {
             delivery_config::DeliveryConfig {
                 delivery_type: delivery_config::DeliveryType::Direct,
                 bobs_url: None,
+                bobs_public_url: None,
                 s3_bucket: None,
                 s3_region: None,
                 s3_endpoint_url: None,

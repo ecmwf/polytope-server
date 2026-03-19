@@ -26,13 +26,20 @@ pub async fn make_delivery(
 ) -> Box<dyn ResultDelivery> {
     match config.delivery_type {
         DeliveryType::Direct => Box::new(DirectDelivery),
-        DeliveryType::Bobs => Box::new(BobsPush {
-            bobs_url: config
+        DeliveryType::Bobs => {
+            let host = config
                 .bobs_url
+                .as_deref()
+                .expect("bobs_url required for delivery_type=bobs")
+                .trim_start_matches("http://")
+                .trim_start_matches("https://");
+            let api_base = format!("http://{host}");
+            let public_base = config
+                .bobs_public_url
                 .clone()
-                .expect("bobs_url required for delivery_type=bobs"),
-            client,
-        }),
+                .unwrap_or_else(|| api_base.clone());
+            Box::new(BobsPush { api_base, public_base, client })
+        }
         DeliveryType::S3 => {
             let shared_config = aws_config::load_defaults(BehaviorVersion::latest()).await;
             let mut s3_builder = aws_sdk_s3::config::Builder::from(&shared_config)

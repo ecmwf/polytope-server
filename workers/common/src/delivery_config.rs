@@ -17,8 +17,10 @@ pub enum DeliveryType {
 pub struct DeliveryConfig {
     pub delivery_type: DeliveryType,
 
-    /// BOBS service URL. Required when delivery_type = bobs.
     pub bobs_url: Option<String>,
+
+    #[serde(default)]
+    pub bobs_public_url: Option<String>,
 
     /// S3 bucket name. Required when delivery_type = s3.
     pub s3_bucket: Option<String>,
