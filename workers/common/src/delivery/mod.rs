@@ -52,6 +52,15 @@ pub async fn make_delivery(
                 s3_builder = s3_builder.force_path_style(true);
             }
 
+            if let (Some(key_id), Some(secret)) = (
+                config.s3_access_key_id.as_deref(),
+                config.s3_secret_access_key.as_deref(),
+            ) {
+                s3_builder = s3_builder.credentials_provider(aws_sdk_s3::config::Credentials::new(
+                    key_id, secret, None, None, "config",
+                ));
+            }
+
             let s3_config = s3_builder.build();
 
             Box::new(S3Push {
@@ -60,6 +69,8 @@ pub async fn make_delivery(
                     .clone()
                     .expect("s3_bucket required for delivery_type=s3"),
                 key_prefix: config.s3_key_prefix.clone(),
+                presigned_url_expiry_secs: config.s3_presigned_url_expiry_secs.unwrap_or(86400).min(604800),
+                public_url: config.s3_public_url.clone(),
                 s3_client: aws_sdk_s3::Client::from_conf(s3_config),
             })
         }

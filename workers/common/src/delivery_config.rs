@@ -35,6 +35,18 @@ pub struct DeliveryConfig {
     #[serde(default)]
     pub s3_force_path_style: Option<bool>,
 
+    #[serde(default)]
+    pub s3_access_key_id: Option<String>,
+
+    #[serde(default)]
+    pub s3_secret_access_key: Option<String>,
+
+    #[serde(default)]
+    pub s3_presigned_url_expiry_secs: Option<u64>,
+
+    #[serde(default)]
+    pub s3_public_url: Option<String>,
+
     /// S3 key prefix (optional). Defaults to empty string.
     #[serde(default)]
     pub s3_key_prefix: String,
@@ -129,6 +141,31 @@ s3_force_path_style: true
         assert_eq!(config.s3_region.as_deref(), Some("us-east-1"));
         assert_eq!(config.s3_endpoint_url.as_deref(), Some("http://minio:9000"));
         assert_eq!(config.s3_force_path_style, Some(true));
+    }
+
+    #[test]
+    fn delivery_config_deserializes_s3_credentials_and_url() {
+        let yaml = r#"
+delivery_type: s3
+s3_bucket: "example-bucket"
+s3_region: "us-east-1"
+s3_access_key_id: "my-access-key"
+s3_secret_access_key: "my-secret-key"
+s3_presigned_url_expiry_secs: 3600
+s3_public_url: "https://cdn.example.com"
+"#;
+        let config: DeliveryConfig = serde_yml::from_str(yaml).unwrap();
+
+        assert_eq!(config.s3_access_key_id.as_deref(), Some("my-access-key"));
+        assert_eq!(
+            config.s3_secret_access_key.as_deref(),
+            Some("my-secret-key")
+        );
+        assert_eq!(config.s3_presigned_url_expiry_secs, Some(3600));
+        assert_eq!(
+            config.s3_public_url.as_deref(),
+            Some("https://cdn.example.com")
+        );
     }
 
     #[test]

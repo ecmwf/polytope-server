@@ -10,11 +10,12 @@ use super::ResultDelivery;
 use crate::Completion;
 
 const S3_PART_SIZE_BYTES: usize = 5 * 1024 * 1024;
-const S3_PRESIGNED_GET_TTL_SECS: u64 = 604800;
 
 pub(super) struct S3Push {
     pub(super) bucket: String,
     pub(super) key_prefix: String,
+    pub(super) presigned_url_expiry_secs: u64,
+    pub(super) public_url: Option<String>,
     pub(super) s3_client: aws_sdk_s3::Client,
 }
 
@@ -90,7 +91,7 @@ impl S3Push {
             .send()
             .await?;
 
-        self.presigned_get_url(&s3_key).await
+        self.get_result_url(&s3_key).await
     }
 
     async fn upload_stream_parts(
@@ -174,12 +175,27 @@ impl S3Push {
             .key(s3_key)
             .presigned(
                 PresigningConfig::builder()
-                    .expires_in(std::time::Duration::from_secs(S3_PRESIGNED_GET_TTL_SECS))
+                    .expires_in(std::time::Duration::from_secs(self.presigned_url_expiry_secs))
                     .build()?,
             )
             .await?;
 
         Ok(presigned.uri().to_string())
+    }
+
+    pub(super) async fn get_result_url(
+        &self,
+        s3_key: &str,
+    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        match &self.public_url {
+            Some(base) => Ok(format!(
+                "{}/{}/{}",
+                base.trim_end_matches('/'),
+                self.bucket,
+                s3_key
+            )),
+            None => self.presigned_get_url(s3_key).await,
+        }
     }
 }
 
@@ -202,6 +218,8 @@ impl S3Push {
         Self {
             bucket: bucket.to_string(),
             key_prefix: key_prefix.to_string(),
+            presigned_url_expiry_secs: 86400,
+            public_url: None,
             s3_client: aws_sdk_s3::Client::from_conf(conf),
         }
     }
@@ -229,5 +247,23 @@ mod tests {
             }
             other => panic!("expected Error, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn s3_push_uses_public_url_when_configured() {
+        let mut push = S3Push::for_test_with_endpoint("my-bucket", "data", "http://127.0.0.1:1");
+        push.public_url = Some("https://cdn.example.com".to_string());
+
+        let url = push.get_result_url("some/uuid").await.unwrap();
+        assert_eq!(url, "https://cdn.example.com/my-bucket/some/uuid");
+    }
+
+    #[tokio::test]
+    async fn s3_push_public_url_trims_trailing_slash() {
+        let mut push = S3Push::for_test_with_endpoint("my-bucket", "", "http://127.0.0.1:1");
+        push.public_url = Some("https://cdn.example.com/".to_string());
+
+        let url = push.get_result_url("uuid-123").await.unwrap();
+        assert_eq!(url, "https://cdn.example.com/my-bucket/uuid-123");
     }
 }
