@@ -50,14 +50,6 @@ pub struct DeliveryConfig {
     /// S3 key prefix (optional). Defaults to empty string.
     #[serde(default)]
     pub s3_key_prefix: String,
-
-    /// Encoding codec to apply before delivery.
-    #[serde(default)]
-    pub encoding: Codec,
-
-    /// Skip compression for payloads smaller than this many bytes.
-    #[serde(default = "default_encoding_threshold")]
-    pub encoding_threshold_bytes: usize,
 }
 
 /// Content encoding codec.
@@ -81,10 +73,6 @@ impl Codec {
     }
 }
 
-fn default_encoding_threshold() -> usize {
-    1024
-}
-
 impl DeliveryConfig {
     pub fn from_file(path: &str) -> std::io::Result<Self> {
         let contents = std::fs::read_to_string(path)?;
@@ -104,14 +92,10 @@ delivery_type: bobs
 bobs_url: "http://bobs.example.com"
 s3_bucket: null
 s3_region: null
-encoding: gzip
-encoding_threshold_bytes: 4096
 "#;
         let config: DeliveryConfig = serde_yml::from_str(yaml).unwrap();
         assert!(matches!(config.delivery_type, DeliveryType::Bobs));
         assert_eq!(config.bobs_url.as_deref(), Some("http://bobs.example.com"));
-        assert_eq!(config.encoding, Codec::Gzip);
-        assert_eq!(config.encoding_threshold_bytes, 4096);
         assert_eq!(config.s3_key_prefix, "");
     }
 
@@ -120,8 +104,6 @@ encoding_threshold_bytes: 4096
         let yaml = "delivery_type: direct\n";
         let config: DeliveryConfig = serde_yml::from_str(yaml).unwrap();
         assert!(matches!(config.delivery_type, DeliveryType::Direct));
-        assert_eq!(config.encoding, Codec::Identity);
-        assert_eq!(config.encoding_threshold_bytes, 1024);
         assert_eq!(config.s3_key_prefix, "");
     }
 

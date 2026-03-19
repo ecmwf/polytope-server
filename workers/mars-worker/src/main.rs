@@ -100,7 +100,7 @@ struct Cli {
     heartbeat_secs: f64,
     #[arg(long, default_value_t = 8100)]
     mars_dhs_local_port: u16,
-    #[arg(long)]
+    #[arg(long, default_value = "/etc/worker/delivery.yaml")]
     delivery_config_path: String,
 }
 

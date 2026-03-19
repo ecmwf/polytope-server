@@ -88,7 +88,7 @@ struct Cli {
     python_path: String,
     #[arg(long, default_value = "/etc/worker/config.yaml")]
     config_path: String,
-    #[arg(long)]
+    #[arg(long, default_value = "/etc/worker/delivery.yaml")]
     delivery_config_path: String,
 }
 

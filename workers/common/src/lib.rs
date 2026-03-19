@@ -14,6 +14,17 @@ use crate::delivery::{make_delivery, ResultDelivery};
 use crate::delivery_config::{Codec, DeliveryConfig};
 use crate::encoding::encode_stream;
 
+fn codec_from_accept_encoding(accept_encoding: Option<&str>) -> Codec {
+    let enc = accept_encoding.unwrap_or("");
+    if enc.contains("zstd") {
+        Codec::Zstd
+    } else if enc.contains("gzip") {
+        Codec::Gzip
+    } else {
+        Codec::Identity
+    }
+}
+
 pub type RawStream = Box<dyn Stream<Item = Result<bytes::Bytes, std::io::Error>> + Send + Unpin>;
 
 pub enum ProcessResult {
@@ -251,9 +262,9 @@ pub async fn run_worker_loop<P: Processor>(
 
         let completion = match process_result {
             ProcessResult::Success { content_type, body } => {
-                let codec: &Codec = &delivery_config.encoding;
+                let codec = codec_from_accept_encoding(work.metadata["accept_encoding"].as_str());
                 let content_encoding = codec.content_encoding_header().map(str::to_string);
-                let encoded = encode_stream(body, codec);
+                let encoded = encode_stream(body, &codec);
                 delivery
                     .deliver(&content_type, content_encoding.as_deref(), encoded)
                     .await
@@ -372,10 +383,20 @@ mod tests {
         StatusCode::OK
     }
 
-    #[derive(Default)]
     struct BrokerState {
         delivered: Mutex<bool>,
         completions: Mutex<Vec<(String, Vec<u8>)>>,
+        work_metadata: Mutex<serde_json::Value>,
+    }
+
+    impl Default for BrokerState {
+        fn default() -> Self {
+            Self {
+                delivered: Mutex::new(false),
+                completions: Mutex::new(Vec::new()),
+                work_metadata: Mutex::new(serde_json::json!({})),
+            }
+        }
     }
 
     #[derive(Default)]
@@ -396,7 +417,7 @@ mod tests {
                 job_id: "job-1".into(),
                 request: serde_json::json!({"foo": "bar"}),
                 user: serde_json::json!({}),
-                metadata: serde_json::json!({}),
+                metadata: state.work_metadata.lock().unwrap().clone(),
             }))
         }
     }
@@ -574,8 +595,6 @@ mod tests {
                 s3_presigned_url_expiry_secs: None,
                 s3_public_url: None,
                 s3_key_prefix: String::new(),
-                encoding: delivery_config::Codec::Identity,
-                encoding_threshold_bytes: 1024,
             },
             StubProcessor,
         ));
@@ -640,8 +659,6 @@ mod tests {
                 s3_presigned_url_expiry_secs: None,
                 s3_public_url: None,
                 s3_key_prefix: String::new(),
-                encoding: delivery_config::Codec::Identity,
-                encoding_threshold_bytes: 1024,
             },
             DirectStreamProcessor,
         ));
@@ -696,6 +713,8 @@ mod tests {
             retry_backoff: Duration::from_millis(5),
         };
 
+        *broker_state.work_metadata.lock().unwrap() = serde_json::json!({"accept_encoding": "zstd"});
+
         let run = tokio::spawn(run_worker_loop(
             config,
             delivery_config::DeliveryConfig {
@@ -710,8 +729,6 @@ mod tests {
                 s3_presigned_url_expiry_secs: None,
                 s3_public_url: None,
                 s3_key_prefix: String::new(),
-                encoding: delivery_config::Codec::Zstd,
-                encoding_threshold_bytes: 1024,
             },
             StubProcessor,
         ));
@@ -767,8 +784,6 @@ mod tests {
                 s3_presigned_url_expiry_secs: None,
                 s3_public_url: None,
                 s3_key_prefix: String::new(),
-                encoding: delivery_config::Codec::Identity,
-                encoding_threshold_bytes: 1024,
             },
             RejectProcessor,
         ));
@@ -824,8 +839,6 @@ mod tests {
                 s3_presigned_url_expiry_secs: None,
                 s3_public_url: None,
                 s3_key_prefix: String::new(),
-                encoding: delivery_config::Codec::Identity,
-                encoding_threshold_bytes: 1024,
             },
             ErrorProcessor,
         ));

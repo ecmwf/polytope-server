@@ -79,7 +79,7 @@ struct Cli {
     heartbeat_secs: f64,
     #[arg(long)]
     fdb_config_path: Option<String>,
-    #[arg(long)]
+    #[arg(long, default_value = "/etc/worker/delivery.yaml")]
     delivery_config_path: String,
 }
 
