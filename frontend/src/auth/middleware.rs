@@ -1,0 +1,509 @@
+use std::sync::Arc;
+
+use axum::{
+    body::Body,
+    extract::State,
+    http::{header, Request, StatusCode},
+    middleware::Next,
+    response::{IntoResponse, Response},
+    Json,
+};
+use serde_json::json;
+
+use super::types::AuthError;
+use crate::state::AppState;
+
+pub async fn auth_middleware(
+    State(state): State<Arc<AppState>>,
+    req: Request<Body>,
+    next: Next,
+) -> Response {
+    let auth_client = match &state.auth_client {
+        Some(client) => client,
+        None => return next.run(req).await,
+    };
+
+    let auth_header = match req.headers().get(header::AUTHORIZATION) {
+        Some(value) => match value.to_str() {
+            Ok(s) => s.to_string(),
+            Err(_) => {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    [(header::WWW_AUTHENTICATE, "Bearer")],
+                    Json(json!({"error": "invalid Authorization header encoding"})),
+                )
+                    .into_response()
+            }
+        },
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                [(header::WWW_AUTHENTICATE, "Bearer")],
+                Json(json!({"error": "missing Authorization header"})),
+            )
+                .into_response()
+        }
+    };
+
+    if auth_header.is_empty() {
+        return (
+            StatusCode::UNAUTHORIZED,
+            [(header::WWW_AUTHENTICATE, "Bearer")],
+            Json(json!({"error": "empty Authorization header"})),
+        )
+            .into_response();
+    }
+
+    match auth_client.authenticate(&auth_header).await {
+        Ok(user) => {
+            tracing::debug!(
+                username = user.username.as_str(),
+                realm = user.realm.as_str(),
+                "authenticated request"
+            );
+            let mut req = req;
+            req.extensions_mut().insert(user);
+            next.run(req).await
+        }
+        Err(AuthError::Unauthorized {
+            message,
+            www_authenticate,
+        }) => (
+            StatusCode::UNAUTHORIZED,
+            [(header::WWW_AUTHENTICATE, www_authenticate.as_str())],
+            Json(json!({"error": message})),
+        )
+            .into_response(),
+        Err(AuthError::InvalidJwt { message }) => (
+            StatusCode::UNAUTHORIZED,
+            [(header::WWW_AUTHENTICATE, "Bearer")],
+            Json(json!({"error": format!("invalid token: {}", message)})),
+        )
+            .into_response(),
+        Err(AuthError::ServiceUnavailable { message }) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"error": message})),
+        )
+            .into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+        middleware,
+        routing::{get, post},
+        Router,
+    };
+    use http_body_util::BodyExt;
+    use jsonwebtoken::{EncodingKey, Header};
+    use serde::Serialize;
+    use tower::ServiceExt;
+
+    use crate::auth::client::AuthClient;
+    use crate::config::AuthConfig;
+    use crate::state::AppState;
+
+    fn test_bits() -> bits::Bits {
+        use std::time::Duration;
+        bits::Bits::from_router_for_tests(
+            bits::routing::switch::Switch::new(vec![]),
+            "test".to_string(),
+            "http://localhost:0".to_string(),
+            Duration::from_secs(1),
+            None,
+            None,
+            Duration::from_secs(30),
+        )
+    }
+
+    #[derive(Serialize)]
+    struct TestClaims {
+        username: String,
+        realm: String,
+        roles: Vec<String>,
+        exp: usize,
+    }
+
+    fn make_test_jwt(secret: &str) -> String {
+        let claims = TestClaims {
+            username: "testuser".to_string(),
+            realm: "testrealm".to_string(),
+            roles: vec!["admin".to_string()],
+            exp: (chrono::Utc::now().timestamp() as usize) + 3600,
+        };
+        jsonwebtoken::encode(
+            &Header::default(),
+            &claims,
+            &EncodingKey::from_secret(secret.as_bytes()),
+        )
+        .unwrap()
+    }
+
+    async fn stub_handler() -> &'static str {
+        "ok"
+    }
+
+    /// Builds a router that mirrors main.rs structure:
+    /// - /api/v2/health is public
+    /// - /api/v1/*, /api/v2/requests*, /openmeteo/v1/* are behind auth
+    /// Uses stub handlers so we don't need bits::Bits.
+    fn build_test_app(auth_client: Option<AuthClient>) -> Router {
+        let state = Arc::new(AppState {
+            bits: test_bits(),
+            auth_client,
+        });
+
+        let v1 = Router::new()
+            .route("/test", get(stub_handler))
+            .route("/collections", get(stub_handler))
+            .route("/requests", get(stub_handler))
+            .route("/requests/{id}", post(stub_handler).get(stub_handler).delete(stub_handler))
+            .route("/downloads/{id}", get(stub_handler));
+
+        let v2_protected = Router::new()
+            .route("/requests", post(stub_handler))
+            .route("/requests/{id}", get(stub_handler).delete(stub_handler));
+
+        let openmeteo = Router::new()
+            .route("/forecast", get(stub_handler));
+
+        let mut protected = Router::new()
+            .nest("/api/v1", v1)
+            .nest("/api/v2", v2_protected)
+            .nest("/openmeteo/v1", openmeteo);
+
+        if state.auth_client.is_some() {
+            protected = protected.layer(middleware::from_fn_with_state(
+                state.clone(),
+                super::auth_middleware,
+            ));
+        }
+
+        Router::new()
+            .route("/api/v2/health", get(stub_handler))
+            .merge(protected)
+            .with_state(state)
+    }
+
+    async fn setup_auth_client(mock_server: &mockito::Server, secret: &str) -> AuthClient {
+        AuthClient::new(&AuthConfig {
+            url: mock_server.url(),
+            secret: secret.to_string(),
+            timeout_ms: 5000,
+        })
+    }
+
+    // ── Public routes ─────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn health_accessible_without_auth() {
+        let server = mockito::Server::new_async().await;
+        let client = setup_auth_client(&server, "secret").await;
+        let app = build_test_app(Some(client));
+
+        let resp = app
+            .oneshot(Request::get("/api/v2/health").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn health_accessible_when_auth_disabled() {
+        let app = build_test_app(None);
+
+        let resp = app
+            .oneshot(Request::get("/api/v2/health").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    // ── Protected routes reject unauthenticated requests ──────────────
+
+    async fn assert_401_without_auth(app: Router, method: &str, path: &str) {
+        let req = Request::builder()
+            .method(method)
+            .uri(path)
+            .header("Content-Type", "application/json")
+            .body(Body::from("{}"))
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "{} {} should be 401 without auth",
+            method,
+            path
+        );
+
+        let www_auth = resp.headers().get("WWW-Authenticate");
+        assert!(
+            www_auth.is_some(),
+            "{} {} missing WWW-Authenticate header",
+            method,
+            path
+        );
+    }
+
+    #[tokio::test]
+    async fn v2_submit_requires_auth() {
+        let server = mockito::Server::new_async().await;
+        let client = setup_auth_client(&server, "secret").await;
+        assert_401_without_auth(build_test_app(Some(client)), "POST", "/api/v2/requests").await;
+    }
+
+    #[tokio::test]
+    async fn v2_poll_requires_auth() {
+        let server = mockito::Server::new_async().await;
+        let client = setup_auth_client(&server, "secret").await;
+        assert_401_without_auth(build_test_app(Some(client)), "GET", "/api/v2/requests/abc").await;
+    }
+
+    #[tokio::test]
+    async fn v2_cancel_requires_auth() {
+        let server = mockito::Server::new_async().await;
+        let client = setup_auth_client(&server, "secret").await;
+        assert_401_without_auth(build_test_app(Some(client)), "DELETE", "/api/v2/requests/abc")
+            .await;
+    }
+
+    #[tokio::test]
+    async fn v1_test_requires_auth() {
+        let server = mockito::Server::new_async().await;
+        let client = setup_auth_client(&server, "secret").await;
+        assert_401_without_auth(build_test_app(Some(client)), "GET", "/api/v1/test").await;
+    }
+
+    #[tokio::test]
+    async fn v1_collections_requires_auth() {
+        let server = mockito::Server::new_async().await;
+        let client = setup_auth_client(&server, "secret").await;
+        assert_401_without_auth(build_test_app(Some(client)), "GET", "/api/v1/collections").await;
+    }
+
+    #[tokio::test]
+    async fn v1_requests_requires_auth() {
+        let server = mockito::Server::new_async().await;
+        let client = setup_auth_client(&server, "secret").await;
+        assert_401_without_auth(build_test_app(Some(client)), "GET", "/api/v1/requests").await;
+    }
+
+    #[tokio::test]
+    async fn openmeteo_requires_auth() {
+        let server = mockito::Server::new_async().await;
+        let client = setup_auth_client(&server, "secret").await;
+        assert_401_without_auth(build_test_app(Some(client)), "GET", "/openmeteo/v1/forecast")
+            .await;
+    }
+
+    // ── Auth disabled: all routes accessible ──────────────────────────
+
+    async fn assert_not_401(app: Router, method: &str, path: &str) {
+        let req = Request::builder()
+            .method(method)
+            .uri(path)
+            .header("Content-Type", "application/json")
+            .body(Body::from("{}"))
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_ne!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "{} {} should NOT be 401 when auth disabled",
+            method,
+            path
+        );
+    }
+
+    #[tokio::test]
+    async fn auth_disabled_all_routes_open() {
+        let app = build_test_app(None);
+        assert_not_401(app, "POST", "/api/v2/requests").await;
+
+        let app = build_test_app(None);
+        assert_not_401(app, "GET", "/api/v1/test").await;
+
+        let app = build_test_app(None);
+        assert_not_401(app, "GET", "/openmeteo/v1/forecast").await;
+    }
+
+    // ── Valid auth passes through ─────────────────────────────────────
+
+    #[tokio::test]
+    async fn empty_authorization_header_returns_401() {
+        let server = mockito::Server::new_async().await;
+        let client = setup_auth_client(&server, "secret").await;
+        let app = build_test_app(Some(client));
+
+        let resp = app
+            .oneshot(
+                Request::post("/api/v2/requests")
+                    .header("Authorization", "")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        assert!(resp.headers().get("WWW-Authenticate").is_some());
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"], "empty Authorization header");
+    }
+
+    #[tokio::test]
+    async fn email_key_auth_passes_through() {
+        let secret = "testsecret";
+        let jwt = make_test_jwt(secret);
+        let mut server = mockito::Server::new_async().await;
+
+        server
+            .mock("GET", "/authenticate")
+            .match_header("Authorization", "Bearer abc123")
+            .with_status(200)
+            .with_header("Authorization", &format!("Bearer {}", jwt))
+            .create_async()
+            .await;
+
+        let client = setup_auth_client(&server, secret).await;
+        let app = build_test_app(Some(client));
+
+        let resp = app
+            .oneshot(
+                Request::get("/api/v1/test")
+                    .header("Authorization", "EmailKey user@test.com:abc123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(&body[..], b"ok");
+    }
+
+    #[tokio::test]
+    async fn valid_auth_passes_through_to_handler() {
+        let secret = "testsecret";
+        let jwt = make_test_jwt(secret);
+        let mut server = mockito::Server::new_async().await;
+
+        server
+            .mock("GET", "/authenticate")
+            .with_status(200)
+            .with_header("Authorization", &format!("Bearer {}", jwt))
+            .create_async()
+            .await;
+
+        let client = setup_auth_client(&server, secret).await;
+        let app = build_test_app(Some(client));
+
+        let resp = app
+            .oneshot(
+                Request::get("/api/v1/test")
+                    .header("Authorization", "Bearer sometoken")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(&body[..], b"ok");
+    }
+
+    #[tokio::test]
+    async fn invalid_token_returns_401() {
+        let mut server = mockito::Server::new_async().await;
+
+        server
+            .mock("GET", "/authenticate")
+            .with_status(401)
+            .with_header("WWW-Authenticate", "Bearer")
+            .create_async()
+            .await;
+
+        let client = setup_auth_client(&server, "secret").await;
+        let app = build_test_app(Some(client));
+
+        let resp = app
+            .oneshot(
+                Request::post("/api/v2/requests")
+                    .header("Authorization", "Bearer badtoken")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // ── User is injected into request extensions ──────────────────────
+
+    #[tokio::test]
+    async fn user_available_in_extensions() {
+        use axum::extract::Request as AxumRequest;
+
+        let secret = "testsecret";
+        let jwt = make_test_jwt(secret);
+        let mut server = mockito::Server::new_async().await;
+
+        server
+            .mock("GET", "/authenticate")
+            .with_status(200)
+            .with_header("Authorization", &format!("Bearer {}", jwt))
+            .create_async()
+            .await;
+
+        let client = setup_auth_client(&server, secret).await;
+        let state = Arc::new(AppState {
+            bits: test_bits(),
+            auth_client: Some(client),
+        });
+
+        async fn check_user(req: AxumRequest) -> StatusCode {
+            let user = req.extensions().get::<crate::auth::types::User>();
+            match user {
+                Some(u) if u.username == "testuser" => StatusCode::OK,
+                Some(_) => StatusCode::EXPECTATION_FAILED,
+                None => StatusCode::EXPECTATION_FAILED,
+            }
+        }
+
+        let mut protected = Router::new().route("/check", get(check_user));
+        protected = protected.layer(middleware::from_fn_with_state(
+            state.clone(),
+            super::auth_middleware,
+        ));
+
+        let app = Router::new().merge(protected).with_state(state);
+
+        let resp = app
+            .oneshot(
+                Request::get("/check")
+                    .header("Authorization", "Bearer token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+}
