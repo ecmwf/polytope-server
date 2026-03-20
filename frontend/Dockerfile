@@ -4,13 +4,18 @@ FROM scratch AS rsfindlibs
 FROM scratch AS polytope-edr
 
 ###############################
-# Stage 1: Prepare Cargo Chef Recipe
+# Shared base: Rust + cargo-chef + system deps (built once)
 ###############################
-FROM docker.io/library/rust:1.90-slim-bookworm AS chef
-ARG GIT_AUTH_TOKEN=""
-ARG LOCAL_DEPS=""
+FROM docker.io/library/rust:1.93-slim-bookworm AS chef-base
 RUN cargo install cargo-chef --locked
 RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-dev && rm -rf /var/lib/apt/lists/*
+
+###############################
+# Stage 1: Prepare Cargo Chef Recipe
+###############################
+FROM chef-base AS chef
+ARG GIT_AUTH_TOKEN=""
+ARG LOCAL_DEPS=""
 WORKDIR /ecmwf/polytope-server
 COPY --from=bits . /ecmwf/bits/
 COPY --from=rsfdb . /ecmwf/rsfdb/
@@ -29,17 +34,15 @@ RUN cd frontend && cargo chef prepare --recipe-path recipe.json
 ###############################
 # Stage 2: Cache Dependencies
 ###############################
-FROM docker.io/library/rust:1.90-slim-bookworm AS cacher
+FROM chef-base AS cacher
 ARG GIT_AUTH_TOKEN=""
 ARG LOCAL_DEPS=""
-RUN cargo install cargo-chef --locked
-RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /ecmwf/polytope-server
 COPY --from=bits . /ecmwf/bits/
 COPY --from=rsfdb . /ecmwf/rsfdb/
 COPY --from=rsfindlibs . /ecmwf/rsfindlibs/
 COPY --from=polytope-edr . /ecmwf/polytope-edr/
-COPY --from=chef /ecmwf/polytope-server/frontend/ frontend/
+COPY --from=chef /ecmwf/polytope-server/frontend/recipe.json frontend/recipe.json
 COPY --from=chef /ecmwf/polytope-server/.cargo/config.toml .cargo/config.toml
 RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi
 RUN cd frontend && cargo chef cook --release --recipe-path recipe.json
@@ -47,10 +50,9 @@ RUN cd frontend && cargo chef cook --release --recipe-path recipe.json
 ###############################
 # Stage 3: Build the Project
 ###############################
-FROM docker.io/library/rust:1.90-slim-bookworm AS builder
+FROM chef-base AS builder
 ARG GIT_AUTH_TOKEN=""
 ARG LOCAL_DEPS=""
-RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /ecmwf/polytope-server
 ARG PACKAGE_NAME=polytope-server
 ARG BIN_NAME=polytope-server

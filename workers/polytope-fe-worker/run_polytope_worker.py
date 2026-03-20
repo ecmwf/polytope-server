@@ -24,10 +24,14 @@ class _Request:
 def _load_config(path):
     text = Path(path).read_text()
     if path.endswith(".json"):
-        return json.loads(text)
-    import yaml
+        raw = json.loads(text)
+    else:
+        import yaml
 
-    return yaml.safe_load(text)
+        raw = yaml.safe_load(text)
+    if "polytope" in raw:
+        return raw["polytope"]
+    return raw
 
 
 _datasource = None

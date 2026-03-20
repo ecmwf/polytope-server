@@ -28,6 +28,10 @@ pub async fn submit(
     if let Some(ip) = super::client_ip(&headers) {
         job.user = json!({"client_ip": ip});
     }
+    // Propagate Accept-Encoding so workers can choose an encoding codec
+    if let Some(enc) = headers.get(axum::http::header::ACCEPT_ENCODING).and_then(|v| v.to_str().ok()) {
+        job.metadata["accept_encoding"] = serde_json::json!(enc);
+    }
     let proxy_proto_addr = headers
         .get("x-proxy-protocol-addr")
         .and_then(|v| v.to_str().ok())

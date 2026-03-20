@@ -6,13 +6,18 @@ FROM scratch AS rsfindlibs
 FROM scratch AS mars-client-bundle
 
 ###############################
-# Stage 1: Prepare Cargo Chef Recipe
+# Shared base: Rust + cargo-chef + system deps (built once)
 ###############################
-FROM docker.io/library/rust:1.90-slim-bookworm AS chef
-ARG GIT_AUTH_TOKEN=""
-ARG LOCAL_DEPS=""
+FROM docker.io/library/rust:1.93-slim-bookworm AS chef-base
 RUN cargo install cargo-chef --locked
 RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-dev python3-dev && rm -rf /var/lib/apt/lists/*
+
+###############################
+# Stage 1: Prepare Cargo Chef Recipe
+###############################
+FROM chef-base AS chef
+ARG GIT_AUTH_TOKEN=""
+ARG LOCAL_DEPS=""
 WORKDIR /ecmwf/polytope-server
 COPY --from=bits . /ecmwf/bits/
 COPY --from=rsfdb . /ecmwf/rsfdb/
@@ -20,18 +25,16 @@ COPY --from=rsfindlibs . /ecmwf/rsfindlibs/
 COPY --from=mars-client-bundle . /ecmwf/mars-client-bundle/
 COPY workers/common/ workers/common/
 COPY workers/mars-worker/ workers/mars-worker/
-RUN mkdir -p .cargo && echo "[net]" > .cargo/config.toml && echo "git-fetch-with-cli = true" >> .cargo/config.toml && if [ "$LOCAL_DEPS" = "1" ]; then echo '[patch."https://github.com/ecmwf/bits-broker"]' >> .cargo/config.toml && echo 'bits = { path = "/ecmwf/bits/bits" }' >> .cargo/config.toml && echo 'bits-ecmwf = { path = "/ecmwf/bits/bits-ecmwf" }' >> .cargo/config.toml && echo '[patch."https://github.com/ecmwf/rsfdb"]' >> .cargo/config.toml && echo 'rsfdb = { path = "/ecmwf/rsfdb" }' >> .cargo/config.toml && echo '[patch."https://github.com/ecmwf/rsfindlibs"]' >> .cargo/config.toml && echo 'rsfindlibs = { path = "/ecmwf/rsfindlibs" }' >> .cargo/config.toml && echo '[patch."https://github.com/ecmwf/mars-client-bundle"]' >> .cargo/config.toml && echo 'mars-client = { path = "/ecmwf/mars-client-bundle/mars-client-cpp/bindings/rust/mars-client" }' >> .cargo/config.toml; fi
+RUN mkdir -p .cargo && echo "[net]" > .cargo/config.toml && echo "git-fetch-with-cli = true" >> .cargo/config.toml && if [ "$LOCAL_DEPS" = "1" ]; then echo '[patch."https://github.com/ecmwf/bits-broker"]' >> .cargo/config.toml && echo 'bits = { path = "/ecmwf/bits/bits" }' >> .cargo/config.toml && echo 'bits-ecmwf = { path = "/ecmwf/bits/bits-ecmwf" }' >> .cargo/config.toml && echo '[patch."https://github.com/ecmwf/mars-client-bundle"]' >> .cargo/config.toml && echo 'mars-client = { path = "/ecmwf/mars-client-bundle/mars-client-cpp/bindings/rust/mars-client" }' >> .cargo/config.toml; fi
 RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi
 RUN cd workers/mars-worker && cargo chef prepare --recipe-path recipe.json
 
 ###############################
 # Stage 2: Cache Dependencies
 ###############################
-FROM docker.io/library/rust:1.90-slim-bookworm AS cacher
+FROM chef-base AS cacher
 ARG GIT_AUTH_TOKEN=""
 ARG LOCAL_DEPS=""
-RUN cargo install cargo-chef --locked
-RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-dev python3-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /ecmwf/polytope-server
 COPY --from=bits . /ecmwf/bits/
 COPY --from=rsfdb . /ecmwf/rsfdb/
@@ -125,11 +128,10 @@ FROM mars-libs-${MARS_BUILD_METHOD} AS mars-libs
 ###############################
 # Stage 3: Build the Project
 ###############################
-FROM docker.io/library/rust:1.90-slim-bookworm AS builder
+FROM chef-base AS builder
 ARG GIT_AUTH_TOKEN=""
 ARG LOCAL_DEPS=""
 ARG MARS_BUILD_METHOD=rpm
-RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-dev python3-dev && rm -rf /var/lib/apt/lists/*
 WORKDIR /ecmwf/polytope-server
 ARG PACKAGE_NAME=mars-worker
 ARG BIN_NAME=mars-worker
@@ -140,7 +142,7 @@ COPY --from=mars-client-bundle . /ecmwf/mars-client-bundle/
 COPY --from=mars-libs /opt/mars-client /opt/mars-client
 COPY workers/common/ workers/common/
 COPY workers/mars-worker/ workers/mars-worker/
-RUN mkdir -p .cargo && echo "[net]" > .cargo/config.toml && echo "git-fetch-with-cli = true" >> .cargo/config.toml && if [ "$LOCAL_DEPS" = "1" ]; then echo '[patch."https://github.com/ecmwf/bits-broker"]' >> .cargo/config.toml && echo 'bits = { path = "/ecmwf/bits/bits" }' >> .cargo/config.toml && echo 'bits-ecmwf = { path = "/ecmwf/bits/bits-ecmwf" }' >> .cargo/config.toml && echo '[patch."https://github.com/ecmwf/rsfdb"]' >> .cargo/config.toml && echo 'rsfdb = { path = "/ecmwf/rsfdb" }' >> .cargo/config.toml && echo '[patch."https://github.com/ecmwf/rsfindlibs"]' >> .cargo/config.toml && echo 'rsfindlibs = { path = "/ecmwf/rsfindlibs" }' >> .cargo/config.toml && echo '[patch."https://github.com/ecmwf/mars-client-bundle"]' >> .cargo/config.toml && echo 'mars-client = { path = "/ecmwf/mars-client-bundle/mars-client-cpp/bindings/rust/mars-client" }' >> .cargo/config.toml; fi
+RUN mkdir -p .cargo && echo "[net]" > .cargo/config.toml && echo "git-fetch-with-cli = true" >> .cargo/config.toml && if [ "$LOCAL_DEPS" = "1" ]; then echo '[patch."https://github.com/ecmwf/bits-broker"]' >> .cargo/config.toml && echo 'bits = { path = "/ecmwf/bits/bits" }' >> .cargo/config.toml && echo 'bits-ecmwf = { path = "/ecmwf/bits/bits-ecmwf" }' >> .cargo/config.toml && echo '[patch."https://github.com/ecmwf/mars-client-bundle"]' >> .cargo/config.toml && echo 'mars-client = { path = "/ecmwf/mars-client-bundle/mars-client-cpp/bindings/rust/mars-client" }' >> .cargo/config.toml; fi
 COPY --from=cacher /ecmwf/polytope-server/workers/mars-worker/target workers/mars-worker/target
 COPY --from=cacher /usr/local/cargo /usr/local/cargo
 ENV MARS_CLIENT_LIB_DIR=/opt/mars-client/lib

@@ -1,4 +1,6 @@
 use async_trait::async_trait;
+use futures::TryStreamExt;
+use http_body_util::BodyDataStream;
 
 use super::ResultDelivery;
 use crate::Completion;
@@ -54,14 +56,20 @@ impl BobsPush {
             .ok_or("missing key in response")?
             .to_string();
 
-        let write_resp = self
-            .client
-            .post(format!("{}/write/{}/0", self.api_base, key))
-            .body(body)
-            .send()
-            .await?;
-        if !write_resp.status().is_success() {
-            return Err(format!("write failed: {}", write_resp.status()).into());
+        let mut stream = BodyDataStream::new(body);
+        let mut offset: u64 = 0;
+        while let Some(chunk) = stream.try_next().await.map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { format!("body stream error: {e}").into() })? {
+            let chunk_len = chunk.len() as u64;
+            let write_resp = self
+                .client
+                .post(format!("{}/write/{}/{}", self.api_base, key, offset))
+                .body(chunk)
+                .send()
+                .await?;
+            if !write_resp.status().is_success() {
+                return Err(format!("write failed: {}", write_resp.status()).into());
+            }
+            offset += chunk_len;
         }
 
         let complete_resp = self
@@ -76,7 +84,8 @@ impl BobsPush {
         let read_url = create_json["read_url"]
             .as_str()
             .ok_or("missing read_url in response")?
-            .to_string();
+            .to_string().replace("/read/", "/");
+        tracing::info!(key = %key, read_url = %read_url, "result pushed to BOBS");
         Ok(read_url)
     }
 }
@@ -162,6 +171,86 @@ mod tests {
         }
         assert!(*state.completed.lock().unwrap());
         assert_eq!(*state.written_data.lock().unwrap(), data);
+    }
+
+    #[derive(Default)]
+    struct StreamingBobsState {
+        created_keys: Mutex<Vec<String>>,
+        writes: Mutex<Vec<(u64, Vec<u8>)>>,
+        completed: Mutex<bool>,
+    }
+
+    async fn streaming_create(
+        State(state): State<Arc<StreamingBobsState>>,
+    ) -> (StatusCode, axum::Json<serde_json::Value>) {
+        let key = "stream-key".to_string();
+        let read_url = format!("http://public.example.com/download-0/{key}");
+        state.created_keys.lock().unwrap().push(key.clone());
+        (StatusCode::CREATED, axum::Json(serde_json::json!({ "key": key, "read_url": read_url })))
+    }
+
+    async fn streaming_write(
+        Path((_key, offset)): Path<(String, u64)>,
+        State(state): State<Arc<StreamingBobsState>>,
+        body: axum::body::Body,
+    ) -> StatusCode {
+        let data: Vec<u8> = axum::body::to_bytes(body, usize::MAX).await.unwrap().to_vec();
+        state.writes.lock().unwrap().push((offset, data));
+        StatusCode::OK
+    }
+
+    async fn streaming_complete(
+        Path(_key): Path<String>,
+        State(state): State<Arc<StreamingBobsState>>,
+    ) -> StatusCode {
+        *state.completed.lock().unwrap() = true;
+        StatusCode::OK
+    }
+
+    #[tokio::test]
+    async fn bobs_push_streams_chunks_at_correct_offsets() {
+        let state = Arc::new(StreamingBobsState::default());
+        let app = Router::new()
+            .route("/create", put(streaming_create))
+            .route("/write/{key}/{offset}", post(streaming_write))
+            .route("/complete/{key}", post(streaming_complete))
+            .with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+        let bobs_url = format!("http://{addr}");
+        let push = BobsPush {
+            api_base: bobs_url.clone(),
+            client: reqwest::Client::new(),
+        };
+
+        // Build a body from a multi-chunk stream (3 bytes, then 4 bytes).
+        let stream = futures::stream::iter(vec![
+            Ok::<bytes::Bytes, std::io::Error>(bytes::Bytes::from_static(b"abc")),
+            Ok(bytes::Bytes::from_static(b"defg")),
+        ]);
+        let body = reqwest::Body::wrap_stream(stream);
+
+        let result = push
+            .deliver("application/octet-stream", None, body)
+            .await;
+
+        match result {
+            Completion::Redirect { location, .. } => {
+                assert_eq!(location, "http://public.example.com/download-0/stream-key");
+            }
+            other => panic!("expected Redirect, got {other:?}"),
+        }
+        assert!(*state.completed.lock().unwrap());
+
+        let writes = state.writes.lock().unwrap();
+        assert_eq!(writes.len(), 2, "expected 2 streamed writes");
+        assert_eq!(writes[0].0, 0, "first chunk should be at offset 0");
+        assert_eq!(writes[0].1, b"abc");
+        assert_eq!(writes[1].0, 3, "second chunk should be at offset 3");
+        assert_eq!(writes[1].1, b"defg");
     }
 
     #[tokio::test]

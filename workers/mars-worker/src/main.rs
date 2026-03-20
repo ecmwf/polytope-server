@@ -6,7 +6,7 @@ use mars_client::{Error as MarsError, MarsClient};
 use polytope_worker_common::{
     run_worker_loop, ProcessResult, Processor, WorkItem, WorkerConfig,
 };
-use polytope_worker_common::delivery_config::DeliveryConfig;
+use polytope_worker_common::config::WorkerConfigFile;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::warn;
 
@@ -100,8 +100,8 @@ struct Cli {
     heartbeat_secs: f64,
     #[arg(long, default_value_t = 8100)]
     mars_dhs_local_port: u16,
-    #[arg(long, default_value = "/etc/worker/delivery.yaml")]
-    delivery_config_path: String,
+    #[arg(long, default_value = "/etc/polytope-worker/config.yaml")]
+    config_path: String,
 }
 
 #[tokio::main]
@@ -109,10 +109,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
 
-    let delivery_config = DeliveryConfig::from_file(&cli.delivery_config_path)
-        .unwrap_or_else(|err| {
-            panic!("failed to read delivery config at {}: {err}", cli.delivery_config_path)
-        });
+    let config = WorkerConfigFile::load(&cli.config_path)
+        .unwrap_or_else(|err| panic!("failed to load config at {}: {err}", cli.config_path));
 
     let manager = NodePortManager::new(cli.mars_dhs_local_port).await?;
     // SAFETY: set once at startup before run_worker_loop spawns any processing threads;
@@ -131,7 +129,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             heartbeat_interval: std::time::Duration::from_secs_f64(cli.heartbeat_secs),
             retry_backoff: std::time::Duration::from_secs(1),
         },
-        delivery_config,
+        config.delivery,
         MarsProcessor,
     )
     .await?;

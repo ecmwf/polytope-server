@@ -6,6 +6,7 @@ use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use tokio::signal::unix::{signal, SignalKind};
 
+pub mod config;
 pub mod delivery;
 pub mod delivery_config;
 pub mod encoding;
@@ -237,6 +238,8 @@ pub async fn run_worker_loop<P: Processor>(
             }
         };
 
+        tracing::info!(job_id = %work.job_id, "job started");
+
         let stop = std::sync::Arc::new(tokio::sync::Notify::new());
         let stop_heartbeat = stop.clone();
         let heartbeat_client = client.clone();
@@ -276,7 +279,7 @@ pub async fn run_worker_loop<P: Processor>(
         stop.notify_one();
         let _ = heartbeat.await;
 
-        let response = match completion {
+        let (response, outcome) = match completion {
             Completion::Complete {
                 content_type,
                 content_encoding,
@@ -293,33 +296,37 @@ pub async fn run_worker_loop<P: Processor>(
                 if let Some(encoding) = content_encoding {
                     request = request.header(reqwest::header::CONTENT_ENCODING, encoding);
                 }
-                request.send().await?
+                (request.send().await?, "data")
             }
             Completion::Reject { reason } => {
                 let payload = CompletionRequest::Reject { reason };
-                client
+                let resp = client
                     .post(config.complete_reject_url(&work.job_id))
                     .json(&payload)
                     .send()
-                    .await?
+                    .await?;
+                (resp, "reject")
             }
             Completion::Error { message } => {
                 let payload = CompletionRequest::Error { message };
-                client
+                let resp = client
                     .post(config.complete_error_url(&work.job_id))
                     .json(&payload)
                     .send()
-                    .await?
+                    .await?;
+                (resp, "error")
             }
             Completion::Redirect { location, message } => {
                 let payload = CompletionRequest::Redirect { location, message };
-                client
+                let resp = client
                     .post(config.complete_redirect_url(&work.job_id))
                     .json(&payload)
                     .send()
-                    .await?
+                    .await?;
+                (resp, "redirect")
             }
         };
+        tracing::info!(job_id = %work.job_id, outcome = outcome, "job completed");
         if response.status() != StatusCode::OK && response.status() != StatusCode::NOT_FOUND {
             tracing::warn!(status=%response.status(), job_id=%work.job_id, "worker completion returned unexpected status");
         }

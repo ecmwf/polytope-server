@@ -3,7 +3,7 @@ use clap::Parser;
 use polytope_worker_common::{
     run_worker_loop, ProcessResult, Processor, WorkItem, WorkerConfig,
 };
-use polytope_worker_common::delivery_config::DeliveryConfig;
+use polytope_worker_common::config::WorkerConfigFile;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyTuple};
 use serde_json::json;
@@ -86,16 +86,17 @@ struct Cli {
     heartbeat_secs: f64,
     #[arg(long, default_value = "/app")]
     python_path: String,
-    #[arg(long, default_value = "/etc/worker/config.yaml")]
+    #[arg(long, default_value = "/etc/polytope-worker/config.yaml")]
     config_path: String,
-    #[arg(long, default_value = "/etc/worker/delivery.yaml")]
-    delivery_config_path: String,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
+
+    let config = WorkerConfigFile::load(&cli.config_path)
+        .unwrap_or_else(|err| panic!("failed to load config at {}: {err}", cli.config_path));
 
     info!(python_path = %cli.python_path, config_path = %cli.config_path, "initializing python interpreter");
 
@@ -116,14 +117,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     })?;
 
-    let delivery_config = DeliveryConfig::from_file(&cli.delivery_config_path)
-        .unwrap_or_else(|err| {
-            panic!(
-                "failed to read delivery config at {}: {err}",
-                cli.delivery_config_path
-            )
-        });
-
     info!(broker_url = %cli.broker_url, "connecting to broker");
 
     run_worker_loop(
@@ -133,7 +126,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             heartbeat_interval: std::time::Duration::from_secs_f64(cli.heartbeat_secs),
             retry_backoff: std::time::Duration::from_secs(1),
         },
-        delivery_config,
+        config.delivery,
         PolytopeProcessor {
             config_path: cli.config_path,
         },

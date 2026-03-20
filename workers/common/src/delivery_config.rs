@@ -78,6 +78,11 @@ impl DeliveryConfig {
         serde_yml::from_str(&contents)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
     }
+
+    /// Deserialize from a `serde_yml::Value` (e.g. a nested section of a larger config).
+    pub fn from_value(value: serde_yml::Value) -> Result<Self, serde_yml::Error> {
+        serde_yml::from_value(value)
+    }
 }
 
 #[cfg(test)]

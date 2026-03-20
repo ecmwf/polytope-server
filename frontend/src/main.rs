@@ -1,4 +1,5 @@
 mod api;
+mod collection;
 mod config;
 mod state;
 
@@ -8,6 +9,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use tower_http::compression::CompressionLayer;
 use tower_http::cors::{Any, CorsLayer};
 use clap::Parser;
 use state::AppState;
@@ -118,7 +120,7 @@ async fn main() {
         app
     };
 
-    let app = app.layer(cors);
+    let app = app.layer(cors).layer(CompressionLayer::new());
 
     let listener = tokio::net::TcpListener::bind(&bind_addr)
         .await

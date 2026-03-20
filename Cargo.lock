@@ -223,28 +223,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "aws-lc-rs"
-version = "1.16.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94bffc006df10ac2a68c83692d734a465f8ee6c5b384d8545a636f81d858f4bf"
-dependencies = [
- "aws-lc-sys",
- "zeroize",
-]
-
-[[package]]
-name = "aws-lc-sys"
-version = "0.38.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4321e568ed89bb5a7d291a7f37997c2c0df89809d7b6d12062c81ddb54aa782e"
-dependencies = [
- "cc",
- "cmake",
- "dunce",
- "fs_extra",
-]
-
-[[package]]
 name = "aws-runtime"
 version = "1.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -485,21 +463,13 @@ dependencies = [
  "h2 0.3.27",
  "h2 0.4.13",
  "http 0.2.12",
- "http 1.4.0",
  "http-body 0.4.6",
  "hyper 0.14.32",
- "hyper 1.8.1",
  "hyper-rustls 0.24.2",
- "hyper-rustls 0.27.7",
- "hyper-util",
  "pin-project-lite",
  "rustls 0.21.12",
- "rustls 0.23.37",
  "rustls-native-certs",
- "rustls-pki-types",
  "tokio",
- "tokio-rustls 0.26.4",
- "tower 0.5.3",
  "tracing",
 ]
 
@@ -939,15 +909,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
-name = "cmake"
-version = "0.1.57"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75443c44cd6b379beb8c5b45d85d0773baf31cce901fe7bb252f4eff3008ef7d"
-dependencies = [
- "cc",
-]
-
-[[package]]
 name = "codespan-reporting"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1228,12 +1189,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dunce"
-version = "1.0.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
-
-[[package]]
 name = "ecdsa"
 version = "0.14.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1337,6 +1292,7 @@ dependencies = [
  "reqwest",
  "rsfdb",
  "serde_json",
+ "serde_yml",
  "tokio",
  "tokio-stream",
  "tracing",
@@ -1410,12 +1366,6 @@ checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
 dependencies = [
  "percent-encoding",
 ]
-
-[[package]]
-name = "fs_extra"
-version = "1.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42703706b716c37f96a77aea830392ad231f44c9e9a67872fa5548707e11b11c"
 
 [[package]]
 name = "futures"
@@ -2750,6 +2700,7 @@ dependencies = [
 name = "polytope-server"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "axum 0.8.8",
  "bits",
  "bits-ecmwf",
@@ -2757,6 +2708,7 @@ dependencies = [
  "chrono",
  "clap",
  "futures",
+ "inventory",
  "polytope-edr",
  "serde",
  "serde_json",
@@ -2779,6 +2731,7 @@ dependencies = [
  "axum 0.8.8",
  "bytes",
  "futures",
+ "http-body-util",
  "reqwest",
  "serde",
  "serde_json",
@@ -3352,7 +3305,6 @@ version = "0.23.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "758025cb5fccfd3bc2fd74708fd4682be41d99e5dff73c377c0646c6012c73a4"
 dependencies = [
- "aws-lc-rs",
  "log",
  "once_cell",
  "ring",
@@ -3418,7 +3370,6 @@ version = "0.103.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7df23109aa6c1567d1c575b9952556388da57401e4ace1d15f79eedad0d8f53"
 dependencies = [
- "aws-lc-rs",
  "ring",
  "rustls-pki-types",
  "untrusted",
@@ -3848,6 +3799,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755"
 dependencies = [
  "winapi-util",
+]
+
+[[package]]
+name = "test-worker"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "clap",
+ "polytope-worker-common",
+ "serde_json",
+ "serde_yml",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

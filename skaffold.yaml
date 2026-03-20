@@ -15,16 +15,6 @@ build:
           BIN_NAME: polytope-server
           GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
           PACKAGE_NAME: polytope-server
-    - image: eccr.ecmwf.int/polytope/polytope-server-debug
-      context: .
-      docker:
-        dockerfile: frontend/Dockerfile
-        target: debug
-        buildArgs:
-          BIN_NAME: polytope-server
-          GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
-          PACKAGE_NAME: polytope-server
-
     # ── Polytope FE worker (FDB + GribJump + Python) ──────────────────────────
     - image: eccr.ecmwf.int/polytope/polytope-fe-worker
       context: .
@@ -60,6 +50,17 @@ build:
           PACKAGE_NAME: mars-worker
           rpm_repo: '{{ .rpm_repo }}'
 
+    # ── Test worker (runs a configured Python command) ────────────────────────
+    - image: eccr.ecmwf.int/polytope/test-worker
+      context: .
+      docker:
+        dockerfile: workers/test-worker/Dockerfile
+        target: release
+        buildArgs:
+          BIN_NAME: test-worker
+          GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+          PACKAGE_NAME: test-worker
+
   tagPolicy:
     customTemplate:
       template: '{{if .FIXED_TAG}}{{.FIXED_TAG}}{{else}}{{.PREFIX}}{{.GIT_TAG}}{{end}}'
@@ -78,15 +79,16 @@ build:
   local:
     # Required: Skaffold shells out to docker/podman CLI to pass --build-context flags.
     useDockerCLI: true
-    concurrency: 1
+    concurrency: 0
 
 # ── Profiles ───────────────────────────────────────────────────────────────────
 # Default: Cargo.toml git deps are fetched from GitHub inside the Docker build.
 #          GH_TOKEN is required for private repos (bits-broker, rsfdb).
-#          Dockerfiles define empty `FROM scratch AS bits/rsfdb/rsfindlibs` stages
+#          Dockerfiles define empty `FROM scratch AS bits/polytope-edr` stages
 #          so `COPY --from=bits` is a no-op.
 #
-# -p local: Build from sibling repos on disk (../bits, ../rsfdb, ../rsfindlibs).
+# -p local: Build bits and polytope-edr from sibling repos on disk.
+#           rsfdb and rsfindlibs are always fetched from GitHub.
 #           Uses custom artifact type so that dependencies.paths actually works
 #           for cache invalidation (docker artifact type ignores it).
 #           --build-context overrides the scratch stages with real directories.
@@ -102,116 +104,111 @@ profiles:
         path: /build/artifacts/0/custom
         value:
           buildCommand: >-
+            set -e;
             docker build -f frontend/Dockerfile --target release
             --build-arg BIN_NAME=polytope-server
             --build-arg PACKAGE_NAME=polytope-server
             --build-arg LOCAL_DEPS=1
+            --build-arg GIT_AUTH_TOKEN=$GH_TOKEN
             --build-context bits=../bits
-            --build-context rsfdb=../rsfdb
-            --build-context rsfindlibs=../rsfindlibs
             --build-context polytope-edr=../polytope-edr
             --platform linux/amd64
-            -t $IMAGE .
-            && [ "$PUSH_IMAGE" != "true" ] || docker push $IMAGE
+            -t $IMAGE .;
+            [ "$PUSH_IMAGE" != "true" ] || docker push $IMAGE
           dependencies: &local-deps
             paths:
               - "**"
               - "../bits/**"
-              - "../rsfdb/**"
-              - "../rsfindlibs/**"
               - "../polytope-edr/**"
             ignore: &local-dep-ignore
               - "**/target/**"
               - "**/.git/**"
 
-      # ── polytope-server (debug) ──
+      # ── polytope-fe-worker ──
       - op: remove
         path: /build/artifacts/1/docker
       - op: add
         path: /build/artifacts/1/custom
         value:
           buildCommand: >-
-            docker build -f frontend/Dockerfile --target debug
-            --build-arg BIN_NAME=polytope-server
-            --build-arg PACKAGE_NAME=polytope-server
+            set -e;
+            docker build -f workers/polytope-fe-worker/Dockerfile --target release
+            --build-arg BIN_NAME=polytope-fe-worker
+            --build-arg PACKAGE_NAME=polytope-fe-worker
             --build-arg LOCAL_DEPS=1
+            --build-arg GIT_AUTH_TOKEN=$GH_TOKEN
+            --build-arg rpm_repo=$rpm_repo
             --build-context bits=../bits
-            --build-context rsfdb=../rsfdb
-            --build-context rsfindlibs=../rsfindlibs
             --build-context polytope-edr=../polytope-edr
             --platform linux/amd64
-            -t $IMAGE .
-            && [ "$PUSH_IMAGE" != "true" ] || docker push $IMAGE
+            -t $IMAGE .;
+            [ "$PUSH_IMAGE" != "true" ] || docker push $IMAGE
           dependencies: *local-deps
 
-      # ── polytope-fe-worker ──
+      # ── fdb-worker ──
       - op: remove
         path: /build/artifacts/2/docker
       - op: add
         path: /build/artifacts/2/custom
         value:
           buildCommand: >-
-            docker build -f workers/polytope-fe-worker/Dockerfile --target release
-            --build-arg BIN_NAME=polytope-fe-worker
-            --build-arg PACKAGE_NAME=polytope-fe-worker
+            set -e;
+            docker build -f workers/fdb-worker/Dockerfile --target release
+            --build-arg BIN_NAME=fdb-worker
+            --build-arg PACKAGE_NAME=fdb-worker
             --build-arg LOCAL_DEPS=1
-            --build-arg rpm_repo=$rpm_repo
+            --build-arg GIT_AUTH_TOKEN=$GH_TOKEN
             --build-context bits=../bits
-            --build-context rsfdb=../rsfdb
-            --build-context rsfindlibs=../rsfindlibs
             --build-context polytope-edr=../polytope-edr
             --platform linux/amd64
-            -t $IMAGE .
-            && [ "$PUSH_IMAGE" != "true" ] || docker push $IMAGE
+            -t $IMAGE .;
+            [ "$PUSH_IMAGE" != "true" ] || docker push $IMAGE
           dependencies: *local-deps
 
-      # ── fdb-worker ──
+      # ── mars-worker ──
       - op: remove
         path: /build/artifacts/3/docker
       - op: add
         path: /build/artifacts/3/custom
         value:
           buildCommand: >-
-            docker build -f workers/fdb-worker/Dockerfile --target release
-            --build-arg BIN_NAME=fdb-worker
-            --build-arg PACKAGE_NAME=fdb-worker
+            set -e;
+            docker build -f workers/mars-worker/Dockerfile --target release
+            --build-arg BIN_NAME=mars-worker
+            --build-arg PACKAGE_NAME=mars-worker
             --build-arg LOCAL_DEPS=1
+            --build-arg GIT_AUTH_TOKEN=$GH_TOKEN
+            --build-arg rpm_repo=$rpm_repo
+            --build-arg MARS_BUILD_METHOD=source
             --build-context bits=../bits
-            --build-context rsfdb=../rsfdb
-            --build-context rsfindlibs=../rsfindlibs
             --build-context polytope-edr=../polytope-edr
+            --build-context mars-client-bundle=../mars-client-bundle
             --platform linux/amd64
-            -t $IMAGE .
-            && [ "$PUSH_IMAGE" != "true" ] || docker push $IMAGE
-          dependencies: *local-deps
+            -t $IMAGE .;
+            [ "$PUSH_IMAGE" != "true" ] || docker push $IMAGE
+          dependencies:
+            paths:
+              - "**"
+              - "../bits/**"
+              - "../polytope-edr/**"
+              - "../mars-client-bundle/**"
+            ignore: *local-dep-ignore
 
-      # ── mars-worker ──
+      # ── test-worker ──
       - op: remove
         path: /build/artifacts/4/docker
       - op: add
         path: /build/artifacts/4/custom
         value:
           buildCommand: >-
-            docker build -f workers/mars-worker/Dockerfile --target release
-            --build-arg BIN_NAME=mars-worker
-            --build-arg PACKAGE_NAME=mars-worker
+            set -e;
+            docker build -f workers/test-worker/Dockerfile --target release
+            --build-arg BIN_NAME=test-worker
+            --build-arg PACKAGE_NAME=test-worker
             --build-arg LOCAL_DEPS=1
-            --build-arg rpm_repo=$rpm_repo
-            --build-arg MARS_BUILD_METHOD=source
+            --build-arg GIT_AUTH_TOKEN=$GH_TOKEN
             --build-context bits=../bits
-            --build-context rsfdb=../rsfdb
-            --build-context rsfindlibs=../rsfindlibs
-            --build-context polytope-edr=../polytope-edr
-            --build-context mars-client-bundle=../mars-client-bundle
             --platform linux/amd64
-            -t $IMAGE .
-            && [ "$PUSH_IMAGE" != "true" ] || docker push $IMAGE
-          dependencies:
-            paths:
-              - "**"
-              - "../bits/**"
-              - "../rsfdb/**"
-              - "../rsfindlibs/**"
-              - "../polytope-edr/**"
-              - "../mars-client-bundle/**"
-            ignore: *local-dep-ignore
+            -t $IMAGE .;
+            [ "$PUSH_IMAGE" != "true" ] || docker push $IMAGE
+          dependencies: *local-deps

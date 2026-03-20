@@ -4,12 +4,12 @@ use clap::Parser;
 use polytope_worker_common::{
     run_worker_loop, ProcessResult, Processor, WorkItem, WorkerConfig,
 };
-use polytope_worker_common::delivery_config::DeliveryConfig;
+use polytope_worker_common::config::WorkerConfigFile;
 use rsfdb::{request::Request, FDB};
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::info;
 
-const DEFAULT_CONFIG_PATH: &str = "/etc/worker/config.yaml";
+const DEFAULT_CONFIG_PATH: &str = "/etc/polytope-worker/config.yaml";
 
 struct FdbProcessor {
     fdb_config: String,
@@ -77,29 +77,25 @@ struct Cli {
     poll_timeout_ms: u64,
     #[arg(long, default_value_t = 10.0)]
     heartbeat_secs: f64,
-    #[arg(long)]
-    fdb_config_path: Option<String>,
-    #[arg(long, default_value = "/etc/worker/delivery.yaml")]
-    delivery_config_path: String,
+    #[arg(long, default_value = DEFAULT_CONFIG_PATH)]
+    config_path: String,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
-    let config_path = cli
-        .fdb_config_path
-        .unwrap_or_else(|| DEFAULT_CONFIG_PATH.to_string());
-    let fdb_config = std::fs::read_to_string(&config_path)
-        .unwrap_or_else(|err| panic!("failed to read FDB config at {config_path}: {err}"));
-    info!(path = config_path, config = fdb_config.as_str(), "loaded FDB config");
-    let delivery_config = DeliveryConfig::from_file(&cli.delivery_config_path)
-        .unwrap_or_else(|err| {
-            panic!(
-                "failed to read delivery config at {}: {err}",
-                cli.delivery_config_path
-            )
-        });
+    let config = WorkerConfigFile::load(&cli.config_path)
+        .unwrap_or_else(|err| panic!("failed to load config at {}: {err}", cli.config_path));
+
+    let fdb_section = config
+        .section("fdb")
+        .expect("config missing 'fdb' section");
+    let fdb_config = serde_yml::to_string(fdb_section)
+        .expect("failed to serialize fdb config section");
+
+    info!(path = cli.config_path, fdb_config = fdb_config.as_str(), "loaded config");
+
     run_worker_loop(
         WorkerConfig {
             broker_url: cli.broker_url,
@@ -107,10 +103,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             heartbeat_interval: std::time::Duration::from_secs_f64(cli.heartbeat_secs),
             retry_backoff: std::time::Duration::from_secs(1),
         },
-        delivery_config,
-        FdbProcessor {
-            fdb_config,
-        },
+        config.delivery,
+        FdbProcessor { fdb_config },
     )
     .await?;
     Ok(())
@@ -121,8 +115,8 @@ mod tests {
     #[test]
     fn missing_config_panics() {
         let result = std::panic::catch_unwind(|| {
-            std::fs::read_to_string("/definitely/missing/fdb.yaml")
-                .unwrap_or_else(|err| panic!("failed to read FDB config: {err}"));
+            polytope_worker_common::config::WorkerConfigFile::load("/definitely/missing/config.yaml")
+                .unwrap_or_else(|err| panic!("failed to load config: {err}"));
         });
         assert!(result.is_err());
     }

@@ -42,12 +42,18 @@ pub async fn test() -> &'static str {
     "Polytope server is alive"
 }
 
-pub async fn list_collections() -> impl IntoResponse {
-    (
-        StatusCode::OK,
-        [("Deprecation", "true")],
-        Json(json!({"message": ["all"]})),
-    )
+pub async fn list_collections(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let collections: Vec<String> = state
+        .bits
+        .describe_actions()
+        .into_iter()
+        .filter_map(|d| {
+            d.get("collection")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_owned())
+        })
+        .collect();
+    (StatusCode::OK, Json(json!({"collections": collections})))
 }
 
 pub async fn list_requests() -> impl IntoResponse {
@@ -57,7 +63,7 @@ pub async fn list_requests() -> impl IntoResponse {
 pub async fn submit_request(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Path(_collection): Path<String>,
+    Path(collection): Path<String>,
     Json(body): Json<SubmitBody>,
 ) -> impl IntoResponse {
     let request = json!({
@@ -66,6 +72,7 @@ pub async fn submit_request(
     });
 
     let mut job = Job::new(request);
+    job.metadata["collection"] = json!(collection);
     if let Some(ip) = super::client_ip(&headers) {
         job.user = json!({"client_ip": ip});
     }

@@ -13,8 +13,8 @@ The worker side of the repository is split into separate crates so each worker c
 
 ```bash
 cargo run -p polytope-worker -- --broker-url http://127.0.0.1:9001 --config-path worker-config.yaml
-cargo run -p fdb-worker -- --broker-url http://127.0.0.1:9001 --fdb-config-path /path/to/fdb.yaml
-cargo run -p mars-worker -- --broker-url http://127.0.0.1:9001
+cargo run -p fdb-worker -- --broker-url http://127.0.0.1:9001 --config-path worker-config.yaml
+cargo run -p mars-worker -- --broker-url http://127.0.0.1:9001 --config-path worker-config.yaml
 ```
 
 ## Streaming contract
