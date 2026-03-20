@@ -1,11 +1,45 @@
 use serde::Deserialize;
 
+#[derive(Deserialize, Clone)]
+pub struct AuthConfig {
+    pub url: String,
+    #[serde(default)]
+    pub secret: String,
+    #[serde(default = "default_timeout_ms")]
+    pub timeout_ms: u64,
+}
+
+impl AuthConfig {
+    pub fn resolved_secret(&self) -> String {
+        std::env::var("AUTH_SECRET")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| self.secret.clone())
+    }
+}
+
+impl std::fmt::Debug for AuthConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthConfig")
+            .field("url", &self.url)
+            .field("secret", &"[REDACTED]")
+            .field("timeout_ms", &self.timeout_ms)
+            .finish()
+    }
+}
+
+fn default_timeout_ms() -> u64 {
+    5000
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ServerConfig {
     #[serde(default)]
     pub server: HttpConfig,
     pub bits: serde_yaml::Value,
     pub edr: Option<serde_yaml::Value>,
+    #[serde(default)]
+    pub authentication: Option<AuthConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -44,5 +78,57 @@ impl ServerConfig {
 
     pub fn bind_addr(&self) -> String {
         format!("{}:{}", self.server.host, self.server.port)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_with_auth() {
+        let yaml = r#"
+server:
+  host: "0.0.0.0"
+  port: 3000
+bits: {}
+authentication:
+  url: "http://auth-o-tron:8080"
+  secret: "testsecret"
+"#;
+        let cfg: ServerConfig = serde_yaml::from_str(yaml).unwrap();
+        let auth = cfg.authentication.unwrap();
+        assert_eq!(auth.url, "http://auth-o-tron:8080");
+        assert_eq!(auth.secret, "testsecret");
+        assert_eq!(auth.timeout_ms, 5000);
+    }
+
+    #[test]
+    fn test_config_without_auth() {
+        let yaml = r#"
+server:
+  host: "0.0.0.0"
+  port: 3000
+bits: {}
+"#;
+        let cfg: ServerConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(cfg.authentication.is_none());
+    }
+
+    #[test]
+    fn test_config_with_custom_timeout() {
+        let yaml = r#"
+server:
+  host: "0.0.0.0"
+  port: 3000
+bits: {}
+authentication:
+  url: "http://auth:8080"
+  secret: "s"
+  timeout_ms: 10000
+"#;
+        let cfg: ServerConfig = serde_yaml::from_str(yaml).unwrap();
+        let auth = cfg.authentication.unwrap();
+        assert_eq!(auth.timeout_ms, 10000);
     }
 }

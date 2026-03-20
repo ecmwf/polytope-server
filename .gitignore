@@ -6,3 +6,4 @@ skaffold.env
 __pycache__/
 *.log
 tests/test_e2e.py
+AGENTS.md
