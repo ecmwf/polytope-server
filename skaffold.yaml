@@ -50,7 +50,7 @@ build:
           PACKAGE_NAME: mars-worker
           rpm_repo: '{{ .rpm_repo }}'
 
-    # ── Test worker (runs a configured Python command) ────────────────────────
+    # ── Test worker (config-driven behaviour: echo, reject, error, wait, dummy)
     - image: eccr.ecmwf.int/polytope/test-worker
       context: .
       docker:

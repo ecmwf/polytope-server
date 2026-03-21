@@ -10,6 +10,7 @@ pub mod config;
 pub mod delivery;
 pub mod delivery_config;
 pub mod encoding;
+pub mod management;
 
 use crate::delivery::{make_delivery, ResultDelivery};
 use crate::delivery_config::{Codec, DeliveryConfig};
@@ -128,6 +129,7 @@ pub struct WorkerConfig {
     pub poll_timeout_ms: u64,
     pub heartbeat_interval: Duration,
     pub retry_backoff: Duration,
+    pub management_port: u16,
 }
 
 impl WorkerConfig {
@@ -185,6 +187,24 @@ pub async fn run_worker_loop<P: Processor>(
     delivery_config: DeliveryConfig,
     processor: P,
 ) -> Result<(), reqwest::Error> {
+    let management_app = management::router();
+    let management_listener =
+        tokio::net::TcpListener::bind(("0.0.0.0", config.management_port))
+            .await
+            .unwrap_or_else(|err| {
+                panic!(
+                    "failed to bind management server on port {}: {err}",
+                    config.management_port
+                )
+            });
+    let management_port = management_listener.local_addr().unwrap().port();
+    tracing::info!(port = management_port, "management server listening");
+    tokio::spawn(async move {
+        axum::serve(management_listener, management_app)
+            .await
+            .unwrap();
+    });
+
     let client = reqwest::Client::builder().build()?;
     let delivery: Box<dyn ResultDelivery> = make_delivery(&delivery_config, client.clone()).await;
     let mut sigterm = signal(SignalKind::terminate()).expect("failed to register SIGTERM handler");
@@ -586,6 +606,7 @@ mod tests {
             poll_timeout_ms: 10,
             heartbeat_interval: Duration::from_millis(5),
             retry_backoff: Duration::from_millis(5),
+            management_port: 0,
         };
 
         let run = tokio::spawn(run_worker_loop(
@@ -651,6 +672,7 @@ mod tests {
             poll_timeout_ms: 10,
             heartbeat_interval: Duration::from_millis(5),
             retry_backoff: Duration::from_millis(5),
+            management_port: 0,
         };
 
         let run = tokio::spawn(run_worker_loop(
@@ -720,6 +742,7 @@ mod tests {
             poll_timeout_ms: 10,
             heartbeat_interval: Duration::from_millis(5),
             retry_backoff: Duration::from_millis(5),
+            management_port: 0,
         };
 
         *broker_state.work_metadata.lock().unwrap() = serde_json::json!({"accept_encoding": "zstd"});
@@ -778,6 +801,7 @@ mod tests {
             poll_timeout_ms: 10,
             heartbeat_interval: Duration::from_millis(5),
             retry_backoff: Duration::from_millis(5),
+            management_port: 0,
         };
 
         let run = tokio::spawn(run_worker_loop(
@@ -834,6 +858,7 @@ mod tests {
             poll_timeout_ms: 10,
             heartbeat_interval: Duration::from_millis(5),
             retry_backoff: Duration::from_millis(5),
+            management_port: 0,
         };
 
         let run = tokio::spawn(run_worker_loop(

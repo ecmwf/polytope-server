@@ -2970,6 +2970,7 @@ dependencies = [
  "serde_yml",
  "tokio",
  "tokio-util",
+ "tower 0.5.3",
  "tracing",
  "uuid",
 ]

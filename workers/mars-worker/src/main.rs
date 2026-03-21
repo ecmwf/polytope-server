@@ -128,6 +128,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             poll_timeout_ms: cli.poll_timeout_ms,
             heartbeat_interval: std::time::Duration::from_secs_f64(cli.heartbeat_secs),
             retry_backoff: std::time::Duration::from_secs(1),
+            management_port: config.management_port,
         },
         config.delivery,
         MarsProcessor,

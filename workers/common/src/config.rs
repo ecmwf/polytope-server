@@ -3,6 +3,7 @@ use crate::delivery_config::DeliveryConfig;
 pub struct WorkerConfigFile {
     pub raw: serde_yml::Value,
     pub delivery: DeliveryConfig,
+    pub management_port: u16,
 }
 
 impl WorkerConfigFile {
@@ -17,7 +18,17 @@ impl WorkerConfigFile {
 
         let delivery = DeliveryConfig::from_value(delivery_value)?;
 
-        Ok(Self { raw, delivery })
+        let management_port = raw
+            .get("management")
+            .and_then(|m| m.get("port"))
+            .and_then(|p| p.as_u64())
+            .unwrap_or(9090) as u16;
+
+        Ok(Self {
+            raw,
+            delivery,
+            management_port,
+        })
     }
 
     pub fn section(&self, key: &str) -> Option<&serde_yml::Value> {
