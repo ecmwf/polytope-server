@@ -6,11 +6,12 @@ use axum::{
     extract::{Path, State},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    Json,
+    Extension, Json,
 };
 use bits::{Job, JobResult, PollOutcome};
 use serde_json::{json, Value};
 
+use crate::auth::AuthUser;
 use crate::state::AppState;
 
 const POLL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -22,12 +23,18 @@ pub async fn health() -> &'static str {
 pub async fn submit(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    auth_user: Option<Extension<AuthUser>>,
     Json(body): Json<Value>,
 ) -> Response {
     let mut job = Job::new(body);
+    let mut user_context = serde_json::Map::new();
     if let Some(ip) = super::client_ip(&headers) {
-        job.user = json!({"client_ip": ip}).into();
+        user_context.insert("client_ip".to_string(), json!(ip));
     }
+    if let Some(Extension(user)) = auth_user {
+        user_context.insert("auth".to_string(), serde_json::to_value(&user).unwrap());
+    }
+    job.user = Value::Object(user_context).into();
     // Propagate Accept-Encoding so workers can choose an encoding codec
     if let Some(enc) = headers.get(axum::http::header::ACCEPT_ENCODING).and_then(|v| v.to_str().ok()) {
         job.metadata_mut()["accept_encoding"] = serde_json::json!(enc);

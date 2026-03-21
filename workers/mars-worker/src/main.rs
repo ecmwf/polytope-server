@@ -1,7 +1,7 @@
+use crate::k8s::NodePortManager;
 use async_trait::async_trait;
 use bytes::Bytes;
 use clap::Parser;
-use crate::k8s::NodePortManager;
 use mars_client::{Error as MarsError, MarsClient};
 use polytope_worker_common::{
     run_worker_loop, ProcessResult, Processor, WorkItem, WorkerConfig,
@@ -124,7 +124,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::env::set_var("MARS_DHS_CALLBACK_HOST", manager.node_name());
         std::env::set_var("MARS_DHS_CALLBACK_PORT", manager.node_port().to_string());
     }
-    tracing::info!(node_port = manager.node_port(), "NodePort service created, MARS DHS callback configured");
+    tracing::info!(
+        node_port = manager.node_port(),
+        "NodePort service created, MARS DHS callback configured"
+    );
 
     run_worker_loop(
         WorkerConfig {

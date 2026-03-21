@@ -1,6 +1,8 @@
 [workspace]
 members = [
     "frontend",
+    "client",
+    "tests/integration",
     "workers/common",
     "workers/polytope-fe-worker",
     "workers/fdb-worker",

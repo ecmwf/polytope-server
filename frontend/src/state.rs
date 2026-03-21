@@ -1,4 +1,4 @@
-use crate::auth::client::AuthClient;
+use crate::auth::AuthClient;
 
 pub struct AppState {
     pub bits: bits::Bits,

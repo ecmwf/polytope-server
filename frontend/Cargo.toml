@@ -3,6 +3,14 @@ name = "polytope-server"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "polytope_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "polytope-server"
+path = "src/main.rs"
+
 [dependencies]
 async-trait = "0.1"
 axum = { version = "0.8", features = ["http2"] }
@@ -26,10 +34,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Metkit expansion (optional — requires C++ metkit libs at build+runtime)
 metkit = { path = "../utils/metkit", optional = true }
 
-# Auth
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
-jsonwebtoken = { version = "10", default-features = false, features = ["aws_lc_rs"] }
-moka = { version = "0.12", features = ["future"] }
+# Auth (shared crate from auth-o-tron workspace)
+authotron-client = { path = "../../auth-o-tron/authotron-client" }
+authotron-types = { path = "../../auth-o-tron/authotron-types" }
 
 [features]
 default = []
@@ -39,3 +46,4 @@ metkit = ["dep:metkit"]
 mockito = "1.7"
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
+jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto"] }

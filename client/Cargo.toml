@@ -1,0 +1,21 @@
+[package]
+name = "polytope_client"
+version = "0.2.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1.45.1", features = ["full"] }
+reqwest = { version = "0.12.20", features = ["json", "stream"] }
+futures-util = "0.3"
+bytes = "1.8.0"
+serde = { version = "1.0.219", features = ["derive"]}
+serde_json = "1.0.140"
+base64 = "0.22.1"
+dirs = "6.0.0"
+tracing = "0.1.41"
+chrono = "0.4.41"
+serde_with = "3.13.0"
+
+[dev-dependencies]
+regex = "1.11.1"
+tracing-test = {version="0.2.5", features = ["no-env-filter"]}
