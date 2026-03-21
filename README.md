@@ -30,7 +30,7 @@ Build a single crate:
 
 ```bash
 cargo build -p polytope-server
-cargo build -p polytope-worker
+cargo build -p polytope-fe-worker
 cargo build -p fdb-worker
 cargo build -p mars-worker
 ```
@@ -38,7 +38,7 @@ cargo build -p mars-worker
 The workspace produces separate binaries under `target/release/`:
 
 - `polytope-server`
-- `polytope-worker`
+- `polytope-fe-worker`
 - `fdb-worker`
 - `mars-worker`
 
@@ -72,7 +72,7 @@ cargo run -p polytope-server -- config.yaml
 Workers:
 
 ```bash
-cargo run -p polytope-worker -- --broker-url http://127.0.0.1:9001 --config-path worker-config.yaml
+cargo run -p polytope-fe-worker -- --broker-url http://127.0.0.1:9001 --config-path worker-config.yaml
 cargo run -p fdb-worker -- --broker-url http://127.0.0.1:9001 --config-path worker-config.yaml
 cargo run -p mars-worker -- --broker-url http://127.0.0.1:9001 --config-path worker-config.yaml
 ```
@@ -89,13 +89,12 @@ The frontend exposes the legacy v1 and newer v2 HTTP APIs.
 
 - `GET /api/v1/test`
 - `GET /api/v1/collections`
-- `POST /api/v1/requests/:collection`
-- `GET /api/v1/requests/:id`
-- `DELETE /api/v1/requests/:id`
-- `GET /api/v2/test`
+- `POST /api/v1/requests/{id}`
+- `GET /api/v1/requests/{id}`
+- `DELETE /api/v1/requests/{id}`
 - `POST /api/v2/requests`
-- `GET /api/v2/requests/:id`
-- `DELETE /api/v2/requests/:id`
+- `GET /api/v2/requests/{id}`
+- `DELETE /api/v2/requests/{id}`
 
 Successful responses are streamed back to the client over HTTP.
 
@@ -104,7 +103,7 @@ Successful responses are streamed back to the client over HTTP.
 `skaffold.yaml` builds separate images for the frontend and each worker. The Docker build is workspace-aware:
 
 - `PACKAGE_NAME=polytope-server`, `BIN_NAME=polytope-server`
-- `PACKAGE_NAME=polytope-worker`, `BIN_NAME=polytope-worker`
+- `PACKAGE_NAME=polytope-fe-worker`, `BIN_NAME=polytope-fe-worker`
 - `PACKAGE_NAME=fdb-worker`, `BIN_NAME=fdb-worker`
 - `PACKAGE_NAME=mars-worker`, `BIN_NAME=mars-worker`
 

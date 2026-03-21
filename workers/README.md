@@ -5,14 +5,14 @@ The worker side of the repository is split into separate crates so each worker c
 ## Layout
 
 - `workers/common/` — shared remote-worker runtime and protocol client
-- `workers/polytope-worker/` — Polytope worker
+- `workers/polytope-fe-worker/` — Polytope worker
 - `workers/fdb-worker/` — FDB worker
 - `workers/mars-worker/` — Mars worker stub
 
 ## Run commands
 
 ```bash
-cargo run -p polytope-worker -- --broker-url http://127.0.0.1:9001 --config-path worker-config.yaml
+cargo run -p polytope-fe-worker -- --broker-url http://127.0.0.1:9001 --config-path worker-config.yaml
 cargo run -p fdb-worker -- --broker-url http://127.0.0.1:9001 --config-path worker-config.yaml
 cargo run -p mars-worker -- --broker-url http://127.0.0.1:9001 --config-path worker-config.yaml
 ```
