@@ -4,12 +4,10 @@ use clap::Parser;
 use polytope_worker_common::{
     run_worker_loop, ProcessResult, Processor, WorkItem, WorkerConfig,
 };
-use polytope_worker_common::config::WorkerConfigFile;
+use polytope_worker_common::config::{WorkerConfigFile, DEFAULT_CONFIG_PATH};
 use rsfdb::{request::Request, FDB};
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::info;
-
-const DEFAULT_CONFIG_PATH: &str = "/etc/polytope-worker/config.yaml";
 
 struct FdbProcessor {
     fdb_config: String,

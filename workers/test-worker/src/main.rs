@@ -1,11 +1,9 @@
 use async_trait::async_trait;
 use clap::Parser;
-use polytope_worker_common::config::WorkerConfigFile;
+use polytope_worker_common::config::{WorkerConfigFile, DEFAULT_CONFIG_PATH};
 use polytope_worker_common::{run_worker_loop, ProcessResult, Processor, WorkItem, WorkerConfig};
 use serde::Deserialize;
 use tracing::info;
-
-const DEFAULT_CONFIG_PATH: &str = "/etc/polytope-worker/config.yaml";
 
 #[derive(Debug, Deserialize)]
 struct TestConfig {
