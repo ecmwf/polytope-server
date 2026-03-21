@@ -10,7 +10,7 @@ use axum::{
 };
 use serde_json::json;
 
-use super::types::AuthError;
+use super::AuthError;
 use crate::state::AppState;
 
 pub async fn auth_middleware(
@@ -99,13 +99,15 @@ mod tests {
         routing::{get, post},
         Router,
     };
+    use std::time::Duration as StdDuration;
+
     use http_body_util::BodyExt;
     use jsonwebtoken::{EncodingKey, Header};
     use serde::Serialize;
+    use serde_json::{json, Value};
     use tower::ServiceExt;
 
-    use crate::auth::client::AuthClient;
-    use crate::config::AuthConfig;
+    use crate::auth::AuthClient;
     use crate::state::AppState;
 
     fn test_bits() -> bits::Bits {
@@ -162,15 +164,17 @@ mod tests {
             .route("/test", get(stub_handler))
             .route("/collections", get(stub_handler))
             .route("/requests", get(stub_handler))
-            .route("/requests/{id}", post(stub_handler).get(stub_handler).delete(stub_handler))
+            .route(
+                "/requests/{id}",
+                post(stub_handler).get(stub_handler).delete(stub_handler),
+            )
             .route("/downloads/{id}", get(stub_handler));
 
         let v2_protected = Router::new()
             .route("/requests", post(stub_handler))
             .route("/requests/{id}", get(stub_handler).delete(stub_handler));
 
-        let openmeteo = Router::new()
-            .route("/forecast", get(stub_handler));
+        let openmeteo = Router::new().route("/forecast", get(stub_handler));
 
         let mut protected = Router::new()
             .nest("/api/v1", v1)
@@ -191,11 +195,11 @@ mod tests {
     }
 
     async fn setup_auth_client(mock_server: &mockito::Server, secret: &str) -> AuthClient {
-        AuthClient::new(&AuthConfig {
-            url: mock_server.url(),
-            secret: secret.to_string(),
-            timeout_ms: 5000,
-        })
+        AuthClient::new(
+            &mock_server.url(),
+            secret.as_bytes(),
+            StdDuration::from_secs(5),
+        )
     }
 
     // ── Public routes ─────────────────────────────────────────────────
@@ -272,8 +276,12 @@ mod tests {
     async fn v2_cancel_requires_auth() {
         let server = mockito::Server::new_async().await;
         let client = setup_auth_client(&server, "secret").await;
-        assert_401_without_auth(build_test_app(Some(client)), "DELETE", "/api/v2/requests/abc")
-            .await;
+        assert_401_without_auth(
+            build_test_app(Some(client)),
+            "DELETE",
+            "/api/v2/requests/abc",
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -301,8 +309,12 @@ mod tests {
     async fn openmeteo_requires_auth() {
         let server = mockito::Server::new_async().await;
         let client = setup_auth_client(&server, "secret").await;
-        assert_401_without_auth(build_test_app(Some(client)), "GET", "/openmeteo/v1/forecast")
-            .await;
+        assert_401_without_auth(
+            build_test_app(Some(client)),
+            "GET",
+            "/openmeteo/v1/forecast",
+        )
+        .await;
     }
 
     // ── Auth disabled: all routes accessible ──────────────────────────
@@ -478,7 +490,7 @@ mod tests {
         });
 
         async fn check_user(req: AxumRequest) -> StatusCode {
-            let user = req.extensions().get::<crate::auth::types::User>();
+            let user = req.extensions().get::<crate::auth::AuthUser>();
             match user {
                 Some(u) if u.username == "testuser" => StatusCode::OK,
                 Some(_) => StatusCode::EXPECTATION_FAILED,
@@ -505,5 +517,103 @@ mod tests {
             .unwrap();
 
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn authenticated_job_user_auth_contract_shape_is_canonical() {
+        use axum::{extract::Request as AxumRequest, Json};
+
+        let secret = "testsecret";
+        let jwt = make_test_jwt(secret);
+        let mut server = mockito::Server::new_async().await;
+
+        server
+            .mock("GET", "/authenticate")
+            .with_status(200)
+            .with_header("Authorization", &format!("Bearer {}", jwt))
+            .create_async()
+            .await;
+
+        let client = setup_auth_client(&server, secret).await;
+        let state = Arc::new(AppState {
+            bits: test_bits(),
+            auth_client: Some(client),
+        });
+
+        async fn contract_payload(req: AxumRequest) -> Json<Value> {
+            let user = req
+                .extensions()
+                .get::<crate::auth::AuthUser>()
+                .expect("auth middleware should inject AuthUser");
+
+            let mut user_context = serde_json::Map::new();
+            user_context.insert("auth".to_string(), serde_json::to_value(user).unwrap());
+            Json(Value::Object(user_context))
+        }
+
+        let mut protected = Router::new().route("/contract", get(contract_payload));
+        protected = protected.layer(middleware::from_fn_with_state(
+            state.clone(),
+            super::auth_middleware,
+        ));
+
+        let app = Router::new().merge(protected).with_state(state);
+
+        let resp = app
+            .oneshot(
+                Request::get("/contract")
+                    .header("Authorization", "Bearer token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let job_user: Value = serde_json::from_slice(&body).unwrap();
+
+        assert!(
+            job_user.get("auth").is_some(),
+            "job.user must contain auth key"
+        );
+        assert!(
+            job_user.get("authentication").is_none(),
+            "job.user must not rename auth key"
+        );
+
+        let auth = job_user
+            .get("auth")
+            .and_then(Value::as_object)
+            .expect("job.user.auth must be an object");
+
+        let mut keys: Vec<&str> = auth.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            vec![
+                "attributes",
+                "realm",
+                "roles",
+                "scopes",
+                "username",
+                "version"
+            ],
+            "job.user.auth fields drifted from canonical contract"
+        );
+
+        assert_eq!(auth.get("version"), Some(&json!(1)));
+        assert_eq!(auth.get("username"), Some(&json!("testuser")));
+        assert_eq!(auth.get("realm"), Some(&json!("testrealm")));
+        let roles = auth
+            .get("roles")
+            .and_then(Value::as_array)
+            .expect("job.user.auth.roles must be an array");
+        assert!(
+            roles.iter().any(|r| r == "admin"),
+            "job.user.auth.roles must contain admin role from token"
+        );
+        assert_eq!(auth.get("attributes"), Some(&json!({})));
+        assert_eq!(auth.get("scopes"), Some(&json!({})));
     }
 }

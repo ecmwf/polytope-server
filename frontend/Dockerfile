@@ -2,6 +2,7 @@ FROM scratch AS bits
 FROM scratch AS rsfdb
 FROM scratch AS rsfindlibs
 FROM scratch AS polytope-edr
+FROM scratch AS auth-o-tron
 
 ###############################
 # Shared base: Rust + cargo-chef + system deps (built once)
@@ -62,6 +63,7 @@ COPY --from=rsfdb . /ecmwf/rsfdb/
 COPY --from=rsfindlibs . /ecmwf/rsfindlibs/
 COPY --from=polytope-edr . /ecmwf/polytope-edr/
 COPY utils/metkit/ utils/metkit/
+COPY --from=auth-o-tron . /ecmwf/auth-o-tron/
 COPY frontend/ frontend/
 RUN mkdir -p .cargo && echo '[net]' > .cargo/config.toml && echo 'git-fetch-with-cli = true' >> .cargo/config.toml
 RUN if [ "$LOCAL_DEPS" = "1" ]; then sed -i \
@@ -84,6 +86,7 @@ COPY --from=rsfdb . /ecmwf/rsfdb/
 COPY --from=rsfindlibs . /ecmwf/rsfindlibs/
 COPY --from=polytope-edr . /ecmwf/polytope-edr/
 COPY utils/metkit/ utils/metkit/
+COPY --from=auth-o-tron . /ecmwf/auth-o-tron/
 COPY --from=chef /ecmwf/polytope-server/frontend/recipe.json frontend/recipe.json
 COPY --from=chef /ecmwf/polytope-server/.cargo/config.toml .cargo/config.toml
 RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi
@@ -104,6 +107,7 @@ COPY --from=rsfdb . /ecmwf/rsfdb/
 COPY --from=rsfindlibs . /ecmwf/rsfindlibs/
 COPY --from=polytope-edr . /ecmwf/polytope-edr/
 COPY utils/metkit/ utils/metkit/
+COPY --from=auth-o-tron . /ecmwf/auth-o-tron/
 COPY --from=metkit-build /opt/metkit /opt/metkit
 COPY frontend/ frontend/
 RUN mkdir -p .cargo && echo '[net]' > .cargo/config.toml && echo 'git-fetch-with-cli = true' >> .cargo/config.toml

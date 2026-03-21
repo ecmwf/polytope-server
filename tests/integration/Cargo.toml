@@ -1,0 +1,15 @@
+[package]
+name = "polytope-server-integration-tests"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = "0.8"
+authotron = { path = "../../../auth-o-tron/authotron" }
+polytope_client = { path = "../../client" }
+polytope-server = { path = "../../frontend" }
+reqwest = { version = "0.12", features = ["json"] }
+serde_json = "1"
+serde_yaml = "0.9"
+tempfile = "3"
+tokio = { version = "1", features = ["full"] }

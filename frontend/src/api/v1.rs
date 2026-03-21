@@ -6,7 +6,7 @@ use axum::{
     extract::{Path, State},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    Json,
+    Extension, Json,
 };
 use bits::{Job, JobResult, PollOutcome};
 use bytes::BytesMut;
@@ -14,6 +14,7 @@ use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::auth::AuthUser;
 use crate::state::AppState;
 
 const POLL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -63,6 +64,7 @@ pub async fn list_requests() -> impl IntoResponse {
 pub async fn submit_request(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    auth_user: Option<Extension<AuthUser>>,
     Path(collection): Path<String>,
     Json(body): Json<SubmitBody>,
 ) -> impl IntoResponse {
@@ -73,9 +75,14 @@ pub async fn submit_request(
 
     let mut job = Job::new(request);
     job.metadata_mut()["collection"] = json!(collection);
+    let mut user_context = serde_json::Map::new();
     if let Some(ip) = super::client_ip(&headers) {
-        job.user = json!({"client_ip": ip}).into();
+        user_context.insert("client_ip".to_string(), json!(ip));
     }
+    if let Some(Extension(user)) = auth_user {
+        user_context.insert("auth".to_string(), serde_json::to_value(&user).unwrap());
+    }
+    job.user = Value::Object(user_context).into();
     let handle = state.bits.submit(job);
     let location = format!("/api/v1/requests/{}", handle.id);
     (

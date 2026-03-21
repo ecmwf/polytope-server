@@ -11,14 +11,15 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
-    Json, Router,
+    Extension, Json, Router,
 };
 use bits::{Job, JobResult, PollOutcome};
 use bytes::BytesMut;
 use chrono::Utc;
 use futures::TryStreamExt;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
+use crate::auth::AuthUser;
 use crate::state::AppState;
 
 const POLL_TIMEOUT: Duration = Duration::from_secs(120);
@@ -50,6 +51,7 @@ pub fn router() -> Router<Arc<AppState>> {
 async fn forecast(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    auth_user: Option<Extension<AuthUser>>,
     Query(params): Query<params::ForecastParams>,
 ) -> Response {
     let _ = (
@@ -147,9 +149,14 @@ async fn forecast(
 
         let mut job = Job::new(request);
         job.metadata = json!({"api": "openmeteo"}).into();
+        let mut user_context = serde_json::Map::new();
         if let Some(ref ip) = super::client_ip(&headers) {
-            job.user = json!({"client_ip": ip}).into();
+            user_context.insert("client_ip".to_string(), json!(ip));
         }
+        if let Some(Extension(ref user)) = auth_user {
+            user_context.insert("auth".to_string(), serde_json::to_value(user).unwrap());
+        }
+        job.user = Value::Object(user_context).into();
         let id = state.bits.submit(job).id;
         submitted.push((group, param_list, id));
     }
