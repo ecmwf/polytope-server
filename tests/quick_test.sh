@@ -1,0 +1,1 @@
+http://127.0.0.1:46515/edr/collections/operational-data/position?f=json&datetime=2026-03-18T00%3A00%3A00Z%2F2026-03-20T00%3A00%3A00Z&parameter-name=2t&coords=POINT(60+13)
