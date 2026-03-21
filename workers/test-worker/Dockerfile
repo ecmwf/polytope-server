@@ -56,7 +56,7 @@ RUN cd workers/test-worker && cargo build --release -p ${PACKAGE_NAME}
 ###############################
 # Stage 4: Production Release Image
 ###############################
-FROM docker.io/library/python:3.11-slim-bookworm AS release
+FROM docker.io/library/debian:bookworm-slim AS release
 ARG VERSION
 ARG BIN_NAME=test-worker
 LABEL version=$VERSION

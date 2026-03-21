@@ -4137,11 +4137,12 @@ dependencies = [
  "async-trait",
  "bytes",
  "clap",
+ "futures",
  "polytope-worker-common",
+ "serde",
  "serde_json",
  "serde_yml",
  "tokio",
- "tokio-stream",
  "tracing",
  "tracing-subscriber",
 ]

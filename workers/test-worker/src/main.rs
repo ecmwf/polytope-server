@@ -1,103 +1,76 @@
 use async_trait::async_trait;
-use bytes::Bytes;
 use clap::Parser;
 use polytope_worker_common::config::WorkerConfigFile;
 use polytope_worker_common::{run_worker_loop, ProcessResult, Processor, WorkItem, WorkerConfig};
-use tokio::io::AsyncWriteExt;
-use tokio_stream::wrappers::ReceiverStream;
-use tracing::{info, warn};
+use serde::Deserialize;
+use tracing::info;
 
 const DEFAULT_CONFIG_PATH: &str = "/etc/polytope-worker/config.yaml";
 
-struct CommandProcessor {
-    command: String,
+#[derive(Debug, Deserialize)]
+struct TestConfig {
+    behaviour: Behaviour,
+    #[serde(default = "default_content_type")]
     content_type: String,
 }
 
+fn default_content_type() -> String {
+    "application/json".to_string()
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum Behaviour {
+    Reject,
+    Wait {
+        duration_ms: u64,
+    },
+    Error,
+    Echo,
+    Dummy {
+        #[serde(default = "default_dummy_count")]
+        count: u64,
+    },
+}
+
+fn default_dummy_count() -> u64 {
+    10
+}
+
+struct BehaviourProcessor {
+    config: TestConfig,
+}
+
+fn json_success(content_type: &str, payload: Vec<u8>) -> ProcessResult {
+    let body = bytes::Bytes::from(payload);
+    let stream = futures::stream::once(futures::future::ready(Ok::<_, std::io::Error>(body)));
+    ProcessResult::success(content_type, Box::new(stream))
+}
+
 #[async_trait]
-impl Processor for CommandProcessor {
+impl Processor for BehaviourProcessor {
     async fn process(&self, work: WorkItem) -> ProcessResult {
-        let request_json = match serde_json::to_string(&work.request) {
-            Ok(j) => j,
-            Err(err) => return ProcessResult::error(format!("failed to serialize request: {err}")),
-        };
+        match &self.config.behaviour {
+            Behaviour::Reject => ProcessResult::reject("rejected by test worker"),
 
-        let mut child = match tokio::process::Command::new("sh")
-            .arg("-c")
-            .arg(&self.command)
-            .env("JOB_ID", &work.job_id)
-            .env("REQUEST_JSON", &request_json)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-        {
-            Ok(child) => child,
-            Err(err) => return ProcessResult::error(format!("failed to spawn command: {err}")),
-        };
+            Behaviour::Wait { duration_ms } => {
+                tokio::time::sleep(std::time::Duration::from_millis(*duration_ms)).await;
+                json_success(&self.config.content_type, b"{}".to_vec())
+            }
 
-        if let Some(mut stdin) = child.stdin.take() {
-            let json = request_json.clone();
-            tokio::spawn(async move {
-                let _ = stdin.write_all(json.as_bytes()).await;
-                let _ = stdin.shutdown().await;
-            });
+            Behaviour::Error => ProcessResult::error("test error"),
+
+            Behaviour::Echo => {
+                let payload = serde_json::to_vec(&work.request).unwrap_or_default();
+                json_success(&self.config.content_type, payload)
+            }
+
+            Behaviour::Dummy { count } => {
+                let data: Vec<u64> = (1..=*count).collect();
+                let payload = serde_json::to_vec(&data).unwrap_or_default();
+                json_success(&self.config.content_type, payload)
+            }
         }
-
-        let mut stdout = match child.stdout.take() {
-            Some(stdout) => stdout,
-            None => return ProcessResult::error("failed to capture stdout".to_string()),
-        };
-
-        let stderr_handle = child.stderr.take().map(|mut stderr| {
-            tokio::spawn(async move {
-                let mut buf = Vec::new();
-                let _ = tokio::io::AsyncReadExt::read_to_end(&mut stderr, &mut buf).await;
-                String::from_utf8_lossy(&buf).to_string()
-            })
-        });
-
-        let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(16);
-
-        tokio::spawn(async move {
-            let mut buf = vec![0u8; 64 * 1024];
-            loop {
-                match tokio::io::AsyncReadExt::read(&mut stdout, &mut buf).await {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        if tx.send(Ok(Bytes::copy_from_slice(&buf[..n]))).await.is_err() {
-                            break;
-                        }
-                    }
-                    Err(err) => {
-                        let _ = tx.send(Err(err)).await;
-                        break;
-                    }
-                }
-            }
-
-            match child.wait().await {
-                Ok(status) if !status.success() => {
-                    let stderr_output = if let Some(handle) = stderr_handle {
-                        handle.await.unwrap_or_default()
-                    } else {
-                        String::new()
-                    };
-                    warn!(
-                        exit_code = status.code(),
-                        stderr = stderr_output.as_str(),
-                        "command exited with non-zero status"
-                    );
-                }
-                Err(err) => {
-                    warn!(error = %err, "failed to wait for command");
-                }
-                _ => {}
-            }
-        });
-
-        let stream = ReceiverStream::new(rx);
-        ProcessResult::success(&self.content_type, Box::new(stream))
     }
 }
 
@@ -122,23 +95,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let test_section = config
         .section("test")
+        .cloned()
         .expect("config missing 'test' section");
 
-    let command = test_section["command"]
-        .as_str()
-        .expect("config missing 'test.command'")
-        .to_string();
-
-    let content_type = test_section
-        .get("content_type")
-        .and_then(|v| v.as_str())
-        .unwrap_or("application/octet-stream")
-        .to_string();
+    let test_config: TestConfig = serde_yml::from_value(test_section)
+        .expect("failed to parse 'test' config section");
 
     info!(
         path = cli.config_path,
-        command = command.as_str(),
-        content_type = content_type.as_str(),
+        behaviour = ?test_config.behaviour,
+        content_type = test_config.content_type.as_str(),
         "loaded config"
     );
 
@@ -150,11 +116,132 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             retry_backoff: std::time::Duration::from_secs(1),
         },
         config.delivery,
-        CommandProcessor {
-            command,
-            content_type,
+        BehaviourProcessor {
+            config: test_config,
         },
     )
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::TryStreamExt;
+
+    fn dummy_work() -> WorkItem {
+        WorkItem {
+            job_id: "test-1".into(),
+            request: serde_json::json!({"collection": "era5", "level": 500}),
+            user: serde_json::json!({}),
+            metadata: serde_json::json!({}),
+        }
+    }
+
+    fn processor(behaviour: Behaviour) -> BehaviourProcessor {
+        BehaviourProcessor {
+            config: TestConfig {
+                behaviour,
+                content_type: "application/json".to_string(),
+            },
+        }
+    }
+
+    async fn collect_success_body(result: ProcessResult) -> (String, Vec<u8>) {
+        match result {
+            ProcessResult::Success { content_type, body } => {
+                let bytes = body
+                    .try_fold(Vec::new(), |mut acc, chunk| async move {
+                        acc.extend_from_slice(&chunk);
+                        Ok(acc)
+                    })
+                    .await
+                    .unwrap();
+                (content_type, bytes)
+            }
+            other => panic!("expected Success, got {:?}", variant_name(&other)),
+        }
+    }
+
+    fn variant_name(r: &ProcessResult) -> &'static str {
+        match r {
+            ProcessResult::Success { .. } => "Success",
+            ProcessResult::Reject { .. } => "Reject",
+            ProcessResult::Error { .. } => "Error",
+        }
+    }
+
+    #[tokio::test]
+    async fn reject_returns_reject() {
+        let result = processor(Behaviour::Reject).process(dummy_work()).await;
+        match result {
+            ProcessResult::Reject { reason } => assert_eq!(reason, "rejected by test worker"),
+            other => panic!("expected Reject, got {}", variant_name(&other)),
+        }
+    }
+
+    #[tokio::test]
+    async fn error_returns_test_error() {
+        let result = processor(Behaviour::Error).process(dummy_work()).await;
+        match result {
+            ProcessResult::Error { message } => assert_eq!(message, "test error"),
+            other => panic!("expected Error, got {}", variant_name(&other)),
+        }
+    }
+
+    #[tokio::test]
+    async fn echo_returns_request_json() {
+        let work = dummy_work();
+        let expected = serde_json::to_vec(&work.request).unwrap();
+        let result = processor(Behaviour::Echo).process(work).await;
+        let (content_type, body) = collect_success_body(result).await;
+        assert_eq!(content_type, "application/json");
+        assert_eq!(body, expected);
+    }
+
+    #[tokio::test]
+    async fn dummy_returns_sequential_array() {
+        let result = processor(Behaviour::Dummy { count: 5 })
+            .process(dummy_work())
+            .await;
+        let (content_type, body) = collect_success_body(result).await;
+        assert_eq!(content_type, "application/json");
+        let parsed: Vec<u64> = serde_json::from_slice(&body).unwrap();
+        assert_eq!(parsed, vec![1, 2, 3, 4, 5]);
+    }
+
+    #[tokio::test]
+    async fn dummy_default_count_is_10() {
+        let config: TestConfig =
+            serde_yml::from_str("behaviour:\n  type: dummy\n").unwrap();
+        let result = BehaviourProcessor { config }.process(dummy_work()).await;
+        let (_, body) = collect_success_body(result).await;
+        let parsed: Vec<u64> = serde_json::from_slice(&body).unwrap();
+        assert_eq!(parsed, (1..=10).collect::<Vec<u64>>());
+    }
+
+    #[tokio::test]
+    async fn wait_returns_success_after_delay() {
+        let start = std::time::Instant::now();
+        let result = processor(Behaviour::Wait { duration_ms: 50 })
+            .process(dummy_work())
+            .await;
+        let elapsed = start.elapsed();
+        assert!(elapsed.as_millis() >= 40);
+        let (_, body) = collect_success_body(result).await;
+        assert_eq!(body, b"{}");
+    }
+
+    #[tokio::test]
+    async fn config_content_type_is_honoured() {
+        let p = BehaviourProcessor {
+            config: TestConfig {
+                behaviour: Behaviour::Echo,
+                content_type: "application/octet-stream".to_string(),
+            },
+        };
+        let result = p.process(dummy_work()).await;
+        let (content_type, _) = collect_success_body(result).await;
+        assert_eq!(content_type, "application/octet-stream");
+    }
 }
