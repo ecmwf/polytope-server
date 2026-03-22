@@ -2546,6 +2546,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "metkit"
+version = "0.1.0"
+dependencies = [
+ "cxx",
+ "cxx-build",
+ "serde_json",
+]
+
+[[package]]
 name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2937,6 +2946,7 @@ dependencies = [
  "http-body-util",
  "inventory",
  "jsonwebtoken",
+ "metkit",
  "mockito",
  "moka",
  "polytope-edr",
