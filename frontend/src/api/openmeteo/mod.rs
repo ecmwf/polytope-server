@@ -146,9 +146,9 @@ async fn forecast(
         }
 
         let mut job = Job::new(request);
-        job.metadata = json!({"api": "openmeteo"});
+        job.metadata = json!({"api": "openmeteo"}).into();
         if let Some(ref ip) = super::client_ip(&headers) {
-            job.user = json!({"client_ip": ip});
+            job.user = json!({"client_ip": ip}).into();
         }
         let id = state.bits.submit(job).id;
         submitted.push((group, param_list, id));
