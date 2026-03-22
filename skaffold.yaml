@@ -116,7 +116,6 @@ profiles:
             --build-arg METKIT_VERSION=${METKIT_VERSION:-1.17.1}
             --build-context bits=../bits
             --build-context polytope-edr=../polytope-edr
-            --build-context metkit-crate=utils/metkit
             --platform linux/amd64
             -t $IMAGE .;
             [ "$PUSH_IMAGE" != "true" ] || docker push $IMAGE

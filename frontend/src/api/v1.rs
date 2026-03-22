@@ -72,9 +72,9 @@ pub async fn submit_request(
     });
 
     let mut job = Job::new(request);
-    job.metadata["collection"] = json!(collection);
+    job.metadata_mut()["collection"] = json!(collection);
     if let Some(ip) = super::client_ip(&headers) {
-        job.user = json!({"client_ip": ip});
+        job.user = json!({"client_ip": ip}).into();
     }
     let handle = state.bits.submit(job);
     let location = format!("/api/v1/requests/{}", handle.id);

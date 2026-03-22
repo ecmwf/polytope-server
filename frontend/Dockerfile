@@ -2,7 +2,6 @@ FROM scratch AS bits
 FROM scratch AS rsfdb
 FROM scratch AS rsfindlibs
 FROM scratch AS polytope-edr
-FROM scratch AS metkit-crate
 
 ###############################
 # Shared base: Rust + cargo-chef + system deps (built once)
@@ -31,6 +30,8 @@ RUN git clone --depth 1 --branch ${ECKIT_VERSION} https://github.com/ecmwf/eckit
     && ecbuild --prefix=/opt/metkit \
         -DENABLE_FORTRAN=OFF \
         -DENABLE_BUILD_TOOLS=OFF \
+        -DENABLE_TESTS=OFF \
+        -DENABLE_GEO=OFF \
         /src/eckit \
     && make -j$(nproc) \
     && make install
@@ -40,10 +41,14 @@ RUN git clone --depth 1 --branch ${METKIT_VERSION} https://github.com/ecmwf/metk
     && ecbuild --prefix=/opt/metkit \
         -DENABLE_FORTRAN=OFF \
         -DENABLE_BUILD_TOOLS=OFF \
+        -DENABLE_ECCODES=OFF \
+        -DENABLE_TESTS=OFF \
+        -DENABLE_MARS2GRIB=OFF \
         -Deckit_DIR=/opt/metkit/lib/cmake/eckit \
         /src/metkit \
-    && make -j$(nproc) \
-    && make install
+    && make -j$(nproc) metkit metkit.pc-pkg-config \
+    && : > /build/metkit/src/tools/cmake_install.cmake \
+    && cmake --install /build/metkit
 
 ###############################
 # Stage 1: Prepare Cargo Chef Recipe
@@ -56,7 +61,7 @@ COPY --from=bits . /ecmwf/bits/
 COPY --from=rsfdb . /ecmwf/rsfdb/
 COPY --from=rsfindlibs . /ecmwf/rsfindlibs/
 COPY --from=polytope-edr . /ecmwf/polytope-edr/
-COPY --from=metkit-crate . /ecmwf/polytope-server/utils/metkit/
+COPY utils/metkit/ utils/metkit/
 COPY frontend/ frontend/
 RUN mkdir -p .cargo && echo '[net]' > .cargo/config.toml && echo 'git-fetch-with-cli = true' >> .cargo/config.toml
 RUN if [ "$LOCAL_DEPS" = "1" ]; then sed -i \
@@ -78,7 +83,7 @@ COPY --from=bits . /ecmwf/bits/
 COPY --from=rsfdb . /ecmwf/rsfdb/
 COPY --from=rsfindlibs . /ecmwf/rsfindlibs/
 COPY --from=polytope-edr . /ecmwf/polytope-edr/
-COPY --from=metkit-crate . /ecmwf/polytope-server/utils/metkit/
+COPY utils/metkit/ utils/metkit/
 COPY --from=chef /ecmwf/polytope-server/frontend/recipe.json frontend/recipe.json
 COPY --from=chef /ecmwf/polytope-server/.cargo/config.toml .cargo/config.toml
 RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi
@@ -98,7 +103,7 @@ COPY --from=bits . /ecmwf/bits/
 COPY --from=rsfdb . /ecmwf/rsfdb/
 COPY --from=rsfindlibs . /ecmwf/rsfindlibs/
 COPY --from=polytope-edr . /ecmwf/polytope-edr/
-COPY --from=metkit-crate . /ecmwf/polytope-server/utils/metkit/
+COPY utils/metkit/ utils/metkit/
 COPY --from=metkit-build /opt/metkit /opt/metkit
 COPY frontend/ frontend/
 RUN mkdir -p .cargo && echo '[net]' > .cargo/config.toml && echo 'git-fetch-with-cli = true' >> .cargo/config.toml
