@@ -6,6 +6,7 @@ members = [
     "workers/fdb-worker",
     "workers/mars-worker",
     "workers/test-worker",
+    "utils/metkit",
 ]
 resolver = "2"
 

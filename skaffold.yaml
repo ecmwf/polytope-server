@@ -15,6 +15,8 @@ build:
           BIN_NAME: polytope-server
           GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
           PACKAGE_NAME: polytope-server
+          ECKIT_VERSION: '{{default "2.0.4" .ECKIT_VERSION}}'
+          METKIT_VERSION: '{{default "1.17.1" .METKIT_VERSION}}'
     # ── Polytope FE worker (FDB + GribJump + Python) ──────────────────────────
     - image: eccr.ecmwf.int/polytope/polytope-fe-worker
       context: .
@@ -110,8 +112,11 @@ profiles:
             --build-arg PACKAGE_NAME=polytope-server
             --build-arg LOCAL_DEPS=1
             --build-arg GIT_AUTH_TOKEN=$GH_TOKEN
+            --build-arg ECKIT_VERSION=${ECKIT_VERSION:-2.0.4}
+            --build-arg METKIT_VERSION=${METKIT_VERSION:-1.17.1}
             --build-context bits=../bits
             --build-context polytope-edr=../polytope-edr
+            --build-context metkit-crate=utils/metkit
             --platform linux/amd64
             -t $IMAGE .;
             [ "$PUSH_IMAGE" != "true" ] || docker push $IMAGE

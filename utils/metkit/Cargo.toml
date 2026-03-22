@@ -1,0 +1,12 @@
+[package]
+name = "metkit"
+version = "0.1.0"
+edition = "2021"
+description = "Rust bindings for metkit MARS request expansion using cxx"
+
+[dependencies]
+cxx = "1.0"
+serde_json = "1"
+
+[build-dependencies]
+cxx-build = "1.0"

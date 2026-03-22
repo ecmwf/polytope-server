@@ -2,6 +2,8 @@ mod api;
 mod auth;
 mod collection;
 mod config;
+#[cfg(feature = "metkit")]
+mod metkit_expansion;
 mod state;
 
 use std::sync::Arc;

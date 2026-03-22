@@ -23,10 +23,17 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# Metkit expansion (optional — requires C++ metkit libs at build+runtime)
+metkit = { path = "../utils/metkit", optional = true }
+
 # Auth
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 jsonwebtoken = { version = "10", default-features = false, features = ["aws_lc_rs"] }
 moka = { version = "0.12", features = ["future"] }
+
+[features]
+default = []
+metkit = ["dep:metkit"]
 
 [dev-dependencies]
 mockito = "1.7"
