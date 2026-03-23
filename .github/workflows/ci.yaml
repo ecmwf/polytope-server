@@ -16,6 +16,9 @@ jobs:
         with:
           components: rustfmt
 
+      - name: Strip unresolvable workspace members
+        run: sed -i '/"workers\/mars-worker",/d' Cargo.toml
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 
@@ -28,8 +31,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Strip local path patches
+      - name: Strip local path patches and non-CI workspace members
         run: |
+          sed -i '/"workers\/mars-worker",/d' Cargo.toml
           sed -i '/^\[patch\./,$d' Cargo.toml
           printf '[net]\ngit-fetch-with-cli = true\n' > .cargo/config.toml
 
