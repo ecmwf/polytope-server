@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 async-trait = "0.1"
 axum = "0.8"
-authotron = { git = "https://github.com/ecmwf/auth-o-tron.git", branch = "feat/shared-auth-workspace" }
+authotron = { git = "https://github.com/ecmwf/auth-o-tron.git", branch = "main" }
 bobs = { git = "https://github.com/ecmwf/bobs.git", branch = "main" }
 bytes = "1"
 futures = "0.3"
