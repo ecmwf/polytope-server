@@ -31,6 +31,9 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      - name: Configure private repo access
+        run: git config --global url."https://x-access-token:${{ secrets.GH_REPO_READ_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
       - name: Strip local path patches and non-CI workspace members
         run: |
           sed -i '/"workers\/mars-worker",/d' Cargo.toml
