@@ -66,6 +66,12 @@ RUN git clone --depth 1 --branch ${eckit_version} https://github.com/ecmwf/eckit
     && ecbuild --prefix=/opt/fdb -- -DCMAKE_PREFIX_PATH=/opt/fdb /source/eckit \
     && make -j$(nproc) && make install
 
+RUN git clone --depth 1 --branch v1.1.3 https://github.com/Deutsches-Klimarechenzentrum/libaec.git /source/libaec \
+    && mkdir -p /build/libaec && cd /build/libaec \
+    && cmake -DCMAKE_INSTALL_PREFIX=/opt/fdb /source/libaec \
+    && make -j$(nproc) && make install \
+    && rm -rf /source/libaec /build/libaec
+
 RUN git clone --depth 1 --branch ${eccodes_version} https://github.com/ecmwf/eccodes.git /source/eccodes \
     && mkdir -p /build/eccodes && cd /build/eccodes \
     && ecbuild --prefix=/opt/fdb -- -DENABLE_FORTRAN=OFF -DCMAKE_PREFIX_PATH=/opt/fdb /source/eccodes \
@@ -80,12 +86,6 @@ RUN git clone --depth 1 --branch ${fdb_version} https://github.com/ecmwf/fdb.git
     && mkdir -p /build/fdb && cd /build/fdb \
     && ecbuild --prefix=/opt/fdb -- -DCMAKE_PREFIX_PATH="/opt/fdb;/opt/fdb/eckit;/opt/fdb/metkit" -DCMAKE_CXX_FLAGS=-fpermissive /source/fdb \
     && make -j$(nproc) && make install
-
-RUN git clone --depth 1 --branch v1.1.3 https://github.com/Deutsches-Klimarechenzentrum/libaec.git /source/libaec \
-    && mkdir -p /build/libaec && cd /build/libaec \
-    && cmake -DCMAKE_INSTALL_PREFIX=/opt/fdb /source/libaec \
-    && make -j$(nproc) && make install \
-    && rm -rf /source/libaec /build/libaec
 
 RUN git clone --depth 1 --branch ${gribjump_version} https://github.com/ecmwf/gribjump.git /source/gribjump \
     && mkdir -p /build/gribjump && cd /build/gribjump \
