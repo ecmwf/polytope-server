@@ -17,21 +17,21 @@ if [[ -n "$staged_rs" ]]; then
   green "cargo fmt ✓"
 fi
 
-# ── Update bits lock ────────────────────────────────────────────────────────
-# Skip with: SKIP_BITS_UPDATE=1 git commit
-if [[ "${SKIP_BITS_UPDATE:-}" == "1" ]]; then
-  dim "Skipping bits lock update (SKIP_BITS_UPDATE=1)"
+# ── Update dependency locks ───────────────────────────────────────────────────
+# Skip with: SKIP_DEPS_UPDATE=1 git commit
+if [[ "${SKIP_DEPS_UPDATE:-}" == "1" ]]; then
+  dim "Skipping dependency lock update (SKIP_DEPS_UPDATE=1)"
 else
-  dim "Updating bits dependency lock..."
-  if cargo update -p bits -p bits-ecmwf 2>/dev/null; then
+  dim "Updating dependency locks..."
+  if cargo update 2>/dev/null; then
     if ! git diff --quiet Cargo.lock 2>/dev/null; then
       git add Cargo.lock
-      green "Cargo.lock updated with latest bits ✓"
+      green "Cargo.lock updated ✓"
     else
       dim "Cargo.lock already up to date"
     fi
   else
-    red "Warning: could not update bits (offline?). Skipping."
-    red "Run 'cargo update -p bits -p bits-ecmwf' manually before pushing."
+    red "Warning: could not update dependencies (offline?). Skipping."
+    red "Run 'cargo update' manually before pushing."
   fi
 fi
