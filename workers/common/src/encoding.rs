@@ -78,9 +78,10 @@ mod tests {
         let stream = make_stream(data.clone());
         let compressed = collect_stream(compress_to_stream(stream, &Codec::Zstd)).await;
 
-        let compressed_stream = futures::stream::once(futures::future::ready(
-            Ok::<Bytes, std::io::Error>(Bytes::from(compressed)),
-        ));
+        let compressed_stream =
+            futures::stream::once(futures::future::ready(Ok::<Bytes, std::io::Error>(
+                Bytes::from(compressed),
+            )));
         let reader = StreamReader::new(compressed_stream);
         let decoder = ZstdDecoder::new(reader);
         let decompressed = collect_stream(ReaderStream::new(decoder)).await;
@@ -93,9 +94,10 @@ mod tests {
         let stream = make_stream(data.clone());
         let compressed = collect_stream(compress_to_stream(stream, &Codec::Gzip)).await;
 
-        let compressed_stream = futures::stream::once(futures::future::ready(
-            Ok::<Bytes, std::io::Error>(Bytes::from(compressed)),
-        ));
+        let compressed_stream =
+            futures::stream::once(futures::future::ready(Ok::<Bytes, std::io::Error>(
+                Bytes::from(compressed),
+            )));
         let reader = StreamReader::new(compressed_stream);
         let decoder = GzipDecoder::new(reader);
         let decompressed = collect_stream(ReaderStream::new(decoder)).await;

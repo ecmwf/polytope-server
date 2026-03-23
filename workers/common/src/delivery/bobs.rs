@@ -58,7 +58,14 @@ impl BobsPush {
 
         let mut stream = BodyDataStream::new(body);
         let mut offset: u64 = 0;
-        while let Some(chunk) = stream.try_next().await.map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { format!("body stream error: {e}").into() })? {
+        while let Some(chunk) =
+            stream
+                .try_next()
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                    format!("body stream error: {e}").into()
+                })?
+        {
             let chunk_len = chunk.len() as u64;
             let write_resp = self
                 .client
@@ -84,7 +91,8 @@ impl BobsPush {
         let read_url = create_json["read_url"]
             .as_str()
             .ok_or("missing read_url in response")?
-            .to_string().replace("/read/", "/");
+            .to_string()
+            .replace("/read/", "/");
         tracing::info!(key = %key, read_url = %read_url, "result pushed to BOBS");
         Ok(read_url)
     }
@@ -94,10 +102,10 @@ impl BobsPush {
 mod tests {
     use super::*;
     use axum::{
+        Router,
         extract::{Path, State},
         http::StatusCode,
         routing::{post, put},
-        Router,
     };
     use std::sync::{Arc, Mutex};
 
@@ -114,7 +122,10 @@ mod tests {
         let key = "test-key-123".to_string();
         let read_url = format!("http://public.example.com/download-0/{key}");
         state.created_keys.lock().unwrap().push(key.clone());
-        (StatusCode::CREATED, axum::Json(serde_json::json!({ "key": key, "read_url": read_url })))
+        (
+            StatusCode::CREATED,
+            axum::Json(serde_json::json!({ "key": key, "read_url": read_url })),
+        )
     }
 
     async fn mock_write(
@@ -122,7 +133,10 @@ mod tests {
         State(state): State<Arc<BobsState>>,
         body: axum::body::Body,
     ) -> StatusCode {
-        let data: Vec<u8> = axum::body::to_bytes(body, usize::MAX).await.unwrap().to_vec();
+        let data: Vec<u8> = axum::body::to_bytes(body, usize::MAX)
+            .await
+            .unwrap()
+            .to_vec();
         state.written_data.lock().unwrap().extend(data);
         StatusCode::OK
     }
@@ -164,7 +178,10 @@ mod tests {
 
         match result {
             Completion::Redirect { location, message } => {
-                assert_eq!(location, "http://public.example.com/download-0/test-key-123");
+                assert_eq!(
+                    location,
+                    "http://public.example.com/download-0/test-key-123"
+                );
                 assert_eq!(message, "result available for download");
             }
             other => panic!("expected Redirect, got {other:?}"),
@@ -186,7 +203,10 @@ mod tests {
         let key = "stream-key".to_string();
         let read_url = format!("http://public.example.com/download-0/{key}");
         state.created_keys.lock().unwrap().push(key.clone());
-        (StatusCode::CREATED, axum::Json(serde_json::json!({ "key": key, "read_url": read_url })))
+        (
+            StatusCode::CREATED,
+            axum::Json(serde_json::json!({ "key": key, "read_url": read_url })),
+        )
     }
 
     async fn streaming_write(
@@ -194,7 +214,10 @@ mod tests {
         State(state): State<Arc<StreamingBobsState>>,
         body: axum::body::Body,
     ) -> StatusCode {
-        let data: Vec<u8> = axum::body::to_bytes(body, usize::MAX).await.unwrap().to_vec();
+        let data: Vec<u8> = axum::body::to_bytes(body, usize::MAX)
+            .await
+            .unwrap()
+            .to_vec();
         state.writes.lock().unwrap().push((offset, data));
         StatusCode::OK
     }
@@ -233,9 +256,7 @@ mod tests {
         ]);
         let body = reqwest::Body::wrap_stream(stream);
 
-        let result = push
-            .deliver("application/octet-stream", None, body)
-            .await;
+        let result = push.deliver("application/octet-stream", None, body).await;
 
         match result {
             Completion::Redirect { location, .. } => {

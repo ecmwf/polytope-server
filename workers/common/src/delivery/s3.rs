@@ -110,7 +110,10 @@ impl S3Push {
 
             while buffer.len() >= S3_PART_SIZE_BYTES {
                 let part = buffer.split_to(S3_PART_SIZE_BYTES).freeze();
-                completed_parts.push(self.upload_part(s3_key, upload_id, part_number, part).await?);
+                completed_parts.push(
+                    self.upload_part(s3_key, upload_id, part_number, part)
+                        .await?,
+                );
                 part_number += 1;
             }
         }
@@ -175,7 +178,9 @@ impl S3Push {
             .key(s3_key)
             .presigned(
                 PresigningConfig::builder()
-                    .expires_in(std::time::Duration::from_secs(self.presigned_url_expiry_secs))
+                    .expires_in(std::time::Duration::from_secs(
+                        self.presigned_url_expiry_secs,
+                    ))
                     .build()?,
             )
             .await?;
@@ -231,7 +236,8 @@ mod tests {
 
     #[tokio::test]
     async fn s3_push_returns_error_when_unreachable() {
-        let push = S3Push::for_test_with_endpoint("example-bucket", "results", "http://127.0.0.1:1");
+        let push =
+            S3Push::for_test_with_endpoint("example-bucket", "results", "http://127.0.0.1:1");
 
         let result = push
             .deliver(

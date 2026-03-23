@@ -1,4 +1,4 @@
-use axum::{routing::get, Json, Router};
+use axum::{Json, Router, routing::get};
 
 pub fn router() -> Router {
     Router::new().route("/health", get(health))

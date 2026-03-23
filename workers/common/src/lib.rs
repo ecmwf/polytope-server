@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use futures::Stream;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
-use tokio::signal::unix::{signal, SignalKind};
+use tokio::signal::unix::{SignalKind, signal};
 
 pub mod config;
 pub mod delivery;
@@ -12,7 +12,7 @@ pub mod delivery_config;
 pub mod encoding;
 pub mod management;
 
-use crate::delivery::{make_delivery, ResultDelivery};
+use crate::delivery::{ResultDelivery, make_delivery};
 use crate::delivery_config::{Codec, DeliveryConfig};
 use crate::encoding::encode_stream;
 
@@ -34,8 +34,12 @@ pub enum ProcessResult {
         content_type: String,
         body: RawStream,
     },
-    Reject { reason: String },
-    Error { message: String },
+    Reject {
+        reason: String,
+    },
+    Error {
+        message: String,
+    },
 }
 
 impl ProcessResult {
@@ -188,15 +192,14 @@ pub async fn run_worker_loop<P: Processor>(
     processor: P,
 ) -> Result<(), reqwest::Error> {
     let management_app = management::router();
-    let management_listener =
-        tokio::net::TcpListener::bind(("0.0.0.0", config.management_port))
-            .await
-            .unwrap_or_else(|err| {
-                panic!(
-                    "failed to bind management server on port {}: {err}",
-                    config.management_port
-                )
-            });
+    let management_listener = tokio::net::TcpListener::bind(("0.0.0.0", config.management_port))
+        .await
+        .unwrap_or_else(|err| {
+            panic!(
+                "failed to bind management server on port {}: {err}",
+                config.management_port
+            )
+        });
     let management_port = management_listener.local_addr().unwrap().port();
     tracing::info!(port = management_port, "management server listening");
     tokio::spawn(async move {
@@ -359,11 +362,11 @@ pub async fn run_worker_loop<P: Processor>(
 mod tests {
     use super::*;
     use axum::{
+        Router,
         body::Bytes,
         extract::{Path, State},
         http::StatusCode,
         routing::{get, post, put},
-        Router,
     };
     use futures::TryStreamExt;
     use std::sync::{Arc, Mutex};
@@ -512,7 +515,9 @@ mod tests {
         state.calls.lock().unwrap().push("create".to_string());
         (
             StatusCode::CREATED,
-            axum::Json(serde_json::json!({ "key": "redirect-key", "read_url": "https://polytope.example.com/download-0/redirect-key" })),
+            axum::Json(
+                serde_json::json!({ "key": "redirect-key", "read_url": "https://polytope.example.com/download-0/redirect-key" }),
+            ),
         )
     }
 
@@ -547,12 +552,10 @@ mod tests {
     #[async_trait]
     impl Processor for StubProcessor {
         async fn process(&self, _work: WorkItem) -> ProcessResult {
-            let stream = futures::stream::once(futures::future::ready(Ok::<
-                bytes::Bytes,
-                std::io::Error,
-            >(
-                bytes::Bytes::from(vec![1, 2, 3]),
-            )));
+            let stream =
+                futures::stream::once(futures::future::ready(Ok::<bytes::Bytes, std::io::Error>(
+                    bytes::Bytes::from(vec![1, 2, 3]),
+                )));
             ProcessResult::success("application/octet-stream", Box::new(stream))
         }
     }
@@ -657,7 +660,10 @@ mod tests {
             .route("/work", get(broker_work))
             .route("/heartbeat/{job_id}", post(broker_heartbeat))
             .route("/complete/data/{job_id}", post(broker_complete_data))
-            .route("/complete/redirect/{job_id}", post(broker_complete_redirect))
+            .route(
+                "/complete/redirect/{job_id}",
+                post(broker_complete_redirect),
+            )
             .route("/complete/reject/{job_id}", post(broker_complete_reject))
             .route("/complete/error/{job_id}", post(broker_complete_error))
             .with_state(broker_state.clone());
@@ -709,7 +715,10 @@ mod tests {
             body["location"].as_str().unwrap(),
             "https://polytope.example.com/download-0/redirect-key"
         );
-        assert_eq!(body["message"].as_str().unwrap(), "result available for download");
+        assert_eq!(
+            body["message"].as_str().unwrap(),
+            "result available for download"
+        );
 
         drop(completions);
         let calls = bobs_state.calls.lock().unwrap();
@@ -727,7 +736,10 @@ mod tests {
             .route("/work", get(broker_work))
             .route("/heartbeat/{job_id}", post(broker_heartbeat))
             .route("/complete/data/{job_id}", post(broker_complete_data))
-            .route("/complete/redirect/{job_id}", post(broker_complete_redirect))
+            .route(
+                "/complete/redirect/{job_id}",
+                post(broker_complete_redirect),
+            )
             .route("/complete/reject/{job_id}", post(broker_complete_reject))
             .route("/complete/error/{job_id}", post(broker_complete_error))
             .with_state(broker_state.clone());
@@ -745,7 +757,8 @@ mod tests {
             management_port: 0,
         };
 
-        *broker_state.work_metadata.lock().unwrap() = serde_json::json!({"accept_encoding": "zstd"});
+        *broker_state.work_metadata.lock().unwrap() =
+            serde_json::json!({"accept_encoding": "zstd"});
 
         let run = tokio::spawn(run_worker_loop(
             config,
@@ -786,7 +799,10 @@ mod tests {
             .route("/work", get(broker_work))
             .route("/heartbeat/{job_id}", post(broker_heartbeat))
             .route("/complete/data/{job_id}", post(broker_complete_data))
-            .route("/complete/redirect/{job_id}", post(broker_complete_redirect))
+            .route(
+                "/complete/redirect/{job_id}",
+                post(broker_complete_redirect),
+            )
             .route("/complete/reject/{job_id}", post(broker_complete_reject))
             .route("/complete/error/{job_id}", post(broker_complete_error))
             .with_state(broker_state.clone());
@@ -843,7 +859,10 @@ mod tests {
             .route("/work", get(broker_work))
             .route("/heartbeat/{job_id}", post(broker_heartbeat))
             .route("/complete/data/{job_id}", post(broker_complete_data))
-            .route("/complete/redirect/{job_id}", post(broker_complete_redirect))
+            .route(
+                "/complete/redirect/{job_id}",
+                post(broker_complete_redirect),
+            )
             .route("/complete/reject/{job_id}", post(broker_complete_reject))
             .route("/complete/error/{job_id}", post(broker_complete_error))
             .with_state(broker_state.clone());

@@ -1,11 +1,9 @@
 use async_trait::async_trait;
 use bytes::Bytes;
 use clap::Parser;
-use polytope_worker_common::{
-    run_worker_loop, ProcessResult, Processor, WorkItem, WorkerConfig,
-};
-use polytope_worker_common::config::{WorkerConfigFile, DEFAULT_CONFIG_PATH};
-use rsfdb::{request::Request, FDB};
+use polytope_worker_common::config::{DEFAULT_CONFIG_PATH, WorkerConfigFile};
+use polytope_worker_common::{ProcessResult, Processor, WorkItem, WorkerConfig, run_worker_loop};
+use rsfdb::{FDB, request::Request};
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::info;
 
@@ -88,13 +86,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = WorkerConfigFile::load(&cli.config_path)
         .unwrap_or_else(|err| panic!("failed to load config at {}: {err}", cli.config_path));
 
-    let fdb_section = config
-        .section("fdb")
-        .expect("config missing 'fdb' section");
-    let fdb_config = serde_yml::to_string(fdb_section)
-        .expect("failed to serialize fdb config section");
+    let fdb_section = config.section("fdb").expect("config missing 'fdb' section");
+    let fdb_config =
+        serde_yml::to_string(fdb_section).expect("failed to serialize fdb config section");
 
-    info!(path = cli.config_path, fdb_config = fdb_config.as_str(), "loaded config");
+    info!(
+        path = cli.config_path,
+        fdb_config = fdb_config.as_str(),
+        "loaded config"
+    );
 
     run_worker_loop(
         WorkerConfig {
@@ -116,8 +116,10 @@ mod tests {
     #[test]
     fn missing_config_panics() {
         let result = std::panic::catch_unwind(|| {
-            polytope_worker_common::config::WorkerConfigFile::load("/definitely/missing/config.yaml")
-                .unwrap_or_else(|err| panic!("failed to load config: {err}"));
+            polytope_worker_common::config::WorkerConfigFile::load(
+                "/definitely/missing/config.yaml",
+            )
+            .unwrap_or_else(|err| panic!("failed to load config: {err}"));
         });
         assert!(result.is_err());
     }

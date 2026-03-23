@@ -2,14 +2,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
+    Extension, Json,
     body::Body,
     extract::{Path, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
-    Extension, Json,
 };
 use bits::{Job, JobResult, PollOutcome};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::auth::AuthUser;
 use crate::state::AppState;
@@ -36,7 +36,10 @@ pub async fn submit(
     }
     job.user = Value::Object(user_context).into();
     // Propagate Accept-Encoding so workers can choose an encoding codec
-    if let Some(enc) = headers.get(axum::http::header::ACCEPT_ENCODING).and_then(|v| v.to_str().ok()) {
+    if let Some(enc) = headers
+        .get(axum::http::header::ACCEPT_ENCODING)
+        .and_then(|v| v.to_str().ok())
+    {
         job.metadata_mut()["accept_encoding"] = serde_json::json!(enc);
     }
     let proxy_proto_addr = headers

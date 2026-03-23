@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use clap::Parser;
-use polytope_worker_common::config::{WorkerConfigFile, DEFAULT_CONFIG_PATH};
-use polytope_worker_common::{run_worker_loop, ProcessResult, Processor, WorkItem, WorkerConfig};
+use polytope_worker_common::config::{DEFAULT_CONFIG_PATH, WorkerConfigFile};
+use polytope_worker_common::{ProcessResult, Processor, WorkItem, WorkerConfig, run_worker_loop};
 use serde::Deserialize;
 use tracing::info;
 
@@ -96,8 +96,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .cloned()
         .expect("config missing 'test' section");
 
-    let test_config: TestConfig = serde_yml::from_value(test_section)
-        .expect("failed to parse 'test' config section");
+    let test_config: TestConfig =
+        serde_yml::from_value(test_section).expect("failed to parse 'test' config section");
 
     info!(
         path = cli.config_path,
@@ -211,8 +211,7 @@ mod tests {
 
     #[tokio::test]
     async fn dummy_default_count_is_10() {
-        let config: TestConfig =
-            serde_yml::from_str("behaviour:\n  type: dummy\n").unwrap();
+        let config: TestConfig = serde_yml::from_str("behaviour:\n  type: dummy\n").unwrap();
         let result = BehaviourProcessor { config }.process(dummy_work()).await;
         let (_, body) = collect_success_body(result).await;
         let parsed: Vec<u64> = serde_json::from_slice(&body).unwrap();

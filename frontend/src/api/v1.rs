@@ -2,17 +2,17 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::{
+    Extension, Json,
     body::Body,
     extract::{Path, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
-    Extension, Json,
 };
 use bits::{Job, JobResult, PollOutcome};
 use bytes::BytesMut;
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::auth::AuthUser;
 use crate::state::AppState;
