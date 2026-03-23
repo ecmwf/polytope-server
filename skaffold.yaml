@@ -36,9 +36,9 @@ metadata:
   PACKAGE_NAME: polytope-fe-worker
   rpm_repo: '{{ .RPM_REPO }}'
   ecbuild_version: '{{default "3.8.2" .FE_ECBUILD_VERSION}}'
-  eckit_version: '{{default "1.33.0" .FE_ECKIT_VERSION}}'
-  eccodes_version: '{{default "2.46.0" .FE_ECCODES_VERSION}}'
-  fdb_version: '{{default "5.19.2" .FE_FDB_VERSION}}'
+  eckit_version: '{{default "1.28.3" .FE_ECKIT_VERSION}}'
+  eccodes_version: '{{default "2.33.1" .FE_ECCODES_VERSION}}'
+  fdb_version: '{{default "5.14.0" .FE_FDB_VERSION}}'
   gribjump_version: '{{default "0.10.2" .FE_GRIBJUMP_VERSION}}'
   pyfdb_version: '{{default "0.1.0" .FE_PYFDB_VERSION}}'
 
@@ -177,6 +177,13 @@ profiles:
           randomDockerConfigSecret: true
           timeout: 60m
           concurrency: 0
+          resources:
+            requests:
+              cpu: "8"
+              memory: 12Gi
+            limits:
+              cpu: "8"
+              memory: 12Gi
 
       - op: remove
         path: /build/artifacts/0/docker
