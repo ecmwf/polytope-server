@@ -1,12 +1,48 @@
-name: CI (disabled)
+name: CI
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - '**'
+  pull_request:
 
 jobs:
-  disabled:
+  fmt:
     runs-on: ubuntu-latest
     steps:
-      - name: CI disabled during image testing
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Strip local path patches
         run: |
-          echo "polytope-server CI is temporarily disabled to avoid conflicting with production image workflows."
+          sed -i '/^\[patch\./,$d' Cargo.toml
+          printf '[net]\ngit-fetch-with-cli = true\n' > .cargo/config.toml
+
+      - name: Frontend unit tests
+        env:
+          NO_PROXY: "127.0.0.1,localhost"
+        run: |
+          unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy ALL_PROXY all_proxy
+          cargo test -p polytope-server
+
+      - name: Integration tests
+        env:
+          NO_PROXY: "127.0.0.1,localhost"
+        run: |
+          unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy ALL_PROXY all_proxy
+          cargo test -p polytope-server-integration-tests

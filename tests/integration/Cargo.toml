@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 axum = "0.8"
-authotron = { path = "../../../auth-o-tron/authotron" }
+authotron = { git = "https://github.com/ecmwf/auth-o-tron.git", branch = "feat/shared-auth-workspace" }
 polytope_client = { path = "../../client" }
 polytope-server = { path = "../../frontend" }
 reqwest = { version = "0.12", features = ["json"] }
