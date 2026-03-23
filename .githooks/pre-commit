@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+red()   { printf '\033[1;31m%s\033[0m\n' "$*"; }
+green() { printf '\033[1;32m%s\033[0m\n' "$*"; }
+dim()   { printf '\033[2m%s\033[0m\n' "$*"; }
+
+# ── cargo fmt ───────────────────────────────────────────────────────────────
+staged_rs=$(git diff --cached --name-only --diff-filter=ACM -- '*.rs')
+
+if [[ -n "$staged_rs" ]]; then
+  dim "Running cargo fmt..."
+  cargo fmt --all
+
+  # Re-stage only the .rs files that were already staged
+  echo "$staged_rs" | xargs git add
+  green "cargo fmt ✓"
+fi
+
+# ── Update bits lock ────────────────────────────────────────────────────────
+# Skip with: SKIP_BITS_UPDATE=1 git commit
+if [[ "${SKIP_BITS_UPDATE:-}" == "1" ]]; then
+  dim "Skipping bits lock update (SKIP_BITS_UPDATE=1)"
+else
+  dim "Updating bits dependency lock..."
+  if cargo update -p bits -p bits-ecmwf 2>/dev/null; then
+    if ! git diff --quiet Cargo.lock 2>/dev/null; then
+      git add Cargo.lock
+      green "Cargo.lock updated with latest bits ✓"
+    else
+      dim "Cargo.lock already up to date"
+    fi
+  else
+    red "Warning: could not update bits (offline?). Skipping."
+    red "Run 'cargo update -p bits -p bits-ecmwf' manually before pushing."
+  fi
+fi
