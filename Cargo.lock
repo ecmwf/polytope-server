@@ -2487,6 +2487,7 @@ version = "0.1.0"
 dependencies = [
  "cxx",
  "cxx-build",
+ "tracing",
 ]
 
 [[package]]
