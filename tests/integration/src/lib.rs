@@ -139,6 +139,65 @@ pub async fn spawn_authotron(jwt_secret: &str) -> Result<(String, JoinHandle<()>
     Ok((format!("http://{}", addr), handle))
 }
 
+pub async fn spawn_bobs() -> Result<(String, JoinHandle<()>, tempfile::TempDir), Box<dyn Error>> {
+    let tmp_dir = tempfile::tempdir()?;
+    let config = Arc::new(bobs::config::Config {
+        host: "127.0.0.1".to_string(),
+        port: 0,
+        data_dir: tmp_dir.path().to_path_buf(),
+        host_prefix: "test".to_string(),
+        domain: "localhost".to_string(),
+        route_name: "bobs".to_string(),
+        ..bobs::config::Config::default()
+    });
+
+    let manager = Arc::new(bobs::manager::SpoolManager::<bobs::io::TokioFileIO>::new(
+        tmp_dir.path().join("spools.redb"),
+        tmp_dir.path(),
+        config.page_size,
+        config.max_cache_bytes,
+    )?);
+
+    let state = Arc::new(bobs::http::AppState {
+        manager,
+        config: config.clone(),
+        hostname: "test-bobs-0".to_string(),
+        ordinal: "0".to_string(),
+    });
+
+    let app = bobs::http::router::<bobs::io::TokioFileIO>().with_state(state);
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    let handle = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+
+    Ok((format!("http://{}", addr), handle, tmp_dir))
+}
+
+pub async fn spawn_test_worker(
+    broker_url: &str,
+    pool_name: &str,
+    delivery_config: polytope_worker_common::delivery_config::DeliveryConfig,
+) -> JoinHandle<()> {
+    let config = polytope_worker_common::WorkerConfig {
+        broker_url: format!("{}/{}", broker_url.trim_end_matches('/'), pool_name),
+        poll_timeout_ms: 5000,
+        heartbeat_interval: std::time::Duration::from_secs(30),
+        retry_backoff: std::time::Duration::from_millis(100),
+        management_port: 0,
+    };
+
+    let processor = test_worker::BehaviourProcessor::new(test_worker::TestConfig {
+        behaviour: test_worker::Behaviour::Echo,
+        content_type: "application/x-grib".to_string(),
+    });
+
+    tokio::spawn(async move {
+        let _ = polytope_worker_common::run_worker_loop(config, delivery_config, processor).await;
+    })
+}
+
 pub async fn spawn_polytope_server(
     authotron_url: Option<&str>,
     bits_yaml: &str,
@@ -232,6 +291,30 @@ fn simple_bits_yaml(backend_url: &str) -> String {
             url: "{backend_url}/"
 "#
     )
+}
+
+#[cfg(test)]
+fn bobs_bits_yaml(worker_server_port: u16) -> String {
+    format!(
+        r#"
+  bits:
+    worker_server:
+      host: "127.0.0.1"
+      port: {worker_server_port}
+  targets:
+    test_pool:
+      type: remote
+  routes:
+    - default:
+        - target::test_pool
+"#
+    )
+}
+
+#[cfg(test)]
+async fn free_port() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    listener.local_addr().unwrap().port()
 }
 
 #[tokio::test]
@@ -331,6 +414,115 @@ async fn authenticated_retrieve_v2() {
     server.abort();
     authotron.abort();
     backend.abort();
+}
+
+#[tokio::test]
+async fn bobs_delivery_pipeline() {
+    let worker_port = free_port().await;
+
+    let (bobs_url, bobs_handle, _bobs_dir) = spawn_bobs().await.expect("spawn bobs");
+    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (server_url, server) =
+        spawn_polytope_server(Some(&authotron_url), &bobs_bits_yaml(worker_port))
+            .await
+            .expect("spawn polytope server");
+
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .expect("build reqwest client");
+    for _ in 0..100 {
+        if client
+            .get(format!("{server_url}/api/v2/health"))
+            .send()
+            .await
+            .is_ok()
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+
+    for _ in 0..100 {
+        if client
+            .get(format!(
+                "http://127.0.0.1:{worker_port}/test_pool/work?timeout_ms=0"
+            ))
+            .send()
+            .await
+            .is_ok()
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+
+    let delivery = polytope_worker_common::delivery_config::DeliveryConfig {
+        delivery_type: polytope_worker_common::delivery_config::DeliveryType::Bobs,
+        bobs_url: Some(format!("{bobs_url}/api/v1")),
+        s3_bucket: None,
+        s3_region: None,
+        s3_endpoint_url: None,
+        s3_force_path_style: None,
+        s3_access_key_id: None,
+        s3_secret_access_key: None,
+        s3_presigned_url_expiry_secs: None,
+        s3_public_url: None,
+        s3_key_prefix: String::new(),
+    };
+    let worker_handle = spawn_test_worker(
+        &format!("http://127.0.0.1:{worker_port}"),
+        "test_pool",
+        delivery,
+    )
+    .await;
+
+    let polytope_client = PolytopeClient::new(
+        server_url,
+        Some(AuthHeader::Basic(
+            ALPHA_ADMIN_USER.to_string(),
+            ALPHA_ADMIN_PASS.to_string(),
+        )),
+        None,
+        Some(0.01),
+        Some(1.05),
+        Some(5.0),
+    )
+    .expect("client created");
+
+    let retrieve_error = match polytope_client
+        .retrieve("all", serde_json::json!({"class": "od"}))
+        .await
+    {
+        Ok(_) => panic!("retrieve should fail on non-routable test redirect host"),
+        Err(err) => err,
+    };
+    let redirect_url = retrieve_error
+        .downcast::<reqwest::Error>()
+        .ok()
+        .and_then(|err| err.url().cloned())
+        .expect("retrieve error contains redirect url");
+
+    let key = redirect_url
+        .path()
+        .split('/')
+        .next_back()
+        .expect("redirect key");
+    let bobs_read_resp = client
+        .get(format!("{bobs_url}/api/v1/read/{key}"))
+        .send()
+        .await
+        .expect("bobs read succeeds");
+    assert_eq!(bobs_read_resp.status(), StatusCode::OK);
+    let body = bobs_read_resp.bytes().await.expect("read bytes");
+    let size = body.len() as u64;
+
+    assert!(size > 0, "should have received data through BOBS pipeline");
+
+    worker_handle.abort();
+    server.abort();
+    authotron.abort();
+    bobs_handle.abort();
 }
 
 #[tokio::test]
