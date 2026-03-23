@@ -17,13 +17,30 @@ if [[ -n "$staged_rs" ]]; then
   green "cargo fmt ✓"
 fi
 
-# ── Update dependency locks ───────────────────────────────────────────────────
+# ── Update git dependency locks ───────────────────────────────────────────────
 # Skip with: SKIP_DEPS_UPDATE=1 git commit
+GIT_DEPS=(
+  bits
+  bits-ecmwf
+  polytope-edr
+  authotron-client
+  authotron-types
+  authotron
+  bobs
+  rsfdb
+  mars-client
+)
+
 if [[ "${SKIP_DEPS_UPDATE:-}" == "1" ]]; then
-  dim "Skipping dependency lock update (SKIP_DEPS_UPDATE=1)"
+  dim "Skipping git dependency lock update (SKIP_DEPS_UPDATE=1)"
 else
-  dim "Updating dependency locks..."
-  if cargo update 2>/dev/null; then
+  update_args=()
+  for dep in "${GIT_DEPS[@]}"; do
+    update_args+=(-p "$dep")
+  done
+
+  dim "Updating git dependency locks..."
+  if cargo update "${update_args[@]}" 2>/dev/null; then
     if ! git diff --quiet Cargo.lock 2>/dev/null; then
       git add Cargo.lock
       green "Cargo.lock updated ✓"
@@ -31,7 +48,7 @@ else
       dim "Cargo.lock already up to date"
     fi
   else
-    red "Warning: could not update dependencies (offline?). Skipping."
-    red "Run 'cargo update' manually before pushing."
+    red "Warning: could not update git dependencies (offline?). Skipping."
+    red "Run 'cargo update ${update_args[*]}' manually before pushing."
   fi
 fi
