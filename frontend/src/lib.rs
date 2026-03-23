@@ -34,6 +34,8 @@ pub fn build_app(
             &auth_cfg.url,
             auth_cfg.resolved_secret().as_bytes(),
             std::time::Duration::from_millis(auth_cfg.timeout_ms),
+            auth_cfg.cache_ttl_secs.map(std::time::Duration::from_secs),
+            auth_cfg.cache_capacity,
         )
     });
 

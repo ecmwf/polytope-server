@@ -199,6 +199,8 @@ mod tests {
             &mock_server.url(),
             secret.as_bytes(),
             StdDuration::from_secs(5),
+            None,
+            None,
         )
     }
 

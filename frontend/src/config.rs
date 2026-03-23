@@ -7,6 +7,8 @@ pub struct AuthConfig {
     pub secret: String,
     #[serde(default = "default_timeout_ms")]
     pub timeout_ms: u64,
+    pub cache_ttl_secs: Option<u64>,
+    pub cache_capacity: Option<u64>,
 }
 
 impl AuthConfig {
@@ -24,6 +26,8 @@ impl std::fmt::Debug for AuthConfig {
             .field("url", &self.url)
             .field("secret", &"[REDACTED]")
             .field("timeout_ms", &self.timeout_ms)
+            .field("cache_ttl_secs", &self.cache_ttl_secs)
+            .field("cache_capacity", &self.cache_capacity)
             .finish()
     }
 }
@@ -130,5 +134,35 @@ authentication:
         let cfg: ServerConfig = serde_yaml::from_str(yaml).unwrap();
         let auth = cfg.authentication.unwrap();
         assert_eq!(auth.timeout_ms, 10000);
+    }
+
+    #[test]
+    fn test_config_cache_defaults_to_none() {
+        let yaml = r#"
+bits: {}
+authentication:
+  url: "http://auth:8080"
+  secret: "s"
+"#;
+        let cfg: ServerConfig = serde_yaml::from_str(yaml).unwrap();
+        let auth = cfg.authentication.unwrap();
+        assert!(auth.cache_ttl_secs.is_none());
+        assert!(auth.cache_capacity.is_none());
+    }
+
+    #[test]
+    fn test_config_with_cache_settings() {
+        let yaml = r#"
+bits: {}
+authentication:
+  url: "http://auth:8080"
+  secret: "s"
+  cache_ttl_secs: 300
+  cache_capacity: 50000
+"#;
+        let cfg: ServerConfig = serde_yaml::from_str(yaml).unwrap();
+        let auth = cfg.authentication.unwrap();
+        assert_eq!(auth.cache_ttl_secs, Some(300));
+        assert_eq!(auth.cache_capacity, Some(50000));
     }
 }
