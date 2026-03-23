@@ -241,6 +241,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 [[package]]
 name = "authotron"
 version = "0.3.2"
+source = "git+https://github.com/ecmwf/auth-o-tron.git?branch=feat%2Fshared-auth-workspace#668b7754f140d345a7c0a489913915b8d859136d"
 dependencies = [
  "aide",
  "async-trait",
@@ -269,6 +270,7 @@ dependencies = [
 [[package]]
 name = "authotron-client"
 version = "0.1.0"
+source = "git+https://github.com/ecmwf/auth-o-tron.git?branch=feat%2Fshared-auth-workspace#668b7754f140d345a7c0a489913915b8d859136d"
 dependencies = [
  "authotron-types",
  "chrono",
@@ -283,6 +285,7 @@ dependencies = [
 [[package]]
 name = "authotron-types"
 version = "0.1.0"
+source = "git+https://github.com/ecmwf/auth-o-tron.git?branch=feat%2Fshared-auth-workspace#668b7754f140d345a7c0a489913915b8d859136d"
 dependencies = [
  "serde",
  "serde_json",
@@ -893,6 +896,7 @@ checksum = "843867be96c8daad0d758b57df9392b6d8d271134fce549de6ce169ff98a92af"
 [[package]]
 name = "bits"
 version = "0.1.0"
+source = "git+https://github.com/ecmwf/bits-broker?branch=main#3245782e703983bb40b1b53470b2d454e7826181"
 dependencies = [
  "async-trait",
  "axum 0.8.8",
@@ -918,6 +922,7 @@ dependencies = [
 [[package]]
 name = "bits-ecmwf"
 version = "0.1.0"
+source = "git+https://github.com/ecmwf/bits-broker?branch=main#3245782e703983bb40b1b53470b2d454e7826181"
 dependencies = [
  "async-trait",
  "authotron-types",
@@ -3250,6 +3255,7 @@ dependencies = [
 [[package]]
 name = "mars-client"
 version = "0.1.0"
+source = "git+https://github.com/ecmwf/mars-client-cpp?branch=feature%2Flibrary-api#71be614a7605c9dcf9ef983e3f1a4dc71b212067"
 dependencies = [
  "cxx",
  "cxx-build",
@@ -3917,6 +3923,7 @@ checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
 [[package]]
 name = "polytope-edr"
 version = "0.1.0"
+source = "git+https://github.com/ecmwf/polytope-edr?branch=master#cd9d0cb96488483ec0447376e3ffb07328f41d91"
 dependencies = [
  "axum 0.8.8",
  "chrono",
@@ -4709,6 +4716,7 @@ dependencies = [
 [[package]]
 name = "rsfdb"
 version = "0.1.0"
+source = "git+https://github.com/ecmwf/rsfdb?branch=fix%2Frsfindlibs-git-dep#adcd62063f11a7168b6c75ded2c7d701533f405b"
 dependencies = [
  "libc",
  "libloading",
@@ -4721,6 +4729,7 @@ dependencies = [
 [[package]]
 name = "rsfindlibs"
 version = "0.1.1"
+source = "git+https://github.com/ecmwf/rsfindlibs?branch=main#700145d76e2108350263dc6066f17313140002e7"
 dependencies = [
  "cc",
  "clap",

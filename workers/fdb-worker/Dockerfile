@@ -1,7 +1,3 @@
-FROM scratch AS bits
-FROM scratch AS rsfdb
-FROM scratch AS rsfindlibs
-
 ###############################
 # Shared base: Rust + cargo-chef + system deps (built once)
 ###############################
@@ -14,14 +10,10 @@ RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-d
 ###############################
 FROM chef-base AS chef
 ARG GIT_AUTH_TOKEN=""
-ARG LOCAL_DEPS=""
 WORKDIR /ecmwf/polytope-server
-COPY --from=bits . /ecmwf/bits/
-COPY --from=rsfdb . /ecmwf/rsfdb/
-COPY --from=rsfindlibs . /ecmwf/rsfindlibs/
 COPY workers/common/ workers/common/
 COPY workers/fdb-worker/ workers/fdb-worker/
-RUN mkdir -p .cargo && echo "[net]" > .cargo/config.toml && echo "git-fetch-with-cli = true" >> .cargo/config.toml && if [ "$LOCAL_DEPS" = "1" ]; then echo '[patch."https://github.com/ecmwf/bits-broker"]' >> .cargo/config.toml && echo 'bits = { path = "/ecmwf/bits/bits" }' >> .cargo/config.toml && echo 'bits-ecmwf = { path = "/ecmwf/bits/bits-ecmwf" }' >> .cargo/config.toml && echo '[patch."https://github.com/ecmwf/rsfdb"]' >> .cargo/config.toml && echo 'rsfindlibs = { git = "https://github.com/ecmwf/rsfindlibs", branch = "main" }' >> .cargo/config.toml; fi
+RUN mkdir -p .cargo && echo '[net]' > .cargo/config.toml && echo 'git-fetch-with-cli = true' >> .cargo/config.toml
 RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi
 RUN cd workers/fdb-worker && cargo chef prepare --recipe-path recipe.json
 
@@ -30,11 +22,7 @@ RUN cd workers/fdb-worker && cargo chef prepare --recipe-path recipe.json
 ###############################
 FROM chef-base AS cacher
 ARG GIT_AUTH_TOKEN=""
-ARG LOCAL_DEPS=""
 WORKDIR /ecmwf/polytope-server
-COPY --from=bits . /ecmwf/bits/
-COPY --from=rsfdb . /ecmwf/rsfdb/
-COPY --from=rsfindlibs . /ecmwf/rsfindlibs/
 COPY --from=chef /ecmwf/polytope-server/workers/fdb-worker/recipe.json workers/fdb-worker/recipe.json
 COPY --from=chef /ecmwf/polytope-server/.cargo/config.toml .cargo/config.toml
 COPY workers/common/ workers/common/
@@ -46,16 +34,12 @@ RUN cd workers/fdb-worker && cargo chef cook --release --recipe-path recipe.json
 ###############################
 FROM chef-base AS builder
 ARG GIT_AUTH_TOKEN=""
-ARG LOCAL_DEPS=""
 WORKDIR /ecmwf/polytope-server
 ARG PACKAGE_NAME=fdb-worker
 ARG BIN_NAME=fdb-worker
-COPY --from=bits . /ecmwf/bits/
-COPY --from=rsfdb . /ecmwf/rsfdb/
-COPY --from=rsfindlibs . /ecmwf/rsfindlibs/
 COPY workers/common/ workers/common/
 COPY workers/fdb-worker/ workers/fdb-worker/
-RUN mkdir -p .cargo && echo "[net]" > .cargo/config.toml && echo "git-fetch-with-cli = true" >> .cargo/config.toml && if [ "$LOCAL_DEPS" = "1" ]; then echo '[patch."https://github.com/ecmwf/bits-broker"]' >> .cargo/config.toml && echo 'bits = { path = "/ecmwf/bits/bits" }' >> .cargo/config.toml && echo 'bits-ecmwf = { path = "/ecmwf/bits/bits-ecmwf" }' >> .cargo/config.toml && echo '[patch."https://github.com/ecmwf/rsfdb"]' >> .cargo/config.toml && echo 'rsfindlibs = { git = "https://github.com/ecmwf/rsfindlibs", branch = "main" }' >> .cargo/config.toml; fi
+RUN mkdir -p .cargo && echo '[net]' > .cargo/config.toml && echo 'git-fetch-with-cli = true' >> .cargo/config.toml
 COPY --from=cacher /ecmwf/polytope-server/workers/fdb-worker/target workers/fdb-worker/target
 COPY --from=cacher /usr/local/cargo /usr/local/cargo
 RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi

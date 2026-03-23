@@ -1,3 +1,51 @@
+# ─── Environment variables ────────────────────────────────────────────────────
+#
+# Required:
+#   GH_TOKEN                  GitHub token for private repo access
+#   RPM_REPO                  Nexus RPM repository URL (mars-worker, polytope-fe-worker)
+#
+# Tagging:
+#   FIXED_TAG                 Override image tag (default: git commit hash)
+#   PREFIX                    Prepend to auto-generated tag
+#
+# Build method (mars-worker):
+#   MARS_BUILD_FROM_SOURCE    "true" = build C++ from source, "false" = install RPM (default: true)
+#   MARS_CLIENT_CPP_VERSION   RPM package version when MARS_BUILD_FROM_SOURCE=false (default: 7.1.9.1)
+#
+# C++ dependency versions (mars-worker source build, from mars-client-bundle):
+#   MARS_CLIENT_CPP_BRANCH    default: feature/library-api
+#   ECKIT_VERSION             default: 1.33.0
+#   ECCODES_VERSION           default: 2.46.0
+#   ODC_VERSION               default: 1.6.2
+#   METKIT_VERSION            default: 1.17.0
+#   ATLAS_VERSION             default: 0.45.0
+#   ATLAS_ORCA_VERSION        default: 0.4.3
+#   MIR_VERSION               default: 1.23.7
+#   FDB_VERSION               default: 5.19.0
+#
+# C++ dependency versions (polytope-fe-worker):
+#   ECBUILD_VERSION           default: 3.8.2
+#   ECKIT_VERSION             default: 1.28.3
+#   ECCODES_VERSION           default: 2.33.1
+#   FDB_VERSION               default: 5.14.0
+#   GRIBJUMP_VERSION          default: 0.10.2
+#   PYFDB_VERSION             default: 0.1.0
+#
+# C++ dependency versions (fdb-worker):
+#   ECBUILD_VERSION           default: 3.12.0
+#   ECKIT_VERSION             default: 1.33.1
+#   ECCODES_VERSION           default: 2.46.0
+#   FDB_VERSION               default: 5.19.2
+#   PYFDB_VERSION             default: 0.1.0
+#
+# C++ dependency versions (frontend):
+#   ECKIT_VERSION             default: 2.0.4
+#   METKIT_VERSION            default: 1.17.1
+#
+# Example:
+#   ECKIT_VERSION=1.34.0 FDB_VERSION=5.20.0 skaffold build -b mars-worker
+# ──────────────────────────────────────────────────────────────────────────────
+
 apiVersion: skaffold/v4beta13
 kind: Config
 metadata:
@@ -27,7 +75,13 @@ build:
           BIN_NAME: polytope-fe-worker
           GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
           PACKAGE_NAME: polytope-fe-worker
-          rpm_repo: '{{ .rpm_repo }}'
+          rpm_repo: '{{ .RPM_REPO }}'
+          ecbuild_version: '{{default "3.8.2" .ECBUILD_VERSION}}'
+          eckit_version: '{{default "1.28.3" .ECKIT_VERSION}}'
+          eccodes_version: '{{default "2.33.1" .ECCODES_VERSION}}'
+          fdb_version: '{{default "5.14.0" .FDB_VERSION}}'
+          gribjump_version: '{{default "0.10.2" .GRIBJUMP_VERSION}}'
+          pyfdb_version: '{{default "0.1.0" .PYFDB_VERSION}}'
 
     # ── FDB worker ─────────────────────────────────────────────────────────────
     - image: eccr.ecmwf.int/polytope/fdb-worker
@@ -39,6 +93,11 @@ build:
           BIN_NAME: fdb-worker
           GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
           PACKAGE_NAME: fdb-worker
+          ecbuild_version: '{{default "3.12.0" .ECBUILD_VERSION}}'
+          eckit_version: '{{default "1.33.1" .ECKIT_VERSION}}'
+          eccodes_version: '{{default "2.46.0" .ECCODES_VERSION}}'
+          fdb_version: '{{default "5.19.2" .FDB_VERSION}}'
+          pyfdb_version: '{{default "0.1.0" .PYFDB_VERSION}}'
 
     # ── MARS worker (C++ client) ──────────────────────────────────────────────
     - image: eccr.ecmwf.int/polytope/mars-worker
@@ -50,7 +109,18 @@ build:
           BIN_NAME: mars-worker
           GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
           PACKAGE_NAME: mars-worker
-          rpm_repo: '{{ .rpm_repo }}'
+          rpm_repo: '{{ .RPM_REPO }}'
+          MARS_BUILD_FROM_SOURCE: '{{default "true" .MARS_BUILD_FROM_SOURCE}}'
+          mars_client_cpp_version: '{{default "7.1.9.1" .MARS_CLIENT_CPP_VERSION}}'
+          MARS_CLIENT_CPP_BRANCH: '{{default "feature/library-api" .MARS_CLIENT_CPP_BRANCH}}'
+          ECKIT_VERSION: '{{default "1.33.0" .ECKIT_VERSION}}'
+          ECCODES_VERSION: '{{default "2.46.0" .ECCODES_VERSION}}'
+          ODC_VERSION: '{{default "1.6.2" .ODC_VERSION}}'
+          METKIT_VERSION: '{{default "1.17.0" .METKIT_VERSION}}'
+          ATLAS_VERSION: '{{default "0.45.0" .ATLAS_VERSION}}'
+          ATLAS_ORCA_VERSION: '{{default "0.4.3" .ATLAS_ORCA_VERSION}}'
+          MIR_VERSION: '{{default "1.23.7" .MIR_VERSION}}'
+          FDB_VERSION: '{{default "5.19.0" .FDB_VERSION}}'
 
     # ── Test worker (config-driven behaviour: echo, reject, error, wait, dummy)
     - image: eccr.ecmwf.int/polytope/test-worker
@@ -79,143 +149,5 @@ build:
   platforms:
     - linux/amd64
   local:
-    # Required: Skaffold shells out to docker/podman CLI to pass --build-context flags.
     useDockerCLI: true
     concurrency: 0
-
-# ── Profiles ───────────────────────────────────────────────────────────────────
-# Default: Cargo.toml git deps are fetched from GitHub inside the Docker build.
-#          GH_TOKEN is required for private repos (bits-broker, rsfdb).
-#          Dockerfiles define empty `FROM scratch AS bits/polytope-edr` stages
-#          so `COPY --from=bits` is a no-op.
-#
-# -p local: Build bits and polytope-edr from sibling repos on disk.
-#           rsfdb and rsfindlibs are always fetched from GitHub.
-#           Uses custom artifact type so that dependencies.paths actually works
-#           for cache invalidation (docker artifact type ignores it).
-#           --build-context overrides the scratch stages with real directories.
-#           LOCAL_DEPS=1 tells the Dockerfile to generate Cargo [patch] config
-#           pointing at the container-local paths (/ecmwf/bits, etc).
-profiles:
-  - name: local
-    patches:
-      # ── polytope-server (release) ──
-      - op: remove
-        path: /build/artifacts/0/docker
-      - op: add
-        path: /build/artifacts/0/custom
-        value:
-          buildCommand: >-
-            set -e;
-            docker build -f frontend/Dockerfile --target release
-            --build-arg BIN_NAME=polytope-server
-            --build-arg PACKAGE_NAME=polytope-server
-            --build-arg LOCAL_DEPS=1
-            --build-arg GIT_AUTH_TOKEN=$GH_TOKEN
-            --build-arg ECKIT_VERSION=${ECKIT_VERSION:-2.0.4}
-            --build-arg METKIT_VERSION=${METKIT_VERSION:-1.17.1}
-            --build-context bits=../bits
-            --build-context polytope-edr=../polytope-edr
-            --build-context auth-o-tron=../auth-o-tron
-            --platform linux/amd64
-            -t $IMAGE .;
-            [ "$PUSH_IMAGE" != "true" ] || docker push $IMAGE
-          dependencies: &local-deps
-            paths:
-              - "**"
-              - "../bits/**"
-              - "../polytope-edr/**"
-              - "../auth-o-tron/**"
-            ignore: &local-dep-ignore
-              - "**/target/**"
-              - "**/.git/**"
-
-      # ── polytope-fe-worker ──
-      - op: remove
-        path: /build/artifacts/1/docker
-      - op: add
-        path: /build/artifacts/1/custom
-        value:
-          buildCommand: >-
-            set -e;
-            docker build -f workers/polytope-fe-worker/Dockerfile --target release
-            --build-arg BIN_NAME=polytope-fe-worker
-            --build-arg PACKAGE_NAME=polytope-fe-worker
-            --build-arg LOCAL_DEPS=1
-            --build-arg GIT_AUTH_TOKEN=$GH_TOKEN
-            --build-arg rpm_repo=$rpm_repo
-            --build-context bits=../bits
-            --build-context polytope-edr=../polytope-edr
-            --build-context auth-o-tron=../auth-o-tron
-            --platform linux/amd64
-            -t $IMAGE .;
-            [ "$PUSH_IMAGE" != "true" ] || docker push $IMAGE
-          dependencies: *local-deps
-
-      # ── fdb-worker ──
-      - op: remove
-        path: /build/artifacts/2/docker
-      - op: add
-        path: /build/artifacts/2/custom
-        value:
-          buildCommand: >-
-            set -e;
-            docker build -f workers/fdb-worker/Dockerfile --target release
-            --build-arg BIN_NAME=fdb-worker
-            --build-arg PACKAGE_NAME=fdb-worker
-            --build-arg LOCAL_DEPS=1
-            --build-arg GIT_AUTH_TOKEN=$GH_TOKEN
-            --build-context bits=../bits
-            --build-context polytope-edr=../polytope-edr
-            --platform linux/amd64
-            -t $IMAGE .;
-            [ "$PUSH_IMAGE" != "true" ] || docker push $IMAGE
-          dependencies: *local-deps
-
-      # ── mars-worker ──
-      - op: remove
-        path: /build/artifacts/3/docker
-      - op: add
-        path: /build/artifacts/3/custom
-        value:
-          buildCommand: >-
-            set -e;
-            docker build -f workers/mars-worker/Dockerfile --target release
-            --build-arg BIN_NAME=mars-worker
-            --build-arg PACKAGE_NAME=mars-worker
-            --build-arg LOCAL_DEPS=1
-            --build-arg GIT_AUTH_TOKEN=$GH_TOKEN
-            --build-arg rpm_repo=$rpm_repo
-            --build-arg MARS_BUILD_METHOD=source
-            --build-context bits=../bits
-            --build-context polytope-edr=../polytope-edr
-            --build-context mars-client-bundle=../mars-client-bundle
-            --platform linux/amd64
-            -t $IMAGE .;
-            [ "$PUSH_IMAGE" != "true" ] || docker push $IMAGE
-          dependencies:
-            paths:
-              - "**"
-              - "../bits/**"
-              - "../polytope-edr/**"
-              - "../mars-client-bundle/**"
-            ignore: *local-dep-ignore
-
-      # ── test-worker ──
-      - op: remove
-        path: /build/artifacts/4/docker
-      - op: add
-        path: /build/artifacts/4/custom
-        value:
-          buildCommand: >-
-            set -e;
-            docker build -f workers/test-worker/Dockerfile --target release
-            --build-arg BIN_NAME=test-worker
-            --build-arg PACKAGE_NAME=test-worker
-            --build-arg LOCAL_DEPS=1
-            --build-arg GIT_AUTH_TOKEN=$GH_TOKEN
-            --build-context bits=../bits
-            --platform linux/amd64
-            -t $IMAGE .;
-            [ "$PUSH_IMAGE" != "true" ] || docker push $IMAGE
-          dependencies: *local-deps

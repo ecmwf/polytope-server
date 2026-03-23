@@ -11,15 +11,3 @@ members = [
     "utils/metkit",
 ]
 resolver = "2"
-
-[patch."https://github.com/ecmwf/polytope-edr"]
-polytope-edr = { path = "../polytope-edr" }
-
-[patch."https://github.com/ecmwf/bits-broker"]
-bits = { path = "../bits/bits" }
-bits-ecmwf = { path = "../bits/bits-ecmwf" }
-
-[patch."https://github.com/ecmwf/auth-o-tron"]
-authotron = { path = "../auth-o-tron/authotron" }
-authotron-client = { path = "../auth-o-tron/authotron-client" }
-authotron-types = { path = "../auth-o-tron/authotron-types" }
