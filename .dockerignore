@@ -4,3 +4,5 @@
 /.pytest_cache
 /.venv
 .cargo/
+.ruff_cache
+.pytest_cache/
