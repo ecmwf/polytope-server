@@ -1,5 +1,7 @@
 use crate::delivery_config::DeliveryConfig;
 
+pub const DEFAULT_CONFIG_PATH: &str = "/etc/worker/config.yaml";
+
 pub struct WorkerConfigFile {
     pub raw: serde_yml::Value,
     pub delivery: DeliveryConfig,

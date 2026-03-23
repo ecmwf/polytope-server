@@ -6,7 +6,7 @@ use mars_client::{Error as MarsError, MarsClient};
 use polytope_worker_common::{
     run_worker_loop, ProcessResult, Processor, WorkItem, WorkerConfig,
 };
-use polytope_worker_common::config::WorkerConfigFile;
+use polytope_worker_common::config::{WorkerConfigFile, DEFAULT_CONFIG_PATH};
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::warn;
 
@@ -100,7 +100,7 @@ struct Cli {
     heartbeat_secs: f64,
     #[arg(long, default_value_t = 8100)]
     mars_dhs_local_port: u16,
-    #[arg(long, default_value = "/etc/polytope-worker/config.yaml")]
+    #[arg(long, default_value = DEFAULT_CONFIG_PATH)]
     config_path: String,
 }
 

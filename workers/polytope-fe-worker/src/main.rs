@@ -3,7 +3,7 @@ use clap::Parser;
 use polytope_worker_common::{
     run_worker_loop, ProcessResult, Processor, WorkItem, WorkerConfig,
 };
-use polytope_worker_common::config::WorkerConfigFile;
+use polytope_worker_common::config::{WorkerConfigFile, DEFAULT_CONFIG_PATH};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyTuple};
 use serde_json::json;
@@ -86,7 +86,7 @@ struct Cli {
     heartbeat_secs: f64,
     #[arg(long, default_value = "/app")]
     python_path: String,
-    #[arg(long, default_value = "/etc/polytope-worker/config.yaml")]
+    #[arg(long, default_value = DEFAULT_CONFIG_PATH)]
     config_path: String,
 }
 
