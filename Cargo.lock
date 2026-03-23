@@ -4725,7 +4725,7 @@ dependencies = [
 [[package]]
 name = "rsfdb"
 version = "0.1.0"
-source = "git+https://github.com/ecmwf/rsfdb?branch=fix%2Frsfindlibs-git-dep#adcd62063f11a7168b6c75ded2c7d701533f405b"
+source = "git+https://github.com/ecmwf/rsfdb?branch=develop#d426b6b3798394551ddc48fb8cb1d7d12d38f53a"
 dependencies = [
  "libc",
  "libloading",

@@ -1,49 +1,19 @@
 # ─── Environment variables ────────────────────────────────────────────────────
 #
 # Required:
-#   GH_TOKEN                  GitHub token for private repo access
-#   RPM_REPO                  Nexus RPM repository URL (unless MARS_BUILD_FROM_SOURCE=true)
+#   GH_TOKEN                    GitHub token for private repo access
+#   RPM_REPO                    Nexus RPM repository URL (unless MARS_BUILD_FROM_SOURCE=true)
 #
 # Tagging:
-#   FIXED_TAG                 Override image tag (default: git commit hash)
-#   PREFIX                    Prepend to auto-generated tag
+#   FIXED_TAG                   Override image tag (default: git commit hash)
+#   PREFIX                      Prepend to auto-generated tag
 #
 # Build method (mars-worker):
-#   MARS_BUILD_FROM_SOURCE    "true" = build C++ from source, "false" = install RPM (default: true)
-#   MARS_CLIENT_CPP_VERSION   RPM package version when MARS_BUILD_FROM_SOURCE=false (default: 7.1.9.1)
-#
-# C++ dependency versions (mars-worker source build, from mars-client-bundle):
-#   MARS_CLIENT_CPP_BRANCH    default: feature/library-api
-#   ECKIT_VERSION             default: 1.33.0
-#   ECCODES_VERSION           default: 2.46.0
-#   ODC_VERSION               default: 1.6.2
-#   METKIT_VERSION            default: 1.17.0
-#   ATLAS_VERSION             default: 0.45.0
-#   ATLAS_ORCA_VERSION        default: 0.4.3
-#   MIR_VERSION               default: 1.23.7
-#   FDB_VERSION               default: 5.19.0
-#
-# C++ dependency versions (polytope-fe-worker):
-#   ECBUILD_VERSION           default: 3.8.2
-#   ECKIT_VERSION             default: 1.28.3
-#   ECCODES_VERSION           default: 2.33.1
-#   FDB_VERSION               default: 5.14.0
-#   GRIBJUMP_VERSION          default: 0.10.2
-#   PYFDB_VERSION             default: 0.1.0
-#
-# C++ dependency versions (fdb-worker):
-#   ECBUILD_VERSION           default: 3.12.0
-#   ECKIT_VERSION             default: 1.33.1
-#   ECCODES_VERSION           default: 2.46.0
-#   FDB_VERSION               default: 5.19.2
-#   PYFDB_VERSION             default: 0.1.0
-#
-# C++ dependency versions (frontend):
-#   ECKIT_VERSION             default: 2.0.4
-#   METKIT_VERSION            default: 1.17.1
+#   MARS_BUILD_FROM_SOURCE      "true" = build C++ from source (default: true)
+#   MARS_CLIENT_CPP_VERSION     RPM package version when not building from source (default: 7.1.9.1)
 #
 # Example:
-#   ECKIT_VERSION=1.34.0 FDB_VERSION=5.20.0 skaffold build -b mars-worker
+#   MARS_ECKIT_VERSION=1.34.0 MARS_FDB_VERSION=5.20.0 skaffold build -b mars-worker
 # ──────────────────────────────────────────────────────────────────────────────
 
 apiVersion: skaffold/v4beta13
@@ -51,87 +21,112 @@ kind: Config
 metadata:
   name: polytope-server
 
+# ─── Build arg anchors (single source of truth for both local and kaniko) ─────
+
+.server_build_args: &server_build_args
+  BIN_NAME: polytope-server
+  GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+  PACKAGE_NAME: polytope-server
+  ECKIT_VERSION: '{{default "1.33.0" .SERVER_ECKIT_VERSION}}'
+  METKIT_VERSION: '{{default "1.17.0" .SERVER_METKIT_VERSION}}'
+
+.fe_build_args: &fe_build_args
+  BIN_NAME: polytope-fe-worker
+  GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+  PACKAGE_NAME: polytope-fe-worker
+  rpm_repo: '{{ .RPM_REPO }}'
+  ecbuild_version: '{{default "3.8.2" .FE_ECBUILD_VERSION}}'
+  eckit_version: '{{default "1.33.0" .FE_ECKIT_VERSION}}'
+  eccodes_version: '{{default "2.46.0" .FE_ECCODES_VERSION}}'
+  fdb_version: '{{default "5.19.2" .FE_FDB_VERSION}}'
+  gribjump_version: '{{default "0.10.2" .FE_GRIBJUMP_VERSION}}'
+  pyfdb_version: '{{default "0.1.0" .FE_PYFDB_VERSION}}'
+
+.fdb_build_args: &fdb_build_args
+  BIN_NAME: fdb-worker
+  GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+  PACKAGE_NAME: fdb-worker
+  ecbuild_version: '{{default "3.12.0" .FDB_ECBUILD_VERSION}}'
+  eckit_version: '{{default "1.33.0" .FDB_ECKIT_VERSION}}'
+  eccodes_version: '{{default "2.46.0" .FDB_ECCODES_VERSION}}'
+  fdb_version: '{{default "5.19.2" .FDB_FDB_VERSION}}'
+  pyfdb_version: '{{default "0.1.0" .FDB_PYFDB_VERSION}}'
+
+.mars_build_args: &mars_build_args
+  BIN_NAME: mars-worker
+  GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+  PACKAGE_NAME: mars-worker
+  rpm_repo: '{{ .RPM_REPO }}'
+  MARS_BUILD_FROM_SOURCE: '{{default "true" .MARS_BUILD_FROM_SOURCE}}'
+  mars_client_cpp_version: '{{default "7.1.9.1" .MARS_CLIENT_CPP_VERSION}}'
+  MARS_CLIENT_CPP_BRANCH: '{{default "feature/library-api" .MARS_CLIENT_CPP_BRANCH}}'
+  ECKIT_VERSION: '{{default "1.33.0" .MARS_ECKIT_VERSION}}'
+  ECCODES_VERSION: '{{default "2.46.0" .MARS_ECCODES_VERSION}}'
+  ODC_VERSION: '{{default "1.6.2" .MARS_ODC_VERSION}}'
+  METKIT_VERSION: '{{default "1.17.0" .MARS_METKIT_VERSION}}'
+  ATLAS_VERSION: '{{default "0.45.0" .MARS_ATLAS_VERSION}}'
+  ATLAS_ORCA_VERSION: '{{default "0.4.3" .MARS_ATLAS_ORCA_VERSION}}'
+  MIR_VERSION: '{{default "1.23.7" .MARS_MIR_VERSION}}'
+  FDB_VERSION: '{{default "5.19.0" .MARS_FDB_VERSION}}'
+
+.test_build_args: &test_build_args
+  BIN_NAME: test-worker
+  GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+  PACKAGE_NAME: test-worker
+
+.kaniko_cache: &kaniko_cache
+  repo: eccr.ecmwf.int/polytope/kaniko-cache
+  cacheTTL: 480h
+
+.kaniko_common: &kaniko_common
+  target: release
+  skipUnusedStages: true
+  useNewRun: true
+  cache: *kaniko_cache
+
+# ─── Build ────────────────────────────────────────────────────────────────────
+
 build:
   artifacts:
-    # ── Broker (frontend) ──────────────────────────────────────────────────────
     - image: eccr.ecmwf.int/polytope/polytope-server
       context: .
       docker:
         dockerfile: frontend/Dockerfile
         target: release
         buildArgs:
-          BIN_NAME: polytope-server
-          GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
-          PACKAGE_NAME: polytope-server
-          ECKIT_VERSION: '{{default "2.0.4" .ECKIT_VERSION}}'
-          METKIT_VERSION: '{{default "1.17.1" .METKIT_VERSION}}'
-    # ── Polytope FE worker (FDB + GribJump + Python) ──────────────────────────
+          <<: *server_build_args
+
     - image: eccr.ecmwf.int/polytope/polytope-fe-worker
       context: .
       docker:
         dockerfile: workers/polytope-fe-worker/Dockerfile
         target: release
         buildArgs:
-          BIN_NAME: polytope-fe-worker
-          GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
-          PACKAGE_NAME: polytope-fe-worker
-          rpm_repo: '{{ .RPM_REPO }}'
-          ecbuild_version: '{{default "3.8.2" .ECBUILD_VERSION}}'
-          eckit_version: '{{default "1.28.3" .ECKIT_VERSION}}'
-          eccodes_version: '{{default "2.33.1" .ECCODES_VERSION}}'
-          fdb_version: '{{default "5.14.0" .FDB_VERSION}}'
-          gribjump_version: '{{default "0.10.2" .GRIBJUMP_VERSION}}'
-          pyfdb_version: '{{default "0.1.0" .PYFDB_VERSION}}'
+          <<: *fe_build_args
 
-    # ── FDB worker ─────────────────────────────────────────────────────────────
     - image: eccr.ecmwf.int/polytope/fdb-worker
       context: .
       docker:
         dockerfile: workers/fdb-worker/Dockerfile
         target: release
         buildArgs:
-          BIN_NAME: fdb-worker
-          GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
-          PACKAGE_NAME: fdb-worker
-          ecbuild_version: '{{default "3.12.0" .ECBUILD_VERSION}}'
-          eckit_version: '{{default "1.33.1" .ECKIT_VERSION}}'
-          eccodes_version: '{{default "2.46.0" .ECCODES_VERSION}}'
-          fdb_version: '{{default "5.19.2" .FDB_VERSION}}'
-          pyfdb_version: '{{default "0.1.0" .PYFDB_VERSION}}'
+          <<: *fdb_build_args
 
-    # ── MARS worker (C++ client) ──────────────────────────────────────────────
     - image: eccr.ecmwf.int/polytope/mars-worker
       context: .
       docker:
         dockerfile: workers/mars-worker/Dockerfile
         target: release
         buildArgs:
-          BIN_NAME: mars-worker
-          GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
-          PACKAGE_NAME: mars-worker
-          rpm_repo: '{{ .RPM_REPO }}'
-          MARS_BUILD_FROM_SOURCE: '{{default "true" .MARS_BUILD_FROM_SOURCE}}'
-          mars_client_cpp_version: '{{default "7.1.9.1" .MARS_CLIENT_CPP_VERSION}}'
-          MARS_CLIENT_CPP_BRANCH: '{{default "feature/library-api" .MARS_CLIENT_CPP_BRANCH}}'
-          ECKIT_VERSION: '{{default "1.33.0" .ECKIT_VERSION}}'
-          ECCODES_VERSION: '{{default "2.46.0" .ECCODES_VERSION}}'
-          ODC_VERSION: '{{default "1.6.2" .ODC_VERSION}}'
-          METKIT_VERSION: '{{default "1.17.0" .METKIT_VERSION}}'
-          ATLAS_VERSION: '{{default "0.45.0" .ATLAS_VERSION}}'
-          ATLAS_ORCA_VERSION: '{{default "0.4.3" .ATLAS_ORCA_VERSION}}'
-          MIR_VERSION: '{{default "1.23.7" .MIR_VERSION}}'
-          FDB_VERSION: '{{default "5.19.0" .FDB_VERSION}}'
+          <<: *mars_build_args
 
-    # ── Test worker (config-driven behaviour: echo, reject, error, wait, dummy)
     - image: eccr.ecmwf.int/polytope/test-worker
       context: .
       docker:
         dockerfile: workers/test-worker/Dockerfile
         target: release
         buildArgs:
-          BIN_NAME: test-worker
-          GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
-          PACKAGE_NAME: test-worker
+          <<: *test_build_args
 
   tagPolicy:
     customTemplate:
@@ -151,3 +146,84 @@ build:
   local:
     useDockerCLI: true
     concurrency: 0
+
+# ─── Profiles ─────────────────────────────────────────────────────────────────
+
+profiles:
+  # ── Kaniko in-cluster build with remote layer caching ─────────────────────
+  #
+  # Usage:
+  #   skaffold build -p kaniko -b mars-worker
+  #
+  # Prerequisites:
+  #   1. Create ~/.docker/kaniko-config.json with registry credentials:
+  #      docker login eccr.ecmwf.int --username '<robot-user>' --password '<pass>'
+  #      cp ~/.docker/config.json ~/.docker/kaniko-config.json
+  #      (or create the JSON manually — see Docker config.json format)
+  #
+  #   2. Ensure the build service account can create pods in the namespace.
+  #   3. The cache repo (eccr.ecmwf.int/polytope/kaniko-cache) must be
+  #      writable by the build credentials.
+  #
+  - name: kaniko
+    patches:
+      - op: remove
+        path: /build/local
+      - op: add
+        path: /build/cluster
+        value:
+          dockerConfig:
+            path: ~/.docker/kaniko-config.json
+          randomDockerConfigSecret: true
+          timeout: 60m
+          concurrency: 0
+
+      - op: remove
+        path: /build/artifacts/0/docker
+      - op: add
+        path: /build/artifacts/0/kaniko
+        value:
+          dockerfile: frontend/Dockerfile
+          <<: *kaniko_common
+          buildArgs:
+            <<: *server_build_args
+
+      - op: remove
+        path: /build/artifacts/1/docker
+      - op: add
+        path: /build/artifacts/1/kaniko
+        value:
+          dockerfile: workers/polytope-fe-worker/Dockerfile
+          <<: *kaniko_common
+          buildArgs:
+            <<: *fe_build_args
+
+      - op: remove
+        path: /build/artifacts/2/docker
+      - op: add
+        path: /build/artifacts/2/kaniko
+        value:
+          dockerfile: workers/fdb-worker/Dockerfile
+          <<: *kaniko_common
+          buildArgs:
+            <<: *fdb_build_args
+
+      - op: remove
+        path: /build/artifacts/3/docker
+      - op: add
+        path: /build/artifacts/3/kaniko
+        value:
+          dockerfile: workers/mars-worker/Dockerfile
+          <<: *kaniko_common
+          buildArgs:
+            <<: *mars_build_args
+
+      - op: remove
+        path: /build/artifacts/4/docker
+      - op: add
+        path: /build/artifacts/4/kaniko
+        value:
+          dockerfile: workers/test-worker/Dockerfile
+          <<: *kaniko_common
+          buildArgs:
+            <<: *test_build_args
