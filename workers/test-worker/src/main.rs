@@ -1,76 +1,8 @@
-use async_trait::async_trait;
 use clap::Parser;
 use polytope_worker_common::config::{DEFAULT_CONFIG_PATH, WorkerConfigFile};
-use polytope_worker_common::{ProcessResult, Processor, WorkItem, WorkerConfig, run_worker_loop};
-use serde::Deserialize;
+use polytope_worker_common::{ProcessResult, WorkItem, WorkerConfig, run_worker_loop};
+use test_worker::*;
 use tracing::info;
-
-#[derive(Debug, Deserialize)]
-struct TestConfig {
-    behaviour: Behaviour,
-    #[serde(default = "default_content_type")]
-    content_type: String,
-}
-
-fn default_content_type() -> String {
-    "application/json".to_string()
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum Behaviour {
-    Reject,
-    Wait {
-        duration_ms: u64,
-    },
-    Error,
-    Echo,
-    Dummy {
-        #[serde(default = "default_dummy_count")]
-        count: u64,
-    },
-}
-
-fn default_dummy_count() -> u64 {
-    10
-}
-
-struct BehaviourProcessor {
-    config: TestConfig,
-}
-
-fn json_success(content_type: &str, payload: Vec<u8>) -> ProcessResult {
-    let body = bytes::Bytes::from(payload);
-    let stream = futures::stream::once(futures::future::ready(Ok::<_, std::io::Error>(body)));
-    ProcessResult::success(content_type, Box::new(stream))
-}
-
-#[async_trait]
-impl Processor for BehaviourProcessor {
-    async fn process(&self, work: WorkItem) -> ProcessResult {
-        match &self.config.behaviour {
-            Behaviour::Reject => ProcessResult::reject("rejected by test worker"),
-
-            Behaviour::Wait { duration_ms } => {
-                tokio::time::sleep(std::time::Duration::from_millis(*duration_ms)).await;
-                json_success(&self.config.content_type, b"{}".to_vec())
-            }
-
-            Behaviour::Error => ProcessResult::error("test error"),
-
-            Behaviour::Echo => {
-                let payload = serde_json::to_vec(&work.request).unwrap_or_default();
-                json_success(&self.config.content_type, payload)
-            }
-
-            Behaviour::Dummy { count } => {
-                let data: Vec<u64> = (1..=*count).collect();
-                let payload = serde_json::to_vec(&data).unwrap_or_default();
-                json_success(&self.config.content_type, payload)
-            }
-        }
-    }
-}
 
 #[derive(Parser)]
 struct Cli {
@@ -127,6 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
     use futures::TryStreamExt;
+    use polytope_worker_common::Processor;
 
     fn dummy_work() -> WorkItem {
         WorkItem {

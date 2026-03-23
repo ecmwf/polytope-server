@@ -3,6 +3,10 @@ name = "test-worker"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "test_worker"
+path = "src/lib.rs"
+
 [dependencies]
 async-trait = "0.1"
 bytes = "1"
