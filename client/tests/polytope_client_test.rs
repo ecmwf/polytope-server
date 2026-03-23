@@ -7,6 +7,7 @@ use tracing_test::traced_test;
 
 #[tokio::test]
 #[traced_test]
+#[ignore = "requires live polytope-test.lumi service"]
 async fn test_retrieve_to_file() -> Result<(), Box<dyn Error>> {
     // Define test parameters
     let base_url = "https://polytope-test.lumi.apps.dte.destination-earth.eu".to_string();
@@ -74,6 +75,7 @@ async fn test_retrieve_to_file() -> Result<(), Box<dyn Error>> {
 
 #[tokio::test]
 #[traced_test]
+#[ignore = "requires live polytope-test.lumi service"]
 async fn test_list_collections() -> Result<(), Box<dyn Error>> {
     // Define test parameters
     let base_url = "https://polytope-test.lumi.apps.dte.destination-earth.eu".to_string();
@@ -101,6 +103,7 @@ async fn test_list_collections() -> Result<(), Box<dyn Error>> {
 
 #[tokio::test]
 #[traced_test]
+#[ignore = "requires live polytope-test.lumi service"]
 async fn test_get_requests() -> Result<(), Box<dyn Error>> {
     let base_url = "https://polytope-test.lumi.apps.dte.destination-earth.eu".to_string();
     let client = PolytopeClient::new(base_url, None, None, None, None, None)?;
@@ -120,6 +123,7 @@ async fn test_get_requests() -> Result<(), Box<dyn Error>> {
 
 #[tokio::test]
 #[traced_test]
+#[ignore = "requires live polytope-test.lumi service"]
 async fn test_get_request_details_404() -> Result<(), Box<dyn Error>> {
     let base_url = "https://polytope-test.lumi.apps.dte.destination-earth.eu".to_string();
     let client = PolytopeClient::new(base_url, None, None, None, None, None)?;
@@ -152,6 +156,7 @@ async fn test_get_request_details_404() -> Result<(), Box<dyn Error>> {
 
 #[tokio::test]
 #[traced_test]
+#[ignore = "requires live polytope-test.lumi service"]
 async fn test_delete_request_lifecycle() -> Result<(), Box<dyn Error>> {
     let base_url = "https://polytope-test.lumi.apps.dte.destination-earth.eu".to_string();
     let collection = "destination-earth";
@@ -230,6 +235,7 @@ async fn test_delete_request_lifecycle() -> Result<(), Box<dyn Error>> {
 
 #[tokio::test]
 #[traced_test]
+#[ignore = "requires live polytope-test.lumi service"]
 async fn test_get_live_requests() -> () {
     let base_url = "https://polytope-test.lumi.apps.dte.destination-earth.eu".to_string();
     let client = PolytopeClient::new(base_url, None, None, None, None, None).unwrap();

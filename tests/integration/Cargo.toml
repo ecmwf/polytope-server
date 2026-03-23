@@ -4,12 +4,18 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+async-trait = "0.1"
 axum = "0.8"
 authotron = { git = "https://github.com/ecmwf/auth-o-tron.git", branch = "feat/shared-auth-workspace" }
+bobs = { git = "https://github.com/ecmwf/bobs.git", branch = "main" }
+bytes = "1"
+futures = "0.3"
 polytope_client = { path = "../../client" }
 polytope-server = { path = "../../frontend" }
+polytope-worker-common = { path = "../../workers/common" }
 reqwest = { version = "0.12", features = ["json"] }
 serde_json = "1"
 serde_yaml = "0.9"
+test-worker = { path = "../../workers/test-worker" }
 tempfile = "3"
 tokio = { version = "1", features = ["full"] }
