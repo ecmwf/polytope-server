@@ -2,7 +2,7 @@
 #
 # Required:
 #   GH_TOKEN                  GitHub token for private repo access
-#   RPM_REPO                  Nexus RPM repository URL (mars-worker, polytope-fe-worker)
+#   RPM_REPO                  Nexus RPM repository URL (unless MARS_BUILD_FROM_SOURCE=true)
 #
 # Tagging:
 #   FIXED_TAG                 Override image tag (default: git commit hash)
