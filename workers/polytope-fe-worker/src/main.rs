@@ -1,9 +1,7 @@
 use async_trait::async_trait;
 use clap::Parser;
-use polytope_worker_common::{
-    run_worker_loop, ProcessResult, Processor, WorkItem, WorkerConfig,
-};
-use polytope_worker_common::config::{WorkerConfigFile, DEFAULT_CONFIG_PATH};
+use polytope_worker_common::config::{DEFAULT_CONFIG_PATH, WorkerConfigFile};
+use polytope_worker_common::{ProcessResult, Processor, WorkItem, WorkerConfig, run_worker_loop};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyTuple};
 use serde_json::json;
@@ -59,9 +57,10 @@ impl Processor for PolytopeProcessor {
             Ok(Ok((bytes, timings))) => {
                 let len = bytes.len() as u64;
                 info!(job_id = %job_id, bytes = len, timings = %timings, "request completed");
-                let stream = futures::stream::once(futures::future::ready(
-                    Ok::<bytes::Bytes, std::io::Error>(bytes::Bytes::from(bytes)),
-                ));
+                let stream =
+                    futures::stream::once(futures::future::ready(
+                        Ok::<bytes::Bytes, std::io::Error>(bytes::Bytes::from(bytes)),
+                    ));
                 ProcessResult::success("application/prs.coverage+json", Box::new(stream))
             }
             Ok(Err(py_err)) => {

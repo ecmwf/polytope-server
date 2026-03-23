@@ -7,17 +7,17 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::{
+    Extension, Json, Router,
     extract::{Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
-    Extension, Json, Router,
 };
 use bits::{Job, JobResult, PollOutcome};
 use bytes::BytesMut;
 use chrono::Utc;
 use futures::TryStreamExt;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::auth::AuthUser;
 use crate::state::AppState;

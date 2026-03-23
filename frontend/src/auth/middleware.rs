@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use axum::{
+    Json,
     body::Body,
     extract::State,
-    http::{header, Request, StatusCode},
+    http::{Request, StatusCode, header},
     middleware::Next,
     response::{IntoResponse, Response},
-    Json,
 };
 use serde_json::json;
 
@@ -32,7 +32,7 @@ pub async fn auth_middleware(
                     [(header::WWW_AUTHENTICATE, "Bearer")],
                     Json(json!({"error": "invalid Authorization header encoding"})),
                 )
-                    .into_response()
+                    .into_response();
             }
         },
         None => {
@@ -41,7 +41,7 @@ pub async fn auth_middleware(
                 [(header::WWW_AUTHENTICATE, "Bearer")],
                 Json(json!({"error": "missing Authorization header"})),
             )
-                .into_response()
+                .into_response();
         }
     };
 
@@ -93,18 +93,18 @@ mod tests {
     use std::sync::Arc;
 
     use axum::{
+        Router,
         body::Body,
         http::{Request, StatusCode},
         middleware,
         routing::{get, post},
-        Router,
     };
     use std::time::Duration as StdDuration;
 
     use http_body_util::BodyExt;
     use jsonwebtoken::{EncodingKey, Header};
     use serde::Serialize;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
     use tower::ServiceExt;
 
     use crate::auth::AuthClient;
@@ -523,7 +523,7 @@ mod tests {
 
     #[tokio::test]
     async fn authenticated_job_user_auth_contract_shape_is_canonical() {
-        use axum::{extract::Request as AxumRequest, Json};
+        use axum::{Json, extract::Request as AxumRequest};
 
         let secret = "testsecret";
         let jwt = make_test_jwt(secret);

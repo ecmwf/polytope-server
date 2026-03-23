@@ -9,9 +9,8 @@ pub mod state;
 use std::sync::Arc;
 
 use axum::{
-    middleware,
+    Router, middleware,
     routing::{get, post},
-    Router,
 };
 use state::AppState;
 use tower_http::compression::CompressionLayer;

@@ -3,10 +3,8 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use clap::Parser;
 use mars_client::{Error as MarsError, MarsClient};
-use polytope_worker_common::{
-    run_worker_loop, ProcessResult, Processor, WorkItem, WorkerConfig,
-};
-use polytope_worker_common::config::{WorkerConfigFile, DEFAULT_CONFIG_PATH};
+use polytope_worker_common::config::{DEFAULT_CONFIG_PATH, WorkerConfigFile};
+use polytope_worker_common::{ProcessResult, Processor, WorkItem, WorkerConfig, run_worker_loop};
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::warn;
 

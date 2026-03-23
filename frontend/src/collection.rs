@@ -33,8 +33,8 @@
 /// populate the `list_collections` endpoint by walking all instantiated actions
 /// via `Bits::describe_actions()`.
 use async_trait::async_trait;
-use bits::actions::{ActionError, CheckAction, CheckResult};
 use bits::Job;
+use bits::actions::{ActionError, CheckAction, CheckResult};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
