@@ -151,8 +151,8 @@ mod tests {
     }
 
     /// Builds a router that mirrors main.rs structure:
-    /// - /api/v2/health is public
-    /// - /api/v1/*, /api/v2/requests*, /openmeteo/v1/* are behind auth
+    /// - /api/v1/test and /api/v2/health are public
+    /// - /api/v1/collections, /api/v1/requests*, /api/v2/requests*, /openmeteo/v1/* are behind auth
     /// Uses stub handlers so we don't need bits::Bits.
     fn build_test_app(auth_client: Option<AuthClient>) -> Router {
         let state = Arc::new(AppState {
@@ -161,7 +161,6 @@ mod tests {
         });
 
         let v1 = Router::new()
-            .route("/test", get(stub_handler))
             .route("/collections", get(stub_handler))
             .route("/requests", get(stub_handler))
             .route(
@@ -189,6 +188,7 @@ mod tests {
         }
 
         Router::new()
+            .route("/api/v1/test", get(stub_handler))
             .route("/api/v2/health", get(stub_handler))
             .merge(protected)
             .with_state(state)
@@ -287,10 +287,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn v1_test_requires_auth() {
+    async fn v1_test_accessible_without_auth() {
         let server = mockito::Server::new_async().await;
         let client = setup_auth_client(&server, "secret").await;
-        assert_401_without_auth(build_test_app(Some(client)), "GET", "/api/v1/test").await;
+        let app = build_test_app(Some(client));
+
+        let resp = app
+            .oneshot(Request::get("/api/v1/test").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 
     #[tokio::test]
@@ -396,7 +403,7 @@ mod tests {
 
         let resp = app
             .oneshot(
-                Request::get("/api/v1/test")
+                Request::get("/api/v1/collections")
                     .header("Authorization", "EmailKey user@test.com:abc123")
                     .body(Body::empty())
                     .unwrap(),
@@ -427,7 +434,7 @@ mod tests {
 
         let resp = app
             .oneshot(
-                Request::get("/api/v1/test")
+                Request::get("/api/v1/collections")
                     .header("Authorization", "Bearer sometoken")
                     .body(Body::empty())
                     .unwrap(),

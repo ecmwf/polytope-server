@@ -41,7 +41,6 @@ pub fn build_app(
     let state = Arc::new(AppState { bits, auth_client });
 
     let v1 = Router::new()
-        .route("/test", get(api::v1::test))
         .route("/collections", get(api::v1::list_collections))
         .route("/requests", get(api::v1::list_requests))
         .route(
@@ -90,6 +89,7 @@ pub fn build_app(
     }
 
     let app = Router::new()
+        .route("/api/v1/test", get(api::v1::test))
         .route("/api/v2/health", get(api::v2::health))
         .merge(protected)
         .with_state(state.clone());
