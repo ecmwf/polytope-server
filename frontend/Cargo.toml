@@ -35,8 +35,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 metkit = { path = "../utils/metkit", optional = true }
 
 # Auth (shared crate from auth-o-tron workspace)
-authotron-client = { git = "https://github.com/ecmwf/auth-o-tron.git", branch = "feat/shared-auth-workspace" }
-authotron-types = { git = "https://github.com/ecmwf/auth-o-tron.git", branch = "feat/shared-auth-workspace" }
+authotron-client = { git = "https://github.com/ecmwf/auth-o-tron.git", branch = "main" }
+authotron-types = { git = "https://github.com/ecmwf/auth-o-tron.git", branch = "main" }
 
 [features]
 default = []

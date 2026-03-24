@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+red()   { printf '\033[1;31m%s\033[0m\n' "$*"; }
+green() { printf '\033[1;32m%s\033[0m\n' "$*"; }
+dim()   { printf '\033[2m%s\033[0m\n' "$*"; }
+
+# ── cargo fmt ───────────────────────────────────────────────────────────────
+staged_rs=$(git diff --cached --name-only --diff-filter=ACM -- '*.rs')
+
+if [[ -n "$staged_rs" ]]; then
+  dim "Running cargo fmt..."
+  cargo fmt --all
+
+  # Re-stage only the .rs files that were already staged
+  echo "$staged_rs" | xargs git add
+  green "cargo fmt ✓"
+fi
+
+# ── Update git dependency locks ───────────────────────────────────────────────
+# Skip with: SKIP_DEPS_UPDATE=1 git commit
+GIT_DEPS=(
+  bits
+  bits-ecmwf
+  polytope-edr
+  authotron-client
+  authotron-types
+  authotron
+  bobs
+  rsfdb
+  mars-client
+)
+
+if [[ "${SKIP_DEPS_UPDATE:-}" == "1" ]]; then
+  dim "Skipping git dependency lock update (SKIP_DEPS_UPDATE=1)"
+else
+  update_args=()
+  for dep in "${GIT_DEPS[@]}"; do
+    update_args+=(-p "$dep")
+  done
+
+  dim "Updating git dependency locks..."
+  if cargo update "${update_args[@]}" 2>/dev/null; then
+    if ! git diff --quiet Cargo.lock 2>/dev/null; then
+      git add Cargo.lock
+      green "Cargo.lock updated ✓"
+    else
+      dim "Cargo.lock already up to date"
+    fi
+  else
+    red "Warning: could not update git dependencies (offline?). Skipping."
+    red "Run 'cargo update ${update_args[*]}' manually before pushing."
+  fi
+fi

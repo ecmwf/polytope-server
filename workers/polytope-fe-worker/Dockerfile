@@ -1,7 +1,3 @@
-FROM scratch AS bits
-FROM scratch AS rsfdb
-FROM scratch AS rsfindlibs
-
 ###############################
 # Shared base: Rust + cargo-chef + system deps (built once)
 ###############################
@@ -14,14 +10,10 @@ RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-d
 ###############################
 FROM chef-base AS chef
 ARG GIT_AUTH_TOKEN=""
-ARG LOCAL_DEPS=""
 WORKDIR /ecmwf/polytope-server
-COPY --from=bits . /ecmwf/bits/
-COPY --from=rsfdb . /ecmwf/rsfdb/
-COPY --from=rsfindlibs . /ecmwf/rsfindlibs/
 COPY workers/common/ workers/common/
 COPY workers/polytope-fe-worker/ workers/polytope-fe-worker/
-RUN mkdir -p .cargo && echo "[net]" > .cargo/config.toml && echo "git-fetch-with-cli = true" >> .cargo/config.toml && if [ "$LOCAL_DEPS" = "1" ]; then echo '[patch."https://github.com/ecmwf/bits-broker"]' >> .cargo/config.toml && echo 'bits = { path = "/ecmwf/bits/bits" }' >> .cargo/config.toml && echo 'bits-ecmwf = { path = "/ecmwf/bits/bits-ecmwf" }' >> .cargo/config.toml; fi
+RUN mkdir -p .cargo && echo '[net]' > .cargo/config.toml && echo 'git-fetch-with-cli = true' >> .cargo/config.toml
 RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi
 RUN cd workers/polytope-fe-worker && cargo chef prepare --recipe-path recipe.json
 
@@ -30,11 +22,7 @@ RUN cd workers/polytope-fe-worker && cargo chef prepare --recipe-path recipe.jso
 ###############################
 FROM chef-base AS cacher
 ARG GIT_AUTH_TOKEN=""
-ARG LOCAL_DEPS=""
 WORKDIR /ecmwf/polytope-server
-COPY --from=bits . /ecmwf/bits/
-COPY --from=rsfdb . /ecmwf/rsfdb/
-COPY --from=rsfindlibs . /ecmwf/rsfindlibs/
 COPY --from=chef /ecmwf/polytope-server/workers/polytope-fe-worker/recipe.json workers/polytope-fe-worker/recipe.json
 COPY --from=chef /ecmwf/polytope-server/.cargo/config.toml .cargo/config.toml
 COPY workers/common/ workers/common/
@@ -46,16 +34,12 @@ RUN cd workers/polytope-fe-worker && cargo chef cook --release --recipe-path rec
 ###############################
 FROM chef-base AS builder
 ARG GIT_AUTH_TOKEN=""
-ARG LOCAL_DEPS=""
 WORKDIR /ecmwf/polytope-server
 ARG PACKAGE_NAME=polytope-fe-worker
 ARG BIN_NAME=polytope-fe-worker
-COPY --from=bits . /ecmwf/bits/
-COPY --from=rsfdb . /ecmwf/rsfdb/
-COPY --from=rsfindlibs . /ecmwf/rsfindlibs/
 COPY workers/common/ workers/common/
 COPY workers/polytope-fe-worker/ workers/polytope-fe-worker/
-RUN mkdir -p .cargo && echo "[net]" > .cargo/config.toml && echo "git-fetch-with-cli = true" >> .cargo/config.toml && if [ "$LOCAL_DEPS" = "1" ]; then echo '[patch."https://github.com/ecmwf/bits-broker"]' >> .cargo/config.toml && echo 'bits = { path = "/ecmwf/bits/bits" }' >> .cargo/config.toml && echo 'bits-ecmwf = { path = "/ecmwf/bits/bits-ecmwf" }' >> .cargo/config.toml; fi
+RUN mkdir -p .cargo && echo '[net]' > .cargo/config.toml && echo 'git-fetch-with-cli = true' >> .cargo/config.toml
 COPY --from=cacher /ecmwf/polytope-server/workers/polytope-fe-worker/target workers/polytope-fe-worker/target
 COPY --from=cacher /usr/local/cargo /usr/local/cargo
 RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi
@@ -82,6 +66,12 @@ RUN git clone --depth 1 --branch ${eckit_version} https://github.com/ecmwf/eckit
     && ecbuild --prefix=/opt/fdb -- -DCMAKE_PREFIX_PATH=/opt/fdb /source/eckit \
     && make -j$(nproc) && make install
 
+RUN git clone --depth 1 --branch v1.1.3 https://github.com/Deutsches-Klimarechenzentrum/libaec.git /source/libaec \
+    && mkdir -p /build/libaec && cd /build/libaec \
+    && cmake -DCMAKE_INSTALL_PREFIX=/opt/fdb /source/libaec \
+    && make -j$(nproc) && make install \
+    && rm -rf /source/libaec /build/libaec
+
 RUN git clone --depth 1 --branch ${eccodes_version} https://github.com/ecmwf/eccodes.git /source/eccodes \
     && mkdir -p /build/eccodes && cd /build/eccodes \
     && ecbuild --prefix=/opt/fdb -- -DENABLE_FORTRAN=OFF -DCMAKE_PREFIX_PATH=/opt/fdb /source/eccodes \
@@ -96,12 +86,6 @@ RUN git clone --depth 1 --branch ${fdb_version} https://github.com/ecmwf/fdb.git
     && mkdir -p /build/fdb && cd /build/fdb \
     && ecbuild --prefix=/opt/fdb -- -DCMAKE_PREFIX_PATH="/opt/fdb;/opt/fdb/eckit;/opt/fdb/metkit" -DCMAKE_CXX_FLAGS=-fpermissive /source/fdb \
     && make -j$(nproc) && make install
-
-RUN git clone --depth 1 --branch v1.1.3 https://github.com/Deutsches-Klimarechenzentrum/libaec.git /source/libaec \
-    && mkdir -p /build/libaec && cd /build/libaec \
-    && cmake -DCMAKE_INSTALL_PREFIX=/opt/fdb /source/libaec \
-    && make -j$(nproc) && make install \
-    && rm -rf /source/libaec /build/libaec
 
 RUN git clone --depth 1 --branch ${gribjump_version} https://github.com/ecmwf/gribjump.git /source/gribjump \
     && mkdir -p /build/gribjump && cd /build/gribjump \
