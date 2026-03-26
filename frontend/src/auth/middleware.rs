@@ -25,34 +25,11 @@ pub async fn auth_middleware(
 
     let auth_header = match req.headers().get(header::AUTHORIZATION) {
         Some(value) => match value.to_str() {
-            Ok(s) => s.to_string(),
-            Err(_) => {
-                return (
-                    StatusCode::UNAUTHORIZED,
-                    [(header::WWW_AUTHENTICATE, "Bearer")],
-                    Json(json!({"error": "invalid Authorization header encoding"})),
-                )
-                    .into_response();
-            }
+            Ok(s) if !s.is_empty() => s.to_string(),
+            Ok(_) | Err(_) => return next.run(req).await,
         },
-        None => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                [(header::WWW_AUTHENTICATE, "Bearer")],
-                Json(json!({"error": "missing Authorization header"})),
-            )
-                .into_response();
-        }
+        None => return next.run(req).await,
     };
-
-    if auth_header.is_empty() {
-        return (
-            StatusCode::UNAUTHORIZED,
-            [(header::WWW_AUTHENTICATE, "Bearer")],
-            Json(json!({"error": "empty Authorization header"})),
-        )
-            .into_response();
-    }
 
     match auth_client.authenticate(&auth_header).await {
         Ok(user) => {
@@ -150,9 +127,9 @@ mod tests {
         "ok"
     }
 
-    /// Builds a router that mirrors main.rs structure:
-    /// - /api/v1/test and /api/v2/health are public
-    /// - /api/v1/collections, /api/v1/requests*, /api/v2/requests*, /openmeteo/v1/* are behind auth
+    /// Builds a router that mirrors main.rs structure.
+    /// Auth middleware is pass-through: validates tokens when present, continues without
+    /// AuthUser when absent. Invalid tokens still 401.
     /// Uses stub handlers so we don't need bits::Bits.
     fn build_test_app(auth_client: Option<AuthClient>) -> Router {
         let state = Arc::new(AppState {
@@ -232,98 +209,23 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
     }
 
-    // ── Protected routes reject unauthenticated requests ──────────────
-
-    async fn assert_401_without_auth(app: Router, method: &str, path: &str) {
-        let req = Request::builder()
-            .method(method)
-            .uri(path)
-            .header("Content-Type", "application/json")
-            .body(Body::from("{}"))
-            .unwrap();
-
-        let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(
-            resp.status(),
-            StatusCode::UNAUTHORIZED,
-            "{} {} should be 401 without auth",
-            method,
-            path
-        );
-
-        let www_auth = resp.headers().get("WWW-Authenticate");
-        assert!(
-            www_auth.is_some(),
-            "{} {} missing WWW-Authenticate header",
-            method,
-            path
-        );
-    }
+    // ── Unauthenticated requests pass through ──────────────────────────
 
     #[tokio::test]
-    async fn v2_submit_requires_auth() {
-        let server = mockito::Server::new_async().await;
-        let client = setup_auth_client(&server, "secret").await;
-        assert_401_without_auth(build_test_app(Some(client)), "POST", "/api/v2/requests").await;
-    }
-
-    #[tokio::test]
-    async fn v2_poll_requires_auth() {
-        let server = mockito::Server::new_async().await;
-        let client = setup_auth_client(&server, "secret").await;
-        assert_401_without_auth(build_test_app(Some(client)), "GET", "/api/v2/requests/abc").await;
-    }
-
-    #[tokio::test]
-    async fn v2_cancel_requires_auth() {
-        let server = mockito::Server::new_async().await;
-        let client = setup_auth_client(&server, "secret").await;
-        assert_401_without_auth(
-            build_test_app(Some(client)),
-            "DELETE",
-            "/api/v2/requests/abc",
-        )
-        .await;
-    }
-
-    #[tokio::test]
-    async fn v1_test_accessible_without_auth() {
+    async fn routes_accessible_without_auth_header() {
         let server = mockito::Server::new_async().await;
         let client = setup_auth_client(&server, "secret").await;
         let app = build_test_app(Some(client));
 
-        let resp = app
-            .oneshot(Request::get("/api/v1/test").body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-
-        assert_eq!(resp.status(), StatusCode::OK);
-    }
-
-    #[tokio::test]
-    async fn v1_collections_requires_auth() {
-        let server = mockito::Server::new_async().await;
-        let client = setup_auth_client(&server, "secret").await;
-        assert_401_without_auth(build_test_app(Some(client)), "GET", "/api/v1/collections").await;
-    }
-
-    #[tokio::test]
-    async fn v1_requests_requires_auth() {
-        let server = mockito::Server::new_async().await;
-        let client = setup_auth_client(&server, "secret").await;
-        assert_401_without_auth(build_test_app(Some(client)), "GET", "/api/v1/requests").await;
-    }
-
-    #[tokio::test]
-    async fn openmeteo_requires_auth() {
-        let server = mockito::Server::new_async().await;
-        let client = setup_auth_client(&server, "secret").await;
-        assert_401_without_auth(
-            build_test_app(Some(client)),
-            "GET",
-            "/openmeteo/v1/forecast",
-        )
-        .await;
+        for (method, path) in [
+            ("GET", "/api/v1/test"),
+            ("GET", "/api/v1/collections"),
+            ("GET", "/api/v1/requests"),
+            ("GET", "/api/v2/requests/abc"),
+            ("GET", "/openmeteo/v1/forecast"),
+        ] {
+            assert_not_401(app.clone(), method, path).await;
+        }
     }
 
     // ── Auth disabled: all routes accessible ──────────────────────────
@@ -349,39 +251,30 @@ mod tests {
     #[tokio::test]
     async fn auth_disabled_all_routes_open() {
         let app = build_test_app(None);
-        assert_not_401(app, "POST", "/api/v2/requests").await;
-
-        let app = build_test_app(None);
-        assert_not_401(app, "GET", "/api/v1/test").await;
-
-        let app = build_test_app(None);
+        assert_not_401(app.clone(), "POST", "/api/v2/requests").await;
+        assert_not_401(app.clone(), "GET", "/api/v1/test").await;
         assert_not_401(app, "GET", "/openmeteo/v1/forecast").await;
     }
 
     // ── Valid auth passes through ─────────────────────────────────────
 
     #[tokio::test]
-    async fn empty_authorization_header_returns_401() {
+    async fn empty_authorization_header_passes_through() {
         let server = mockito::Server::new_async().await;
         let client = setup_auth_client(&server, "secret").await;
         let app = build_test_app(Some(client));
 
         let resp = app
             .oneshot(
-                Request::post("/api/v2/requests")
+                Request::get("/api/v1/collections")
                     .header("Authorization", "")
-                    .header("Content-Type", "application/json")
-                    .body(Body::from("{}"))
+                    .body(Body::empty())
                     .unwrap(),
             )
             .await
             .unwrap();
 
-        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
-        assert!(resp.headers().get("WWW-Authenticate").is_some());
-        let body = resp.into_body().collect().await.unwrap().to_bytes();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json["error"], "empty Authorization header");
+        assert_ne!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
