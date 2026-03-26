@@ -13,6 +13,15 @@ use serde_json::json;
 use super::AuthError;
 use crate::state::AppState;
 
+fn unauthorized(message: &str) -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        [(header::WWW_AUTHENTICATE, "Bearer")],
+        Json(json!({"error": message})),
+    )
+        .into_response()
+}
+
 pub async fn auth_middleware(
     State(state): State<Arc<AppState>>,
     req: Request<Body>,
@@ -26,9 +35,15 @@ pub async fn auth_middleware(
     let auth_header = match req.headers().get(header::AUTHORIZATION) {
         Some(value) => match value.to_str() {
             Ok(s) if !s.is_empty() => s.to_string(),
-            Ok(_) | Err(_) => return next.run(req).await,
+            Ok(_) => return unauthorized("empty Authorization header"),
+            Err(_) => return unauthorized("invalid Authorization header encoding"),
         },
-        None => return next.run(req).await,
+        None => {
+            if state.allow_anonymous {
+                return next.run(req).await;
+            }
+            return unauthorized("missing Authorization header");
+        }
     };
 
     match auth_client.authenticate(&auth_header).await {
@@ -127,14 +142,15 @@ mod tests {
         "ok"
     }
 
-    /// Builds a router that mirrors main.rs structure.
-    /// Auth middleware is pass-through: validates tokens when present, continues without
-    /// AuthUser when absent. Invalid tokens still 401.
-    /// Uses stub handlers so we don't need bits::Bits.
     fn build_test_app(auth_client: Option<AuthClient>) -> Router {
+        build_test_app_with_anon(auth_client, false)
+    }
+
+    fn build_test_app_with_anon(auth_client: Option<AuthClient>, allow_anonymous: bool) -> Router {
         let state = Arc::new(AppState {
             bits: test_bits(),
             auth_client,
+            allow_anonymous,
         });
 
         let v1 = Router::new()
@@ -209,23 +225,72 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
     }
 
-    // ── Unauthenticated requests pass through ──────────────────────────
+    // ── Default mode: auth required ──────────────────────────────────
 
     #[tokio::test]
-    async fn routes_accessible_without_auth_header() {
+    async fn protected_routes_require_auth() {
         let server = mockito::Server::new_async().await;
         let client = setup_auth_client(&server, "secret").await;
         let app = build_test_app(Some(client));
 
         for (method, path) in [
-            ("GET", "/api/v1/test"),
             ("GET", "/api/v1/collections"),
             ("GET", "/api/v1/requests"),
+            ("POST", "/api/v2/requests"),
             ("GET", "/api/v2/requests/abc"),
+            ("DELETE", "/api/v2/requests/abc"),
+            ("GET", "/openmeteo/v1/forecast"),
+        ] {
+            assert_401(app.clone(), method, path).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn test_endpoint_accessible_without_auth() {
+        let server = mockito::Server::new_async().await;
+        let client = setup_auth_client(&server, "secret").await;
+        let app = build_test_app(Some(client));
+
+        assert_not_401(app, "GET", "/api/v1/test").await;
+    }
+
+    // ── Anonymous mode: allow_anonymous = true ────────────────────────
+
+    #[tokio::test]
+    async fn anonymous_mode_passes_unauthenticated_requests() {
+        let server = mockito::Server::new_async().await;
+        let client = setup_auth_client(&server, "secret").await;
+        let app = build_test_app_with_anon(Some(client), true);
+
+        for (method, path) in [
+            ("GET", "/api/v1/collections"),
+            ("GET", "/api/v1/requests"),
+            ("POST", "/api/v2/requests"),
+            ("GET", "/api/v2/requests/abc"),
+            ("DELETE", "/api/v2/requests/abc"),
             ("GET", "/openmeteo/v1/forecast"),
         ] {
             assert_not_401(app.clone(), method, path).await;
         }
+    }
+
+    #[tokio::test]
+    async fn anonymous_mode_empty_auth_header_still_401() {
+        let server = mockito::Server::new_async().await;
+        let client = setup_auth_client(&server, "secret").await;
+        let app = build_test_app_with_anon(Some(client), true);
+
+        let resp = app
+            .oneshot(
+                Request::get("/api/v1/collections")
+                    .header("Authorization", "")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
     // ── Auth disabled: all routes accessible ──────────────────────────
@@ -242,7 +307,31 @@ mod tests {
         assert_ne!(
             resp.status(),
             StatusCode::UNAUTHORIZED,
-            "{} {} should NOT be 401 when auth disabled",
+            "{} {} should not be 401",
+            method,
+            path
+        );
+    }
+
+    async fn assert_401(app: Router, method: &str, path: &str) {
+        let req = Request::builder()
+            .method(method)
+            .uri(path)
+            .header("Content-Type", "application/json")
+            .body(Body::from("{}"))
+            .unwrap();
+
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "{} {} should be 401 without auth",
+            method,
+            path
+        );
+        assert!(
+            resp.headers().get("WWW-Authenticate").is_some(),
+            "{} {} missing WWW-Authenticate header",
             method,
             path
         );
@@ -259,7 +348,7 @@ mod tests {
     // ── Valid auth passes through ─────────────────────────────────────
 
     #[tokio::test]
-    async fn empty_authorization_header_passes_through() {
+    async fn empty_authorization_header_returns_401() {
         let server = mockito::Server::new_async().await;
         let client = setup_auth_client(&server, "secret").await;
         let app = build_test_app(Some(client));
@@ -274,7 +363,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert_ne!(resp.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"], "empty Authorization header");
     }
 
     #[tokio::test]
@@ -389,6 +481,7 @@ mod tests {
         let state = Arc::new(AppState {
             bits: test_bits(),
             auth_client: Some(client),
+            allow_anonymous: false,
         });
 
         async fn check_user(req: AxumRequest) -> StatusCode {
@@ -440,6 +533,7 @@ mod tests {
         let state = Arc::new(AppState {
             bits: test_bits(),
             auth_client: Some(client),
+            allow_anonymous: false,
         });
 
         async fn contract_payload(req: AxumRequest) -> Json<Value> {
@@ -517,5 +611,49 @@ mod tests {
         );
         assert_eq!(auth.get("attributes"), Some(&json!({})));
         assert_eq!(auth.get("scopes"), Some(&json!({})));
+    }
+
+    #[tokio::test]
+    async fn user_not_in_extensions_when_anonymous() {
+        use axum::extract::Request as AxumRequest;
+
+        let server = mockito::Server::new_async().await;
+        let client = setup_auth_client(&server, "secret").await;
+        let state = Arc::new(AppState {
+            bits: test_bits(),
+            auth_client: Some(client),
+            allow_anonymous: true,
+        });
+
+        async fn check_no_user(req: AxumRequest) -> StatusCode {
+            if req.extensions().get::<crate::auth::AuthUser>().is_none() {
+                StatusCode::OK
+            } else {
+                StatusCode::EXPECTATION_FAILED
+            }
+        }
+
+        let mut protected = Router::new().route("/check", get(check_no_user));
+        protected = protected.layer(middleware::from_fn_with_state(
+            state.clone(),
+            super::auth_middleware,
+        ));
+
+        let app = Router::new().merge(protected).with_state(state);
+
+        let resp = app
+            .oneshot(
+                Request::get("/check")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "anonymous request should not have AuthUser in extensions"
+        );
     }
 }
