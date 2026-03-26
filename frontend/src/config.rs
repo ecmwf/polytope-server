@@ -9,6 +9,8 @@ pub struct AuthConfig {
     pub timeout_ms: u64,
     pub cache_ttl_secs: Option<u64>,
     pub cache_capacity: Option<u64>,
+    #[serde(default)]
+    pub allow_anonymous: bool,
 }
 
 impl AuthConfig {
@@ -28,6 +30,7 @@ impl std::fmt::Debug for AuthConfig {
             .field("timeout_ms", &self.timeout_ms)
             .field("cache_ttl_secs", &self.cache_ttl_secs)
             .field("cache_capacity", &self.cache_capacity)
+            .field("allow_anonymous", &self.allow_anonymous)
             .finish()
     }
 }
@@ -105,6 +108,21 @@ authentication:
         assert_eq!(auth.url, "http://auth-o-tron:8080");
         assert_eq!(auth.secret, "testsecret");
         assert_eq!(auth.timeout_ms, 5000);
+        assert!(!auth.allow_anonymous);
+    }
+
+    #[test]
+    fn test_config_allow_anonymous() {
+        let yaml = r#"
+bits: {}
+authentication:
+  url: "http://auth:8080"
+  secret: "s"
+  allow_anonymous: true
+"#;
+        let cfg: ServerConfig = serde_yaml::from_str(yaml).unwrap();
+        let auth = cfg.authentication.unwrap();
+        assert!(auth.allow_anonymous);
     }
 
     #[test]
