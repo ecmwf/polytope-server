@@ -16,8 +16,8 @@ async-trait = "0.1"
 axum = { version = "0.8", features = ["http2"] }
 tower-http = { version = "0.6", features = ["cors", "compression-full"] }
 polytope-edr = { git = "https://github.com/ecmwf/polytope-edr", branch = "master" }
-bits = { git = "https://github.com/ecmwf/bits-broker", branch = "main", features = ["tikv"] }
-bits-ecmwf = { git = "https://github.com/ecmwf/bits-broker", branch = "main" }
+bits = { git = "https://github.com/ecmwf/bits-broker", branch = "feat/unauthenticated-routes", features = ["tikv"] }
+bits-ecmwf = { git = "https://github.com/ecmwf/bits-broker", branch = "feat/unauthenticated-routes" }
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
 futures = "0.3"
@@ -35,8 +35,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 metkit = { path = "../utils/metkit", optional = true }
 
 # Auth (shared crate from auth-o-tron workspace)
-authotron-client = { git = "https://github.com/ecmwf/auth-o-tron.git", branch = "main" }
-authotron-types = { git = "https://github.com/ecmwf/auth-o-tron.git", branch = "main" }
+authotron-client = { git = "https://github.com/ecmwf/auth-o-tron.git", branch = "feat/unauthenticated-routes" }
+authotron-types = { git = "https://github.com/ecmwf/auth-o-tron.git", branch = "feat/unauthenticated-routes" }
 
 [features]
 default = []

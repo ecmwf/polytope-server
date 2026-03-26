@@ -830,7 +830,6 @@ async fn anonymous_mode_unauthenticated_submit_succeeds() {
 }
 
 #[tokio::test]
-#[ignore = "requires has_auth action from local bits branch (not yet on remote main)"]
 async fn anonymous_mode_has_auth_routes_to_public() {
     let (auth_backend_url, auth_backend) = spawn_mock_backend().await.expect("spawn auth backend");
     let (public_backend_url, public_backend) =
