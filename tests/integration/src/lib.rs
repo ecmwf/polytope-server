@@ -246,6 +246,56 @@ bits:
     Ok((format!("http://{}", addr), handle))
 }
 
+pub async fn spawn_polytope_server_anon(
+    authotron_url: Option<&str>,
+    bits_yaml: &str,
+    allow_anonymous: bool,
+) -> Result<(String, JoinHandle<()>), Box<dyn Error>> {
+    let server_config = if let Some(auth_url) = authotron_url {
+        format!(
+            r#"
+server:
+  host: "127.0.0.1"
+  port: 0
+authentication:
+  url: "{auth_url}"
+  secret: "{JWT_SECRET}"
+  allow_anonymous: {allow_anonymous}
+bits:
+{bits_yaml}
+"#
+        )
+    } else {
+        format!(
+            r#"
+server:
+  host: "127.0.0.1"
+  port: 0
+bits:
+{bits_yaml}
+"#
+        )
+    };
+
+    let mut config_file = NamedTempFile::new()?;
+    use std::io::Write as _;
+    config_file.write_all(server_config.as_bytes())?;
+
+    let cfg = polytope_server::config::ServerConfig::from_file(
+        config_file.path().to_str().expect("utf8 path"),
+    )?;
+
+    let (app, _state) = polytope_server::build_app(cfg)?;
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+
+    let handle = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+
+    Ok((format!("http://{}", addr), handle))
+}
+
 #[cfg(test)]
 fn fallback_bits_yaml(backend_url: &str) -> String {
     format!(
@@ -277,6 +327,22 @@ fn strict_bits_yaml(backend_url: &str) -> String {
             realm: alpha
         - target::http:
             url: "{backend_url}/"
+"#
+    )
+}
+
+#[cfg(test)]
+fn has_auth_split_yaml(auth_backend_url: &str, public_backend_url: &str) -> String {
+    format!(
+        r#"
+  routes:
+    - authenticated:
+        - check::has_auth: {{}}
+        - target::http:
+            url: "{auth_backend_url}/"
+    - public:
+        - target::http:
+            url: "{public_backend_url}/"
 "#
     )
 }
@@ -731,6 +797,171 @@ async fn strict_wrong_realm_rejected() {
         .await
         .expect("request succeeds");
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    server.abort();
+    authotron.abort();
+    backend.abort();
+}
+
+#[tokio::test]
+async fn anonymous_mode_unauthenticated_submit_succeeds() {
+    let (backend_url, backend) = spawn_mock_backend().await.expect("spawn backend");
+    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (server_url, server) =
+        spawn_polytope_server_anon(Some(&authotron_url), &simple_bits_yaml(&backend_url), true)
+            .await
+            .expect("spawn polytope server");
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("build reqwest client");
+    let res = client
+        .post(format!("{server_url}/api/v2/requests"))
+        .json(&serde_json::json!({"class": "od"}))
+        .send()
+        .await
+        .expect("request succeeds");
+    assert!(matches!(res.status(), StatusCode::OK | StatusCode::SEE_OTHER));
+
+    server.abort();
+    authotron.abort();
+    backend.abort();
+}
+
+#[tokio::test]
+#[ignore = "requires has_auth action from local bits branch (not yet on remote main)"]
+async fn anonymous_mode_has_auth_routes_to_public() {
+    let (auth_backend_url, auth_backend) = spawn_mock_backend().await.expect("spawn auth backend");
+    let (public_backend_url, public_backend) =
+        spawn_mock_backend().await.expect("spawn public backend");
+    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (server_url, server) = spawn_polytope_server_anon(
+        Some(&authotron_url),
+        &has_auth_split_yaml(&auth_backend_url, &public_backend_url),
+        true,
+    )
+    .await
+    .expect("spawn polytope server");
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("build reqwest client");
+    let res = client
+        .post(format!("{server_url}/api/v2/requests"))
+        .json(&serde_json::json!({"class": "od"}))
+        .send()
+        .await
+        .expect("request succeeds");
+    assert!(matches!(res.status(), StatusCode::OK | StatusCode::SEE_OTHER));
+
+    server.abort();
+    authotron.abort();
+    public_backend.abort();
+    auth_backend.abort();
+}
+
+#[tokio::test]
+async fn anonymous_mode_strict_route_rejects_at_routing() {
+    let (backend_url, backend) = spawn_mock_backend().await.expect("spawn backend");
+    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (server_url, server) =
+        spawn_polytope_server_anon(Some(&authotron_url), &strict_bits_yaml(&backend_url), true)
+            .await
+            .expect("spawn polytope server");
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("build reqwest client");
+    let res = client
+        .post(format!("{server_url}/api/v2/requests"))
+        .json(&serde_json::json!({"class": "od"}))
+        .send()
+        .await
+        .expect("request succeeds");
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    server.abort();
+    authotron.abort();
+    backend.abort();
+}
+
+#[tokio::test]
+async fn anonymous_mode_invalid_token_still_401() {
+    let (backend_url, backend) = spawn_mock_backend().await.expect("spawn backend");
+    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (server_url, server) =
+        spawn_polytope_server_anon(Some(&authotron_url), &simple_bits_yaml(&backend_url), true)
+            .await
+            .expect("spawn polytope server");
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("build reqwest client");
+    let res = client
+        .post(format!("{server_url}/api/v2/requests"))
+        .header("Authorization", "Bearer invalid-token")
+        .json(&serde_json::json!({"class": "od"}))
+        .send()
+        .await
+        .expect("request succeeds");
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+
+    server.abort();
+    authotron.abort();
+    backend.abort();
+}
+
+#[tokio::test]
+async fn anonymous_mode_empty_auth_header_401() {
+    let (backend_url, backend) = spawn_mock_backend().await.expect("spawn backend");
+    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (server_url, server) =
+        spawn_polytope_server_anon(Some(&authotron_url), &simple_bits_yaml(&backend_url), true)
+            .await
+            .expect("spawn polytope server");
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("build reqwest client");
+    let res = client
+        .post(format!("{server_url}/api/v2/requests"))
+        .header("Authorization", "")
+        .json(&serde_json::json!({"class": "od"}))
+        .send()
+        .await
+        .expect("request succeeds");
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+
+    server.abort();
+    authotron.abort();
+    backend.abort();
+}
+
+#[tokio::test]
+async fn default_mode_unauthenticated_rejected() {
+    let (backend_url, backend) = spawn_mock_backend().await.expect("spawn backend");
+    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (server_url, server) =
+        spawn_polytope_server(Some(&authotron_url), &simple_bits_yaml(&backend_url))
+            .await
+            .expect("spawn polytope server");
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .expect("build reqwest client");
+    let res = client
+        .post(format!("{server_url}/api/v2/requests"))
+        .json(&serde_json::json!({"class": "od"}))
+        .send()
+        .await
+        .expect("request succeeds");
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
 
     server.abort();
     authotron.abort();
