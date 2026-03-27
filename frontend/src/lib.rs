@@ -28,6 +28,11 @@ pub fn build_app(
     let bits_yaml = cfg.bits_yaml()?;
     let bits = bits::Bits::from_config(&bits_yaml)?;
 
+    let allow_anonymous = cfg
+        .authentication
+        .as_ref()
+        .is_some_and(|a| a.allow_anonymous);
+
     let auth_client = cfg.authentication.as_ref().map(|auth_cfg| {
         auth::AuthClient::new(
             &auth_cfg.url,
@@ -38,10 +43,13 @@ pub fn build_app(
         )
     });
 
-    let state = Arc::new(AppState { bits, auth_client });
+    let state = Arc::new(AppState {
+        bits,
+        auth_client,
+        allow_anonymous,
+    });
 
-    let v1 = Router::new()
-        .route("/test", get(api::v1::test))
+    let v1_protected = Router::new()
         .route("/collections", get(api::v1::list_collections))
         .route("/requests", get(api::v1::list_requests))
         .route(
@@ -78,7 +86,7 @@ pub fn build_app(
         .allow_headers(Any);
 
     let mut protected = Router::new()
-        .nest("/api/v1", v1)
+        .nest("/api/v1", v1_protected)
         .nest("/api/v2", v2_protected)
         .nest("/openmeteo/v1", openmeteo);
 
@@ -90,6 +98,7 @@ pub fn build_app(
     }
 
     let app = Router::new()
+        .route("/api/v1/test", get(api::v1::test))
         .route("/api/v2/health", get(api::v2::health))
         .merge(protected)
         .with_state(state.clone());
