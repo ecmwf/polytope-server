@@ -91,6 +91,7 @@ pub async fn auth_middleware(
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+    use std::{collections::HashMap, time::Duration as StdDuration};
 
     use axum::{
         Router,
@@ -99,7 +100,6 @@ mod tests {
         middleware,
         routing::{get, post},
     };
-    use std::time::Duration as StdDuration;
 
     use http_body_util::BodyExt;
     use jsonwebtoken::{EncodingKey, Header};
@@ -150,14 +150,11 @@ mod tests {
         "ok"
     }
 
-    /// Builds a router that mirrors main.rs structure:
-    /// - /api/v2/health is public
-    /// - /api/v1/*, /api/v2/requests*, /openmeteo/v1/* are behind auth
-    /// Uses stub handlers so we don't need bits::Bits.
     fn build_test_app(auth_client: Option<AuthClient>) -> Router {
         let state = Arc::new(AppState {
             bits: test_bits(),
             auth_client,
+            collections: HashMap::new(),
         });
 
         let v1 = Router::new()
@@ -171,7 +168,8 @@ mod tests {
             .route("/downloads/{id}", get(stub_handler));
 
         let v2_protected = Router::new()
-            .route("/requests", post(stub_handler))
+            .route("/collections", get(stub_handler))
+            .route("/{collection}/requests", post(stub_handler))
             .route("/requests/{id}", get(stub_handler).delete(stub_handler));
 
         let openmeteo = Router::new().route("/forecast", get(stub_handler));
@@ -264,7 +262,12 @@ mod tests {
     async fn v2_submit_requires_auth() {
         let server = mockito::Server::new_async().await;
         let client = setup_auth_client(&server, "secret").await;
-        assert_401_without_auth(build_test_app(Some(client)), "POST", "/api/v2/requests").await;
+        assert_401_without_auth(
+            build_test_app(Some(client)),
+            "POST",
+            "/api/v2/ecmwf/requests",
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -342,7 +345,7 @@ mod tests {
     #[tokio::test]
     async fn auth_disabled_all_routes_open() {
         let app = build_test_app(None);
-        assert_not_401(app, "POST", "/api/v2/requests").await;
+        assert_not_401(app, "POST", "/api/v2/ecmwf/requests").await;
 
         let app = build_test_app(None);
         assert_not_401(app, "GET", "/api/v1/test").await;
@@ -361,7 +364,7 @@ mod tests {
 
         let resp = app
             .oneshot(
-                Request::post("/api/v2/requests")
+                Request::post("/api/v2/ecmwf/requests")
                     .header("Authorization", "")
                     .header("Content-Type", "application/json")
                     .body(Body::from("{}"))
@@ -456,7 +459,7 @@ mod tests {
 
         let resp = app
             .oneshot(
-                Request::post("/api/v2/requests")
+                Request::post("/api/v2/ecmwf/requests")
                     .header("Authorization", "Bearer badtoken")
                     .header("Content-Type", "application/json")
                     .body(Body::from("{}"))
@@ -489,6 +492,7 @@ mod tests {
         let state = Arc::new(AppState {
             bits: test_bits(),
             auth_client: Some(client),
+            collections: HashMap::new(),
         });
 
         async fn check_user(req: AxumRequest) -> StatusCode {
@@ -540,6 +544,7 @@ mod tests {
         let state = Arc::new(AppState {
             bits: test_bits(),
             auth_client: Some(client),
+            collections: HashMap::new(),
         });
 
         async fn contract_payload(req: AxumRequest) -> Json<Value> {
