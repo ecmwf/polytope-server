@@ -16,8 +16,8 @@ async-trait = "0.1"
 axum = { version = "0.8", features = ["http2"] }
 tower-http = { version = "0.6", features = ["cors", "compression-full"] }
 polytope-edr = { git = "https://github.com/ecmwf/polytope-edr", branch = "master" }
-bits = { git = "https://github.com/ecmwf/bits-broker", branch = "feat/unauthenticated-routes", features = ["tikv"] }
-bits-ecmwf = { git = "https://github.com/ecmwf/bits-broker", branch = "feat/unauthenticated-routes" }
+bits = { git = "https://github.com/ecmwf/bits-broker", branch = "main", features = ["tikv"] }
+bits-ecmwf = { git = "https://github.com/ecmwf/bits-broker", branch = "main" }
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
 futures = "0.3"

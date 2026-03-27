@@ -275,6 +275,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn anonymous_mode_non_utf8_auth_header_still_401() {
+        let server = mockito::Server::new_async().await;
+        let client = setup_auth_client(&server, "secret").await;
+        let app = build_test_app_with_anon(Some(client), true);
+
+        let resp = app
+            .oneshot(
+                Request::get("/api/v1/collections")
+                    .header("Authorization", b"\xff\xfe".as_slice())
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
     async fn anonymous_mode_empty_auth_header_still_401() {
         let server = mockito::Server::new_async().await;
         let client = setup_auth_client(&server, "secret").await;

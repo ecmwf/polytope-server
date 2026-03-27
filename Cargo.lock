@@ -896,7 +896,7 @@ checksum = "843867be96c8daad0d758b57df9392b6d8d271134fce549de6ce169ff98a92af"
 [[package]]
 name = "bits"
 version = "0.1.0"
-source = "git+https://github.com/ecmwf/bits-broker?branch=feat%2Funauthenticated-routes#89aae63eb794b7ec25760262920a94e5f5be4bca"
+source = "git+https://github.com/ecmwf/bits-broker?branch=main#9b6946701dc0425b7607fafd5d38727c30979718"
 dependencies = [
  "async-trait",
  "axum 0.8.8",
@@ -922,7 +922,7 @@ dependencies = [
 [[package]]
 name = "bits-ecmwf"
 version = "0.1.0"
-source = "git+https://github.com/ecmwf/bits-broker?branch=feat%2Funauthenticated-routes#89aae63eb794b7ec25760262920a94e5f5be4bca"
+source = "git+https://github.com/ecmwf/bits-broker?branch=main#9b6946701dc0425b7607fafd5d38727c30979718"
 dependencies = [
  "async-trait",
  "authotron-types",
@@ -934,7 +934,6 @@ dependencies = [
  "roxmltree",
  "serde",
  "serde_json",
- "serde_yaml",
  "tokio",
  "tracing",
  "tracing-subscriber",
