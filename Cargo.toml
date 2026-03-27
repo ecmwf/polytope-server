@@ -17,9 +17,5 @@ exclude = [
 ]
 resolver = "2"
 
-[patch."https://github.com/ecmwf/bits-broker"]
-bits = { path = "../bits/bits" }
-bits-ecmwf = { path = "../bits/bits-ecmwf" }
-
 
 
