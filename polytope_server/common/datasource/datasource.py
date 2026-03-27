@@ -70,8 +70,6 @@ class DataSource(ABC):
         coerced_ur_copy = copy.deepcopy(coerced_ur)  # don't want to modify the original request
         # apply defaults
         defaults = ds_config.get("defaults", {})
-        if "date" not in defaults:
-            defaults["date"] = "-1"  # today, default for mars
         for k, v in defaults.items():
             if k not in coerced_ur_copy:
                 coerced_ur_copy[k] = coerce_value(k, v)
