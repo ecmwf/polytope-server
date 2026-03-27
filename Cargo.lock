@@ -896,7 +896,7 @@ checksum = "843867be96c8daad0d758b57df9392b6d8d271134fce549de6ce169ff98a92af"
 [[package]]
 name = "bits"
 version = "0.1.0"
-source = "git+https://github.com/ecmwf/bits-broker?branch=main#5ab392a9a1743a0099d584da718e98a5cf4476eb"
+source = "git+https://github.com/ecmwf/bits-broker?branch=main#e2da8bec078e9f22ffe2699f4cba4ee2fb890ee0"
 dependencies = [
  "async-trait",
  "axum 0.8.8",
@@ -922,7 +922,7 @@ dependencies = [
 [[package]]
 name = "bits-ecmwf"
 version = "0.1.0"
-source = "git+https://github.com/ecmwf/bits-broker?branch=main#5ab392a9a1743a0099d584da718e98a5cf4476eb"
+source = "git+https://github.com/ecmwf/bits-broker?branch=main#e2da8bec078e9f22ffe2699f4cba4ee2fb890ee0"
 dependencies = [
  "async-trait",
  "authotron-types",

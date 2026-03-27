@@ -279,7 +279,11 @@ impl PolytopeClient {
                     payload,
                 )
             }
-            ApiVersion::V2 => (self.base_url.join("api/v2/requests")?, request_body),
+            ApiVersion::V2 => (
+                self.base_url
+                    .join(&format!("api/v2/{}/requests", collection))?,
+                request_body,
+            ),
         };
         info!("Sending request: {}\nto {}", payload, url);
 
@@ -361,7 +365,7 @@ impl PolytopeClient {
     > {
         match self.api_version {
             ApiVersion::V1 => self.retrieve_v1(collection, request_body).await,
-            ApiVersion::V2 => self.retrieve_v2(request_body).await,
+            ApiVersion::V2 => self.retrieve_v2(collection, request_body).await,
         }
     }
 
@@ -470,6 +474,7 @@ impl PolytopeClient {
 
     async fn retrieve_v2(
         &self,
+        collection: &str,
         request_body: Value,
     ) -> Result<
         (
@@ -479,7 +484,9 @@ impl PolytopeClient {
         ),
         Box<dyn Error>,
     > {
-        let mut next_url = self.base_url.join("api/v2/requests")?;
+        let mut next_url = self
+            .base_url
+            .join(&format!("api/v2/{}/requests", collection))?;
         let mut is_first = true;
 
         loop {

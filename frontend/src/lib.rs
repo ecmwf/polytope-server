@@ -46,6 +46,9 @@ pub fn build_app(
         }
     }
 
+    bits.start_worker_server()
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+
     let auth_client = cfg.authentication.as_ref().map(|auth_cfg| {
         auth::AuthClient::new(
             &auth_cfg.url,

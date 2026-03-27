@@ -250,18 +250,20 @@ bits:
 fn fallback_bits_yaml(backend_url: &str) -> String {
     format!(
         r#"
-  routes:
-    - default:
-        - switch:
-            - admin_only:
-                - check::has_role:
-                    role: admin
-                    realm: alpha
-                - target::http:
-                    url: "{backend_url}/"
-            - catch_all:
-                - target::http:
-                    url: "{backend_url}/"
+  collections:
+    all:
+      - default:
+          - switch:
+              - admin_only:
+                  - check::has_role:
+                      roles:
+                        alpha:
+                          - admin
+                  - target::http:
+                      url: "{backend_url}/"
+              - catch_all:
+                  - target::http:
+                      url: "{backend_url}/"
 "#
     )
 }
@@ -270,13 +272,15 @@ fn fallback_bits_yaml(backend_url: &str) -> String {
 fn strict_bits_yaml(backend_url: &str) -> String {
     format!(
         r#"
-  routes:
-    - admin_only:
-        - check::has_role:
-            role: admin
-            realm: alpha
-        - target::http:
-            url: "{backend_url}/"
+  collections:
+    all:
+      - admin_only:
+          - check::has_role:
+              roles:
+                alpha:
+                  - admin
+          - target::http:
+              url: "{backend_url}/"
 "#
     )
 }
@@ -285,10 +289,11 @@ fn strict_bits_yaml(backend_url: &str) -> String {
 fn simple_bits_yaml(backend_url: &str) -> String {
     format!(
         r#"
-  routes:
-    - default:
-        - target::http:
-            url: "{backend_url}/"
+  collections:
+    all:
+      - switch:
+          - target::http:
+              url: "{backend_url}/"
 "#
     )
 }
@@ -304,9 +309,10 @@ fn bobs_bits_yaml(worker_server_port: u16) -> String {
   targets:
     test_pool:
       type: remote
-  routes:
-    - default:
-        - target::test_pool
+  collections:
+    all:
+      - switch:
+          - target::test_pool
 "#
     )
 }
@@ -536,7 +542,7 @@ async fn unauthenticated_rejected() {
 
     let client = reqwest::Client::new();
     let res = client
-        .post(format!("{server_url}/api/v2/requests"))
+        .post(format!("{server_url}/api/v2/all/requests"))
         .json(&serde_json::json!({"class": "od"}))
         .send()
         .await
@@ -697,7 +703,7 @@ async fn strict_regular_rejected() {
     let auth_value: String = auth.into();
 
     let res = client
-        .post(format!("{server_url}/api/v2/requests"))
+        .post(format!("{server_url}/api/v2/all/requests"))
         .header("Authorization", auth_value)
         .json(&serde_json::json!({"class": "od"}))
         .send()
@@ -724,7 +730,7 @@ async fn strict_wrong_realm_rejected() {
     let auth_value: String = auth.into();
 
     let res = client
-        .post(format!("{server_url}/api/v2/requests"))
+        .post(format!("{server_url}/api/v2/all/requests"))
         .header("Authorization", auth_value)
         .json(&serde_json::json!({"class": "od"}))
         .send()
