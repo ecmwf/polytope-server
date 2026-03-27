@@ -83,6 +83,7 @@ pub async fn auth_middleware(
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+    use std::{collections::HashMap, time::Duration as StdDuration};
 
     use axum::{
         Router,
@@ -91,7 +92,6 @@ mod tests {
         middleware,
         routing::{get, post},
     };
-    use std::time::Duration as StdDuration;
 
     use http_body_util::BodyExt;
     use jsonwebtoken::{EncodingKey, Header};
@@ -150,6 +150,7 @@ mod tests {
         let state = Arc::new(AppState {
             bits: test_bits(),
             auth_client,
+            collections: HashMap::new(),
             allow_anonymous,
         });
 
@@ -163,7 +164,8 @@ mod tests {
             .route("/downloads/{id}", get(stub_handler));
 
         let v2_protected = Router::new()
-            .route("/requests", post(stub_handler))
+            .route("/collections", get(stub_handler))
+            .route("/{collection}/requests", post(stub_handler))
             .route("/requests/{id}", get(stub_handler).delete(stub_handler));
 
         let openmeteo = Router::new().route("/forecast", get(stub_handler));
@@ -359,7 +361,7 @@ mod tests {
     #[tokio::test]
     async fn auth_disabled_all_routes_open() {
         let app = build_test_app(None);
-        assert_not_401(app.clone(), "POST", "/api/v2/requests").await;
+        assert_not_401(app.clone(), "POST", "/api/v2/ecmwf/requests").await;
         assert_not_401(app.clone(), "GET", "/api/v1/test").await;
         assert_not_401(app, "GET", "/openmeteo/v1/forecast").await;
     }
@@ -467,7 +469,7 @@ mod tests {
 
         let resp = app
             .oneshot(
-                Request::post("/api/v2/requests")
+                Request::post("/api/v2/ecmwf/requests")
                     .header("Authorization", "Bearer badtoken")
                     .header("Content-Type", "application/json")
                     .body(Body::from("{}"))
@@ -500,6 +502,7 @@ mod tests {
         let state = Arc::new(AppState {
             bits: test_bits(),
             auth_client: Some(client),
+            collections: HashMap::new(),
             allow_anonymous: false,
         });
 
@@ -552,6 +555,7 @@ mod tests {
         let state = Arc::new(AppState {
             bits: test_bits(),
             auth_client: Some(client),
+            collections: HashMap::new(),
             allow_anonymous: false,
         });
 
@@ -641,6 +645,7 @@ mod tests {
         let state = Arc::new(AppState {
             bits: test_bits(),
             auth_client: Some(client),
+            collections: HashMap::new(),
             allow_anonymous: true,
         });
 

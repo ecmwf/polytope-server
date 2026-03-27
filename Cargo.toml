@@ -6,8 +6,16 @@ members = [
     "workers/common",
     "workers/polytope-fe-worker",
     "workers/fdb-worker",
-    "workers/mars-worker",
     "workers/test-worker",
+]
+# mars-worker and metkit require native eckit/metkit C++ libraries.
+# Include them explicitly when developing those crates:
+#   cargo build -p mars-worker
+exclude = [
+    "workers/mars-worker",
     "utils/metkit",
 ]
 resolver = "2"
+
+
+

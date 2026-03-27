@@ -287,19 +287,20 @@ bits:
 fn fallback_bits_yaml(backend_url: &str) -> String {
     format!(
         r#"
-  routes:
-    - default:
-        - switch:
-            - admin_only:
-                - check::has_role:
-                    roles:
-                      alpha:
-                        - admin
-                - target::http:
-                    url: "{backend_url}/"
-            - catch_all:
-                - target::http:
-                    url: "{backend_url}/"
+  collections:
+    all:
+      - default:
+          - switch:
+              - admin_only:
+                  - check::has_role:
+                      roles:
+                        alpha:
+                          - admin
+                  - target::http:
+                      url: "{backend_url}/"
+              - catch_all:
+                  - target::http:
+                      url: "{backend_url}/"
 "#
     )
 }
@@ -308,14 +309,15 @@ fn fallback_bits_yaml(backend_url: &str) -> String {
 fn strict_bits_yaml(backend_url: &str) -> String {
     format!(
         r#"
-  routes:
-    - admin_only:
-        - check::has_role:
-            roles:
-              alpha:
-                - admin
-        - target::http:
-            url: "{backend_url}/"
+  collections:
+    all:
+      - admin_only:
+          - check::has_role:
+              roles:
+                alpha:
+                  - admin
+          - target::http:
+              url: "{backend_url}/"
 "#
     )
 }
@@ -324,17 +326,18 @@ fn strict_bits_yaml(backend_url: &str) -> String {
 fn auth_split_yaml(auth_backend_url: &str, public_backend_url: &str) -> String {
     format!(
         r#"
-  routes:
-    - authenticated:
-        - check::has_role:
-            roles:
-              alpha:
-                - admin
-        - target::http:
-            url: "{auth_backend_url}/"
-    - public:
-        - target::http:
-            url: "{public_backend_url}/"
+  collections:
+    all:
+      - authenticated:
+          - check::has_role:
+              roles:
+                alpha:
+                  - admin
+          - target::http:
+              url: "{auth_backend_url}/"
+      - public:
+          - target::http:
+              url: "{public_backend_url}/"
 "#
     )
 }
@@ -343,10 +346,11 @@ fn auth_split_yaml(auth_backend_url: &str, public_backend_url: &str) -> String {
 fn simple_bits_yaml(backend_url: &str) -> String {
     format!(
         r#"
-  routes:
-    - default:
-        - target::http:
-            url: "{backend_url}/"
+  collections:
+    all:
+      - switch:
+          - target::http:
+              url: "{backend_url}/"
 "#
     )
 }
@@ -362,9 +366,10 @@ fn bobs_bits_yaml(worker_server_port: u16) -> String {
   targets:
     test_pool:
       type: remote
-  routes:
-    - default:
-        - target::test_pool
+  collections:
+    all:
+      - switch:
+          - target::test_pool
 "#
     )
 }
@@ -594,7 +599,7 @@ async fn unauthenticated_rejected() {
 
     let client = reqwest::Client::new();
     let res = client
-        .post(format!("{server_url}/api/v2/requests"))
+        .post(format!("{server_url}/api/v2/all/requests"))
         .json(&serde_json::json!({"class": "od"}))
         .send()
         .await
@@ -764,7 +769,7 @@ async fn strict_regular_rejected() {
     let auth_value: String = auth.into();
 
     let res = client
-        .post(format!("{server_url}/api/v2/requests"))
+        .post(format!("{server_url}/api/v2/all/requests"))
         .header("Authorization", auth_value)
         .json(&serde_json::json!({"class": "od"}))
         .send()
@@ -794,7 +799,7 @@ async fn strict_no_roles_user_rejected() {
     let auth_value: String = auth.into();
 
     let res = client
-        .post(format!("{server_url}/api/v2/requests"))
+        .post(format!("{server_url}/api/v2/all/requests"))
         .header("Authorization", auth_value)
         .json(&serde_json::json!({"class": "od"}))
         .send()
@@ -825,7 +830,7 @@ async fn strict_wrong_realm_rejected() {
     let auth_value: String = auth.into();
 
     let res = client
-        .post(format!("{server_url}/api/v2/requests"))
+        .post(format!("{server_url}/api/v2/all/requests"))
         .header("Authorization", auth_value)
         .json(&serde_json::json!({"class": "od"}))
         .send()
@@ -852,7 +857,7 @@ async fn anonymous_mode_unauthenticated_submit_succeeds() {
         .build()
         .expect("build reqwest client");
     let res = client
-        .post(format!("{server_url}/api/v2/requests"))
+        .post(format!("{server_url}/api/v2/all/requests"))
         .json(&serde_json::json!({"class": "od"}))
         .send()
         .await
@@ -889,7 +894,7 @@ async fn anonymous_mode_role_split_routes_to_public() {
         .build()
         .expect("build reqwest client");
     let res = client
-        .post(format!("{server_url}/api/v2/requests"))
+        .post(format!("{server_url}/api/v2/all/requests"))
         .json(&serde_json::json!({"class": "od"}))
         .send()
         .await
@@ -928,7 +933,7 @@ async fn anonymous_mode_strict_route_rejects_at_routing() {
         .build()
         .expect("build reqwest client");
     let res = client
-        .post(format!("{server_url}/api/v2/requests"))
+        .post(format!("{server_url}/api/v2/all/requests"))
         .json(&serde_json::json!({"class": "od"}))
         .send()
         .await
@@ -954,7 +959,7 @@ async fn anonymous_mode_invalid_token_still_401() {
         .build()
         .expect("build reqwest client");
     let res = client
-        .post(format!("{server_url}/api/v2/requests"))
+        .post(format!("{server_url}/api/v2/all/requests"))
         .header("Authorization", "Bearer invalid-token")
         .json(&serde_json::json!({"class": "od"}))
         .send()
@@ -981,7 +986,7 @@ async fn anonymous_mode_empty_auth_header_401() {
         .build()
         .expect("build reqwest client");
     let res = client
-        .post(format!("{server_url}/api/v2/requests"))
+        .post(format!("{server_url}/api/v2/all/requests"))
         .header("Authorization", "")
         .json(&serde_json::json!({"class": "od"}))
         .send()

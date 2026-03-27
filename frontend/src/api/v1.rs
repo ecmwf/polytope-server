@@ -44,16 +44,8 @@ pub async fn test() -> &'static str {
 }
 
 pub async fn list_collections(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let collections: Vec<String> = state
-        .bits
-        .describe_actions()
-        .into_iter()
-        .filter_map(|d| {
-            d.get("collection")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_owned())
-        })
-        .collect();
+    let mut collections: Vec<String> = state.collections.keys().cloned().collect();
+    collections.sort();
     (StatusCode::OK, Json(json!({"collections": collections})))
 }
 
@@ -67,14 +59,24 @@ pub async fn submit_request(
     auth_user: Option<Extension<AuthUser>>,
     Path(collection): Path<String>,
     Json(body): Json<SubmitBody>,
-) -> impl IntoResponse {
+) -> Response {
+    let route_handle = match state.collections.get(&collection) {
+        Some(handle) => handle.clone(),
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": format!("unknown collection '{collection}'")})),
+            )
+                .into_response();
+        }
+    };
+
     let request = json!({
         "verb": body.verb,
         "request": body.request,
     });
 
     let mut job = Job::new(request);
-    job.metadata_mut()["collection"] = json!(collection);
     let mut user_context = serde_json::Map::new();
     if let Some(ip) = super::client_ip(&headers) {
         user_context.insert("client_ip".to_string(), json!(ip));
@@ -83,7 +85,8 @@ pub async fn submit_request(
         user_context.insert("auth".to_string(), serde_json::to_value(&user).unwrap());
     }
     job.user = Value::Object(user_context).into();
-    let handle = state.bits.submit(job);
+
+    let handle = route_handle.submit(job);
     let location = format!("/api/v1/requests/{}", handle.id);
     (
         StatusCode::ACCEPTED,
@@ -94,6 +97,7 @@ pub async fn submit_request(
             message: "Request accepted",
         }),
     )
+        .into_response()
 }
 
 pub async fn get_request(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> Response {

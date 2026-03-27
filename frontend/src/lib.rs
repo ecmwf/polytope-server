@@ -1,12 +1,12 @@
 pub mod api;
 pub mod auth;
-pub mod collection;
 pub mod config;
 #[cfg(feature = "metkit")]
 mod metkit_expansion;
 pub mod state;
 
 use std::sync::Arc;
+use std::{collections::HashMap, io};
 
 use axum::{
     Router, middleware,
@@ -26,7 +26,25 @@ pub fn build_app(
     cfg: config::ServerConfig,
 ) -> Result<(Router, Arc<AppState>), Box<dyn std::error::Error>> {
     let bits_yaml = cfg.bits_yaml()?;
-    let bits = bits::Bits::from_config(&bits_yaml)?;
+    let mut bits_value: serde_json::Value = serde_yaml::from_str(&bits_yaml)?;
+    let collections_value = bits_value
+        .as_object_mut()
+        .and_then(|mapping| mapping.remove("collections"));
+
+    let bits_yaml_no_collections = serde_yaml::to_string(&bits_value)?;
+    let bits = bits::Bits::from_config(&bits_yaml_no_collections)?;
+
+    let mut collections: HashMap<String, bits::RouteHandle> = HashMap::new();
+    if let Some(collections_map) = collections_value {
+        let map = collections_map.as_object().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "collections must be a mapping")
+        })?;
+
+        for (name, routes_value) in map {
+            let handle = bits.add_route(name, routes_value)?;
+            collections.insert(name.clone(), handle);
+        }
+    }
 
     let allow_anonymous = cfg
         .authentication
@@ -46,6 +64,7 @@ pub fn build_app(
     let state = Arc::new(AppState {
         bits,
         auth_client,
+        collections,
         allow_anonymous,
     });
 
@@ -61,15 +80,32 @@ pub fn build_app(
         .route("/downloads/{id}", get(api::v1::downloads_deprecated));
 
     let v2_protected = Router::new()
-        .route("/requests", post(api::v2::submit))
+        .route("/collections", get(api::v2::list_collections))
+        .route("/{collection}/requests", post(api::v2::submit_collection))
         .route("/requests/{id}", get(api::v2::poll).delete(api::v2::cancel));
 
     let openmeteo = api::openmeteo::router();
 
     let edr_router = if let Some(edr_value) = cfg.edr {
+        // Extract optional collection field from EDR config
+        let collection = edr_value
+            .get("collection")
+            .and_then(|v| v.as_str().map(|s| s.to_string()))
+            .unwrap_or_default();
+
+        // Validate that the collection exists if specified
+        if !collection.is_empty() && !state.collections.contains_key(&collection) {
+            return Err(format!(
+                "EDR config references unknown bits collection '{}'",
+                collection
+            )
+            .into());
+        }
+
         let edr_config = polytope_edr::EdrConfig::from_value(edr_value)?;
         let submitter = Arc::new(BitsSubmitter {
             state: state.clone(),
+            collection,
         });
         Some(polytope_edr::router(
             edr_config,
@@ -117,6 +153,7 @@ pub fn build_app(
 /// BitsSubmitter wraps Arc<AppState> to implement the polytope_edr::RequestSubmitter trait.
 struct BitsSubmitter {
     state: Arc<AppState>,
+    collection: String,
 }
 
 impl polytope_edr::RequestSubmitter for BitsSubmitter {
@@ -131,13 +168,76 @@ impl polytope_edr::RequestSubmitter for BitsSubmitter {
         >,
     > {
         let state = self.state.clone();
+        let collection = self.collection.clone();
         Box::pin(async move {
             let job = bits::Job::new(request);
-            let handle = state.bits.submit(job);
+            let handle = if collection.is_empty() {
+                // Backward compat: no collection specified, use default bits.submit()
+                state.bits.submit(job)
+            } else {
+                let route_handle = state
+                    .collections
+                    .get(&collection)
+                    .ok_or_else(|| {
+                        polytope_edr::SubmitError::Internal(format!(
+                            "EDR collection '{}' not found in bits collections",
+                            collection
+                        ))
+                    })?
+                    .clone();
+                route_handle.submit(job)
+            };
             Ok(polytope_edr::SubmitResponse {
                 id: handle.id.clone(),
                 poll_url: format!("/api/v2/requests/{}", handle.id),
             })
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_collections_parsed_from_config() {
+        let yaml = r#"
+bits:
+  targets:
+    my_target:
+      type: http
+      url: "http://localhost/"
+  collections:
+    ecmwf:
+      - my_route:
+          - target::my_target
+    opendata:
+      - other_route:
+          - target::my_target
+"#;
+        let cfg: config::ServerConfig = serde_yaml::from_str(yaml).unwrap();
+        let (_, state) = build_app(cfg).unwrap();
+
+        assert!(state.collections.contains_key("ecmwf"));
+        assert!(state.collections.contains_key("opendata"));
+        assert_eq!(state.collections.len(), 2);
+    }
+
+    #[test]
+    fn test_no_collections_still_works() {
+        let yaml = r#"
+bits:
+  targets:
+    my_target:
+      type: http
+      url: "http://localhost/"
+  routes:
+    - default:
+        - target::my_target
+"#;
+        let cfg: config::ServerConfig = serde_yaml::from_str(yaml).unwrap();
+        let (_, state) = build_app(cfg).unwrap();
+
+        assert!(state.collections.is_empty());
     }
 }
