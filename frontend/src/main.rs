@@ -20,10 +20,14 @@ async fn main() {
 
     let bind_addr = cfg.bind_addr();
 
-    let (app, _state) = polytope_server::build_app(cfg).unwrap_or_else(|e| {
+    let (app, state) = polytope_server::build_app(cfg).unwrap_or_else(|e| {
         eprintln!("Failed to build app: {}", e);
         std::process::exit(1);
     });
+
+    for name in state.collections.keys() {
+        tracing::info!(collection = %name, "registered collection");
+    }
 
     let listener = tokio::net::TcpListener::bind(&bind_addr)
         .await

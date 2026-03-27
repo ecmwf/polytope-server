@@ -235,7 +235,7 @@ pub async fn run_worker_loop<P: Processor>(
                 match result {
                     Ok(response) => response,
                     Err(err) => {
-                        tracing::warn!(error = %err, "worker poll failed");
+                        tracing::warn!(broker_url = %config.broker_url, error = %err, "worker poll failed");
                         tokio::time::sleep(config.retry_backoff).await;
                         continue;
                     }
@@ -247,7 +247,7 @@ pub async fn run_worker_loop<P: Processor>(
             continue;
         }
         if !response.status().is_success() {
-            tracing::warn!(status = %response.status(), "worker poll returned unexpected status");
+            tracing::warn!(broker_url = %config.broker_url, status = %response.status(), "worker poll returned unexpected status");
             tokio::time::sleep(config.retry_backoff).await;
             continue;
         }
