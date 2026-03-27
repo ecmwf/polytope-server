@@ -125,11 +125,17 @@ impl NodePortManager {
             ..Default::default()
         };
 
-        let created_service = Self::retry_api_call(
-            || async { services.create(&PostParams::default(), &service).await },
-            "create NodePort service",
-        )
-        .await?;
+        let created_service = match services.create(&PostParams::default(), &service).await {
+            Ok(svc) => svc,
+            Err(kube::Error::Api(ref resp)) if resp.code == 409 => {
+                info!(
+                    service_name = %service_name,
+                    "NodePort service already exists, reusing"
+                );
+                services.get(&service_name).await?
+            }
+            Err(e) => return Err(Box::new(e)),
+        };
 
         let node_port_i32 = created_service
             .spec
