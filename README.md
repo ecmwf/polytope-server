@@ -10,7 +10,8 @@ This repository is intentionally split so the frontend and workers can be moved 
 - `workers/common/` — shared remote-worker runtime and protocol client
 - `workers/polytope-fe-worker/` — Polytope worker crate
 - `workers/fdb-worker/` — FDB worker crate
-- `workers/mars-worker/` — Mars worker stub crate
+- `workers/mars-worker/` — Mars worker crate (requires native eckit/metkit C++ libraries; excluded from default workspace build)
+- `workers/test-worker/` — Test worker crate for integration tests
 
 The frontend does not depend on worker crates. The only shared worker-side dependency is `workers/common/`.
 
@@ -20,7 +21,7 @@ The frontend does not depend on worker crates. The only shared worker-side depen
 
 ## Build
 
-Build the whole workspace:
+Build the whole workspace (excludes mars-worker, which requires native C++ libraries):
 
 ```bash
 cargo build --release
@@ -32,7 +33,7 @@ Build a single crate:
 cargo build -p polytope-server
 cargo build -p polytope-fe-worker
 cargo build -p fdb-worker
-cargo build -p mars-worker
+cargo build -p mars-worker   # requires eckit/metkit C++ libraries installed
 ```
 
 The workspace produces separate binaries under `target/release/`:
@@ -41,25 +42,31 @@ The workspace produces separate binaries under `target/release/`:
 - `polytope-fe-worker`
 - `fdb-worker`
 - `mars-worker`
+- `test-worker`
 
 ## Configuration
 
-The frontend is configured with a single YAML file. The top-level `server` block controls the HTTP listener; the `bits` block is passed directly to the bits routing engine.
+The frontend is configured with a single YAML file. The top-level `server` block controls the HTTP listener; the `bits` block is passed directly to the bits routing engine. The `collections` block maps collection names to bits route pipelines — each collection gets its own route, sharing the same action registries and target instances.
 
 ```yaml
 server:
   host: "0.0.0.0"
   port: 3000
 
-bits:
-  routes:
-    default:
-      - type: noop
+collections:
+  climate:
+    - target::http:
+        url: "http://climate-backend/api"
+  operational:
+    - check::has_role:
+        roles:
+          ecmwf:
+            - admin
+    - target::http:
+        url: "http://ops-backend/api"
 ```
 
 See `config.example.yaml` for a starting point, and the [bits documentation](../bits) for the full bits config schema.
-
-For the remote-worker wire protocol and streaming completion endpoints, see `../bits/docs/src/external-workers.md`.
 
 ## Running
 
@@ -87,14 +94,25 @@ RUST_LOG=info cargo run -p polytope-server -- config.yaml
 
 The frontend exposes the legacy v1 and newer v2 HTTP APIs.
 
+### v1 (legacy)
+
 - `GET /api/v1/test`
 - `GET /api/v1/collections`
+- `GET /api/v1/requests`
 - `POST /api/v1/requests/{id}`
 - `GET /api/v1/requests/{id}`
 - `DELETE /api/v1/requests/{id}`
-- `POST /api/v2/requests`
+- `GET /api/v1/downloads/{id}` (deprecated)
+
+### v2
+
+- `GET /api/v2/health`
+- `GET /api/v2/collections`
+- `POST /api/v2/{collection}/requests`
 - `GET /api/v2/requests/{id}`
 - `DELETE /api/v2/requests/{id}`
+
+v2 routes requests through the named collection — each collection maps to a separate bits route pipeline. The collection name must match a key in the `collections` config block.
 
 Successful responses are streamed back to the client over HTTP.
 

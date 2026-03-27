@@ -21,6 +21,8 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    env:
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
     steps:
       - uses: actions/checkout@v4
 
@@ -32,9 +34,7 @@ jobs:
         run: git config --global url."https://x-access-token:${{ secrets.GH_REPO_READ_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
       - name: Strip local path patches
-        run: |
-          sed -i '/^\[patch\./,$d' Cargo.toml
-          printf '[net]\ngit-fetch-with-cli = true\n' > .cargo/config.toml
+        run: sed -i '/^\[patch\./,$d' Cargo.toml
 
       - name: Frontend unit tests
         env:
