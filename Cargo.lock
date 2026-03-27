@@ -864,7 +864,7 @@ checksum = "843867be96c8daad0d758b57df9392b6d8d271134fce549de6ce169ff98a92af"
 [[package]]
 name = "bits"
 version = "0.1.0"
-source = "git+https://github.com/ecmwf/bits-broker?branch=main#a6d675a5c579e43af8adb95ace8aceee393cc790"
+source = "git+https://github.com/ecmwf/bits-broker?branch=main#4aa9af283c28c2fa2e7ef9c590dfd85f21d6a8db"
 dependencies = [
  "async-nats",
  "async-trait",
@@ -882,6 +882,7 @@ dependencies = [
  "serde_yaml",
  "tokio",
  "tokio-stream",
+ "tower-service",
  "tracing",
  "tracing-subscriber",
  "uuid",
@@ -890,7 +891,7 @@ dependencies = [
 [[package]]
 name = "bits-ecmwf"
 version = "0.1.0"
-source = "git+https://github.com/ecmwf/bits-broker?branch=main#a6d675a5c579e43af8adb95ace8aceee393cc790"
+source = "git+https://github.com/ecmwf/bits-broker?branch=main#4aa9af283c28c2fa2e7ef9c590dfd85f21d6a8db"
 dependencies = [
  "async-trait",
  "authotron-types",
@@ -2530,7 +2531,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -3973,7 +3974,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls 0.23.37",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -4011,7 +4012,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.60.2",
 ]
