@@ -642,11 +642,7 @@ mod tests {
         let app = Router::new().merge(protected).with_state(state);
 
         let resp = app
-            .oneshot(
-                Request::get("/check")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::get("/check").body(Body::empty()).unwrap())
             .await
             .unwrap();
 

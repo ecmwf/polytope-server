@@ -827,7 +827,10 @@ async fn anonymous_mode_unauthenticated_submit_succeeds() {
         .send()
         .await
         .expect("request succeeds");
-    assert!(matches!(res.status(), StatusCode::OK | StatusCode::SEE_OTHER));
+    assert!(matches!(
+        res.status(),
+        StatusCode::OK | StatusCode::SEE_OTHER
+    ));
 
     server.abort();
     authotron.abort();
@@ -858,7 +861,10 @@ async fn anonymous_mode_role_split_routes_to_public() {
         .send()
         .await
         .expect("request succeeds");
-    assert!(matches!(res.status(), StatusCode::OK | StatusCode::SEE_OTHER));
+    assert!(matches!(
+        res.status(),
+        StatusCode::OK | StatusCode::SEE_OTHER
+    ));
 
     server.abort();
     authotron.abort();
