@@ -305,8 +305,9 @@ fn fallback_bits_yaml(backend_url: &str) -> String {
         - switch:
             - admin_only:
                 - check::has_role:
-                    role: admin
-                    realm: alpha
+                    roles:
+                      alpha:
+                        - admin
                 - target::http:
                     url: "{backend_url}/"
             - catch_all:
@@ -323,8 +324,9 @@ fn strict_bits_yaml(backend_url: &str) -> String {
   routes:
     - admin_only:
         - check::has_role:
-            role: admin
-            realm: alpha
+            roles:
+              alpha:
+                - admin
         - target::http:
             url: "{backend_url}/"
 "#
@@ -338,8 +340,9 @@ fn auth_split_yaml(auth_backend_url: &str, public_backend_url: &str) -> String {
   routes:
     - authenticated:
         - check::has_role:
-            role: default
-            silent: true
+            roles:
+              alpha:
+                - default
         - target::http:
             url: "{auth_backend_url}/"
     - public:
