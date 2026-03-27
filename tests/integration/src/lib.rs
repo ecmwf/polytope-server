@@ -332,12 +332,14 @@ fn strict_bits_yaml(backend_url: &str) -> String {
 }
 
 #[cfg(test)]
-fn has_auth_split_yaml(auth_backend_url: &str, public_backend_url: &str) -> String {
+fn auth_split_yaml(auth_backend_url: &str, public_backend_url: &str) -> String {
     format!(
         r#"
   routes:
     - authenticated:
-        - check::has_auth: {{}}
+        - check::has_role:
+            role: default
+            silent: true
         - target::http:
             url: "{auth_backend_url}/"
     - public:
@@ -830,14 +832,14 @@ async fn anonymous_mode_unauthenticated_submit_succeeds() {
 }
 
 #[tokio::test]
-async fn anonymous_mode_has_auth_routes_to_public() {
+async fn anonymous_mode_role_split_routes_to_public() {
     let (auth_backend_url, auth_backend) = spawn_mock_backend().await.expect("spawn auth backend");
     let (public_backend_url, public_backend) =
         spawn_mock_backend().await.expect("spawn public backend");
     let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
     let (server_url, server) = spawn_polytope_server_anon(
         Some(&authotron_url),
-        &has_auth_split_yaml(&auth_backend_url, &public_backend_url),
+        &auth_split_yaml(&auth_backend_url, &public_backend_url),
         true,
     )
     .await
