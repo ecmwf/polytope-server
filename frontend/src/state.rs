@@ -6,4 +6,5 @@ pub struct AppState {
     pub bits: bits::Bits,
     pub auth_client: Option<AuthClient>,
     pub collections: HashMap<String, bits::RouteHandle>,
+    pub allow_anonymous: bool,
 }

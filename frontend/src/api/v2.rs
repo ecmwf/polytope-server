@@ -223,6 +223,7 @@ mod tests {
             bits,
             auth_client: None,
             collections,
+            allow_anonymous: false,
         });
         Router::new()
             .route("/api/v2/collections", get(super::list_collections))
