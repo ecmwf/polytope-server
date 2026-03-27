@@ -43,9 +43,18 @@ ARG MIR_VERSION=""
 ARG FDB_VERSION=""
 
 RUN apt-get update && apt-get install -y \
-    cmake build-essential git libaec-dev bison flex net-tools \
+    build-essential git bison flex net-tools \
     libssl-dev libnetcdf-dev curl \
+    && curl -fsSL https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-linux-x86_64.sh -o /tmp/cmake.sh \
+    && sh /tmp/cmake.sh --skip-license --prefix=/usr/local \
+    && rm /tmp/cmake.sh \
     && rm -rf /var/lib/apt/lists/*
+
+RUN git clone --depth 1 --branch v1.1.4 https://github.com/Deutsches-Klimarechenzentrum/libaec.git /source/libaec \
+    && mkdir -p /build/libaec && cd /build/libaec \
+    && cmake -DCMAKE_INSTALL_PREFIX=/opt/mars-client /source/libaec \
+    && make -j$(nproc) && make install \
+    && rm -rf /source/libaec /build/libaec
 
 RUN if [ -n "$GIT_AUTH_TOKEN" ]; then \
     printf "machine github.com\nlogin x-access-token\npassword %s\n" "$GIT_AUTH_TOKEN" > /root/.netrc && \
@@ -81,12 +90,13 @@ RUN if [ -n "$FDB_VERSION" ]; then sed -i \
     -e "s|PROJECT fdb5.*UPDATE)|PROJECT fdb5 GIT \"https://github.com/ecmwf/fdb\" TAG ${FDB_VERSION} UPDATE)|" \
     /source/mars-client-bundle/CMakeLists.txt; fi
 RUN if [ -n "$MARS_CLIENT_CPP_BRANCH" ]; then sed -i \
-    -e "s|PROJECT mars-client-cpp.*|PROJECT mars-client-cpp GIT \"https://github.com/ecmwf/mars-client-cpp\" BRANCH ${MARS_CLIENT_CPP_BRANCH} UPDATE)|" \
+    -e "s|PROJECT mars-client-cpp.*|PROJECT mars-client-cpp GIT \"https://github.com/ecmwf/mars-client-cpp\" TAG ${MARS_CLIENT_CPP_BRANCH} UPDATE)|" \
     /source/mars-client-bundle/CMakeLists.txt; fi
 
 RUN mkdir -p /build/mars-client-bundle && cd /build/mars-client-bundle \
     && ecbuild \
         --prefix=/opt/mars-client \
+        -DCMAKE_PREFIX_PATH=/opt/mars-client \
         -DENABLE_FORTRAN=OFF \
         -DENABLE_PYTHON=OFF \
         -DENABLE_AEC=ON \
@@ -110,6 +120,7 @@ FROM mars-libs-${MARS_BUILD_FROM_SOURCE} AS mars-libs
 FROM chef-base AS chef
 ARG GIT_AUTH_TOKEN=""
 WORKDIR /ecmwf/polytope-server
+COPY Cargo.lock Cargo.lock
 COPY workers/common/ workers/common/
 COPY workers/mars-worker/ workers/mars-worker/
 RUN mkdir -p .cargo && echo "[net]" > .cargo/config.toml && echo "git-fetch-with-cli = true" >> .cargo/config.toml
@@ -122,6 +133,7 @@ RUN cd workers/mars-worker && cargo chef prepare --recipe-path recipe.json
 FROM chef-base AS cacher
 ARG GIT_AUTH_TOKEN=""
 WORKDIR /ecmwf/polytope-server
+COPY Cargo.lock Cargo.lock
 COPY --from=mars-libs /opt/mars-client /opt/mars-client
 ENV MARS_CLIENT_LIB_DIR=/opt/mars-client/lib
 ENV MARS_CLIENT_INCLUDE_DIR=/opt/mars-client/include
@@ -141,6 +153,7 @@ RUN cd workers/mars-worker && cargo chef cook --release --recipe-path recipe.jso
 FROM chef-base AS builder
 ARG GIT_AUTH_TOKEN=""
 WORKDIR /ecmwf/polytope-server
+COPY Cargo.lock Cargo.lock
 ARG PACKAGE_NAME=mars-worker
 ARG BIN_NAME=mars-worker
 COPY --from=mars-libs /opt/mars-client /opt/mars-client

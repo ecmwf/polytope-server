@@ -59,7 +59,7 @@ metadata:
   rpm_repo: '{{ .RPM_REPO }}'
   MARS_BUILD_FROM_SOURCE: '{{default "true" .MARS_BUILD_FROM_SOURCE}}'
   mars_client_cpp_version: '{{default "7.1.9.1" .MARS_CLIENT_CPP_VERSION}}'
-  MARS_CLIENT_CPP_BRANCH: '{{default "feature/library-api" .MARS_CLIENT_CPP_BRANCH}}'
+  MARS_CLIENT_CPP_BRANCH: '{{default "736f833" .MARS_CLIENT_CPP_BRANCH}}'
   ECKIT_VERSION: '{{default "1.33.0" .MARS_ECKIT_VERSION}}'
   ECCODES_VERSION: '{{default "2.46.0" .MARS_ECCODES_VERSION}}'
   ODC_VERSION: '{{default "1.6.2" .MARS_ODC_VERSION}}'

@@ -51,6 +51,7 @@ RUN git clone --depth 1 --branch ${METKIT_VERSION} https://github.com/ecmwf/metk
 FROM chef-base AS chef
 ARG GIT_AUTH_TOKEN=""
 WORKDIR /ecmwf/polytope-server
+COPY Cargo.lock Cargo.lock
 COPY utils/metkit/ utils/metkit/
 COPY frontend/ frontend/
 RUN mkdir -p .cargo && echo '[net]' > .cargo/config.toml && echo 'git-fetch-with-cli = true' >> .cargo/config.toml
@@ -63,6 +64,7 @@ RUN cd frontend && cargo chef prepare --recipe-path recipe.json
 FROM chef-base AS cacher
 ARG GIT_AUTH_TOKEN=""
 WORKDIR /ecmwf/polytope-server
+COPY Cargo.lock Cargo.lock
 COPY utils/metkit/ utils/metkit/
 COPY --from=chef /ecmwf/polytope-server/frontend/recipe.json frontend/recipe.json
 COPY --from=chef /ecmwf/polytope-server/.cargo/config.toml .cargo/config.toml
@@ -78,6 +80,7 @@ WORKDIR /ecmwf/polytope-server
 ARG PACKAGE_NAME=polytope-server
 ARG BIN_NAME=polytope-server
 ARG FEATURES="metkit"
+COPY Cargo.lock Cargo.lock
 COPY utils/metkit/ utils/metkit/
 COPY --from=metkit-build /opt/metkit /opt/metkit
 COPY frontend/ frontend/
