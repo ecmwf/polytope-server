@@ -889,26 +889,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bits-ecmwf"
-version = "0.1.0"
-source = "git+https://github.com/ecmwf/bits-broker?branch=main#4aa9af283c28c2fa2e7ef9c590dfd85f21d6a8db"
-dependencies = [
- "async-trait",
- "authotron-types",
- "bits",
- "bytes",
- "chrono",
- "futures",
- "inventory",
- "roxmltree",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "bitvec"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3707,7 +3687,6 @@ dependencies = [
  "authotron-types",
  "axum",
  "bits",
- "bits-ecmwf",
  "bytes",
  "chrono",
  "clap",
@@ -3718,6 +3697,7 @@ dependencies = [
  "metkit",
  "mockito",
  "polytope-edr",
+ "roxmltree",
  "serde",
  "serde_json",
  "serde_yaml",

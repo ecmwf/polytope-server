@@ -1,3 +1,4 @@
+mod actions;
 pub mod api;
 pub mod auth;
 pub mod config;
@@ -15,8 +16,6 @@ use axum::{
 use state::AppState;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::{Any, CorsLayer};
-
-use bits_ecmwf as _;
 
 /// Build the polytope-server Axum application from a config.
 ///

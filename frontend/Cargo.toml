@@ -17,7 +17,6 @@ axum = { version = "0.8", features = ["http2"] }
 tower-http = { version = "0.6", features = ["cors", "compression-full"] }
 polytope-edr = { git = "https://github.com/ecmwf/polytope-edr", branch = "master" }
 bits = { git = "https://github.com/ecmwf/bits-broker", branch = "main", features = ["nats"] }
-bits-ecmwf = { git = "https://github.com/ecmwf/bits-broker", branch = "main" }
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
 futures = "0.3"
@@ -30,6 +29,7 @@ tokio-stream = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+roxmltree = "0.20"
 
 # Metkit expansion (optional — requires C++ metkit libs at build+runtime)
 metkit = { path = "../utils/metkit", optional = true }
