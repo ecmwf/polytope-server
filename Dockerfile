@@ -225,11 +225,6 @@ RUN apt update && apt install -y liblapack3 mars-client=${mars_client_c_version}
 FROM mars-base AS mars-base-cpp
 ARG pyfdb_version=0.1.0
 RUN apt update && apt install -y mars-client-cpp=${mars_client_cpp_version}
-RUN set -eux \
-    && git clone --single-branch --branch ${pyfdb_version} https://github.com/ecmwf/pyfdb.git \
-    && python -m pip install "numpy<2.0" --user\
-    && python -m pip install ./pyfdb --user
-
 
 FROM blank-base AS blank-base-c
 FROM blank-base AS blank-base-cpp
@@ -304,7 +299,6 @@ COPY --chown=polytope ./aux/mars-wrapper.py  /polytope/bin/mars-wrapper.py
 COPY --chown=polytope ./aux/mars-wrapper-docker.py  /polytope/bin/mars-wrapper-docker.py
 
 COPY --chown=polytope --from=mars-cpp-base-final   /opt/ecmwf/mars-client-cpp  /opt/ecmwf/mars-client-cpp
-COPY --chown=polytope --from=mars-cpp-base-final    /root/.local /home/polytope/.local
 COPY --chown=polytope --from=mars-c-base-final     /opt/ecmwf/mars-client      /opt/ecmwf/mars-client
 COPY --chown=polytope --from=mars-c-base-final     /usr/local/bin/mars      /usr/local/bin/mars
 RUN sudo apt update \
