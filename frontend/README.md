@@ -4,7 +4,7 @@ This crate contains the Polytope HTTP frontend only.
 
 - Binary: `polytope-server`
 - Source: `frontend/src/`
-- Depends on: `bits`, `bits-ecmwf`, Axum stack
+- Depends on: `bits`, Axum stack
 - Does not depend on any worker crate
 
 Run locally:
