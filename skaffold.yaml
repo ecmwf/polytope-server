@@ -36,6 +36,7 @@ build:
       target: polytope-common
       buildArgs:
         developer_mode: '{{ default "false" .developer_mode }}'
+        gribjump_dev_version: '{{ default "1.6.8-9-g94e1db9" .gribjump_dev_version }}'
 
   # Worker with all clients (FDB, GribJump, MARS C, MARS CPP)
   - image: "worker"
@@ -47,17 +48,13 @@ build:
         mars_config_branch: '{{ .mars_config_branch }}'
         developer_mode: '{{ default "false" .developer_mode }}'
         # mars_client_c_version: 6.33.20.2
-        gribjump_version: '{{ default "0.10.2" .gribjump_version }}'
+        # gribjump_version: '{{ default "0.10.2" .gribjump_version }}'
         mars_client_cpp_version: 7.1.9.1
-        # ecbuild_version: 3.8.2
-        # eccodes_version: 2.33.1
-        # eckit_version: 1.28.0
-        # pyfdb_version: 0.1.0
-        # fdb_version: 5.13.2
+        gribjump_dev_version: '{{ default "1.6.8-9-g94e1db9" .gribjump_dev_version }}'
         mars_base_c: '{{ if eq .mars_base_c "1" }}mars-base-c{{ else }}blank-base{{ end }}'
         mars_base_cpp: '{{ if eq .mars_base_cpp "1" }}mars-base-cpp{{ else }}blank-base{{ end }}'
         fdb_base: '{{ if eq .fdb_base "1" }}fdb-base{{ else }}blank-base{{ end }}'
         gribjump_base: '{{ if eq .gribjump_base "1" }}gribjump-base{{ else }}blank-base{{ end }}'
-      # cliFlags: 
-      #   - --no-cache # for debug purposes
+      cliFlags: 
+        - --no-cache # for debug purposes
 

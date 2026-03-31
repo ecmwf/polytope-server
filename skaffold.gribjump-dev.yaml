@@ -1,0 +1,44 @@
+apiVersion: skaffold/v4beta10
+kind: Config
+
+build:
+  local:
+    useBuildkit: True
+    concurrency: 1
+  tagPolicy:
+    customTemplate:
+      template: "{{.PREFIX}}{{.GIT_TAG}}"
+      components:
+      - name: PREFIX
+        envTemplate:
+          template: '{{default "" .PREFIX}}'
+      - name: GIT_TAG
+        gitCommit:
+          ignoreChanges: true
+  platforms:
+    - linux/amd64
+  artifacts:
+  - image: "fdb-gribjump-base"
+    docker:
+      dockerfile: Dockerfile.gribjump-dev
+      target: fdb-gribjump-base
+      buildArgs:
+        ecbuild_version: '{{ default "3.13.1" .ecbuild_version }}'
+        eckit_version: '{{ default "1.33.2" .eckit_version }}'
+        eccodes_version: '{{ default "2.46.0" .eccodes_version }}'
+        metkit_version: '{{ default "1.17.2" .metkit_version }}'
+        fdb_version: '{{ default "5.21.0" .fdb_version }}'
+        gribjump_version: '{{ default "0.10.4" .gribjump_version }}'
+        pyfdb_version: '{{ default "0.1.3" .pyfdb_version }}'
+  - image: "fdb-gribjump-python-base"
+    docker:
+      dockerfile: Dockerfile.gribjump-dev
+      target: fdb-gribjump-python-base
+      buildArgs:
+        ecbuild_version: '{{ default "3.13.1" .ecbuild_version }}'
+        eckit_version: '{{ default "1.33.2" .eckit_version }}'
+        eccodes_version: '{{ default "2.46.0" .eccodes_version }}'
+        metkit_version: '{{ default "1.17.2" .metkit_version }}'
+        fdb_version: '{{ default "5.21.0" .fdb_version }}'
+        gribjump_version: '{{ default "0.10.4" .gribjump_version }}'
+        pyfdb_version: '{{ default "0.1.3" .pyfdb_version }}'

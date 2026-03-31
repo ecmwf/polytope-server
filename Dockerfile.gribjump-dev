@@ -1,0 +1,154 @@
+##
+## Copyright 2022 European Centre for Medium-Range Weather Forecasts (ECMWF)
+##
+## Licensed under the Apache License, Version 2.0 (the "License");
+## you may not use this file except in compliance with the License.
+## You may obtain a copy of the License at
+##
+##     http://www.apache.org/licenses/LICENSE-2.0
+##
+## Unless required by applicable law or agreed to in writing, software
+## distributed under the License is distributed on an "AS IS" BASIS,
+## WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+## See the License for the specific language governing permissions and
+## limitations under the License.
+##
+## In applying this licence, ECMWF does not waive the privileges and immunities
+## granted to it by virtue of its status as an intergovernmental organisation nor
+## does it submit to any jurisdiction.
+##
+
+ARG gribjump_version=0.10.4
+ARG pyfdb_version=0.1.3
+ARG eccodes_version=2.46.0
+
+#######################################################
+#   F D B  +  G R I B J U M P   F R O M   S O U R C E
+#######################################################
+FROM python:3.11-bookworm AS fdb-gribjump-base
+
+ARG ecbuild_version=3.13.1
+ARG eckit_version=1.33.2
+ARG eccodes_version
+ARG metkit_version=1.17.2
+ARG fdb_version=5.21.0
+ARG gribjump_version
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+       cmake build-essential gnupg git curl \
+       libtinfo5 net-tools \
+       libnetcdf19 libnetcdf-dev \
+       bison flex \
+       liblz4-dev \
+       && rm -rf /var/lib/apt/lists/*
+
+ENV PREFIX=/opt/fdb
+RUN mkdir -p /source /build ${PREFIX}
+
+RUN git clone --depth 1 --branch ${ecbuild_version} \
+       https://github.com/ecmwf/ecbuild.git /ecbuild
+ENV PATH=/ecbuild/bin:${PATH}
+
+RUN set -eux \
+       && git clone --depth 1 --branch ${eckit_version} \
+       https://github.com/ecmwf/eckit.git /source/eckit \
+       && mkdir -p /build/eckit && cd /build/eckit \
+       && ecbuild --prefix=${PREFIX} -- \
+       -DCMAKE_PREFIX_PATH=${PREFIX} \
+       -DENABLE_TESTS=OFF \
+       -DENABLE_ECKIT_CODEC=ON \
+       /source/eckit \
+       && make -j$(nproc) && make install
+
+ARG libaec_version=1.1.3
+RUN set -eux \
+       && git clone --depth 1 --branch v${libaec_version} \
+       https://github.com/MathisRosenhauer/libaec.git /source/libaec \
+       && mkdir -p /build/libaec && cd /build/libaec \
+       && cmake -DCMAKE_INSTALL_PREFIX=${PREFIX} /source/libaec \
+       && make -j$(nproc) && make install
+
+RUN set -eux \
+       && git clone --depth 1 --branch ${eccodes_version} \
+       https://github.com/ecmwf/eccodes.git /source/eccodes \
+       && mkdir -p /build/eccodes && cd /build/eccodes \
+       && ecbuild --prefix=${PREFIX} -- \
+       -DENABLE_FORTRAN=OFF \
+       -DENABLE_AEC=ON \
+       -DENABLE_TESTS=OFF \
+       -DCMAKE_PREFIX_PATH=${PREFIX} \
+       /source/eccodes \
+       && make -j$(nproc) && make install
+
+RUN set -eux \
+       && git clone --depth 1 --branch ${metkit_version} \
+       https://github.com/ecmwf/metkit.git /source/metkit \
+       && mkdir -p /build/metkit && cd /build/metkit \
+       && ecbuild --prefix=${PREFIX} -- \
+       -DCMAKE_PREFIX_PATH=${PREFIX} \
+       -DENABLE_TESTS=OFF \
+       -DENABLE_BUILD_TOOLS=OFF \
+       /source/metkit \
+       && make -j$(nproc) metkit metkit.pc-pkg-config \
+       && mkdir -p bin && touch bin/check-mars2conf && chmod +x bin/check-mars2conf \
+       && cmake --install .
+
+RUN set -eux \
+       && git clone --depth 1 --branch ${fdb_version} \
+       https://github.com/ecmwf/fdb.git /source/fdb \
+       && mkdir -p /build/fdb && cd /build/fdb \
+       && ecbuild --prefix=${PREFIX} -- \
+       -DCMAKE_PREFIX_PATH="${PREFIX}" \
+       -DENABLE_TESTS=OFF \
+       -DENABLE_BUILD_TOOLS=OFF \
+       /source/fdb \
+       && make -j$(nproc) fdb5 \
+       && for t in fdb-root fdb-overlay fdb-lock fdb-status fdb-schema fdb-dump; do mkdir -p bin && touch bin/$t && chmod +x bin/$t; done \
+       && cmake --install .
+
+RUN set -eux \
+       && git clone --depth 1 --branch ${gribjump_version} \
+       https://github.com/ecmwf/gribjump.git /source/gribjump \
+       && mkdir -p /build/gribjump && cd /build/gribjump \
+       && ecbuild --prefix=${PREFIX} -- \
+       -DCMAKE_PREFIX_PATH="${PREFIX}" \
+       -DENABLE_MEMFS=ON \
+       -DENABLE_ECCODES_THREADS=ON \
+       -DENABLE_AEC=ON \
+       -DENABLE_TESTS=OFF \
+       -DENABLE_BUILD_TOOLS=OFF \
+       /source/gribjump \
+       && make -j$(nproc) gribjump \
+       && for t in gribjump-extract gribjump-scan gribjump-scan-files gribjump-server gribjump-validate gribjump-dump-info gribjump-info; do mkdir -p bin && touch bin/$t && chmod +x bin/$t; done \
+       && cmake --install .
+
+RUN rm -rf /source /build /ecbuild
+
+
+#######################################################
+#       R U N T I M E   W I T H   P Y T H O N
+#######################################################
+FROM python:3.11-slim-bookworm AS fdb-gribjump-python-base
+
+ARG gribjump_version
+ARG pyfdb_version
+ARG eccodes_version
+
+RUN apt-get update \
+       && apt-get install -y --no-install-recommends \
+       libgomp1 libaec0 libopenjp2-7 liblz4-1 libnetcdf19 git \
+       && rm -rf /var/lib/apt/lists/*
+
+COPY --from=fdb-gribjump-base /opt/fdb/ /opt/fdb/
+
+RUN pip install --user findlibs cffi pycparser
+RUN pip install --user --no-deps "pyfdb @ git+https://github.com/ecmwf/pyfdb.git@${pyfdb_version}"
+RUN pip install --user --no-deps "pygribjump @ git+https://github.com/ecmwf/gribjump.git@${gribjump_version}"
+RUN pip install --user --no-deps eccodes==${eccodes_version}
+
+ENV LD_LIBRARY_PATH=/opt/fdb/lib
+ENV ECCODES_PYTHON_USE_FINDLIBS=1
+ENV ECCODES_HOME=/opt/fdb
+ENV ECKIT_HOME=/opt/fdb
+ENV FDB5_HOME=/opt/fdb
+ENV GRIBJUMP_HOME=/opt/fdb

@@ -22,6 +22,7 @@ ARG fdb_base=blank-base
 ARG mars_base_c=blank-base
 ARG mars_base_cpp=blank-base
 ARG gribjump_base=blank-base
+ARG gribjump_dev_version=1.6.8-4-g727ac50
 
 #######################################################
 #                     C O M M O N
@@ -94,112 +95,10 @@ RUN set -eux \
     && touch /usr/local/bin/mars
 
 #######################################################
-#                  F D B   B U I L D
-#######################################################
-FROM python:3.11-bookworm AS fdb-base
-ARG ecbuild_version=3.8.2
-ARG eccodes_version=2.33.1
-ARG eckit_version=1.28.0
-ARG fdb_version=5.13.2
-ARG pyfdb_version=0.1.0
-RUN apt update
-# COPY polytope-deployment/common/default_fdb_schema /polytope/config/fdb/default
-
-# Install FDB from open source repositories
-RUN set -eux && \
-    apt install -y cmake gnupg build-essential libtinfo5 net-tools libnetcdf19 libnetcdf-dev bison flex && \
-    rm -rf source && \
-    rm -rf build && \
-    mkdir -p source && \
-    mkdir -p build && \
-    mkdir -p /opt/fdb/
-
-# Download ecbuild
-RUN set -eux && \
-    git clone --depth 1 --branch ${ecbuild_version} https://github.com/ecmwf/ecbuild.git /ecbuild
-
-ENV PATH=/ecbuild/bin:$PATH
-
-# Install eckit
-RUN set -eux && \
-    git clone --depth 1 --branch ${eckit_version} https://github.com/ecmwf/eckit.git /source/eckit && \
-    cd /source/eckit && \
-    mkdir -p /build/eckit && \
-    cd /build/eckit && \
-    ecbuild --prefix=/opt/fdb -- -DCMAKE_PREFIX_PATH=/opt/fdb /source/eckit && \
-    make -j4 && \
-    make install
-
-# Install eccodes
-RUN set -eux && \
-    git clone --depth 1 --branch ${eccodes_version} https://github.com/ecmwf/eccodes.git /source/eccodes && \
-    mkdir -p /build/eccodes && \
-    cd /build/eccodes && \
-    ecbuild --prefix=/opt/fdb -- -DENABLE_FORTRAN=OFF -DCMAKE_PREFIX_PATH=/opt/fdb /source/eccodes && \
-    make -j4 && \
-    make install
-
-# Install metkit
-RUN set -eux && \
-    git clone --depth 1 --branch develop https://github.com/ecmwf/metkit.git /source/metkit && \
-    cd /source/metkit && \
-    mkdir -p /build/metkit && \
-    cd /build/metkit && \
-    ecbuild --prefix=/opt/fdb -- -DCMAKE_PREFIX_PATH=/opt/fdb /source/metkit && \
-    make -j4 && \
-    make install
-
-# Install fdb \
-RUN set -eux && \
-    git clone --depth 1 --branch ${fdb_version} https://github.com/ecmwf/fdb.git /source/fdb && \
-    cd /source/fdb && \
-    mkdir -p /build/fdb && \
-    cd /build/fdb && \
-    ecbuild --prefix=/opt/fdb -- -DCMAKE_PREFIX_PATH="/opt/fdb;/opt/fdb/eckit;/opt/fdb/metkit" /source/fdb && \
-    make -j4 && \
-    make install
-
-RUN set -eux && \
-    rm -rf /source && \ 
-    rm -rf /build 
-
-# Install pyfdb \
-RUN set -eux \
-    && git clone --single-branch --branch ${pyfdb_version} https://github.com/ecmwf/pyfdb.git \
-    && python -m pip install "numpy<2.0" --user\
-    && python -m pip install ./pyfdb --user
-
-#######################################################
 #             G R I B  J U M P   B U I L D
 #######################################################
 
-FROM python:3.11-bookworm AS gribjump-base
-ARG rpm_repo
-ARG gribjump_version=0.10.0
-
-RUN response=$(curl -s -w "%{http_code}" ${rpm_repo}) \
-    && if [ "$response" = "403" ]; then echo "Unauthorized access to ${rpm_repo} "; fi
-
-RUN set -eux \
-    && apt-get update \
-    && apt-get install -y gnupg2 curl ca-certificates \
-    && curl -fsSL "${rpm_repo}/private-raw-repos-config/debian/bookworm/stable/public.gpg.key" | gpg --dearmor -o /usr/share/keyrings/mars-archive-keyring.gpg \
-    && echo "deb [signed-by=/usr/share/keyrings/mars-archive-keyring.gpg] ${rpm_repo}/private-debian-bookworm-stable/ bookworm main" | tee /etc/apt/sources.list.d/mars.list
-
-RUN set -eux \
-    && apt-get update \
-    && apt install -y gribjump-server=${gribjump_version}-gribjumpserver
-
-RUN set -eux \
-    ls -R /opt
-
-RUN set -eux \
-    && git clone --single-branch --branch ${gribjump_version} https://github.com/ecmwf/gribjump.git
-# Install pygribjump
-RUN set -eux \
-    && cd /gribjump \
-    && python -m pip install . --user \
-    && rm -rf /gribjump
+FROM eccr.ecmwf.int/polytope/fdb-gribjump-python-base:${gribjump_dev_version} AS gribjump-base
 
 #######################################################
 #               M A R S    B A S E
@@ -223,7 +122,6 @@ FROM mars-base AS mars-base-c
 RUN apt update && apt install -y liblapack3 mars-client=${mars_client_c_version} mars-client-cloud
 
 FROM mars-base AS mars-base-cpp
-ARG pyfdb_version=0.1.0
 RUN apt update && apt install -y mars-client-cpp=${mars_client_cpp_version}
 
 FROM blank-base AS blank-base-c
@@ -284,7 +182,7 @@ RUN set -eux \
     && mkdir /polytope && chmod -R o+rw /polytope
 
 RUN apt update \
-    && apt install -y curl nano sudo ssh libgomp1 vim
+    && apt install -y curl nano sudo ssh libgomp1 vim libopenjp2-7
 
 # Add polytope user to passwordless sudo group during build
 RUN usermod -aG sudo polytope
@@ -322,12 +220,11 @@ ENV PATH="/polytope/bin/:/opt/ecmwf/mars-client/bin:/opt/ecmwf/mars-client-cloud
 COPY --chown=polytope --from=fdb-base-final /opt/fdb/ /opt/fdb/
 COPY --chown=polytope ./aux/default_fdb_schema /polytope/config/fdb/default
 RUN mkdir -p /polytope/fdb/ && sudo chmod -R o+rw /polytope/fdb
-ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/opt/fdb/lib:/opt/ecmwf/gribjump-server/lib
+ENV LD_LIBRARY_PATH=/opt/fdb/lib:${LD_LIBRARY_PATH}
 COPY --chown=polytope --from=fdb-base-final /root/.local /home/polytope/.local
 
 # Copy gribjump-related artifacts, including python libraries
-# COPY --chown=polytope --from=gribjump-base-final /opt/fdb/ /opt/fdb/
-COPY --chown=polytope --from=gribjump-base-final /opt/ecmwf/gribjump-server/ /opt/ecmwf/gribjump-server/
+COPY --chown=polytope --from=gribjump-base-final /opt/fdb/ /opt/fdb/
 COPY --chown=polytope --from=gribjump-base-final /root/.local /home/polytope/.local
 # RUN sudo apt install -y libopenjp2-7
 # COPY polytope-deployment/common/default_fdb_schema /polytope/config/fdb/default
