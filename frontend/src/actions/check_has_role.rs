@@ -6,7 +6,6 @@ use bits::Job;
 use bits::actions::{ActionError, CheckAction, CheckResult};
 use serde::{Deserialize, Serialize};
 
-const ADMIN_ROLE: &str = "polytope-admin";
 const ACCESS_DENIED: &str = "insufficient permissions";
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -42,7 +41,12 @@ impl CheckAction for HasRole {
             });
         }
 
-        if auth_user.roles.iter().any(|r| r == ADMIN_ROLE) {
+        if job
+            .user
+            .get("can_bypass_role_check")
+            .and_then(|v| v.as_bool())
+            == Some(true)
+        {
             return Ok(CheckResult::Pass);
         }
 
@@ -231,9 +235,10 @@ mod has_role_tests {
     }
 
     #[tokio::test]
-    async fn polytope_admin_always_passes() {
-        let user = test_user(vec!["polytope-admin"], "ecmwf");
-        let job = job_with_auth(&user);
+    async fn bypass_flag_passes_any_check() {
+        let user = test_user(vec!["viewer"], "ecmwf");
+        let mut job = job_with_auth(&user);
+        job.user_mut()["can_bypass_role_check"] = json!(true);
         let result = has_role(&[("ecmwf", &["some_other_role"])])
             .evaluate(&job)
             .await
@@ -242,14 +247,27 @@ mod has_role_tests {
     }
 
     #[tokio::test]
-    async fn polytope_admin_passes_even_unlisted_realm() {
-        let user = test_user(vec!["polytope-admin"], "unknown_realm");
-        let job = job_with_auth(&user);
-        let result = has_role(&[("ecmwf", &["viewer"])])
+    async fn bypass_flag_passes_even_unlisted_realm() {
+        let user = test_user(vec!["viewer"], "unknown_realm");
+        let mut job = job_with_auth(&user);
+        job.user_mut()["can_bypass_role_check"] = json!(true);
+        let result = has_role(&[("ecmwf", &["admin"])])
             .evaluate(&job)
             .await
             .unwrap();
         assert!(matches!(result, CheckResult::Pass));
+    }
+
+    #[tokio::test]
+    async fn no_bypass_flag_still_checks_roles() {
+        let user = test_user(vec!["viewer"], "ecmwf");
+        let job = job_with_auth(&user);
+        assert_reject(
+            has_role(&[("ecmwf", &["admin"])])
+                .evaluate(&job)
+                .await
+                .unwrap(),
+        );
     }
 
     #[tokio::test]

@@ -82,6 +82,9 @@ pub async fn submit_request(
         user_context.insert("client_ip".to_string(), json!(ip));
     }
     if let Some(Extension(user)) = auth_user {
+        if super::check_admin_bypass(&user, &state.admin_bypass_roles) {
+            user_context.insert("can_bypass_role_check".to_string(), json!(true));
+        }
         user_context.insert("auth".to_string(), serde_json::to_value(&user).unwrap());
     }
     job.user = Value::Object(user_context).into();

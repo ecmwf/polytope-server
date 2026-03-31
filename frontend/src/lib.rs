@@ -65,6 +65,7 @@ pub fn build_app(
         auth_client,
         collections,
         allow_anonymous,
+        admin_bypass_roles: cfg.admin_bypass_roles,
     });
 
     let v1_protected = Router::new()

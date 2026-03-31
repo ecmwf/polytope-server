@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use std::collections::HashMap;
 
 #[derive(Deserialize, Clone)]
 pub struct AuthConfig {
@@ -47,6 +48,8 @@ pub struct ServerConfig {
     pub edr: Option<serde_yaml::Value>,
     #[serde(default)]
     pub authentication: Option<AuthConfig>,
+    #[serde(default)]
+    pub admin_bypass_roles: Option<HashMap<String, Vec<String>>>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -152,6 +152,7 @@ mod tests {
             auth_client,
             collections: HashMap::new(),
             allow_anonymous,
+            admin_bypass_roles: None,
         });
 
         let v1 = Router::new()
@@ -504,6 +505,7 @@ mod tests {
             auth_client: Some(client),
             collections: HashMap::new(),
             allow_anonymous: false,
+            admin_bypass_roles: None,
         });
 
         async fn check_user(req: AxumRequest) -> StatusCode {
@@ -557,6 +559,7 @@ mod tests {
             auth_client: Some(client),
             collections: HashMap::new(),
             allow_anonymous: false,
+            admin_bypass_roles: None,
         });
 
         async fn contract_payload(req: AxumRequest) -> Json<Value> {
@@ -647,6 +650,7 @@ mod tests {
             auth_client: Some(client),
             collections: HashMap::new(),
             allow_anonymous: true,
+            admin_bypass_roles: None,
         });
 
         async fn check_no_user(req: AxumRequest) -> StatusCode {
