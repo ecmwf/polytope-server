@@ -22,7 +22,7 @@ pub fn json_to_request(request: &Value) -> Result<HashMap<String, Vec<String>>, 
 
 fn value_to_strings(key: &str, value: &Value) -> Result<Vec<String>, String> {
     match value {
-        Value::String(s) => Ok(vec![s.clone()]),
+        Value::String(s) => Ok(s.split('/').map(|p| p.trim().to_string()).collect()),
         Value::Number(n) => Ok(vec![n.to_string()]),
         Value::Array(items) => items
             .iter()
@@ -107,7 +107,16 @@ mod tests {
     fn test_range_object() {
         let input = json!({"step":{"start":1, "end":30, "step":2}});
         let out = json_to_request(&input).expect("conversion should succeed");
-        assert_eq!(out.get("step"), Some(&vec!["1/to/30/by/2".to_string()]));
+        assert_eq!(
+            out.get("step"),
+            Some(&vec![
+                "1".to_string(),
+                "to".to_string(),
+                "30".to_string(),
+                "by".to_string(),
+                "2".to_string()
+            ])
+        );
     }
 
     #[test]
