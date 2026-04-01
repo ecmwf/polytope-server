@@ -24,6 +24,7 @@ import logging
 import os
 
 import yaml
+from covjsonkit.param_db import get_param_id_from_db
 from polytope_feature.utility.exceptions import PolytopeError
 from polytope_mars.api import PolytopeMars
 
@@ -83,10 +84,19 @@ class PolytopeDataSource(datasource.DataSource):
             if k in self.pre_path:
                 if isinstance(v, list):
                     if self.gh70_fix_step_ranges:
-                        if k == "param":
+                        if k == "param" and not str(v[0]).lstrip("-").isdigit():
+                            try:
+                                v[0] = get_param_id_from_db(v[0])
+                            except Exception:
+                                logging.warning("Could not convert param shortname '%s' to param id", v[0])
                             pre_path[k] = v[0]
                     if len(v) == 1:
                         v = v[0]
+                        if k == "param" and not str(v).lstrip("-").isdigit():
+                            try:
+                                v = get_param_id_from_db(v)
+                            except Exception:
+                                logging.warning("Could not convert param shortname '%s' to param id", v)
                         pre_path[k] = v
 
         polytope_mars_config = copy.deepcopy(self.config)
