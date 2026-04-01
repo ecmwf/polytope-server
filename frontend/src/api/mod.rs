@@ -6,6 +6,39 @@ use std::collections::HashMap;
 
 use authotron_types::User as AuthUser;
 use axum::http::HeaderMap;
+use serde_json::Value;
+
+/// Flatten a v1-style `{"request": "...yaml..."}` or `{"request": {...}}` wrapper
+/// into a top-level MARS field object. Passes through already-flat requests unchanged.
+pub fn flatten_request(val: &mut Value) -> Result<(), String> {
+    let obj = val
+        .as_object_mut()
+        .ok_or("request body must be a JSON object")?;
+
+    obj.remove("verb");
+
+    if let Some(inner) = obj.remove("request") {
+        match inner {
+            Value::Object(inner_obj) => {
+                for (k, v) in inner_obj {
+                    obj.entry(k).or_insert(v);
+                }
+            }
+            Value::String(yaml_str) => {
+                let parsed: Value = serde_yaml::from_str(&yaml_str)
+                    .map_err(|e| format!("failed to parse request YAML: {e}"))?;
+                if let Some(parsed_obj) = parsed.as_object() {
+                    for (k, v) in parsed_obj {
+                        obj.entry(k.clone()).or_insert(v.clone());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
 
 pub fn client_ip(headers: &HeaderMap) -> Option<String> {
     headers
