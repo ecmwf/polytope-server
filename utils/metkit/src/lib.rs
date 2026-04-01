@@ -85,12 +85,7 @@ pub fn expand_json(request: &serde_json::Value) -> Result<serde_json::Value, Err
     let mut result = serde_json::Map::new();
     result.insert("verb".to_string(), serde_json::Value::String(verb));
     for (key, vals) in expanded {
-        let json_val = if vals.len() == 1 {
-            serde_json::Value::String(vals.into_iter().next().unwrap())
-        } else {
-            serde_json::Value::Array(vals.into_iter().map(serde_json::Value::String).collect())
-        };
-        result.insert(key, json_val);
+        result.insert(key, serde_json::Value::String(vals.join("/")));
     }
 
     Ok(serde_json::Value::Object(result))
@@ -98,7 +93,7 @@ pub fn expand_json(request: &serde_json::Value) -> Result<serde_json::Value, Err
 
 fn json_value_to_strings(val: &serde_json::Value) -> Result<Vec<String>, Error> {
     match val {
-        serde_json::Value::String(s) => Ok(vec![s.clone()]),
+        serde_json::Value::String(s) => Ok(s.split('/').map(|p| p.trim().to_string()).collect()),
         serde_json::Value::Number(n) => Ok(vec![n.to_string()]),
         serde_json::Value::Array(arr) => {
             let mut result = Vec::new();
