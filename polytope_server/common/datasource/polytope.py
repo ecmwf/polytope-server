@@ -84,7 +84,11 @@ class PolytopeDataSource(datasource.DataSource):
             if k in self.pre_path:
                 if isinstance(v, list):
                     if self.gh70_fix_step_ranges:
-                        if k == "param":
+                        if k == "param" and not str(v).lstrip("-").isdigit():
+                            try:
+                                v = get_param_id_from_db(v)
+                            except Exception:
+                                logging.warning("Could not convert param shortname '%s' to param id", v)
                             pre_path[k] = v[0]
                     if len(v) == 1:
                         v = v[0]
