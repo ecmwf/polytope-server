@@ -24,8 +24,6 @@ import logging
 import os
 
 import yaml
-from polytope_feature.utility.exceptions import PolytopeError
-from polytope_mars.api import PolytopeMars
 
 
 class PolytopeDataSource:
@@ -60,6 +58,8 @@ class PolytopeDataSource:
 
     def retrieve(self, request):
         import time
+        from polytope_feature.utility.exceptions import PolytopeError
+        from polytope_mars.api import PolytopeMars
 
         t0 = time.monotonic()
 
