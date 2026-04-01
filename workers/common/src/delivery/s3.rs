@@ -26,6 +26,7 @@ impl ResultDelivery for S3Push {
         content_type: &str,
         content_encoding: Option<&str>,
         body: reqwest::Body,
+        _metadata: &serde_json::Value,
     ) -> Completion {
         match self.push(content_type, content_encoding, body).await {
             Ok(location) => Completion::Redirect {
@@ -244,6 +245,7 @@ mod tests {
                 "application/octet-stream",
                 Some("gzip"),
                 reqwest::Body::from(vec![1, 2, 3]),
+                &serde_json::json!({}),
             )
             .await;
 

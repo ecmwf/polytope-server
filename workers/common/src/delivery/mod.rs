@@ -17,6 +17,7 @@ pub trait ResultDelivery: Send + Sync {
         content_type: &str,
         content_encoding: Option<&str>,
         body: reqwest::Body,
+        metadata: &serde_json::Value,
     ) -> Completion;
 }
 
@@ -33,7 +34,7 @@ pub async fn make_delivery(
                 .expect("bobs_url required for delivery_type=bobs")
                 .trim_start_matches("http://")
                 .trim_start_matches("https://");
-            let api_base = format!("http://{host}");
+            let api_base = format!("http://{host}/api/v1");
             Box::new(BobsPush { api_base, client })
         }
         DeliveryType::S3 => {
@@ -93,7 +94,13 @@ impl ResultDelivery for DirectDelivery {
         content_type: &str,
         content_encoding: Option<&str>,
         body: reqwest::Body,
+        metadata: &serde_json::Value,
     ) -> Completion {
+        if metadata.get("buffer_full_output").and_then(|v| v.as_bool()) == Some(true) {
+            return Completion::Error {
+                message: "buffer_full_output requires BOBS delivery; direct streaming does not support it".to_string(),
+            };
+        }
         Completion::Complete {
             content_type: content_type.to_string(),
             content_encoding: content_encoding.map(str::to_string),

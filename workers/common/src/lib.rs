@@ -292,7 +292,12 @@ pub async fn run_worker_loop<P: Processor>(
                 let content_encoding = codec.content_encoding_header().map(str::to_string);
                 let encoded = encode_stream(body, &codec);
                 delivery
-                    .deliver(&content_type, content_encoding.as_deref(), encoded)
+                    .deliver(
+                        &content_type,
+                        content_encoding.as_deref(),
+                        encoded,
+                        &work.metadata,
+                    )
                     .await
             }
             ProcessResult::Reject { reason } => Completion::Reject { reason },

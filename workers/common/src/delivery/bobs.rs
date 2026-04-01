@@ -17,8 +17,14 @@ impl ResultDelivery for BobsPush {
         content_type: &str,
         content_encoding: Option<&str>,
         body: reqwest::Body,
+        metadata: &serde_json::Value,
     ) -> Completion {
-        match self.push(content_type, content_encoding, body).await {
+        let buffer_full =
+            metadata.get("buffer_full_output").and_then(|v| v.as_bool()) == Some(true);
+        match self
+            .push(content_type, content_encoding, body, buffer_full)
+            .await
+        {
             Ok(location) => Completion::Redirect {
                 location,
                 message: "result available for download".to_string(),
@@ -36,8 +42,12 @@ impl BobsPush {
         content_type: &str,
         content_encoding: Option<&str>,
         body: reqwest::Body,
+        write_locked: bool,
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-        let mut create_body = serde_json::json!({ "content_type": content_type });
+        let mut create_body = serde_json::json!({
+            "content_type": content_type,
+            "write_locked": write_locked,
+        });
         if let Some(enc) = content_encoding {
             create_body["content_encoding"] = serde_json::json!(enc);
         }
@@ -173,6 +183,7 @@ mod tests {
                 "application/octet-stream",
                 None,
                 reqwest::Body::from(data.clone()),
+                &serde_json::json!({}),
             )
             .await;
 
@@ -256,7 +267,14 @@ mod tests {
         ]);
         let body = reqwest::Body::wrap_stream(stream);
 
-        let result = push.deliver("application/octet-stream", None, body).await;
+        let result = push
+            .deliver(
+                "application/octet-stream",
+                None,
+                body,
+                &serde_json::json!({}),
+            )
+            .await;
 
         match result {
             Completion::Redirect { location, .. } => {
@@ -285,6 +303,7 @@ mod tests {
                 "application/octet-stream",
                 None,
                 reqwest::Body::from(vec![]),
+                &serde_json::json!({}),
             )
             .await;
 
