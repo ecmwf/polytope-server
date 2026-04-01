@@ -31,7 +31,7 @@ pub async fn submit_collection(
     headers: HeaderMap,
     auth_user: Option<Extension<AuthUser>>,
     Path(collection): Path<String>,
-    Json(body): Json<Value>,
+    Json(mut body): Json<Value>,
 ) -> Response {
     let route_handle = match state.collections.get(&collection) {
         Some(handle) => handle.clone(),
@@ -43,6 +43,10 @@ pub async fn submit_collection(
                 .into_response();
         }
     };
+
+    if let Err(msg) = super::flatten_request(&mut body) {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": msg}))).into_response();
+    }
 
     let mut job = Job::new(body);
     let mut user_context = serde_json::Map::new();

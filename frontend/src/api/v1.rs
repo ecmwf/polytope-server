@@ -71,10 +71,10 @@ pub async fn submit_request(
         }
     };
 
-    let request = json!({
-        "verb": body.verb,
-        "request": body.request,
-    });
+    let mut request = json!({ "request": body.request });
+    if let Err(msg) = super::flatten_request(&mut request) {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": msg}))).into_response();
+    }
 
     let mut job = Job::new(request);
     let mut user_context = serde_json::Map::new();
@@ -88,8 +88,12 @@ pub async fn submit_request(
         user_context.insert("auth".to_string(), serde_json::to_value(&user).unwrap());
     }
     job.user = Value::Object(user_context).into();
+    // v1 clients require Content-Length, so delivery must buffer the full
+    // output before making it available for download.
+    job.metadata_mut()["buffer_full_output"] = json!(true);
 
     let handle = route_handle.submit(job);
+
     let location = format!("/api/v1/requests/{}", handle.id);
     (
         StatusCode::ACCEPTED,
