@@ -4,8 +4,6 @@ import re
 from datetime import datetime, timedelta
 from typing import Any, Dict
 
-from covjsonkit.param_db import get_param_id_from_db
-
 from . import config as polytope_config
 
 
@@ -192,15 +190,7 @@ def coerce_param(value: Any) -> str:
     if isinstance(value, int):
         return str(value)
     elif isinstance(value, str):
-        # If the value is already a numeric param ID, return it as-is
-        if str(value).lstrip("-").isdigit():
-            return value
-        # Otherwise treat it as a shortname and try to convert to a param ID
-        try:
-            return str(get_param_id_from_db(value))
-        except Exception:
-            logging.warning("Could not convert param shortname '%s' to param id", value)
-            return value
+        return value
     else:
         raise CoercionError("Invalid param type, expected integer or string.")
 
