@@ -105,6 +105,7 @@ ARG BIN_NAME=polytope-server
 LABEL version=$VERSION
 WORKDIR /app
 COPY --from=metkit-build /opt/metkit/lib /opt/metkit/lib
+COPY --from=metkit-build /opt/metkit/share /opt/metkit/share
 COPY --from=builder /ecmwf/polytope-server/frontend/target/release/${BIN_NAME} /app/polytope-server
 ENV LD_LIBRARY_PATH="/opt/metkit/lib"
 ENTRYPOINT ["/app/polytope-server"]
@@ -119,6 +120,7 @@ LABEL version=$VERSION
 RUN apt-get update && apt-get install -y ca-certificates bash && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=metkit-build /opt/metkit/lib /opt/metkit/lib
+COPY --from=metkit-build /opt/metkit/share /opt/metkit/share
 COPY --from=builder /ecmwf/polytope-server/frontend/target/release/${BIN_NAME} /app/polytope-server
 ENV LD_LIBRARY_PATH="/opt/metkit/lib"
 ENTRYPOINT ["/app/polytope-server"]
