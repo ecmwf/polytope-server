@@ -108,8 +108,6 @@ class PolytopeDataSource(datasource.DataSource):
             change_hash(r, polytope_mars_config)
         if self.separate_datetime:
             unmerge_date_time_options(r, polytope_mars_config)
-        if r.get("class", None) == "ce" and r.get("stream", None) == "efcl":
-            add_hdate_options(r, polytope_mars_config)
 
         polytope_mars = PolytopeMars(
             polytope_mars_config,
@@ -244,21 +242,6 @@ def change_config_grid_res(config, res):
         for sub_mapping in mappings["transformations"]:
             if sub_mapping["name"] == "mapper":
                 sub_mapping["resolution"] = res
-    return config
-
-
-def add_hdate_options(request, config):
-    config["options"]["axis_config"] = [
-        m for m in config["options"]["axis_config"] if m["axis_name"] != "date"
-    ]
-    config["options"]["axis_config"].append(
-        {
-            "axis_name": "hdate",
-            "transformations": [
-                {"name": "merge", "other_axis": "time", "linkers": ["T", "00"]}
-            ],
-        }
-    )
     return config
 
 
