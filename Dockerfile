@@ -211,6 +211,7 @@ RUN set -eux \
         build-essential \
         cmake \
         git \
+        liblz4-dev \
         ninja-build \
         python3-dev \
         python3-venv \
@@ -368,7 +369,9 @@ COPY --chown=polytope --from=fdb-base-final /root/.local /home/polytope/.local
 COPY --chown=polytope --from=gribjump-base-final /opt/ecmwf/gribjump-server/ /opt/ecmwf/gribjump-server/
 COPY --chown=polytope --from=gribjump-base-final /root/.local /home/polytope/.local
 COPY --chown=polytope --from=source-gribjump-base-final /opt/polytope/gribjump-source /opt/polytope/gribjump-source
-# RUN sudo apt install -y libopenjp2-7
+RUN sudo apt update \
+    && sudo apt install -y libopenjp2-7 \
+    && sudo rm -rf /var/lib/apt/lists/*
 # COPY polytope-deployment/common/default_fdb_schema /polytope/config/fdb/default
 
 # Copy python requirements

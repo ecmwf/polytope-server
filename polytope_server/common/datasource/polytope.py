@@ -100,13 +100,36 @@ class PolytopeDataSource(datasource.DataSource):
 
     def _activate_source_bundle(self, bundle_root: Path) -> None:
         site_packages = _python_site_packages(bundle_root)
+        bundle_lib = str(bundle_root / "lib")
+        logging.info(
+            "Activating source-built GribJump bundle",
+            extra={
+                "source_bundle_root": str(bundle_root),
+                "source_bundle_site_packages": str(site_packages),
+            },
+        )
         self._save_env("GRIBJUMP_HOME")
         self._save_env("FDB_HOME")
         self._save_env("FDB5_HOME")
+        self._save_env("GRIBJUMP_DIR")
+        self._save_env("FDB5_DIR")
+        self._save_env("ECCODES_DIR")
+        self._save_env("FINDLIBS_DISABLE_PACKAGE")
+        self._save_env("LD_LIBRARY_PATH")
 
         os.environ["GRIBJUMP_HOME"] = str(bundle_root)
         os.environ["FDB_HOME"] = str(bundle_root)
         os.environ["FDB5_HOME"] = str(bundle_root)
+        os.environ["GRIBJUMP_DIR"] = str(bundle_root)
+        os.environ["FDB5_DIR"] = str(bundle_root)
+        os.environ["ECCODES_DIR"] = str(bundle_root)
+        os.environ["FINDLIBS_DISABLE_PACKAGE"] = "yes"
+
+        ld_library_path = os.environ.get("LD_LIBRARY_PATH")
+        if ld_library_path:
+            os.environ["LD_LIBRARY_PATH"] = f"{bundle_lib}:{ld_library_path}"
+        else:
+            os.environ["LD_LIBRARY_PATH"] = bundle_lib
 
         if str(site_packages) not in sys.path:
             sys.path.insert(0, str(site_packages))
