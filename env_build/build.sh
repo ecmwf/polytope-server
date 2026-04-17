@@ -14,6 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_BUNDLE="${SRC_BUNDLE:-${SCRIPT_DIR}/git}"
 BUILD_DIR="${BUILD_DIR:-${SCRIPT_DIR}/build}"
 INSTALL_PREFIX="${INSTALL_PREFIX:-${SCRIPT_DIR}/install}"
+PYTHON_VERSION="${PYTHON_VERSION:-3.12}"
 
 # rm -rf "${BUILD_DIR}"
 rm -rf "${INSTALL_PREFIX}/.venv"
@@ -39,7 +40,8 @@ export PATH="${SRC_BUNDLE}/ecbuild/bin:$PATH"
 # Create a python environment
 if [ ! -d "${INSTALL_PREFIX}/.venv" ]; then
   # ${PYTHON_BIN} -m venv "${INSTALL_PREFIX}/.venv"
-  uv venv "${INSTALL_PREFIX}/.venv" --python "3.12"
+  echo "Creating source bundle virtualenv with Python ${PYTHON_VERSION}"
+  uv venv "${INSTALL_PREFIX}/.venv" --python "${PYTHON_VERSION}"
 fi
 source "${INSTALL_PREFIX}/.venv/bin/activate"
 
