@@ -22,6 +22,7 @@ ARG fdb_base=blank-base
 ARG mars_base_c=blank-base
 ARG mars_base_cpp=blank-base
 ARG gribjump_base=blank-base
+ARG gribjump_source_base=blank-base
 
 #######################################################
 #                     C O M M O N
@@ -91,6 +92,7 @@ RUN set -eux \
     && mkdir -p /opt/ecmwf/mars-client-cloud \
     && mkdir -p /opt/fdb \
     && mkdir -p /opt/ecmwf/gribjump-server \
+    && mkdir -p /opt/polytope/gribjump-source \
     && touch /usr/local/bin/mars
 
 #######################################################
@@ -201,6 +203,40 @@ RUN set -eux \
     && python -m pip install . --user \
     && rm -rf /gribjump
 
+FROM python:3.11-bookworm AS source-gribjump-base
+
+RUN set -eux \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        cmake \
+        git \
+        ninja-build \
+        python3-dev \
+        python3-venv \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python -m pip install --no-cache-dir uv cmake
+
+COPY ./env_build /env_build
+
+RUN set -eux \
+    && mkdir -p /opt/polytope/gribjump-source-src /opt/polytope/gribjump-source-build \
+    && PYTHON_VERSION=3.11 \
+       SRC_BUNDLE=/opt/polytope/gribjump-source-src \
+       BUILD_DIR=/opt/polytope/gribjump-source-build \
+       INSTALL_PREFIX=/opt/polytope/gribjump-source \
+       bash /env_build/build.sh
+
+ENV FDB5_DIR=/opt/polytope/gribjump-source
+ENV GRIBJUMP_DIR=/opt/polytope/gribjump-source
+ENV ECCODES_DIR=/opt/polytope/gribjump-source
+ENV FINDLIBS_DISABLE_PACKAGE=yes
+ENV LD_LIBRARY_PATH=/opt/polytope/gribjump-source/lib
+
+RUN /opt/polytope/gribjump-source/.venv/bin/python -c "import pyfdb, pygribjump; print('source bundle imports OK')"
+
 #######################################################
 #               M A R S    B A S E
 #######################################################
@@ -240,6 +276,8 @@ FROM ${mars_base_c} AS mars-c-base-final
 FROM ${mars_base_cpp} AS mars-cpp-base-final
 
 FROM ${gribjump_base} AS gribjump-base-final
+
+FROM ${gribjump_source_base} AS source-gribjump-base-final
 
 
 #######################################################
@@ -329,6 +367,7 @@ COPY --chown=polytope --from=fdb-base-final /root/.local /home/polytope/.local
 # COPY --chown=polytope --from=gribjump-base-final /opt/fdb/ /opt/fdb/
 COPY --chown=polytope --from=gribjump-base-final /opt/ecmwf/gribjump-server/ /opt/ecmwf/gribjump-server/
 COPY --chown=polytope --from=gribjump-base-final /root/.local /home/polytope/.local
+COPY --chown=polytope --from=source-gribjump-base-final /opt/polytope/gribjump-source /opt/polytope/gribjump-source
 # RUN sudo apt install -y libopenjp2-7
 # COPY polytope-deployment/common/default_fdb_schema /polytope/config/fdb/default
 
