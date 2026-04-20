@@ -2,6 +2,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 import polytope_server.common.datasource.polytope as polytope_module
 from polytope_server.common.datasource.polytope import (
@@ -10,7 +11,7 @@ from polytope_server.common.datasource.polytope import (
 )
 
 
-def _base_config(bundle_root: Path) -> dict:
+def _base_config(bundle_root: Path) -> dict[str, Any]:
     return {
         "type": "polytope",
         "name": "polytope-source-test",
@@ -22,7 +23,7 @@ def _base_config(bundle_root: Path) -> dict:
     }
 
 
-def _make_request():
+def _make_request() -> Any:
     return type(
         "Request",
         (),
@@ -76,16 +77,16 @@ def test_polytope_datasource_resolves_sequential_source_bundles(monkeypatch, tmp
 
     bundle_a = tmp_path / "bundle-a"
     bundle_b = tmp_path / "bundle-b"
-    site_packages_a = _prepare_bundle(bundle_a)
-    site_packages_b = _prepare_bundle(bundle_b)
+    _prepare_bundle(bundle_a)
+    _prepare_bundle(bundle_b)
 
     ds_a = PolytopeDataSource(_base_config(bundle_a))
     assert ds_a.config_file != ds_a.fdb_config_file
     assert ds_a.config_file != "/tmp/gribjump.yaml"
     assert ds_a.fdb_config_file != "/tmp/fdb.yaml"
-    assert str(site_packages_a) in sys.path
 
     assert ds_a.retrieve(_make_request()) is True
+    assert ds_a.output is not None
     assert json.loads(ds_a.output.decode("utf-8"))["marker"] == "bundle-a"
     assert os.environ["GRIBJUMP_HOME"] == str(bundle_a)
     assert os.environ["FDB_HOME"] == str(bundle_a)
@@ -97,7 +98,6 @@ def test_polytope_datasource_resolves_sequential_source_bundles(monkeypatch, tmp
     assert os.environ["LD_LIBRARY_PATH"] == f"{bundle_a / 'lib'}:/existing/lib"
 
     ds_a.destroy(None)
-    assert str(site_packages_a) not in sys.path
     assert os.environ["GRIBJUMP_HOME"] == "/existing/gribjump"
     assert os.environ["FDB_HOME"] == "/existing/fdb"
     assert os.environ["FDB5_HOME"] == "/existing/fdb5"
@@ -110,13 +110,12 @@ def test_polytope_datasource_resolves_sequential_source_bundles(monkeypatch, tmp
     assert os.environ["FDB5_CONFIG_FILE"] == "/existing/fdb.yaml"
 
     ds_b = PolytopeDataSource(_base_config(bundle_b))
-    assert str(site_packages_b) in sys.path
 
     assert ds_b.retrieve(_make_request()) is True
+    assert ds_b.output is not None
     assert json.loads(ds_b.output.decode("utf-8"))["marker"] == "bundle-b"
 
     ds_b.destroy(None)
-    assert str(site_packages_b) not in sys.path
 
 
 def test_polytope_datasource_creates_unique_temp_files(tmp_path):
@@ -126,18 +125,31 @@ def test_polytope_datasource_creates_unique_temp_files(tmp_path):
     ds_a = PolytopeDataSource(_base_config(bundle_root))
     ds_b = PolytopeDataSource(_base_config(bundle_root))
 
-    assert ds_a.config_file != ds_b.config_file
-    assert ds_a.fdb_config_file != ds_b.fdb_config_file
-    assert Path(ds_a.config_file).exists()
-    assert Path(ds_b.config_file).exists()
-    assert Path(ds_a.fdb_config_file).exists()
-    assert Path(ds_b.fdb_config_file).exists()
+    config_file_a = ds_a.config_file
+    config_file_b = ds_b.config_file
+    fdb_config_file_a = ds_a.fdb_config_file
+    fdb_config_file_b = ds_b.fdb_config_file
+
+    assert config_file_a != config_file_b
+    assert fdb_config_file_a != fdb_config_file_b
+    assert config_file_a is not None
+    assert config_file_b is not None
+    assert fdb_config_file_a is not None
+    assert fdb_config_file_b is not None
+    assert Path(config_file_a).exists()
+    assert Path(config_file_b).exists()
+    assert Path(fdb_config_file_a).exists()
+    assert Path(fdb_config_file_b).exists()
 
     ds_a.destroy(None)
-    assert not Path(ds_a.config_file).exists()
-    assert not Path(ds_a.fdb_config_file).exists()
-    assert Path(ds_b.config_file).exists()
-    assert Path(ds_b.fdb_config_file).exists()
+    assert config_file_a is not None
+    assert fdb_config_file_a is not None
+    assert not Path(config_file_a).exists()
+    assert not Path(fdb_config_file_a).exists()
+    assert config_file_b is not None
+    assert fdb_config_file_b is not None
+    assert Path(config_file_b).exists()
+    assert Path(fdb_config_file_b).exists()
 
     ds_b.destroy(None)
 
@@ -165,5 +177,41 @@ def test_polytope_datasource_without_source_bundle_does_not_set_bundle_env(monke
     assert "ECCODES_DIR" not in os.environ
     assert "FINDLIBS_DISABLE_PACKAGE" not in os.environ
     assert "LD_LIBRARY_PATH" not in os.environ
+
+    ds.destroy(None)
+
+
+def test_polytope_datasource_source_mode_does_not_prepend_site_packages(monkeypatch, tmp_path):
+    bundle_root = tmp_path / "bundle"
+    _prepare_bundle(bundle_root)
+
+    monkeypatch.setattr(
+        polytope_module,
+        "_import_polytope_mars",
+        _fake_polytope_mars_class,
+    )
+
+    original_path = list(sys.path)
+    ds = PolytopeDataSource(_base_config(bundle_root))
+
+    assert sys.path == original_path
+
+    ds.destroy(None)
+
+
+def test_polytope_datasource_source_mode_sets_bundle_env_without_path_injection(tmp_path):
+    bundle_root = tmp_path / "bundle"
+    _prepare_bundle(bundle_root)
+
+    ds = PolytopeDataSource(_base_config(bundle_root))
+
+    assert os.environ["GRIBJUMP_HOME"] == str(bundle_root)
+    assert os.environ["FDB_HOME"] == str(bundle_root)
+    assert os.environ["FDB5_HOME"] == str(bundle_root)
+    assert os.environ["GRIBJUMP_DIR"] == str(bundle_root)
+    assert os.environ["FDB5_DIR"] == str(bundle_root)
+    assert os.environ["ECCODES_DIR"] == str(bundle_root)
+    assert os.environ["FINDLIBS_DISABLE_PACKAGE"] == "yes"
+    assert os.environ["LD_LIBRARY_PATH"].startswith(str(bundle_root / "lib"))
 
     ds.destroy(None)
