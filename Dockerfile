@@ -23,6 +23,8 @@ ARG mars_base_c=blank-base
 ARG mars_base_cpp=blank-base
 ARG gribjump_base=blank-base
 ARG gribjump_source_base=blank-base
+ARG polytope_python_git=https://github.com/ecmwf/polytope.git
+ARG polytope_python_ref=feat/new-pyfdb-api
 
 #######################################################
 #                     C O M M O N
@@ -238,6 +240,44 @@ ENV LD_LIBRARY_PATH=/opt/polytope/gribjump-source/lib
 
 RUN /opt/polytope/gribjump-source/.venv/bin/python -c "import pyfdb, pygribjump; print('source bundle imports OK')"
 
+FROM python:3.11-bookworm AS polytope-python-wheel-builder
+
+ARG polytope_python_git
+ARG polytope_python_ref
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        curl \
+        git \
+        python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV CARGO_HOME=/root/.cargo
+ENV RUSTUP_HOME=/root/.rustup
+ENV PATH=/root/.cargo/bin:${PATH}
+
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain stable
+
+RUN python -m pip install --no-cache-dir build uv
+
+WORKDIR /build/polytope-python
+RUN GIT_TERMINAL_PROMPT=0 git clone --branch "${polytope_python_ref}" --depth 1 "${polytope_python_git}" .
+RUN python -m build --wheel
+
+FROM source-gribjump-base AS source-gribjump-worker-python
+
+WORKDIR /polytope
+COPY ./requirements.txt /polytope/requirements.txt
+COPY . /polytope
+COPY --from=polytope-python-wheel-builder /build/polytope-python/dist/*.whl /tmp/polytope-python/
+
+RUN VIRTUAL_ENV=/opt/polytope/gribjump-source/.venv PATH="/opt/polytope/gribjump-source/.venv/bin:${PATH}" uv pip install -r /polytope/requirements.txt \
+    && VIRTUAL_ENV=/opt/polytope/gribjump-source/.venv PATH="/opt/polytope/gribjump-source/.venv/bin:${PATH}" uv pip install /tmp/polytope-python/*.whl \
+    && VIRTUAL_ENV=/opt/polytope/gribjump-source/.venv PATH="/opt/polytope/gribjump-source/.venv/bin:${PATH}" uv pip install geopandas==1.0.1 \
+    && VIRTUAL_ENV=/opt/polytope/gribjump-source/.venv PATH="/opt/polytope/gribjump-source/.venv/bin:${PATH}" uv pip install /polytope
+
 #######################################################
 #               M A R S    B A S E
 #######################################################
@@ -355,27 +395,34 @@ RUN set -eux \
 
 ENV MARS_CONFIGS_REPO=${mars_config_repo}
 ENV MARS_CONFIGS_BRANCH=${mars_config_branch}
-ENV PATH="/polytope/bin/:/opt/ecmwf/mars-client/bin:/opt/ecmwf/mars-client-cloud/bin:${PATH}"
+ENV PATH="/opt/polytope/gribjump-source/.venv/bin:/home/polytope/.local/bin:/polytope/bin/:/opt/ecmwf/mars-client/bin:/opt/ecmwf/mars-client-cloud/bin:${PATH}"
+ENV PYTHONPATH="/opt/polytope/gribjump-source/.venv/lib/python3.11/site-packages:/home/polytope/.local/lib/python3.11/site-packages"
 
 # Copy FDB-related artifacts
 COPY --chown=polytope --from=fdb-base-final /opt/fdb/ /opt/fdb/
 COPY --chown=polytope ./aux/default_fdb_schema /polytope/config/fdb/default
 RUN mkdir -p /polytope/fdb/ && sudo chmod -R o+rw /polytope/fdb
-ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/opt/fdb/lib:/opt/ecmwf/gribjump-server/lib
-COPY --chown=polytope --from=fdb-base-final /root/.local /home/polytope/.local
+ENV LD_LIBRARY_PATH=/opt/polytope/gribjump-source/lib:/opt/fdb/lib:/opt/ecmwf/gribjump-server/lib
 
-# Copy gribjump-related artifacts, including python libraries
+# Copy gribjump-related artifacts
 # COPY --chown=polytope --from=gribjump-base-final /opt/fdb/ /opt/fdb/
 COPY --chown=polytope --from=gribjump-base-final /opt/ecmwf/gribjump-server/ /opt/ecmwf/gribjump-server/
-COPY --chown=polytope --from=gribjump-base-final /root/.local /home/polytope/.local
 COPY --chown=polytope --from=source-gribjump-base-final /opt/polytope/gribjump-source /opt/polytope/gribjump-source
 RUN sudo apt update \
     && sudo apt install -y libopenjp2-7 \
     && sudo rm -rf /var/lib/apt/lists/*
 # COPY polytope-deployment/common/default_fdb_schema /polytope/config/fdb/default
 
-# Copy python requirements
-COPY --chown=polytope --from=worker-base /root/.venv /home/polytope/.local
+RUN --mount=from=fdb-base-final,source=/root/.local,target=/tmp/fdb-local,readonly \
+    --mount=from=gribjump-base-final,source=/root/.local,target=/tmp/gribjump-local,readonly \
+    --mount=from=worker-base,source=/root/.venv,target=/tmp/worker-venv,readonly \
+    set -eux \
+    && if [ ! -d /opt/polytope/gribjump-source/.venv ]; then \
+        sudo mkdir -p /home/polytope/.local; \
+        sudo cp -a /tmp/fdb-local/. /home/polytope/.local/; \
+        sudo cp -a /tmp/gribjump-local/. /home/polytope/.local/; \
+        sudo cp -a /tmp/worker-venv/. /home/polytope/.local/; \
+    fi
 
 # Install the server source
 COPY --chown=polytope . /polytope/

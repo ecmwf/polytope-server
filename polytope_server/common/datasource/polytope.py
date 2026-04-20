@@ -71,7 +71,6 @@ class PolytopeDataSource(datasource.DataSource):
         self.obey_schedule = self.config.get("obey_schedule", False)
         self.output = None
         self._saved_env = {}
-        self._inserted_sys_path = None
         self._source_bundle_root = self.config.get("source_bundle_root")
 
         # Create a temp file to store gribjump config
@@ -99,13 +98,11 @@ class PolytopeDataSource(datasource.DataSource):
             self._saved_env[name] = os.environ.get(name)
 
     def _activate_source_bundle(self, bundle_root: Path) -> None:
-        site_packages = _python_site_packages(bundle_root)
         bundle_lib = str(bundle_root / "lib")
         logging.info(
             "Activating source-built GribJump bundle",
             extra={
                 "source_bundle_root": str(bundle_root),
-                "source_bundle_site_packages": str(site_packages),
             },
         )
         self._save_env("GRIBJUMP_HOME")
@@ -131,19 +128,12 @@ class PolytopeDataSource(datasource.DataSource):
         else:
             os.environ["LD_LIBRARY_PATH"] = bundle_lib
 
-        if str(site_packages) not in sys.path:
-            sys.path.insert(0, str(site_packages))
-            self._inserted_sys_path = str(site_packages)
-
     def _restore_env(self) -> None:
         for name, value in self._saved_env.items():
             if value is None:
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = value
-        if self._inserted_sys_path and self._inserted_sys_path in sys.path:
-            sys.path.remove(self._inserted_sys_path)
-            self._inserted_sys_path = None
 
     def get_type(self):
         return self.type
