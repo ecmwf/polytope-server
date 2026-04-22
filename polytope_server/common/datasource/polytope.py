@@ -224,8 +224,9 @@ def change_hash(request, config):
     if request.get("dataset", None) == "climate-dt":
         if request.get("resolution", None) == "high":
             if request.get("model", None) == "icon":
-                hash = "9533855ee8e38314e19aaa0434c310da"
-                return change_config_grid_hash(config, hash)
+                if request.get("generation", None) == "1":
+                    hash = "9533855ee8e38314e19aaa0434c310da"
+                    return change_config_grid_hash(config, hash)
     return config
 
 
