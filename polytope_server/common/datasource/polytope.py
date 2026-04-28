@@ -46,6 +46,7 @@ class PolytopeDataSource(datasource.DataSource):
         self.gh69_fix_grids = config.get("gh69_fix_grids", False)
         # https://github.com/ecmwf/polytope-server/issues/70
         self.gh70_fix_step_ranges = config.get("gh70_fix_step_ranges", False)
+        self.gh176_fix_timespan = config.get("gh176_fix_timespan", False)
         self.separate_datetime = config.get("separate_datetime", False)
         self.obey_schedule = config.get("obey_schedule", False)
         self.output = None
@@ -89,6 +90,9 @@ class PolytopeDataSource(datasource.DataSource):
                                 v[0] = get_param_id_from_db(v[0])
                             except Exception:
                                 logging.warning("Could not convert param shortname '%s' to param id", v[0])
+                            pre_path[k] = v[0]
+                    if self.gh176_fix_timespan:
+                        if k == "param":
                             pre_path[k] = v[0]
                     if len(v) == 1:
                         v = v[0]
