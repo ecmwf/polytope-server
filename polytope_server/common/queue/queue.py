@@ -18,7 +18,6 @@
 # does it submit to any jurisdiction.
 #
 
-import importlib
 from abc import ABC, abstractmethod
 
 
@@ -68,14 +67,3 @@ class Queue(ABC):
     @abstractmethod
     def get_type(self) -> str:
         """Get the implementation type"""
-
-
-queue_dict = {"rabbitmq": "RabbitmqQueue", "sqs": "SQSQueue"}
-
-
-def create_queue(queue_config) -> Queue:
-
-    queue_type = next(iter(queue_config.keys()), "rabbitmq")
-
-    QueueClass = importlib.import_module("polytope_server.common.queue." + queue_type + "_queue")
-    return getattr(QueueClass, queue_dict[queue_type])(queue_config[queue_type])

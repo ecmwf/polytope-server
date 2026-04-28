@@ -206,11 +206,14 @@ class Worker:
 
     def run(self):
         self.queue = polytope_queue.create_queue(self.config.get("queue"))
+        try:
+            self.update_status("idle", time_spent=0)
 
-        self.update_status("idle", time_spent=0)
-
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            aio.run(self.schedule(executor))
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                aio.run(self.schedule(executor))
+        finally:
+            self.request_store.close()
+            self.queue.close_connection()
 
     def process_request(
         self,

@@ -89,5 +89,8 @@ class Frontend:
             self.config.get("frontend", {}).get("proxy_support", False),
         )
 
-        logging.info("Starting frontend...")
-        handler_class.run_server(handler, self.server_type, self.host, self.port)
+        try:
+            logging.info("Starting frontend...")
+            handler_class.run_server(handler, self.server_type, self.host, self.port)
+        finally:
+            request_store.close()

@@ -41,6 +41,11 @@ class TelemetryService:
         # Attach resources to the app state
         app.state.resources = resources
         yield
+        # Close resources on shutdown
+        if resources.get("request_store") is not None:
+            resources["request_store"].close()
+        if resources.get("metric_store") is not None:
+            resources["metric_store"].close()
 
     def load_handler(self):
         handler_type = self.config.get("telemetry", {}).get("handler", "fastapi")
