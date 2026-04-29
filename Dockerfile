@@ -92,89 +92,12 @@ RUN set -eux \
     && mkdir -p /opt/ecmwf/mars-client \
     && mkdir -p /opt/ecmwf/mars-client-cpp \
     && mkdir -p /opt/ecmwf/mars-client-cloud \
-    && mkdir -p /opt/fdb \
     && mkdir -p /opt/ecmwf/gribjump-server \
     && mkdir -p /opt/polytope/gribjump-source \
     && touch /usr/local/bin/mars
 
 #######################################################
-#                  F D B   B U I L D
-#######################################################
-FROM python:3.11-bookworm AS fdb-base
-ARG ecbuild_version=3.8.2
-ARG eccodes_version=2.33.1
-ARG eckit_version=1.28.0
-ARG fdb_version=5.13.2
-ARG pyfdb_version=0.1.0
-RUN apt update
-# COPY polytope-deployment/common/default_fdb_schema /polytope/config/fdb/default
-
-# Install FDB from open source repositories
-RUN set -eux && \
-    apt install -y cmake gnupg build-essential libtinfo5 net-tools libnetcdf19 libnetcdf-dev bison flex && \
-    rm -rf source && \
-    rm -rf build && \
-    mkdir -p source && \
-    mkdir -p build && \
-    mkdir -p /opt/fdb/
-
-# Download ecbuild
-RUN set -eux && \
-    git clone --depth 1 --branch ${ecbuild_version} https://github.com/ecmwf/ecbuild.git /ecbuild
-
-ENV PATH=/ecbuild/bin:$PATH
-
-# Install eckit
-RUN set -eux && \
-    git clone --depth 1 --branch ${eckit_version} https://github.com/ecmwf/eckit.git /source/eckit && \
-    cd /source/eckit && \
-    mkdir -p /build/eckit && \
-    cd /build/eckit && \
-    ecbuild --prefix=/opt/fdb -- -DCMAKE_PREFIX_PATH=/opt/fdb /source/eckit && \
-    make -j4 && \
-    make install
-
-# Install eccodes
-RUN set -eux && \
-    git clone --depth 1 --branch ${eccodes_version} https://github.com/ecmwf/eccodes.git /source/eccodes && \
-    mkdir -p /build/eccodes && \
-    cd /build/eccodes && \
-    ecbuild --prefix=/opt/fdb -- -DENABLE_FORTRAN=OFF -DCMAKE_PREFIX_PATH=/opt/fdb /source/eccodes && \
-    make -j4 && \
-    make install
-
-# Install metkit
-RUN set -eux && \
-    git clone --depth 1 --branch develop https://github.com/ecmwf/metkit.git /source/metkit && \
-    cd /source/metkit && \
-    mkdir -p /build/metkit && \
-    cd /build/metkit && \
-    ecbuild --prefix=/opt/fdb -- -DCMAKE_PREFIX_PATH=/opt/fdb /source/metkit && \
-    make -j4 && \
-    make install
-
-# Install fdb \
-RUN set -eux && \
-    git clone --depth 1 --branch ${fdb_version} https://github.com/ecmwf/fdb.git /source/fdb && \
-    cd /source/fdb && \
-    mkdir -p /build/fdb && \
-    cd /build/fdb && \
-    ecbuild --prefix=/opt/fdb -- -DCMAKE_PREFIX_PATH="/opt/fdb;/opt/fdb/eckit;/opt/fdb/metkit" /source/fdb && \
-    make -j4 && \
-    make install
-
-RUN set -eux && \
-    rm -rf /source && \ 
-    rm -rf /build 
-
-# Install pyfdb \
-RUN set -eux \
-    && git clone --single-branch --branch ${pyfdb_version} https://github.com/ecmwf/pyfdb.git \
-    && python -m pip install "numpy<2.0" --user\
-    && python -m pip install ./pyfdb --user
-
-#######################################################
-#             G R I B  J U M P   B U I L D
+#             G R I B  J U M P   R P M
 #######################################################
 
 FROM python:3.11-bookworm AS gribjump-base
@@ -210,14 +133,14 @@ FROM python:3.11-bookworm AS source-gribjump-base
 RUN set -eux \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
-        build-essential \
-        cmake \
-        git \
-        liblz4-dev \
-        ninja-build \
-        python3-dev \
-        python3-venv \
-        curl \
+    build-essential \
+    cmake \
+    git \
+    liblz4-dev \
+    ninja-build \
+    python3-dev \
+    python3-venv \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 RUN python -m pip install --no-cache-dir uv cmake
@@ -227,10 +150,10 @@ COPY ./env_build /env_build
 RUN set -eux \
     && mkdir -p /opt/polytope/gribjump-source-src /opt/polytope/gribjump-source-build \
     && PYTHON_VERSION=3.11 \
-       SRC_BUNDLE=/opt/polytope/gribjump-source-src \
-       BUILD_DIR=/opt/polytope/gribjump-source-build \
-       INSTALL_PREFIX=/opt/polytope/gribjump-source \
-       bash /env_build/build.sh
+    SRC_BUNDLE=/opt/polytope/gribjump-source-src \
+    BUILD_DIR=/opt/polytope/gribjump-source-build \
+    INSTALL_PREFIX=/opt/polytope/gribjump-source \
+    bash /env_build/build.sh
 
 ENV FDB5_DIR=/opt/polytope/gribjump-source
 ENV GRIBJUMP_DIR=/opt/polytope/gribjump-source
@@ -249,11 +172,11 @@ ARG polytope_python_ref
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        build-essential \
-        ca-certificates \
-        curl \
-        git \
-        python3-dev \
+    build-essential \
+    ca-certificates \
+    curl \
+    git \
+    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 ENV CARGO_HOME=/root/.cargo
@@ -270,16 +193,10 @@ RUN python -m build --wheel
 
 FROM source-gribjump-base AS source-gribjump-worker-python
 
-WORKDIR /polytope
-COPY ./requirements.txt /polytope/requirements.txt
-COPY . /polytope
 COPY --from=polytope-python-wheel-builder /build/polytope-python/dist/*.whl /tmp/polytope-python/
 
-RUN VIRTUAL_ENV=/opt/polytope/gribjump-source/.venv PATH="/opt/polytope/gribjump-source/.venv/bin:${PATH}" uv pip install -r /polytope/requirements.txt \
-    && VIRTUAL_ENV=/opt/polytope/gribjump-source/.venv PATH="/opt/polytope/gribjump-source/.venv/bin:${PATH}" uv pip install --no-binary eccodes "eccodes>=2.45" \
+RUN VIRTUAL_ENV=/opt/polytope/gribjump-source/.venv PATH="/opt/polytope/gribjump-source/.venv/bin:${PATH}" uv pip install --no-binary eccodes "eccodes>=2.45" \
     && VIRTUAL_ENV=/opt/polytope/gribjump-source/.venv PATH="/opt/polytope/gribjump-source/.venv/bin:${PATH}" uv pip install /tmp/polytope-python/*.whl \
-    && VIRTUAL_ENV=/opt/polytope/gribjump-source/.venv PATH="/opt/polytope/gribjump-source/.venv/bin:${PATH}" uv pip install geopandas==1.0.1 \
-    && VIRTUAL_ENV=/opt/polytope/gribjump-source/.venv PATH="/opt/polytope/gribjump-source/.venv/bin:${PATH}" uv pip install /polytope \
     && VIRTUAL_ENV=/opt/polytope/gribjump-source/.venv PATH="/opt/polytope/gribjump-source/.venv/bin:${PATH}" python -c "import eccodes, pyfdb, pygribjump; print('source worker imports OK')"
 
 #######################################################
@@ -314,8 +231,6 @@ FROM blank-base AS blank-base-cpp
 #         S W I T C H   B A S E    I M A G E S
 #######################################################
 
-FROM ${fdb_base} AS fdb-base-final
-
 FROM ${mars_base_c} AS mars-c-base-final
 
 FROM ${mars_base_cpp} AS mars-cpp-base-final
@@ -341,7 +256,6 @@ ENV PATH="/root/.venv/bin:/root/.local/bin:${PATH}"
 ENV VIRTUAL_ENV=/root/.venv
 RUN uv venv /root/.venv
 RUN uv pip install -r requirements.txt
-RUN uv pip install geopandas==1.0.1
 
 COPY . ./polytope
 RUN set -eux \
@@ -378,9 +292,6 @@ USER polytope
 
 
 # Copy MARS-related artifacts
-COPY --chown=polytope ./aux/mars-wrapper.py  /polytope/bin/mars-wrapper.py 
-COPY --chown=polytope ./aux/mars-wrapper-docker.py  /polytope/bin/mars-wrapper-docker.py
-
 COPY --chown=polytope --from=mars-cpp-base-final   /opt/ecmwf/mars-client-cpp  /opt/ecmwf/mars-client-cpp
 COPY --chown=polytope --from=mars-c-base-final     /opt/ecmwf/mars-client      /opt/ecmwf/mars-client
 COPY --chown=polytope --from=mars-c-base-final     /usr/local/bin/mars      /usr/local/bin/mars
@@ -402,12 +313,6 @@ ENV MARS_CONFIGS_BRANCH=${mars_config_branch}
 ENV PATH="/opt/polytope/gribjump-source/.venv/bin:/home/polytope/.local/bin:/polytope/bin/:/opt/ecmwf/mars-client/bin:/opt/ecmwf/mars-client-cloud/bin:${PATH}"
 ENV PYTHONPATH="/opt/polytope/gribjump-source/.venv/lib/python3.11/site-packages:/home/polytope/.local/lib/python3.11/site-packages"
 
-# Copy FDB-related artifacts
-COPY --chown=polytope --from=fdb-base-final /opt/fdb/ /opt/fdb/
-COPY --chown=polytope ./aux/default_fdb_schema /polytope/config/fdb/default
-RUN mkdir -p /polytope/fdb/ && sudo chmod -R o+rw /polytope/fdb
-ENV LD_LIBRARY_PATH=/opt/polytope/gribjump-source/lib:/opt/fdb/lib:/opt/ecmwf/gribjump-server/lib
-
 # Copy gribjump-related artifacts
 # COPY --chown=polytope --from=gribjump-base-final /opt/fdb/ /opt/fdb/
 COPY --chown=polytope --from=gribjump-base-final /opt/ecmwf/gribjump-server/ /opt/ecmwf/gribjump-server/
@@ -417,15 +322,13 @@ RUN sudo apt update \
     && sudo rm -rf /var/lib/apt/lists/*
 # COPY polytope-deployment/common/default_fdb_schema /polytope/config/fdb/default
 
-RUN --mount=from=fdb-base-final,source=/root/.local,target=/tmp/fdb-local,readonly \
-    --mount=from=gribjump-base-final,source=/root/.local,target=/tmp/gribjump-local,readonly \
+RUN --mount=from=gribjump-base-final,source=/root/.local,target=/tmp/gribjump-local,readonly \
     --mount=from=worker-base,source=/root/.venv,target=/tmp/worker-venv,readonly \
     set -eux \
     && if [ ! -d /opt/polytope/gribjump-source/.venv ]; then \
-        sudo mkdir -p /home/polytope/.local; \
-        sudo cp -a /tmp/fdb-local/. /home/polytope/.local/; \
-        sudo cp -a /tmp/gribjump-local/. /home/polytope/.local/; \
-        sudo cp -a /tmp/worker-venv/. /home/polytope/.local/; \
+    sudo mkdir -p /home/polytope/.local; \
+    sudo cp -a /tmp/gribjump-local/. /home/polytope/.local/; \
+    sudo cp -a /tmp/worker-venv/. /home/polytope/.local/; \
     fi
 
 # Install the server source
