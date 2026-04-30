@@ -37,11 +37,7 @@ build:
       buildArgs:
         developer_mode: '{{ default "false" .developer_mode }}'
 
-  # Worker with all clients (FDB, GribJump, MARS C, MARS CPP)
-  # gribjump_base selects the RPM-backed GribJump mode.
-  # gribjump_source_base selects the source-built GribJump mode.
-  # They are independent toggles and can both be enabled for debugging; runtime
-  # datasource selection still happens at the PolytopeDataSource level.
+  # Worker with source-built GribJump and optional MARS clients
   - image: "worker"
     docker:
       target: worker
@@ -51,7 +47,6 @@ build:
         mars_config_branch: '{{ .mars_config_branch }}'
         developer_mode: '{{ default "false" .developer_mode }}'
         # mars_client_c_version: 6.33.20.2
-        gribjump_version: '{{ default "0.10.2" .gribjump_version }}'
         mars_client_cpp_version: 7.1.9.1
         # ecbuild_version: 3.8.2
         # eccodes_version: 2.33.1
@@ -60,7 +55,6 @@ build:
         # fdb_version: 5.13.2
         mars_base_c: '{{ if eq .mars_base_c "1" }}mars-base-c{{ else }}blank-base{{ end }}'
         mars_base_cpp: '{{ if eq .mars_base_cpp "1" }}mars-base-cpp{{ else }}blank-base{{ end }}'
-        gribjump_base: '{{ if eq .gribjump_base "1" }}gribjump-base{{ else }}blank-base{{ end }}'
         gribjump_source_base: '{{ if eq .gribjump_source_base "1" }}source-gribjump-worker-python{{ else }}blank-base{{ end }}'
       # cliFlags: 
       #   - --no-cache # for debug purposes

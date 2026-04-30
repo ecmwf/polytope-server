@@ -21,7 +21,6 @@
 ARG fdb_base=blank-base
 ARG mars_base_c=blank-base
 ARG mars_base_cpp=blank-base
-ARG gribjump_base=blank-base
 ARG gribjump_source_base=blank-base
 ARG polytope_python_git=https://github.com/ecmwf/polytope.git
 ARG polytope_python_ref=feat/new-pyfdb-api
@@ -88,45 +87,11 @@ RUN uv pip install --upgrade .
 FROM python:3.11-bookworm AS blank-base
 # create blank directories to copy from in the final stage, optional dependencies aren't built
 RUN set -eux \
-    && mkdir -p /root/.local \
     && mkdir -p /opt/ecmwf/mars-client \
     && mkdir -p /opt/ecmwf/mars-client-cpp \
     && mkdir -p /opt/ecmwf/mars-client-cloud \
-    && mkdir -p /opt/ecmwf/gribjump-server \
     && mkdir -p /opt/polytope/gribjump-source \
     && touch /usr/local/bin/mars
-
-#######################################################
-#             G R I B  J U M P   R P M
-#######################################################
-
-FROM python:3.11-bookworm AS gribjump-base
-ARG rpm_repo
-ARG gribjump_version=0.10.0
-
-RUN response=$(curl -s -w "%{http_code}" ${rpm_repo}) \
-    && if [ "$response" = "403" ]; then echo "Unauthorized access to ${rpm_repo} "; fi
-
-RUN set -eux \
-    && apt-get update \
-    && apt-get install -y gnupg2 curl ca-certificates \
-    && curl -fsSL "${rpm_repo}/private-raw-repos-config/debian/bookworm/stable/public.gpg.key" | gpg --dearmor -o /usr/share/keyrings/mars-archive-keyring.gpg \
-    && echo "deb [signed-by=/usr/share/keyrings/mars-archive-keyring.gpg] ${rpm_repo}/private-debian-bookworm-stable/ bookworm main" | tee /etc/apt/sources.list.d/mars.list
-
-RUN set -eux \
-    && apt-get update \
-    && apt install -y gribjump-server=${gribjump_version}-gribjumpserver
-
-RUN set -eux \
-    ls -R /opt
-
-RUN set -eux \
-    && git clone --single-branch --branch ${gribjump_version} https://github.com/ecmwf/gribjump.git
-# Install pygribjump
-RUN set -eux \
-    && cd /gribjump \
-    && python -m pip install . --user \
-    && rm -rf /gribjump
 
 FROM python:3.11-bookworm AS source-gribjump-base
 
@@ -235,33 +200,13 @@ FROM ${mars_base_c} AS mars-c-base-final
 
 FROM ${mars_base_cpp} AS mars-cpp-base-final
 
-FROM ${gribjump_base} AS gribjump-base-final
-
 FROM ${gribjump_source_base} AS source-gribjump-base-final
 
 
 #######################################################
-#           P Y T H O N   R E Q U I R E M E N T S
+#        S E R V E R   R U N T I M E   L A Y E R
 #######################################################
-FROM python:3.11-slim-bookworm AS worker-base
-ARG developer_mode
-
-# contains compilers for building wheels which we don't want in the final image
-RUN apt update
-RUN apt-get install -y --no-install-recommends gcc libc6-dev make gnupg2 git
-
-COPY ./requirements.txt /requirements.txt
-RUN pip install uv --user
-ENV PATH="/root/.venv/bin:/root/.local/bin:${PATH}"
-ENV VIRTUAL_ENV=/root/.venv
-RUN uv venv /root/.venv
-RUN uv pip install -r requirements.txt
-
-COPY . ./polytope
-RUN set -eux \
-    && if [ $developer_mode = true ]; then \
-    uv pip install ./polytope/polytope-mars ./polytope/polytope ./polytope/covjsonkit; \
-    fi
+FROM polytope-common AS server-runtime
 
 #######################################################
 #                    W O R K E R
@@ -308,29 +253,20 @@ RUN set -eux \
 
 ENV MARS_CONFIGS_REPO=${mars_config_repo}
 ENV MARS_CONFIGS_BRANCH=${mars_config_branch}
-ENV PATH="/opt/polytope/gribjump-source/.venv/bin:/home/polytope/.local/bin:/polytope/bin/:/opt/ecmwf/mars-client/bin:/opt/ecmwf/mars-client-cloud/bin:${PATH}"
-ENV PYTHONPATH="/opt/polytope/gribjump-source/.venv/lib/python3.11/site-packages:/home/polytope/.local/lib/python3.11/site-packages"
+ENV PATH="/opt/polytope/gribjump-source/.venv/bin:/home/polytope/.venv/bin:/polytope/bin/:/opt/ecmwf/mars-client/bin:/opt/ecmwf/mars-client-cloud/bin:${PATH}"
+ENV PYTHONPATH="/opt/polytope/gribjump-source/.venv/lib/python3.11/site-packages:/home/polytope/.venv/lib/python3.11/site-packages"
 
 # Copy gribjump-related artifacts
-# COPY --chown=polytope --from=gribjump-base-final /opt/fdb/ /opt/fdb/
-COPY --chown=polytope --from=gribjump-base-final /opt/ecmwf/gribjump-server/ /opt/ecmwf/gribjump-server/
 COPY --chown=polytope --from=source-gribjump-base-final /opt/polytope/gribjump-source /opt/polytope/gribjump-source
 RUN sudo apt update \
     && sudo apt install -y libopenjp2-7 \
     && sudo rm -rf /var/lib/apt/lists/*
 # COPY polytope-deployment/common/default_fdb_schema /polytope/config/fdb/default
 
-RUN --mount=from=gribjump-base-final,source=/root/.local,target=/tmp/gribjump-local,readonly \
-    --mount=from=worker-base,source=/root/.venv,target=/tmp/worker-venv,readonly \
-    set -eux \
-    && if [ ! -d /opt/polytope/gribjump-source/.venv ]; then \
-    sudo mkdir -p /home/polytope/.local; \
-    sudo cp -a /tmp/gribjump-local/. /home/polytope/.local/; \
-    sudo cp -a /tmp/worker-venv/. /home/polytope/.local/; \
-    fi
+COPY --chown=polytope --from=server-runtime /home/polytope/.venv /home/polytope/.venv
 
 # Install the server source
-COPY --chown=polytope . /polytope/
+COPY --chown=polytope --from=server-runtime /home/polytope/polytope-server /polytope/
 
 RUN set -eux \
     && mkdir /home/polytope/data
