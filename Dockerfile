@@ -304,9 +304,7 @@ RUN sudo apt update \
 RUN set -eux \
     && mkdir -p /home/polytope/.ssh \
     && chmod 0700 /home/polytope/.ssh \
-    && ssh-keyscan git.ecmwf.int > /home/polytope/.ssh/known_hosts \
-    && chmod 755 /polytope/bin/mars-wrapper.py \
-    && chmod 755 /polytope/bin/mars-wrapper-docker.py
+    && ssh-keyscan git.ecmwf.int > /home/polytope/.ssh/known_hosts
 
 ENV MARS_CONFIGS_REPO=${mars_config_repo}
 ENV MARS_CONFIGS_BRANCH=${mars_config_branch}
