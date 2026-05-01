@@ -57,7 +57,6 @@ class DataTransfer:
             raise ServerError("Error while attempting to add new request to request store")
 
         response = self.construct_response(request)
-        logging.info("Retrieve request added to store: {}".format(request.id), extra={"request_id": request.id})
         return RequestAccepted(response)
 
     def request_upload(self, http_request: Request, user: User, collection: str):
@@ -85,7 +84,6 @@ class DataTransfer:
             raise ServerError("Error while attempting to add new request to request store")
 
         response = self.construct_response(request)
-        logging.info("Archive request added to store: {}".format(request.id), extra={"request_id": request.id})
         return RequestAccepted(response)
 
     def query_request(self, user: User, id: str) -> Response:
@@ -159,11 +157,6 @@ class DataTransfer:
         """
 
         response = self.construct_response(request)
-        logging.info(
-            "Request succeeded, redirecting to %s",
-            response["location"],
-            extra={"request_id": request.id, "location": response["location"]},
-        )
         return RequestRedirected(response)
 
     def construct_response(self, request: PolytopeRequest) -> dict:
@@ -203,7 +196,6 @@ class DataTransfer:
 
     def revoke_request(self, user: User, id: str):
         n = self.request_store.revoke_request(user, id)
-        logging.info("Request {} successfully revoked by user {}".format(id, user.username))
         return RequestSucceeded(f"Successfully revoked {n} requests")
 
     def get_request(self, id: str) -> PolytopeRequest | None:

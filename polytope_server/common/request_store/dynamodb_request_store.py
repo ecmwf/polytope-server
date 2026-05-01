@@ -166,7 +166,11 @@ class DynamoDBRequestStore(request_store.RequestStore):
         if self.metric_store:
             self.metric_store.add_metric(RequestStatusChange(request_id=request.id, status=request.status))
 
-        logger.info("Request ID %s status set to %s.", request.id, request.status)
+        logger.info(
+            "Request ID %s added to request store.",
+            request.id,
+            extra={"request": request.serialize_logging()},
+        )
 
     def remove_request(self, id):
         try:
@@ -320,7 +324,12 @@ class DynamoDBRequestStore(request_store.RequestStore):
                 raise NotFound("Request {} not found in request store".format(request.id)) from e
             raise
 
-        logger.info("Request ID %s status set to %s.", request.id, request.status)
+        logger.info(
+            "Request ID %s status set to %s.",
+            request.id,
+            request.status,
+            extra={"request": request.serialize_logging()},
+        )
 
     def set_request_status(self, request: PolytopeRequest, status: Status) -> None:
         """Set the status of a request and update the request store"""

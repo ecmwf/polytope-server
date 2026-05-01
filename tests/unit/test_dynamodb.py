@@ -1,3 +1,4 @@
+import logging
 import os
 from unittest import mock
 
@@ -57,6 +58,27 @@ def test_add_request(mocked_aws):
     assert r2.user == r1.user
     assert r2.verb == r1.verb
     assert r2.status == r1.status
+
+
+def test_add_request_logs_serialize_logging_payload(mocked_aws, caplog):
+    store = dynamodb_request_store.DynamoDBRequestStore()
+    u1 = user.User("some-user", "some-realm")
+    r1 = request.PolytopeRequest(
+        user=u1,
+        collection="test-collection",
+        verb=request.Verb.RETRIEVE,
+        status=request.Status.QUEUED,
+        user_request="raw-user-request",
+    )
+    r1.coerced_request = {"param": "167"}
+
+    caplog.set_level(logging.INFO)
+
+    store.add_request(r1)
+
+    record = next(r for r in caplog.records if "added to request store" in r.getMessage())
+    assert record.getMessage() == f"Request ID {r1.id} added to request store."
+    assert record.__dict__["request"] == r1.serialize_logging()
 
 
 def test_add_request_duplicate(mocked_aws):
@@ -130,6 +152,27 @@ def test_update(mocked_aws):
     assert r3.user.attributes["test"] == "updated"
 
     _test_update_request(store)
+
+
+def test_update_logs_serialize_logging_payload(mocked_aws, caplog):
+    store = dynamodb_request_store.DynamoDBRequestStore()
+    u1 = user.User("user1", "realm1")
+    r1 = request.PolytopeRequest(
+        user=u1,
+        collection="test-collection",
+        status=request.Status.WAITING,
+        user_request="raw-user-request",
+    )
+    r1.coerced_request = {"param": "167"}
+    store.add_request(r1)
+    caplog.clear()
+
+    caplog.set_level(logging.INFO)
+    r1.status = request.Status.PROCESSED
+    store.update_request(r1)
+
+    record = next(r for r in caplog.records if "status set to" in r.getMessage())
+    assert record.__dict__["request"] == r1.serialize_logging()
 
 
 def test_metric_store(mocked_aws):
