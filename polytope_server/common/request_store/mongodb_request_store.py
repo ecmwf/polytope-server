@@ -73,7 +73,7 @@ class MongoRequestStore(request_store.RequestStore):
 
         logging.info(
             "Request ID {} added to request store.".format(request.id),
-            extra={"request": request.serialize_logging()},
+            extra={"request": request.serialize_logging(), "request_id": request.id},
         )
 
     def remove_request(self, id):
