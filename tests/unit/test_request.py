@@ -71,3 +71,27 @@ class Test:
         r1 = request.PolytopeRequest(user=self.user, verb=request.Verb.RETRIEVE)
         r2 = deepcopy(r1)
         assert r1 == r2
+
+    def test_serialize_logging_truncates_long_strings(self):
+        r1 = request.PolytopeRequest(user=self.user, verb=request.Verb.RETRIEVE)
+        r1.coerced_request = {"param": "x" * 1005}
+
+        d = r1.serialize_logging()
+
+        assert d["coerced_request"]["param"] == ("x" * 1000) + "...<truncated>"
+
+    def test_serialize_logging_summarizes_oversized_lists_recursively(self):
+        r1 = request.PolytopeRequest(user=self.user, verb=request.Verb.RETRIEVE)
+        r1.coerced_request = {
+            "feature": {
+                "points": list(range(105)),
+            }
+        }
+
+        d = r1.serialize_logging()
+
+        assert d["coerced_request"]["feature"]["points"] == {
+            "_summary": "list",
+            "count": 105,
+            "preview": list(range(10)),
+        }

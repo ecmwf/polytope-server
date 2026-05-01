@@ -25,6 +25,10 @@ import uuid
 
 from .user import User
 
+DEFAULT_LOG_MAX_STRING_LENGTH = 1000
+DEFAULT_LOG_MAX_LIST_LENGTH = 100
+DEFAULT_LOG_LIST_PREVIEW_LENGTH = 10
+
 
 class Status(enum.Enum):
     WAITING = "waiting"
@@ -133,13 +137,75 @@ class PolytopeRequest:
             result[k] = self.serialize_slot(k, v)
         return result
 
-    def serialize_logging(self):
+    @classmethod
+    def _bound_logging_value(
+        cls,
+        value,
+        *,
+        max_string_length: int,
+        max_list_length: int,
+        list_preview_length: int,
+    ):
+        if isinstance(value, dict):
+            return {
+                key: cls._bound_logging_value(
+                    sub_value,
+                    max_string_length=max_string_length,
+                    max_list_length=max_list_length,
+                    list_preview_length=list_preview_length,
+                )
+                for key, sub_value in value.items()
+            }
+
+        if isinstance(value, list):
+            if len(value) > max_list_length:
+                preview = [
+                    cls._bound_logging_value(
+                        item,
+                        max_string_length=max_string_length,
+                        max_list_length=max_list_length,
+                        list_preview_length=list_preview_length,
+                    )
+                    for item in value[: min(list_preview_length, max_list_length)]
+                ]
+                return {
+                    "_summary": "list",
+                    "count": len(value),
+                    "preview": preview,
+                }
+            return [
+                cls._bound_logging_value(
+                    item,
+                    max_string_length=max_string_length,
+                    max_list_length=max_list_length,
+                    list_preview_length=list_preview_length,
+                )
+                for item in value
+            ]
+
+        if isinstance(value, str) and len(value) > max_string_length:
+            return value[:max_string_length] + "...<truncated>"
+
+        return value
+
+    def serialize_logging(
+        self,
+        *,
+        max_string_length: int = DEFAULT_LOG_MAX_STRING_LENGTH,
+        max_list_length: int = DEFAULT_LOG_MAX_LIST_LENGTH,
+        list_preview_length: int = DEFAULT_LOG_LIST_PREVIEW_LENGTH,
+    ):
         """Serialize the request object to a reduced dictionary for logging purposes"""
         result = self.serialize()
         # unnecessary for request logging
         result.pop("user", None)
         result.pop("user_request", None)
-        return result
+        return self._bound_logging_value(
+            result,
+            max_string_length=max_string_length,
+            max_list_length=max_list_length,
+            list_preview_length=list_preview_length,
+        )
 
     def deserialize(self, dict):
         """Modify the request by deserializing a dictionary into it"""
