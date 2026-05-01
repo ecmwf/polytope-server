@@ -53,7 +53,13 @@ class Authotron:
 
         response = requests.get(f"{self.url}/authenticate", headers={"Authorization": auth_header})
         if response.status_code != 200:
-            logging.error("Authentication failed with response: {}".format(response))
+            logging.error(
+                "Authentication failed",
+                extra={
+                    "auth.response_status": response.status_code,
+                    "auth.www_authenticate": response.headers.get("WWW-Authenticate", ""),
+                },
+            )
             raise UnauthorizedRequest(
                 "Authentication failed", www_authenticate=response.headers.get("WWW-Authenticate", "")
             )
