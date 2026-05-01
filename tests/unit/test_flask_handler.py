@@ -55,3 +55,21 @@ def test_unexpected_exception_logs_structured_status_and_error_code(caplog):
     record = next(r for r in caplog.records if r.getMessage().startswith("Unexpected error:"))
     assert record.__dict__["http.status"] == 500
     assert record.__dict__["error.code"] == "RuntimeError"
+
+
+def test_healthcheck_does_not_log_success(caplog):
+    app = FlaskHandler().create_handler(
+        request_store=MissingRequestStore(),
+        auth=FakeAuth(),
+        staging=object(),
+        collections={},
+        proxy_support=False,
+    )
+
+    caplog.set_level(logging.INFO)
+
+    response = app.test_client().get("/api/v1/test")
+
+    assert response.status_code == 200
+    assert response.get_json() == {"message": "Polytope server is alive"}
+    assert all(record.getMessage() != "Polytope server is alive" for record in caplog.records)
