@@ -46,6 +46,8 @@ build:
         mars_config_repo: '{{ .mars_config_repo }}'
         mars_config_branch: '{{ .mars_config_branch }}'
         developer_mode: '{{ default "false" .developer_mode }}'
+        polytope_python_git: '{{ default "https://github.com/ecmwf/polytope.git" .polytope_python_git }}'
+        polytope_python_ref: '{{ default "feat/sub_hourly_mixed_steps" .polytope_python_ref }}'
         # mars_client_c_version: 6.33.20.2
         mars_client_cpp_version: 7.1.9.1
         # ecbuild_version: 3.8.2
