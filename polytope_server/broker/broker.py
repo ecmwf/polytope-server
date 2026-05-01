@@ -132,7 +132,7 @@ class Broker:
 
     def enqueue(self, request: PolytopeRequest):
         with with_baggage_items({"request_id": request.id}):
-            logging.info("Queuing request")
+            logging.debug("Queuing request")
 
             try:
                 # Must update request_store before queue, worker checks request status immediately
@@ -143,6 +143,5 @@ class Broker:
             except Exception as e:
                 # If we fail to call this, the request will be stuck (POLY-21)
                 logging.exception("Failed to queue, error: {}".format(repr(e)))
+                request.user_message = "Failed to queue request due to an internal error. Please try again later."
                 self.request_store.set_request_status(request, Status.FAILED)
-            else:
-                logging.info("Queued request")
