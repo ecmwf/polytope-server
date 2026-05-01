@@ -169,10 +169,10 @@ class Worker:
                 self.queue.ack(self.queue_msg)
 
                 self.update_status("idle")
-                await self.terminate()
 
                 self.queue_msg = None
                 self.request = None
+                await self.terminate()
 
     async def terminate(self) -> NoReturn:
         if timeout := self.config.get("timeout"):
