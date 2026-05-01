@@ -169,7 +169,7 @@ class DynamoDBRequestStore(request_store.RequestStore):
         logger.info(
             "Request ID %s added to request store.",
             request.id,
-            extra={"request": request.serialize_logging()},
+            extra={"request_id": request.id, "request": request.serialize_logging()},
         )
 
     def remove_request(self, id):
