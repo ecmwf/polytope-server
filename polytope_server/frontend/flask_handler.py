@@ -117,7 +117,11 @@ class FlaskHandler(frontend.FrontendHandler):
         @handler.route("/api/v1/test", methods=["GET"])
         def test():
             if request.method == "GET":
-                return RequestSucceeded("Polytope server is alive")
+                return (
+                    json.dumps({"message": "Polytope server is alive"}),
+                    200,
+                    {"Content-Type": "application/json"},
+                )
 
         @handler.route(
             "/api/v1/user",

@@ -56,7 +56,7 @@ class Broker:
 
         # Don't queue if full. We don't need to query request_store.
         if self.queue.count() >= self.max_queue_size:
-            logging.info("Queue is full")
+            logging.debug("Queue is full")
             return
 
         # Find all requests that are waiting to be queued (oldest first)
