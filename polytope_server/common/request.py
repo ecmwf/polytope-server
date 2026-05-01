@@ -138,9 +138,7 @@ class PolytopeRequest:
         result = self.serialize()
         # unnecessary for request logging
         result.pop("user", None)
-        # omit user_request if request has been coerced
-        if self.coerced_request:
-            result.pop("user_request", None)
+        result.pop("user_request", None)
         return result
 
     def deserialize(self, dict):

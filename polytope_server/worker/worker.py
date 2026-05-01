@@ -223,7 +223,7 @@ class Worker:
 
         logging.debug(
             "Processing request on collection {}".format(collection.name),
-            extra={"collection": collection.name, "request": request.serialize()},
+            extra={"collection": collection.name, "request": request.serialize_logging()},
         )
 
         input_data = self.fetch_input_data(request.url)

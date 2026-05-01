@@ -50,6 +50,7 @@ class DataTransfer:
             verb=Verb.RETRIEVE,
             user_request=str(payload["request"]),
         )
+        logging.info("Received user request", extra={"request_id": request.id, "user_request": request.user_request})
         try:
             self.request_store.add_request(request)
         except Exception:
@@ -73,6 +74,7 @@ class DataTransfer:
             verb=Verb.ARCHIVE,
             user_request=str(payload["request"]),
         )
+        logging.info("Received user request", extra={"request_id": request.id, "user_request": request.user_request})
 
         if url not in (None, ""):
             request.set_status(Status.WAITING)
