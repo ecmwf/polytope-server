@@ -82,9 +82,17 @@ class FlaskHandler(frontend.FrontendHandler):
 
         data_transfer = DataTransfer(request_store, staging)
 
+        def log_error(error, status_code: int, message: str):
+            logging.exception(
+                message,
+                error,
+                str(error),
+                extra={"http.status": status_code, "error.code": type(error).__name__},
+            )
+
         @handler.errorhandler(Exception)
         def default_error_handler(error):
-            logging.exception("Unexpected error: %s %s", error, str(error))
+            log_error(error, 500, "Unexpected error: %s %s")
             return (
                 json.dumps({"message": str(error)}),
                 500,
@@ -93,7 +101,7 @@ class FlaskHandler(frontend.FrontendHandler):
 
         @handler.errorhandler(HTTPException)
         def handle_error(error):
-            logging.exception("HTTP error: %s %s", error, error.description)
+            log_error(error, error.code, "HTTP error: %s %s")
             return (
                 json.dumps({"message": str(error.description)}),
                 error.code,
