@@ -120,7 +120,7 @@ class Broker:
                     f"User {request.user} has {user_active_requests} of {limit} "
                     f"active requests in collection {request.collection}"
                 )
-                logging.info(user_limit_message)
+                logging.debug(user_limit_message)
                 if user_active_requests >= limit:
                     return False
                 else:
