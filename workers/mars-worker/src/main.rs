@@ -10,8 +10,13 @@ use tracing::warn;
 
 mod convert;
 mod k8s;
+mod port_cleanup;
 
-struct MarsProcessor;
+struct MarsProcessor {
+    /// Port the C++ MARS client binds for DHS callbacks. We forcibly close any
+    /// leaked listener on this port between retrieves; see `port_cleanup`.
+    local_port: u16,
+}
 
 #[async_trait]
 impl Processor for MarsProcessor {
@@ -31,6 +36,7 @@ impl Processor for MarsProcessor {
             .to_owned();
 
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(32);
+        let local_port = self.local_port;
         tokio::task::spawn_blocking(move || {
             // SAFETY: run_worker_loop processes one request at a time — no concurrent set_var.
             unsafe {
@@ -81,6 +87,26 @@ impl Processor for MarsProcessor {
                 }
             }
             stream.close();
+
+            // mars-client-cpp leaks the DHS callback listener (and, on the
+            // "Data not found" path, the accepted CLOSE_WAIT data socket);
+            // force-close any fd in our process still bound to `local_port`,
+            // otherwise the next retrieve fails with `Address already in
+            // use`. Remove this once the C++ lifecycle is fixed upstream.
+            // Tracked: https://jira.ecmwf.int/projects/MARSC/issues/MARSC-468
+            match port_cleanup::close_leaked_listeners(local_port) {
+                Ok(0) => {}
+                Ok(n) => tracing::info!(
+                    closed = n,
+                    port = local_port,
+                    "reclaimed leaked MARS DHS callback listener(s)"
+                ),
+                Err(e) => tracing::warn!(
+                    error = %e,
+                    port = local_port,
+                    "failed to scan /proc for leaked MARS DHS callback listeners"
+                ),
+            }
         });
 
         let stream = ReceiverStream::new(rx);
@@ -136,7 +162,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             management_port: config.management_port,
         },
         config.delivery,
-        MarsProcessor,
+        MarsProcessor {
+            local_port: manager.local_port(),
+        },
     )
     .await?;
 
@@ -154,7 +182,7 @@ mod tests {
 
     #[tokio::test]
     async fn process_returns_error_for_invalid_request() {
-        let processor = MarsProcessor;
+        let processor = MarsProcessor { local_port: 8100 };
         let result = processor
             .process(WorkItem {
                 job_id: "job-1".into(),
