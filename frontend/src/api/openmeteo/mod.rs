@@ -19,7 +19,7 @@ use chrono::Utc;
 use futures::TryStreamExt;
 use serde_json::{Value, json};
 
-use crate::auth::AuthUser;
+use crate::auth::{AuthUser, MockRolesAudit};
 use crate::state::AppState;
 
 const POLL_TIMEOUT: Duration = Duration::from_secs(120);
@@ -52,6 +52,7 @@ async fn forecast(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     auth_user: Option<Extension<AuthUser>>,
+    mock_audit: Option<Extension<MockRolesAudit>>,
     Query(params): Query<params::ForecastParams>,
 ) -> Response {
     let _ = (
@@ -149,18 +150,15 @@ async fn forecast(
 
         let mut job = Job::new(request);
         job.metadata = json!({"api": "openmeteo"}).into();
-        let mut user_context = serde_json::Map::new();
-        if let Some(ref ip) = super::client_ip(&headers) {
-            user_context.insert("client_ip".to_string(), json!(ip));
-        }
-        if let Some(Extension(ref user)) = auth_user {
-            if crate::api::check_admin_bypass(user, &state.admin_bypass_roles) {
-                user_context.insert("can_bypass_role_check".to_string(), json!(true));
-            }
-            user_context.insert("auth".to_string(), serde_json::to_value(user).unwrap());
-        }
-        job.user = Value::Object(user_context).into();
+        super::set_job_user_context(
+            &mut job,
+            &headers,
+            auth_user.as_ref().map(|Extension(user)| user),
+            mock_audit.as_ref().map(|Extension(audit)| audit),
+            &state.admin_bypass_roles,
+        );
         let id = state.bits.submit(job).id;
+        super::audit_mock_job_submission(mock_audit.as_ref().map(|Extension(audit)| audit), &id);
         submitted.push((group, param_list, id));
     }
 

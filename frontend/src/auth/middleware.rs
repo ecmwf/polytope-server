@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{
@@ -10,7 +11,11 @@ use axum::{
 };
 use serde_json::json;
 
-use super::AuthError;
+use super::mock_roles::{
+    MOCK_ROLES_HEADER, MockRolesAudit, REQUEST_ID_HEADER, has_mock_roles_header,
+    parse_mock_roles_header,
+};
+use super::{AuthError, AuthUser, is_admin_bypass_user};
 use crate::state::AppState;
 
 fn unauthorized(message: &str) -> Response {
@@ -22,14 +27,28 @@ fn unauthorized(message: &str) -> Response {
         .into_response()
 }
 
+fn bad_request(message: &str) -> Response {
+    (StatusCode::BAD_REQUEST, Json(json!({"error": message}))).into_response()
+}
+
+fn forbidden(message: &str) -> Response {
+    (StatusCode::FORBIDDEN, Json(json!({"error": message}))).into_response()
+}
+
 pub async fn auth_middleware(
     State(state): State<Arc<AppState>>,
     req: Request<Body>,
     next: Next,
 ) -> Response {
+    let mock_header_present = has_mock_roles_header(req.headers());
     let auth_client = match &state.auth_client {
         Some(client) => client,
-        None => return next.run(req).await,
+        None => {
+            if mock_header_present {
+                return unauthorized("Polytope-Mock-Roles requires authentication");
+            }
+            return next.run(req).await;
+        }
     };
 
     let auth_header = match req.headers().get(header::AUTHORIZATION) {
@@ -39,6 +58,9 @@ pub async fn auth_middleware(
             Err(_) => return unauthorized("invalid Authorization header encoding"),
         },
         None => {
+            if mock_header_present {
+                return unauthorized("Polytope-Mock-Roles requires authentication");
+            }
             if state.allow_anonymous {
                 return next.run(req).await;
             }
@@ -53,8 +75,58 @@ pub async fn auth_middleware(
                 realm = user.realm.as_str(),
                 "authenticated request"
             );
+
+            let mock_roles = match parse_mock_roles_header(req.headers(), &state.admin_bypass_roles)
+            {
+                Ok(mock_roles) => mock_roles,
+                Err(err) => return bad_request(&err.message()),
+            };
+
             let mut req = req;
-            req.extensions_mut().insert(user);
+            let effective_user = if let Some(mock_roles) = mock_roles {
+                if !is_admin_bypass_user(&user, &state.admin_bypass_roles) {
+                    return forbidden("Polytope-Mock-Roles requires a configured admin user");
+                }
+
+                let request_id = req
+                    .headers()
+                    .get(REQUEST_ID_HEADER)
+                    .and_then(|value| value.to_str().ok())
+                    .map(str::to_string);
+                let audit = MockRolesAudit {
+                    real_username: user.username.clone(),
+                    real_realm: user.realm.clone(),
+                    mocked_realm: mock_roles.realm.clone(),
+                    mocked_roles: mock_roles.roles.clone(),
+                    path: req.uri().path().to_string(),
+                    request_id,
+                };
+                tracing::info!(
+                    event = "polytope_mock_roles_accepted",
+                    real_username = audit.real_username.as_str(),
+                    real_realm = audit.real_realm.as_str(),
+                    mocked_realm = audit.mocked_realm.as_str(),
+                    mocked_roles = ?audit.mocked_roles,
+                    path = audit.path.as_str(),
+                    request_id = audit.request_id.as_deref(),
+                    header = MOCK_ROLES_HEADER,
+                    "accepted mocked-role request"
+                );
+                req.extensions_mut().insert(audit);
+
+                AuthUser {
+                    version: user.version,
+                    username: user.username,
+                    realm: mock_roles.realm,
+                    roles: mock_roles.roles,
+                    attributes: HashMap::new(),
+                    scopes: HashMap::new(),
+                }
+            } else {
+                user
+            };
+
+            req.extensions_mut().insert(effective_user);
             next.run(req).await
         }
         Err(AuthError::Unauthorized {
@@ -95,7 +167,6 @@ mod tests {
 
     use http_body_util::BodyExt;
     use jsonwebtoken::{EncodingKey, Header};
-    use serde::Serialize;
     use serde_json::{Value, json};
     use tower::ServiceExt;
 
@@ -115,21 +186,34 @@ mod tests {
         )
     }
 
-    #[derive(Serialize)]
-    struct TestClaims {
-        username: String,
-        realm: String,
-        roles: Vec<String>,
-        exp: usize,
+    fn make_test_jwt(secret: &str) -> String {
+        make_test_jwt_with(
+            secret,
+            "testuser",
+            "testrealm",
+            &["admin"],
+            json!({}),
+            json!({}),
+        )
     }
 
-    fn make_test_jwt(secret: &str) -> String {
-        let claims = TestClaims {
-            username: "testuser".to_string(),
-            realm: "testrealm".to_string(),
-            roles: vec!["admin".to_string()],
-            exp: (chrono::Utc::now().timestamp() as usize) + 3600,
-        };
+    fn make_test_jwt_with(
+        secret: &str,
+        username: &str,
+        realm: &str,
+        roles: &[&str],
+        attributes: Value,
+        scopes: Value,
+    ) -> String {
+        let claims = json!({
+            "version": 1,
+            "username": username,
+            "realm": realm,
+            "roles": roles,
+            "attributes": attributes,
+            "scopes": scopes,
+            "exp": (chrono::Utc::now().timestamp() as usize) + 3600,
+        });
         jsonwebtoken::encode(
             &Header::default(),
             &claims,
@@ -147,12 +231,20 @@ mod tests {
     }
 
     fn build_test_app_with_anon(auth_client: Option<AuthClient>, allow_anonymous: bool) -> Router {
+        build_test_app_with_anon_and_admin(auth_client, allow_anonymous, None)
+    }
+
+    fn build_test_app_with_anon_and_admin(
+        auth_client: Option<AuthClient>,
+        allow_anonymous: bool,
+        admin_bypass_roles: Option<HashMap<String, Vec<String>>>,
+    ) -> Router {
         let state = Arc::new(AppState {
             bits: test_bits(),
             auth_client,
             collections: HashMap::new(),
             allow_anonymous,
-            admin_bypass_roles: None,
+            admin_bypass_roles,
         });
 
         let v1 = Router::new()
@@ -171,17 +263,14 @@ mod tests {
 
         let openmeteo = Router::new().route("/forecast", get(stub_handler));
 
-        let mut protected = Router::new()
+        let protected = Router::new()
             .nest("/api/v1", v1)
             .nest("/api/v2", v2_protected)
-            .nest("/openmeteo/v1", openmeteo);
-
-        if state.auth_client.is_some() {
-            protected = protected.layer(middleware::from_fn_with_state(
+            .nest("/openmeteo/v1", openmeteo)
+            .layer(middleware::from_fn_with_state(
                 state.clone(),
                 super::auth_middleware,
             ));
-        }
 
         Router::new()
             .route("/api/v1/test", get(stub_handler))
@@ -365,6 +454,22 @@ mod tests {
         assert_not_401(app.clone(), "POST", "/api/v2/ecmwf/requests").await;
         assert_not_401(app.clone(), "GET", "/api/v1/test").await;
         assert_not_401(app, "GET", "/openmeteo/v1/forecast").await;
+    }
+
+    #[tokio::test]
+    async fn auth_disabled_mock_header_is_unauthorized() {
+        let app = build_test_app(None);
+        let resp = app
+            .oneshot(
+                Request::get("/api/v1/collections")
+                    .header("Polytope-Mock-Roles", "beta:viewer")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
     // ── Valid auth passes through ─────────────────────────────────────
@@ -637,6 +742,189 @@ mod tests {
         );
         assert_eq!(auth.get("attributes"), Some(&json!({})));
         assert_eq!(auth.get("scopes"), Some(&json!({})));
+    }
+
+    #[tokio::test]
+    async fn admin_mock_roles_injects_sanitized_effective_user_and_audit() {
+        use axum::{Json, extract::Request as AxumRequest};
+
+        let secret = "testsecret";
+        let jwt = make_test_jwt_with(
+            secret,
+            "admin-user",
+            "alpha",
+            &["admin", "ops"],
+            json!({"department": "secret"}),
+            json!({"scope": ["admin-power"]}),
+        );
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/authenticate")
+            .with_status(200)
+            .with_header("Authorization", &format!("Bearer {}", jwt))
+            .create_async()
+            .await;
+
+        let client = setup_auth_client(&server, secret).await;
+        let state = Arc::new(AppState {
+            bits: test_bits(),
+            auth_client: Some(client),
+            collections: HashMap::new(),
+            allow_anonymous: false,
+            admin_bypass_roles: Some(HashMap::from([(
+                "alpha".to_string(),
+                vec!["admin".to_string()],
+            )])),
+        });
+
+        async fn payload(req: AxumRequest) -> Json<Value> {
+            let user = req
+                .extensions()
+                .get::<crate::auth::AuthUser>()
+                .expect("effective AuthUser is inserted");
+            let audit = req
+                .extensions()
+                .get::<crate::auth::MockRolesAudit>()
+                .expect("mock audit is inserted");
+            Json(json!({
+                "user": user,
+                "audit": {
+                    "real_username": audit.real_username,
+                    "real_realm": audit.real_realm,
+                    "mocked_realm": audit.mocked_realm,
+                    "mocked_roles": audit.mocked_roles,
+                    "path": audit.path,
+                    "request_id": audit.request_id,
+                }
+            }))
+        }
+
+        let protected =
+            Router::new()
+                .route("/check", get(payload))
+                .layer(middleware::from_fn_with_state(
+                    state.clone(),
+                    super::auth_middleware,
+                ));
+        let app = Router::new().merge(protected).with_state(state);
+
+        let resp = app
+            .oneshot(
+                Request::get("/check")
+                    .header("Authorization", "Bearer token")
+                    .header("Polytope-Mock-Roles", "beta:viewer,data")
+                    .header("X-Request-Id", "request-123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let payload: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(payload["user"]["version"], json!(1));
+        assert_eq!(payload["user"]["username"], json!("admin-user"));
+        assert_eq!(payload["user"]["realm"], json!("beta"));
+        assert_eq!(payload["user"]["roles"], json!(["viewer", "data"]));
+        assert_eq!(payload["user"]["attributes"], json!({}));
+        assert_eq!(payload["user"]["scopes"], json!({}));
+        assert_eq!(payload["audit"]["real_username"], json!("admin-user"));
+        assert_eq!(payload["audit"]["real_realm"], json!("alpha"));
+        assert_eq!(payload["audit"]["request_id"], json!("request-123"));
+    }
+
+    #[tokio::test]
+    async fn non_admin_mock_roles_is_forbidden() {
+        let secret = "testsecret";
+        let jwt = make_test_jwt_with(
+            secret,
+            "regular",
+            "alpha",
+            &["viewer"],
+            json!({}),
+            json!({}),
+        );
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/authenticate")
+            .with_status(200)
+            .with_header("Authorization", &format!("Bearer {}", jwt))
+            .create_async()
+            .await;
+        let client = setup_auth_client(&server, secret).await;
+        let app = build_test_app_with_anon_and_admin(
+            Some(client),
+            false,
+            Some(HashMap::from([(
+                "alpha".to_string(),
+                vec!["admin".to_string()],
+            )])),
+        );
+
+        let resp = app
+            .oneshot(
+                Request::get("/api/v1/collections")
+                    .header("Authorization", "Bearer token")
+                    .header("Polytope-Mock-Roles", "beta:viewer")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn malformed_mock_roles_is_bad_request() {
+        let secret = "testsecret";
+        let jwt = make_test_jwt(secret);
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/authenticate")
+            .with_status(200)
+            .with_header("Authorization", &format!("Bearer {}", jwt))
+            .create_async()
+            .await;
+        let client = setup_auth_client(&server, secret).await;
+        let app = build_test_app_with_anon_and_admin(
+            Some(client),
+            false,
+            Some(HashMap::from([(
+                "testrealm".to_string(),
+                vec!["admin".to_string()],
+            )])),
+        );
+
+        let resp = app
+            .oneshot(
+                Request::get("/api/v1/collections")
+                    .header("Authorization", "Bearer token")
+                    .header("Polytope-Mock-Roles", "beta:")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn anonymous_mode_mock_header_is_unauthorized() {
+        let server = mockito::Server::new_async().await;
+        let client = setup_auth_client(&server, "secret").await;
+        let app = build_test_app_with_anon(Some(client), true);
+
+        let resp = app
+            .oneshot(
+                Request::get("/api/v1/collections")
+                    .header("Polytope-Mock-Roles", "beta:viewer")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]

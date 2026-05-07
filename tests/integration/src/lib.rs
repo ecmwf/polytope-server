@@ -238,6 +238,15 @@ pub async fn spawn_polytope_server(
     bits_yaml: &str,
     allow_anonymous: bool,
 ) -> Result<(String, JoinHandle<()>), Box<dyn Error>> {
+    spawn_polytope_server_with_extra_config(authotron_url, bits_yaml, allow_anonymous, "").await
+}
+
+pub async fn spawn_polytope_server_with_extra_config(
+    authotron_url: Option<&str>,
+    bits_yaml: &str,
+    allow_anonymous: bool,
+    extra_config: &str,
+) -> Result<(String, JoinHandle<()>), Box<dyn Error>> {
     let server_config = if let Some(auth_url) = authotron_url {
         format!(
             r#"
@@ -248,7 +257,7 @@ authentication:
   url: "{auth_url}"
   secret: "{JWT_SECRET}"
   allow_anonymous: {allow_anonymous}
-bits:
+{extra_config}bits:
 {bits_yaml}
 "#
         )
@@ -258,7 +267,7 @@ bits:
 server:
   host: "127.0.0.1"
   port: 0
-bits:
+{extra_config}bits:
 {bits_yaml}
 "#
         )
@@ -314,6 +323,22 @@ fn strict_bits_yaml(backend_url: &str) -> String {
           - check::has_role:
               alpha:
                 - admin
+          - target::http:
+              url: "{backend_url}/"
+"#
+    )
+}
+
+#[cfg(test)]
+fn beta_viewer_bits_yaml(backend_url: &str) -> String {
+    format!(
+        r#"
+  collections:
+    all:
+      - beta_viewer:
+          - check::has_role:
+              beta:
+                - viewer
           - target::http:
               url: "{backend_url}/"
 "#
@@ -834,6 +859,131 @@ async fn strict_wrong_realm_rejected() {
         .await
         .expect("request succeeds");
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    server.abort();
+    authotron.abort();
+    backend.abort();
+}
+
+#[tokio::test]
+async fn admin_mock_roles_can_access_mocked_realm_role() {
+    let (backend_url, backend) = spawn_mock_backend().await.expect("spawn backend");
+    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (server_url, server) = spawn_polytope_server_with_extra_config(
+        Some(&authotron_url),
+        &beta_viewer_bits_yaml(&backend_url),
+        false,
+        "admin_bypass_roles:\n  alpha:\n    - admin\n",
+    )
+    .await
+    .expect("spawn polytope server");
+
+    let auth: String =
+        AuthHeader::Basic(ALPHA_ADMIN_USER.to_string(), ALPHA_ADMIN_PASS.to_string()).into();
+    let res = reqwest::Client::new()
+        .post(format!("{server_url}/api/v2/all/requests"))
+        .header("Authorization", auth)
+        .header("Polytope-Mock-Roles", "beta:viewer")
+        .json(&serde_json::json!({"class": "od"}))
+        .send()
+        .await
+        .expect("request succeeds");
+    assert_eq!(res.status(), StatusCode::OK);
+
+    server.abort();
+    authotron.abort();
+    backend.abort();
+}
+
+#[tokio::test]
+async fn non_admin_mock_roles_rejected_before_downstream_access() {
+    let (backend_url, backend, hits) = spawn_mock_backend_counted().await.expect("spawn backend");
+    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (server_url, server) = spawn_polytope_server_with_extra_config(
+        Some(&authotron_url),
+        &beta_viewer_bits_yaml(&backend_url),
+        false,
+        "admin_bypass_roles:\n  alpha:\n    - admin\n",
+    )
+    .await
+    .expect("spawn polytope server");
+
+    let auth: String = AuthHeader::Basic(
+        ALPHA_REGULAR_USER.to_string(),
+        ALPHA_REGULAR_PASS.to_string(),
+    )
+    .into();
+    let res = reqwest::Client::new()
+        .post(format!("{server_url}/api/v2/all/requests"))
+        .header("Authorization", auth)
+        .header("Polytope-Mock-Roles", "beta:viewer")
+        .json(&serde_json::json!({"class": "od"}))
+        .send()
+        .await
+        .expect("request succeeds");
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+    server.abort();
+    authotron.abort();
+    backend.abort();
+}
+
+#[tokio::test]
+async fn admin_mock_roles_rejects_configured_admin_role() {
+    let (backend_url, backend) = spawn_mock_backend().await.expect("spawn backend");
+    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (server_url, server) = spawn_polytope_server_with_extra_config(
+        Some(&authotron_url),
+        &beta_viewer_bits_yaml(&backend_url),
+        false,
+        "admin_bypass_roles:\n  alpha:\n    - admin\n",
+    )
+    .await
+    .expect("spawn polytope server");
+
+    let auth: String =
+        AuthHeader::Basic(ALPHA_ADMIN_USER.to_string(), ALPHA_ADMIN_PASS.to_string()).into();
+    let res = reqwest::Client::new()
+        .post(format!("{server_url}/api/v2/all/requests"))
+        .header("Authorization", auth)
+        .header("Polytope-Mock-Roles", "alpha:admin")
+        .json(&serde_json::json!({"class": "od"}))
+        .send()
+        .await
+        .expect("request succeeds");
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+    server.abort();
+    authotron.abort();
+    backend.abort();
+}
+
+#[tokio::test]
+async fn mocked_request_cannot_use_admin_bypass_for_unmatched_role() {
+    let (backend_url, backend, hits) = spawn_mock_backend_counted().await.expect("spawn backend");
+    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (server_url, server) = spawn_polytope_server_with_extra_config(
+        Some(&authotron_url),
+        &beta_viewer_bits_yaml(&backend_url),
+        false,
+        "admin_bypass_roles:\n  alpha:\n    - admin\n",
+    )
+    .await
+    .expect("spawn polytope server");
+
+    let auth: String =
+        AuthHeader::Basic(ALPHA_ADMIN_USER.to_string(), ALPHA_ADMIN_PASS.to_string()).into();
+    let res = reqwest::Client::new()
+        .post(format!("{server_url}/api/v2/all/requests"))
+        .header("Authorization", auth)
+        .header("Polytope-Mock-Roles", "gamma:viewer")
+        .json(&serde_json::json!({"class": "od"}))
+        .send()
+        .await
+        .expect("request succeeds");
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
 
     server.abort();
     authotron.abort();

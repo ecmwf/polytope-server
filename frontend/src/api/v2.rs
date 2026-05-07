@@ -11,7 +11,7 @@ use axum::{
 use bits::{Job, JobResult, PollOutcome};
 use serde_json::{Value, json};
 
-use crate::auth::AuthUser;
+use crate::auth::{AuthUser, MockRolesAudit};
 use crate::state::AppState;
 
 const POLL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -30,6 +30,7 @@ pub async fn submit_collection(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     auth_user: Option<Extension<AuthUser>>,
+    mock_audit: Option<Extension<MockRolesAudit>>,
     Path(collection): Path<String>,
     Json(mut body): Json<Value>,
 ) -> Response {
@@ -49,17 +50,13 @@ pub async fn submit_collection(
     }
 
     let mut job = Job::new(body);
-    let mut user_context = serde_json::Map::new();
-    if let Some(ip) = super::client_ip(&headers) {
-        user_context.insert("client_ip".to_string(), json!(ip));
-    }
-    if let Some(Extension(user)) = auth_user {
-        if super::check_admin_bypass(&user, &state.admin_bypass_roles) {
-            user_context.insert("can_bypass_role_check".to_string(), json!(true));
-        }
-        user_context.insert("auth".to_string(), serde_json::to_value(&user).unwrap());
-    }
-    job.user = Value::Object(user_context).into();
+    super::set_job_user_context(
+        &mut job,
+        &headers,
+        auth_user.as_ref().map(|Extension(user)| user),
+        mock_audit.as_ref().map(|Extension(audit)| audit),
+        &state.admin_bypass_roles,
+    );
     // Propagate Accept-Encoding so workers can choose an encoding codec
     if let Some(enc) = headers
         .get(axum::http::header::ACCEPT_ENCODING)
@@ -78,6 +75,7 @@ pub async fn submit_collection(
         proxy_proto_addr,
     );
     let id = route_handle.submit(job).id;
+    super::audit_mock_job_submission(mock_audit.as_ref().map(|Extension(audit)| audit), &id);
 
     match state.bits.poll(&id, Some(POLL_TIMEOUT)).await {
         PollOutcome::Pending { id } => Response::builder()

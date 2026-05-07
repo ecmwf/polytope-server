@@ -121,17 +121,14 @@ pub fn build_app(
         .allow_methods(Any)
         .allow_headers(Any);
 
-    let mut protected = Router::new()
+    let protected = Router::new()
         .nest("/api/v1", v1_protected)
         .nest("/api/v2", v2_protected)
-        .nest("/openmeteo/v1", openmeteo);
-
-    if state.auth_client.is_some() {
-        protected = protected.layer(middleware::from_fn_with_state(
+        .nest("/openmeteo/v1", openmeteo)
+        .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::middleware::auth_middleware,
         ));
-    }
 
     let app = Router::new()
         .route("/api/v1/test", get(api::v1::test))
