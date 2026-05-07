@@ -14,7 +14,7 @@ use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::auth::AuthUser;
+use crate::auth::{AuthUser, MockRolesAudit};
 use crate::state::AppState;
 
 const POLL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -57,6 +57,7 @@ pub async fn submit_request(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     auth_user: Option<Extension<AuthUser>>,
+    mock_audit: Option<Extension<MockRolesAudit>>,
     Path(collection): Path<String>,
     Json(body): Json<SubmitBody>,
 ) -> Response {
@@ -77,22 +78,22 @@ pub async fn submit_request(
     }
 
     let mut job = Job::new(request);
-    let mut user_context = serde_json::Map::new();
-    if let Some(ip) = super::client_ip(&headers) {
-        user_context.insert("client_ip".to_string(), json!(ip));
-    }
-    if let Some(Extension(user)) = auth_user {
-        if super::check_admin_bypass(&user, &state.admin_bypass_roles) {
-            user_context.insert("can_bypass_role_check".to_string(), json!(true));
-        }
-        user_context.insert("auth".to_string(), serde_json::to_value(&user).unwrap());
-    }
-    job.user = Value::Object(user_context).into();
+    super::set_job_user_context(
+        &mut job,
+        &headers,
+        auth_user.as_ref().map(|Extension(user)| user),
+        mock_audit.as_ref().map(|Extension(audit)| audit),
+        &state.admin_bypass_roles,
+    );
     // v1 clients require Content-Length, so delivery must buffer the full
     // output before making it available for download.
     job.metadata_mut()["buffer_full_output"] = json!(true);
 
     let handle = route_handle.submit(job);
+    super::audit_mock_job_submission(
+        mock_audit.as_ref().map(|Extension(audit)| audit),
+        &handle.id,
+    );
 
     let location = format!("/api/v1/requests/{}", handle.id);
     (
@@ -188,9 +189,17 @@ pub async fn delete_request(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     state.bits.cancel(&id);
+    // The polytope-client SDK reads `messages["message"]` from the JSON
+    // body of this endpoint and KeyErrors if it isn't present. The legacy
+    // polytope-server included a `message` field, so keep one here for
+    // backwards compatibility with the published SDK.
     (
         StatusCode::OK,
-        Json(json!({"status": "cancelled", "id": id})),
+        Json(json!({
+            "status": "cancelled",
+            "id": id,
+            "message": "Request revoked",
+        })),
     )
 }
 

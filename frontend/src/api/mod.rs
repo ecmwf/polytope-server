@@ -2,11 +2,12 @@ pub mod openmeteo;
 pub mod v1;
 pub mod v2;
 
-use std::collections::HashMap;
-
 use authotron_types::User as AuthUser;
 use axum::http::HeaderMap;
-use serde_json::Value;
+use bits::Job;
+use serde_json::{Value, json};
+
+use crate::auth::{MockRolesAudit, is_admin_bypass_user};
 
 /// Flatten a v1-style `{"request": "...yaml..."}` or `{"request": {...}}` wrapper
 /// into a top-level MARS field object. Passes through already-flat requests unchanged.
@@ -48,16 +49,49 @@ pub fn client_ip(headers: &HeaderMap) -> Option<String> {
         .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
 }
 
-pub fn check_admin_bypass(user: &AuthUser, bypass: &Option<HashMap<String, Vec<String>>>) -> bool {
-    let Some(bypass) = bypass else { return false };
-    let Some(admin_roles) = bypass.get(&user.realm) else {
-        return false;
-    };
-    admin_roles.iter().any(|r| user.roles.contains(r))
+pub fn set_job_user_context(
+    job: &mut Job,
+    headers: &HeaderMap,
+    auth_user: Option<&AuthUser>,
+    mock_audit: Option<&MockRolesAudit>,
+    admin_bypass_roles: &Option<std::collections::HashMap<String, Vec<String>>>,
+) {
+    let mut user_context = serde_json::Map::new();
+    if let Some(ip) = client_ip(headers) {
+        user_context.insert("client_ip".to_string(), json!(ip));
+    }
+    if let Some(user) = auth_user {
+        if mock_audit.is_none() && is_admin_bypass_user(user, admin_bypass_roles) {
+            user_context.insert("can_bypass_role_check".to_string(), json!(true));
+        }
+        user_context.insert("auth".to_string(), serde_json::to_value(user).unwrap());
+    }
+    job.user = Value::Object(user_context).into();
+}
+
+pub fn audit_mock_job_submission(mock_audit: Option<&MockRolesAudit>, job_id: &str) {
+    if let Some(audit) = mock_audit {
+        tracing::info!(
+            event = "polytope_mock_roles_job_submitted",
+            real_username = audit.real_username.as_str(),
+            real_realm = audit.real_realm.as_str(),
+            mocked_realm = audit.mocked_realm.as_str(),
+            mocked_roles = ?audit.mocked_roles,
+            path = audit.path.as_str(),
+            request_id = audit.request_id.as_deref(),
+            job_id = job_id,
+            "accepted mocked-role request submitted job"
+        );
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
+    use axum::http::HeaderMap;
+    use serde_json::json;
+
     use super::*;
 
     fn user(realm: &str, roles: &[&str]) -> AuthUser {
@@ -71,38 +105,53 @@ mod tests {
         }
     }
 
-    fn bypass(entries: &[(&str, &[&str])]) -> Option<HashMap<String, Vec<String>>> {
-        Some(
-            entries
-                .iter()
-                .map(|(r, roles)| (r.to_string(), roles.iter().map(|s| s.to_string()).collect()))
-                .collect(),
-        )
+    fn bypass() -> Option<HashMap<String, Vec<String>>> {
+        Some(HashMap::from([(
+            "alpha".to_string(),
+            vec!["admin".to_string()],
+        )]))
     }
 
     #[test]
-    fn admin_in_configured_realm_passes() {
-        let b = bypass(&[("ecmwf", &["polytope-admin"])]);
-        assert!(check_admin_bypass(&user("ecmwf", &["polytope-admin"]), &b));
+    fn ordinary_admin_job_context_gets_bypass_flag() {
+        let mut job = Job::new(json!({}));
+        let user = user("alpha", &["admin"]);
+        set_job_user_context(&mut job, &HeaderMap::new(), Some(&user), None, &bypass());
+        assert_eq!(job.user["can_bypass_role_check"], json!(true));
+        assert_eq!(job.user["auth"]["realm"], json!("alpha"));
     }
 
     #[test]
-    fn admin_in_wrong_realm_fails() {
-        let b = bypass(&[("ecmwf", &["polytope-admin"])]);
-        assert!(!check_admin_bypass(&user("efas", &["polytope-admin"]), &b));
-    }
-
-    #[test]
-    fn non_admin_fails() {
-        let b = bypass(&[("ecmwf", &["polytope-admin"])]);
-        assert!(!check_admin_bypass(&user("ecmwf", &["viewer"]), &b));
-    }
-
-    #[test]
-    fn no_bypass_config_fails() {
-        assert!(!check_admin_bypass(
-            &user("ecmwf", &["polytope-admin"]),
-            &None
-        ));
+    fn mocked_job_context_never_gets_bypass_flag_and_keeps_effective_auth() {
+        let mut job = Job::new(json!({}));
+        let user = AuthUser {
+            version: 1,
+            username: "alice".into(),
+            realm: "beta".into(),
+            roles: vec!["viewer".into()],
+            attributes: HashMap::new(),
+            scopes: HashMap::new(),
+        };
+        let audit = MockRolesAudit {
+            real_username: "alice".into(),
+            real_realm: "alpha".into(),
+            mocked_realm: "beta".into(),
+            mocked_roles: vec!["viewer".into()],
+            path: "/api/v2/all/requests".into(),
+            request_id: None,
+        };
+        set_job_user_context(
+            &mut job,
+            &HeaderMap::new(),
+            Some(&user),
+            Some(&audit),
+            &bypass(),
+        );
+        assert!(job.user.get("can_bypass_role_check").is_none());
+        assert_eq!(job.user["auth"]["username"], json!("alice"));
+        assert_eq!(job.user["auth"]["realm"], json!("beta"));
+        assert_eq!(job.user["auth"]["roles"], json!(["viewer"]));
+        assert_eq!(job.user["auth"]["attributes"], json!({}));
+        assert_eq!(job.user["auth"]["scopes"], json!({}));
     }
 }
