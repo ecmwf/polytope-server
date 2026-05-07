@@ -10,3 +10,5 @@ tests/test_e2e.py
 AGENTS.md
 .ruff_cache
 .pytest_cache
+# Pi/Weave runtime artefacts (plans, sessions, runtime notes)
+.weave/

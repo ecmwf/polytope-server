@@ -1,8 +1,7 @@
 ###############################
-# Shared base: Rust + cargo-chef + system deps (built once)
+# Shared base: Rust + system deps
 ###############################
-FROM docker.io/library/rust:1.93-slim-bookworm AS chef-base
-RUN cargo install cargo-chef --locked
+FROM docker.io/library/rust:1.93-slim-bookworm AS rust-base
 RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-dev && rm -rf /var/lib/apt/lists/*
 
 ###############################
@@ -36,8 +35,9 @@ RUN git clone --depth 1 --branch ${METKIT_VERSION} https://github.com/ecmwf/metk
     && ecbuild --prefix=/opt/metkit \
         -DENABLE_FORTRAN=OFF \
         -DENABLE_BUILD_TOOLS=OFF \
-        -DENABLE_ECCODES=OFF \
         -DENABLE_TESTS=OFF \
+        -DENABLE_GEO=OFF \
+        -DENABLE_ECCODES=OFF \
         -DENABLE_MARS2GRIB=OFF \
         -Deckit_DIR=/opt/metkit/lib/cmake/eckit \
         /src/metkit \
@@ -46,58 +46,39 @@ RUN git clone --depth 1 --branch ${METKIT_VERSION} https://github.com/ecmwf/metk
     && cmake --install /build/metkit
 
 ###############################
-# Stage 1: Prepare Cargo Chef Recipe
+# Build the frontend package with the workspace lockfile
 ###############################
-FROM chef-base AS chef
-ARG GIT_AUTH_TOKEN=""
-WORKDIR /ecmwf/polytope-server
-COPY Cargo.lock Cargo.lock
-COPY utils/metkit/ utils/metkit/
-COPY frontend/ frontend/
-RUN mkdir -p .cargo && echo '[net]' > .cargo/config.toml && echo 'git-fetch-with-cli = true' >> .cargo/config.toml
-RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi
-RUN cd frontend && cargo chef prepare --recipe-path recipe.json
-
-###############################
-# Stage 2: Cache Dependencies
-###############################
-FROM chef-base AS cacher
-ARG GIT_AUTH_TOKEN=""
-WORKDIR /ecmwf/polytope-server
-COPY Cargo.lock Cargo.lock
-COPY utils/metkit/ utils/metkit/
-COPY --from=chef /ecmwf/polytope-server/frontend/recipe.json frontend/recipe.json
-COPY --from=chef /ecmwf/polytope-server/.cargo/config.toml .cargo/config.toml
-RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi
-RUN cd frontend && cargo chef cook --release --recipe-path recipe.json
-
-###############################
-# Stage 3: Build the Project
-###############################
-FROM chef-base AS builder
+FROM rust-base AS builder
 ARG GIT_AUTH_TOKEN=""
 WORKDIR /ecmwf/polytope-server
 ARG PACKAGE_NAME=polytope-server
 ARG BIN_NAME=polytope-server
 ARG FEATURES="metkit"
+
+COPY Cargo.toml Cargo.toml
 COPY Cargo.lock Cargo.lock
 COPY utils/metkit/ utils/metkit/
-COPY --from=metkit-build /opt/metkit /opt/metkit
 COPY frontend/ frontend/
+COPY client/ client/
+COPY tests/integration/ tests/integration/
+COPY workers/common/ workers/common/
+COPY workers/polytope-fe-worker/ workers/polytope-fe-worker/
+COPY workers/fdb-worker/ workers/fdb-worker/
+COPY workers/test-worker/ workers/test-worker/
+COPY --from=metkit-build /opt/metkit /opt/metkit
+
 RUN mkdir -p .cargo && echo '[net]' > .cargo/config.toml && echo 'git-fetch-with-cli = true' >> .cargo/config.toml
-COPY --from=cacher /ecmwf/polytope-server/frontend/target frontend/target
-COPY --from=cacher /usr/local/cargo /usr/local/cargo
 ENV METKIT_LIB_DIR=/opt/metkit/lib
 ENV METKIT_INCLUDE_DIR=/opt/metkit/include
 ENV METKIT_BUILD_INCLUDE_DIR=/opt/metkit/include
 ENV ECKIT_INCLUDE_DIR=/opt/metkit/include
 ENV ECKIT_BUILD_INCLUDE_DIR=/opt/metkit/include
 RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi
-RUN cd frontend && cargo build --release -p ${PACKAGE_NAME} \
+RUN cargo build --release --locked -p ${PACKAGE_NAME} \
     $(if [ -n "$FEATURES" ]; then echo "--features $FEATURES"; fi)
 
 ###############################
-# Stage 4: Production Release Image
+# Production Release Image
 ###############################
 FROM gcr.io/distroless/cc-debian12:nonroot AS release
 ARG VERSION
@@ -106,12 +87,12 @@ LABEL version=$VERSION
 WORKDIR /app
 COPY --from=metkit-build /opt/metkit/lib /opt/metkit/lib
 COPY --from=metkit-build /opt/metkit/share /opt/metkit/share
-COPY --from=builder /ecmwf/polytope-server/frontend/target/release/${BIN_NAME} /app/polytope-server
+COPY --from=builder /ecmwf/polytope-server/target/release/${BIN_NAME} /app/polytope-server
 ENV LD_LIBRARY_PATH="/opt/metkit/lib"
 ENTRYPOINT ["/app/polytope-server"]
 
 ###############################
-# Stage 5: Debug Image
+# Debug Image
 ###############################
 FROM docker.io/library/debian:bookworm-slim AS debug
 ARG VERSION
@@ -121,6 +102,6 @@ RUN apt-get update && apt-get install -y ca-certificates bash && rm -rf /var/lib
 WORKDIR /app
 COPY --from=metkit-build /opt/metkit/lib /opt/metkit/lib
 COPY --from=metkit-build /opt/metkit/share /opt/metkit/share
-COPY --from=builder /ecmwf/polytope-server/frontend/target/release/${BIN_NAME} /app/polytope-server
+COPY --from=builder /ecmwf/polytope-server/target/release/${BIN_NAME} /app/polytope-server
 ENV LD_LIBRARY_PATH="/opt/metkit/lib"
 ENTRYPOINT ["/app/polytope-server"]
