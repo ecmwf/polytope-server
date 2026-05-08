@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use bits::actions::ActionError;
-use chrono::{Datelike, Duration, Local, NaiveDate};
+use chrono::{Duration, Local, NaiveDate};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
@@ -458,10 +458,6 @@ pub fn parse_request_class_like(value: &Value) -> Vec<String> {
         .into_iter()
         .map(|item| item.to_lowercase())
         .collect()
-}
-
-pub fn date_to_ymd(date: NaiveDate) -> String {
-    format!("{:04}-{:02}-{:02}", date.year(), date.month(), date.day())
 }
 
 #[cfg(test)]

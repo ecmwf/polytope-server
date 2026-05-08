@@ -2,12 +2,16 @@ pub mod openmeteo;
 pub mod v1;
 pub mod v2;
 
+use std::convert::Infallible;
+
 use authotron_types::User as AuthUser;
-use axum::http::HeaderMap;
+use axum::extract::FromRequestParts;
+use axum::http::{HeaderMap, request::Parts};
 use bits::Job;
 use serde_json::{Value, json};
 
-use crate::auth::{MockRolesAudit, is_admin_bypass_user};
+use crate::auth::mock_time::{MOCK_TIME_HEADER, normalise_mocked_now};
+use crate::auth::{MockRolesAudit, MockTime, MockTimeAudit, is_admin_bypass_user};
 
 /// Flatten a v1-style `{"request": "...yaml..."}` or `{"request": {...}}` wrapper
 /// into a top-level MARS field object. Passes through already-flat requests unchanged.
@@ -69,6 +73,53 @@ pub fn set_job_user_context(
     job.user = Value::Object(user_context).into();
 }
 
+// Trust boundary invariant: request body, `original_request`, and transform output must never
+// be merged into `job.metadata`. This helper only writes the mock-time carrier from trusted
+// request extensions inserted by authentication middleware.
+pub fn set_job_mock_time_metadata(job: &mut Job, mock_time: Option<&MockTime>) {
+    let Some(mock_time) = mock_time else {
+        return;
+    };
+
+    let mocked_now = normalise_mocked_now(mock_time.now);
+    let metadata = job.metadata_mut();
+    if !metadata.is_object() {
+        *metadata = json!({});
+    }
+
+    let metadata = metadata.as_object_mut().expect("metadata is an object");
+    let admin_overrides = metadata
+        .entry("admin_overrides".to_string())
+        .or_insert_with(|| json!({}));
+    if !admin_overrides.is_object() {
+        *admin_overrides = json!({});
+    }
+
+    admin_overrides
+        .as_object_mut()
+        .expect("admin_overrides is an object")
+        .insert("mock_now_rfc3339".to_string(), json!(mocked_now));
+}
+
+pub struct MockTimeSubmissionExtensions {
+    pub mock_time: Option<MockTime>,
+    pub mock_time_audit: Option<MockTimeAudit>,
+}
+
+impl<S> FromRequestParts<S> for MockTimeSubmissionExtensions
+where
+    S: Send + Sync,
+{
+    type Rejection = Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        Ok(Self {
+            mock_time: parts.extensions.get::<MockTime>().cloned(),
+            mock_time_audit: parts.extensions.get::<MockTimeAudit>().cloned(),
+        })
+    }
+}
+
 pub fn audit_mock_job_submission(mock_audit: Option<&MockRolesAudit>, job_id: &str) {
     if let Some(audit) = mock_audit {
         tracing::info!(
@@ -85,11 +136,28 @@ pub fn audit_mock_job_submission(mock_audit: Option<&MockRolesAudit>, job_id: &s
     }
 }
 
+pub fn audit_mock_time_job_submission(mock_audit: Option<&MockTimeAudit>, job_id: &str) {
+    if let Some(audit) = mock_audit {
+        tracing::info!(
+            event = "polytope_mock_time_job_submitted",
+            real_username = audit.real_username.as_str(),
+            real_realm = audit.real_realm.as_str(),
+            mocked_now = audit.mocked_now.as_str(),
+            path = audit.path.as_str(),
+            request_id = audit.request_id.as_deref(),
+            header = MOCK_TIME_HEADER,
+            job_id = job_id,
+            "accepted mocked-time request submitted job"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
 
     use axum::http::HeaderMap;
+    use chrono::{TimeZone, Utc};
     use serde_json::json;
 
     use super::*;
@@ -153,5 +221,86 @@ mod tests {
         assert_eq!(job.user["auth"]["roles"], json!(["viewer"]));
         assert_eq!(job.user["auth"]["attributes"], json!({}));
         assert_eq!(job.user["auth"]["scopes"], json!({}));
+    }
+
+    fn mock_time() -> MockTime {
+        MockTime {
+            now: Utc.with_ymd_and_hms(2040, 5, 6, 7, 8, 9).unwrap(),
+        }
+    }
+
+    #[test]
+    fn mock_time_metadata_absent_without_mock_time() {
+        let mut job = Job::new(json!({}));
+        set_job_mock_time_metadata(&mut job, None);
+
+        assert!(job.metadata.get("admin_overrides").is_none());
+        assert!(job.metadata.get("mock_now_rfc3339").is_none());
+    }
+
+    #[test]
+    fn mock_time_metadata_is_namespaced_and_normalised() {
+        let mut job = Job::new(json!({}));
+        let mock_time = mock_time();
+        set_job_mock_time_metadata(&mut job, Some(&mock_time));
+
+        assert_eq!(
+            job.metadata["admin_overrides"]["mock_now_rfc3339"],
+            json!("2040-05-06T07:08:09Z")
+        );
+        assert!(job.metadata.get("mock_now_rfc3339").is_none());
+    }
+
+    #[test]
+    fn mock_time_metadata_preserves_existing_keys_across_cow_write() {
+        let mut original = Job::new(json!({}));
+        original.metadata_mut()["accept_encoding"] = json!("gzip");
+        original.metadata_mut()["admin_overrides"] = json!({"other": "kept"});
+
+        let mut submitted = original.clone();
+        let mock_time = mock_time();
+        set_job_mock_time_metadata(&mut submitted, Some(&mock_time));
+
+        assert_eq!(submitted.metadata["accept_encoding"], json!("gzip"));
+        assert_eq!(
+            submitted.metadata["admin_overrides"]["other"],
+            json!("kept")
+        );
+        assert_eq!(
+            submitted.metadata["admin_overrides"]["mock_now_rfc3339"],
+            json!("2040-05-06T07:08:09Z")
+        );
+        assert!(
+            original.metadata["admin_overrides"]
+                .get("mock_now_rfc3339")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn mock_time_helper_does_not_touch_job_user() {
+        let mut job = Job::new(json!({}));
+        job.user = json!({"auth": {"username": "alice"}}).into();
+        let user_before = job.user.clone();
+
+        let mock_time = mock_time();
+        set_job_mock_time_metadata(&mut job, Some(&mock_time));
+
+        assert_eq!(job.user, user_before);
+    }
+
+    #[test]
+    fn mock_time_submission_audit_helper_accepts_normalised_audit_data() {
+        let audit = MockTimeAudit {
+            real_username: "alice".into(),
+            real_realm: "alpha".into(),
+            mocked_now: "2040-05-06T07:08:09Z".into(),
+            path: "/api/v2/all/requests".into(),
+            request_id: Some("request-123".into()),
+            header: MOCK_TIME_HEADER,
+        };
+
+        audit_mock_time_job_submission(Some(&audit), "job-123");
+        audit_mock_time_job_submission(None, "job-123");
     }
 }

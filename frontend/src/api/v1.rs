@@ -58,6 +58,7 @@ pub async fn submit_request(
     headers: HeaderMap,
     auth_user: Option<Extension<AuthUser>>,
     mock_audit: Option<Extension<MockRolesAudit>>,
+    mock_time_extensions: super::MockTimeSubmissionExtensions,
     Path(collection): Path<String>,
     Json(body): Json<SubmitBody>,
 ) -> Response {
@@ -88,10 +89,15 @@ pub async fn submit_request(
     // v1 clients require Content-Length, so delivery must buffer the full
     // output before making it available for download.
     job.metadata_mut()["buffer_full_output"] = json!(true);
+    super::set_job_mock_time_metadata(&mut job, mock_time_extensions.mock_time.as_ref());
 
     let handle = route_handle.submit(job);
     super::audit_mock_job_submission(
         mock_audit.as_ref().map(|Extension(audit)| audit),
+        &handle.id,
+    );
+    super::audit_mock_time_job_submission(
+        mock_time_extensions.mock_time_audit.as_ref(),
         &handle.id,
     );
 

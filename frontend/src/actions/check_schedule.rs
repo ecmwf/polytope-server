@@ -8,7 +8,7 @@ use crate::actions::schedule::{ScheduleCatalog, ScheduleReleased};
 impl CheckAction for ScheduleReleased {
     async fn evaluate(&self, job: &Job) -> Result<CheckResult, ActionError> {
         let catalog = ScheduleCatalog::from_path(&self.path)?;
-        match catalog.assert_request_released(&job.request, self.current_time()?) {
+        match catalog.assert_request_released(&job.request, self.current_time(job)?) {
             Ok(()) => Ok(CheckResult::Pass),
             Err(ActionError::ResourceError(reason)) => Ok(CheckResult::Reject {
                 reason,

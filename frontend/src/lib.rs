@@ -25,6 +25,11 @@ pub fn build_app(
     cfg: config::ServerConfig,
 ) -> Result<(Router, Arc<AppState>), Box<dyn std::error::Error>> {
     let bits_yaml = cfg.bits_yaml()?;
+    // `cfg.bits_yaml()` returns the contents of the chart's outer `bits:`
+    // block. That block IS the top-level YAML consumed by
+    // `bits::parse_bootstrap` (with sibling keys `bits`, `targets`, `routes`,
+    // ...). Strip `collections` out for separate registration via
+    // `add_route`, then pass the remainder through unchanged.
     let mut bits_value: serde_json::Value = serde_yaml::from_str(&bits_yaml)?;
     let collections_value = bits_value
         .as_object_mut()
@@ -196,9 +201,32 @@ impl polytope_edr::RequestSubmitter for BitsSubmitter {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn request_id_config_server_emits_new_format_request_id() {
+        let yaml = r#"
+polytope:
+  site: bol
+  env: dev
+bits: {}
+"#;
+        let cfg: config::ServerConfig =
+            serde_yaml::from_str(yaml).expect("top-level polytope site/env config should parse");
+        let (_, state) = build_app(cfg).expect("polytope site/env should be injected into BITS");
+
+        let handle = state.bits.submit(bits::Job::new(serde_json::json!({})));
+        let decoded = bits::polytope_id::decode(&handle.id)
+            .expect("server-emitted request ID should use the new decodable format");
+
+        assert_eq!(decoded.site, "bol");
+        assert_eq!(decoded.env, "dev");
+    }
+
     #[test]
     fn test_collections_parsed_from_config() {
         let yaml = r#"
+polytope:
+  site: bol
+  env: dev
 bits:
   targets:
     my_target:
@@ -223,6 +251,9 @@ bits:
     #[test]
     fn test_no_collections_still_works() {
         let yaml = r#"
+polytope:
+  site: bol
+  env: dev
 bits:
   targets:
     my_target:

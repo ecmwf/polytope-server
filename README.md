@@ -46,12 +46,22 @@ The workspace produces separate binaries under `target/release/`:
 
 ## Configuration
 
-The frontend is configured with a single YAML file. The top-level `server` block controls the HTTP listener; the `bits` block is passed directly to the bits routing engine. The `collections` block maps collection names to bits route pipelines — each collection gets its own route, sharing the same action registries and target instances.
+The frontend is configured with a single YAML file. The top-level `server` block controls the HTTP listener. The `polytope` block identifies the deployment with stable one-to-three-character lower-case alphanumeric `site` and `env` tags used for opaque request IDs. The `bits` block is passed directly to the bits routing engine. The `collections` block maps collection names to bits route pipelines — each collection gets its own route, sharing the same action registries and target instances.
 
 ```yaml
 server:
   host: "0.0.0.0"
   port: 3000
+
+polytope:
+  site: bol
+  env: dev
+
+bits:
+  # Keep these in sync with polytope.site/env until server config plumbing
+  # injects them automatically.
+  site: bol
+  env: dev
 
 collections:
   climate:
@@ -66,7 +76,7 @@ collections:
         url: "http://ops-backend/api"
 ```
 
-See `config.example.yaml` for a starting point, and the [bits documentation](../bits) for the full bits config schema.
+See `config.example.yaml` for a starting point, [docs/request-ids.md](docs/request-ids.md) for request ID and rollout guidance, and the [bits documentation](../bits) for the full bits config schema.
 
 ## Running
 
@@ -113,6 +123,8 @@ The frontend exposes the legacy v1 and newer v2 HTTP APIs.
 - `DELETE /api/v2/requests/{id}`
 
 v2 routes requests through the named collection — each collection maps to a separate bits route pipeline. The collection name must match a key in the `collections` config block.
+
+Request IDs returned by these APIs are opaque strings. Clients should pass them back unchanged to status, cancel, and download routes, but must not parse broker identity, site, environment, or ordering from the ID text.
 
 Successful responses are streamed back to the client over HTTP.
 

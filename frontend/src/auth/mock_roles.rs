@@ -112,10 +112,9 @@ pub fn parse_mock_roles_value(
     if let Some(admin_roles) = admin_bypass_roles
         .as_ref()
         .and_then(|roles| roles.get(realm))
+        && let Some(role) = roles.iter().find(|role| admin_roles.contains(*role))
     {
-        if let Some(role) = roles.iter().find(|role| admin_roles.contains(*role)) {
-            return Err(MockRolesError::AdminRole { role: role.clone() });
-        }
+        return Err(MockRolesError::AdminRole { role: role.clone() });
     }
 
     Ok(MockRoles {

@@ -31,6 +31,7 @@ pub async fn submit_collection(
     headers: HeaderMap,
     auth_user: Option<Extension<AuthUser>>,
     mock_audit: Option<Extension<MockRolesAudit>>,
+    mock_time_extensions: super::MockTimeSubmissionExtensions,
     Path(collection): Path<String>,
     Json(mut body): Json<Value>,
 ) -> Response {
@@ -64,6 +65,7 @@ pub async fn submit_collection(
     {
         job.metadata_mut()["accept_encoding"] = serde_json::json!(enc);
     }
+    super::set_job_mock_time_metadata(&mut job, mock_time_extensions.mock_time.as_ref());
     let proxy_proto_addr = headers
         .get("x-proxy-protocol-addr")
         .and_then(|v| v.to_str().ok())
@@ -76,6 +78,7 @@ pub async fn submit_collection(
     );
     let id = route_handle.submit(job).id;
     super::audit_mock_job_submission(mock_audit.as_ref().map(|Extension(audit)| audit), &id);
+    super::audit_mock_time_job_submission(mock_time_extensions.mock_time_audit.as_ref(), &id);
 
     match state.bits.poll(&id, Some(POLL_TIMEOUT)).await {
         PollOutcome::Pending { id } => Response::builder()
@@ -213,7 +216,10 @@ mod tests {
     use crate::state::AppState;
 
     fn make_bits_with_route(route_name: &str) -> (bits::Bits, bits::RouteHandle) {
-        let yaml = r#"targets:
+        let yaml = r#"bits:
+  site: tst
+  env: tst
+targets:
   t:
     type: http
     url: "http://127.0.0.1:0/""#;
