@@ -166,7 +166,7 @@ ENV ECCODES_DIR=/opt/polytope/gribjump-source
 ENV ECCODES_DEFINITION_PATH=/opt/polytope/gribjump-source/share/eccodes/definitions
 ENV ECCODES_SAMPLES_PATH=/opt/polytope/gribjump-source/share/eccodes/samples
 ENV FINDLIBS_DISABLE_PACKAGE=yes
-ENV LD_LIBRARY_PATH=/opt/polytope/gribjump-source/lib
+ENV LD_LIBRARY_PATH=/opt/polytope/gribjump-source/lib64:/opt/polytope/gribjump-source/lib
 
 RUN /opt/polytope/gribjump-source/.venv/bin/python -c "import pyfdb, pygribjump; print('source bundle imports OK')"
 
@@ -290,7 +290,5 @@ RUN set -eux \
     && if [ -f /opt/polytope/gribjump-source/profile ]; then \
     bash -c 'source /opt/polytope/gribjump-source/profile && /home/polytope/.venv/bin/python -c "import eccodes, pyfdb, pygribjump; print(\"worker source bundle imports OK\")"'; \
     fi
-
-# COPY polytope-deployment/common/default_fdb_schema /polytope/config/fdb/default
 
 USER polytope

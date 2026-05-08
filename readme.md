@@ -24,13 +24,35 @@ Through common abstraction layers, these components speak to various other servi
 * **authorization**: for managing authorization to different collections (ECMWF LDAP)
 * **caching**: caching of web requests to various services (MongoDB, Redis, Memcached)
 
-## Quick Start
+## Build and deploy
+
+Build images from this repository with Skaffold. Site-specific and
+secret-bearing values live in `skaffold.env`; source-build dependency pins live
+in `env_build/deps.env` so the same GribJump/FDB environment can be built inside
+or outside Docker.
 
 ```bash
-cd polytope-deployment
-export SKAFFOLD_IMAGE_REGISTRY=localhost:32000
-skaffold dev
+# Create skaffold.env with SKAFFOLD_DEFAULT_REPO, rpm_repo,
+# mars_config_repo, and mars_config_branch.
+PREFIX=dev_ env_build/skaffold-with-deps.sh build
 ```
+
+To build the same source GribJump/FDB environment outside Docker:
+
+```bash
+env_build/build.sh
+source env_build/install/profile
+```
+
+Deployments are managed from `polytope-config`, for example:
+
+```bash
+cd ../polytope-config
+./deploy.sh <location> <environment>
+```
+
+Use `./deploy.sh --template-dir /tmp/manifests <location> <environment>` for a
+render-only dry run.
 
 ## Testing
 

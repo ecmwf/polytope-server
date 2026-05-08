@@ -1,14 +1,16 @@
 apiVersion: skaffold/v4beta10
 kind: Config
 
-# This Skaffold configuration expects to find a skaffold.env file in the current directory.
-# It should contain the following environment variables:
+# This Skaffold configuration expects to find a skaffold.env file in the current directory
+# for site/secret-bearing values. It should contain the following environment variables:
 # - SKAFFOLD_DEFAULT_REPO: The default repository to use for images
 # - rpm_repo: The URL of the RPM repository for MARS/GribJump/FDB images
 # - mars_config_repo: The URL of the MARS configuration repository
 # - mars_config_branch: The branch of the MARS configuration repository to use
-# - ssh_pub_key: The public SSH key to use for cloning the MARS and MARS configuration repositories
-# - ssh_prv_key: The private SSH key to use for cloning the MARS and MARS configuration repositories
+#
+# Source-built GribJump/FDB dependency pins live in env_build/deps.env. Use
+# env_build/skaffold-with-deps.sh build so Docker and local env_build/build.sh
+# consume the same versions.
 
 
 build:
@@ -48,6 +50,9 @@ build:
         developer_mode: '{{ default "false" .developer_mode }}'
         mars_client_c_version: '{{ default "6.33.20.2" .mars_client_c_version }}'
         mars_client_cpp_version: '{{ default "7.1.9.1" .mars_client_cpp_version }}'
+        # Fallback defaults mirror env_build/deps.env so existing direct
+        # `skaffold build` workflows keep working. Prefer
+        # env_build/skaffold-with-deps.sh for the shared source of truth.
         ecbuild_version: '{{ default "3.14.0" .ecbuild_version }}'
         libaec_version: '{{ default "v1.1.4" .libaec_version }}'
         eckit_version: '{{ default "1.33.2" .eckit_version }}'
