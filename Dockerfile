@@ -81,7 +81,7 @@ WORKDIR /polytope
 
 # Copy requirements.txt with correct ownership
 COPY --chown=polytope:polytope ./requirements.txt ./requirements.txt
-COPY --from=polytope-requirements-wheel-builder --chown=polytope:polytope /wheels /wheels
+COPY --from=polytope-requirements-wheel-builder --chown=polytope:polytope /wheels ${HOME_DIR}/wheels
 
 # Use one application virtual environment.
 ENV VIRTUAL_ENV=${HOME_DIR}/.venv
@@ -90,11 +90,11 @@ ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 # Install every wheel produced from requirements.txt. This avoids re-resolving
 # direct git requirements in the runtime stage.
 RUN python -m venv ${VIRTUAL_ENV} \
-    && pip install --no-index --find-links=/wheels /wheels/*.whl \
-    && rm -rf /wheels
+    && pip install --no-index --find-links=${HOME_DIR}/wheels ${HOME_DIR}/wheels/*.whl \
+    && rm -rf ${HOME_DIR}/wheels
 
 # Copy the rest of the application code
-COPY --chown=polytope:polytope . $PWD
+COPY --chown=polytope:polytope . .
 
 RUN set -eux \
     && if [ "${developer_mode}" = true ]; then \
