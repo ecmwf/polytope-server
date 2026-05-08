@@ -74,6 +74,9 @@ ecbuild -G "Ninja" -B ${BUILD_DIR} \
   -DCMAKE_INSTALL_PREFIX="${INSTALL_PREFIX}" \
   "${SRC_BUNDLE}"
 
+# Work around an upstream FDB 5.21.3 typo in the pyfdb setup template.
+sed -i 's/uft-8/utf-8/' "${SRC_BUNDLE}/fdb5/cmake/pyfdb_setup.py.in"
+
 cd ${BUILD_DIR} && ninja install
 
 # install the pyfdb wheel we just build
