@@ -53,6 +53,7 @@ async fn forecast(
     headers: HeaderMap,
     auth_user: Option<Extension<AuthUser>>,
     mock_audit: Option<Extension<MockRolesAudit>>,
+    mock_time_extensions: super::MockTimeSubmissionExtensions,
     Query(params): Query<params::ForecastParams>,
 ) -> Response {
     let _ = (
@@ -157,8 +158,10 @@ async fn forecast(
             mock_audit.as_ref().map(|Extension(audit)| audit),
             &state.admin_bypass_roles,
         );
+        super::set_job_mock_time_metadata(&mut job, mock_time_extensions.mock_time.as_ref());
         let id = state.bits.submit(job).id;
         super::audit_mock_job_submission(mock_audit.as_ref().map(|Extension(audit)| audit), &id);
+        super::audit_mock_time_job_submission(mock_time_extensions.mock_time_audit.as_ref(), &id);
         submitted.push((group, param_list, id));
     }
 
@@ -265,16 +268,16 @@ async fn forecast(
         });
     }
 
-    let payload = response::build_forecast_response(
-        params.latitude,
-        params.longitude,
-        params.elevation,
-        &params.timezone,
-        0,
-        started.elapsed().as_secs_f64() * 1000.0,
-        &hourly_times,
-        &hourly_results,
-    );
+    let payload = response::build_forecast_response(response::ForecastResponseInput {
+        latitude: params.latitude,
+        longitude: params.longitude,
+        elevation: params.elevation,
+        timezone: &params.timezone,
+        utc_offset_seconds: 0,
+        generationtime_ms: started.elapsed().as_secs_f64() * 1000.0,
+        hourly_times: &hourly_times,
+        hourly_results: &hourly_results,
+    });
 
     (StatusCode::OK, Json(payload)).into_response()
 }

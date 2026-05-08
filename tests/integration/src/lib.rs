@@ -250,6 +250,9 @@ pub async fn spawn_polytope_server_with_extra_config(
     let server_config = if let Some(auth_url) = authotron_url {
         format!(
             r#"
+polytope:
+  site: tst
+  env: tst
 server:
   host: "127.0.0.1"
   port: 0
@@ -264,6 +267,9 @@ authentication:
     } else {
         format!(
             r#"
+polytope:
+  site: tst
+  env: tst
 server:
   host: "127.0.0.1"
   port: 0
@@ -346,6 +352,59 @@ fn beta_viewer_bits_yaml(backend_url: &str) -> String {
 }
 
 #[cfg(test)]
+fn schedule_bits_yaml(backend_url: &str, schedule_path: &str) -> String {
+    format!(
+        r#"
+  collections:
+    all:
+      - scheduled:
+          - check::schedule_released:
+              path: "{schedule_path}"
+          - target::http:
+              url: "{backend_url}/"
+"#
+    )
+}
+
+#[cfg(test)]
+fn beta_viewer_schedule_bits_yaml(backend_url: &str, schedule_path: &str) -> String {
+    format!(
+        r#"
+  collections:
+    all:
+      - beta_viewer_scheduled:
+          - check::has_role:
+              beta:
+                - viewer
+          - check::schedule_released:
+              path: "{schedule_path}"
+          - target::http:
+              url: "{backend_url}/"
+"#
+    )
+}
+
+#[cfg(test)]
+fn schedule_with_static_now_bits_yaml(
+    backend_url: &str,
+    schedule_path: &str,
+    now_rfc3339: &str,
+) -> String {
+    format!(
+        r#"
+  collections:
+    all:
+      - scheduled:
+          - check::schedule_released:
+              path: "{schedule_path}"
+              now_rfc3339: "{now_rfc3339}"
+          - target::http:
+              url: "{backend_url}/"
+"#
+    )
+}
+
+#[cfg(test)]
 fn auth_split_yaml(auth_backend_url: &str, public_backend_url: &str) -> String {
     format!(
         r#"
@@ -400,6 +459,87 @@ fn bobs_bits_yaml(worker_server_port: u16) -> String {
 async fn free_port() -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     listener.local_addr().unwrap().port()
+}
+
+#[cfg(test)]
+fn temporary_release_schedule() -> NamedTempFile {
+    let mut schedule = NamedTempFile::new().expect("create schedule fixture");
+    use std::io::Write as _;
+    schedule
+        .write_all(
+            br#"
+<schedule>
+  <product>
+    <class>od</class>
+    <stream>oper</stream>
+    <domain>g</domain>
+    <type>fc</type>
+    <time>00:00</time>
+    <step>0</step>
+    <release_time>12:00:00</release_time>
+    <release_delta_day>0</release_delta_day>
+  </product>
+</schedule>
+"#,
+        )
+        .expect("write schedule fixture");
+    schedule
+}
+
+#[cfg(test)]
+fn scheduled_request_body() -> serde_json::Value {
+    serde_json::json!({
+        "class": "od",
+        "stream": "oper",
+        "domain": "g",
+        "type": "fc",
+        "date": utc_today_yyyymmdd(),
+        "time": "0000",
+        "step": 0
+    })
+}
+
+#[cfg(test)]
+fn utc_today_yyyymmdd() -> String {
+    let (year, month, day) = utc_today_parts();
+    format!("{year:04}{month:02}{day:02}")
+}
+
+#[cfg(test)]
+fn utc_today_iso_date() -> String {
+    let (year, month, day) = utc_today_parts();
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
+#[cfg(test)]
+fn utc_today_parts() -> (i32, u32, u32) {
+    let days_since_unix_epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system time after unix epoch")
+        .as_secs()
+        / 86_400;
+    civil_from_days(days_since_unix_epoch as i64)
+}
+
+#[cfg(test)]
+fn civil_from_days(days_since_unix_epoch: i64) -> (i32, u32, u32) {
+    let z = days_since_unix_epoch + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let day_of_era = z - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let mut year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_param = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_param + 2) / 5 + 1;
+    let month = month_param + if month_param < 10 { 3 } else { -9 };
+    year += i64::from(month <= 2);
+    (year as i32, month as u32, day as u32)
+}
+
+#[cfg(test)]
+fn admin_auth_header() -> String {
+    AuthHeader::Basic(ALPHA_ADMIN_USER.to_string(), ALPHA_ADMIN_PASS.to_string()).into()
 }
 
 #[tokio::test]
@@ -889,6 +1029,153 @@ async fn admin_mock_roles_can_access_mocked_realm_role() {
         .await
         .expect("request succeeds");
     assert_eq!(res.status(), StatusCode::OK);
+
+    server.abort();
+    authotron.abort();
+    backend.abort();
+}
+
+#[tokio::test]
+async fn admin_mock_time_before_schedule_release_rejects_before_backend() {
+    let schedule = temporary_release_schedule();
+    let schedule_path = schedule.path().to_str().expect("utf8 schedule path");
+    let (backend_url, backend, hits) = spawn_mock_backend_counted().await.expect("spawn backend");
+    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (server_url, server) = spawn_polytope_server_with_extra_config(
+        Some(&authotron_url),
+        &schedule_bits_yaml(&backend_url, schedule_path),
+        false,
+        "admin_bypass_roles:\n  alpha:\n    - admin\n",
+    )
+    .await
+    .expect("spawn polytope server");
+
+    let res = reqwest::Client::new()
+        .post(format!("{server_url}/api/v2/all/requests"))
+        .header("Authorization", admin_auth_header())
+        .header("Polytope-Mock-Time", "11:59:00")
+        .json(&scheduled_request_body())
+        .send()
+        .await
+        .expect("request succeeds");
+
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+    server.abort();
+    authotron.abort();
+    backend.abort();
+}
+
+#[tokio::test]
+async fn admin_mock_time_after_schedule_release_reaches_backend() {
+    let schedule = temporary_release_schedule();
+    let schedule_path = schedule.path().to_str().expect("utf8 schedule path");
+    let (backend_url, backend, hits) = spawn_mock_backend_counted().await.expect("spawn backend");
+    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (server_url, server) = spawn_polytope_server_with_extra_config(
+        Some(&authotron_url),
+        &schedule_bits_yaml(&backend_url, schedule_path),
+        false,
+        "admin_bypass_roles:\n  alpha:\n    - admin\n",
+    )
+    .await
+    .expect("spawn polytope server");
+
+    let res = reqwest::Client::new()
+        .post(format!("{server_url}/api/v2/all/requests"))
+        .header("Authorization", admin_auth_header())
+        .header("Polytope-Mock-Time", "12:01:00")
+        .json(&scheduled_request_body())
+        .send()
+        .await
+        .expect("request succeeds");
+
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(
+        hits.load(std::sync::atomic::Ordering::SeqCst) > 0,
+        "accepted scheduled request should reach the target backend"
+    );
+
+    server.abort();
+    authotron.abort();
+    backend.abort();
+}
+
+#[tokio::test]
+async fn admin_mock_time_and_roles_compose_for_scheduled_role_gated_collection() {
+    let schedule = temporary_release_schedule();
+    let schedule_path = schedule.path().to_str().expect("utf8 schedule path");
+    let (backend_url, backend, hits) = spawn_mock_backend_counted().await.expect("spawn backend");
+    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (server_url, server) = spawn_polytope_server_with_extra_config(
+        Some(&authotron_url),
+        &beta_viewer_schedule_bits_yaml(&backend_url, schedule_path),
+        false,
+        "admin_bypass_roles:\n  alpha:\n    - admin\n",
+    )
+    .await
+    .expect("spawn polytope server");
+
+    let res = reqwest::Client::new()
+        .post(format!("{server_url}/api/v2/all/requests"))
+        .header("Authorization", admin_auth_header())
+        .header("Polytope-Mock-Roles", "beta:viewer")
+        .header("Polytope-Mock-Time", "12:01:00")
+        .json(&scheduled_request_body())
+        .send()
+        .await
+        .expect("request succeeds");
+
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(
+        hits.load(std::sync::atomic::Ordering::SeqCst) > 0,
+        "combined mock-role/mock-time request should reach the target backend"
+    );
+
+    server.abort();
+    authotron.abort();
+    backend.abort();
+}
+
+#[tokio::test]
+async fn admin_mock_time_trust_boundary_body_values_without_header_do_not_affect_schedule() {
+    let schedule = temporary_release_schedule();
+    let schedule_path = schedule.path().to_str().expect("utf8 schedule path");
+    let (backend_url, backend, hits) = spawn_mock_backend_counted().await.expect("spawn backend");
+    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let static_now = format!("{}T11:59:00Z", utc_today_iso_date());
+    let (server_url, server) = spawn_polytope_server_with_extra_config(
+        Some(&authotron_url),
+        &schedule_with_static_now_bits_yaml(&backend_url, schedule_path, &static_now),
+        false,
+        "admin_bypass_roles:\n  alpha:\n    - admin\n",
+    )
+    .await
+    .expect("spawn polytope server");
+
+    let mut body = scheduled_request_body();
+    body["mock_now_rfc3339"] = serde_json::json!(format!("{}T12:01:00Z", utc_today_iso_date()));
+    body["metadata"] = serde_json::json!({
+        "admin_overrides": {
+            "mock_now_rfc3339": format!("{}T12:01:00Z", utc_today_iso_date())
+        }
+    });
+
+    let res = reqwest::Client::new()
+        .post(format!("{server_url}/api/v2/all/requests"))
+        .header("Authorization", admin_auth_header())
+        .json(&body)
+        .send()
+        .await
+        .expect("request succeeds");
+
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        hits.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "body-supplied mock time must not be copied into job metadata or reach the backend"
+    );
 
     server.abort();
     authotron.abort();

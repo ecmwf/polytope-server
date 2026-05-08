@@ -2,6 +2,12 @@ server:
   host: "0.0.0.0"   # optional, default 0.0.0.0
   port: 3000         # optional, default 3000
 
+# Deployment identity used for opaque BITS request IDs.
+# Tags must be 1-3 lower-case alphanumeric characters.
+polytope:
+  site: "bol"
+  env: "dev"
+
 bits:
   routes:
     - default:

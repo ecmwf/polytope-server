@@ -24,4 +24,6 @@ Workers use the BITS remote-worker protocol documented in `../../bits/docs/src/e
 - success data is uploaded as a streamed request body to `/complete/data/{job_id}`
 - control outcomes use `/complete/reject/{job_id}`, `/complete/error/{job_id}`, and `/complete/redirect/{job_id}`
 
+`job_id` values are opaque request IDs. Worker code should echo them back exactly as supplied by the broker and must not parse broker ownership, site, environment, or ordering from the ID text.
+
 That keeps successful results fully streamed from worker to broker to end user.
