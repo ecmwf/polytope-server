@@ -1,7 +1,11 @@
 import os
+import threading
 from concurrent.futures import ThreadPoolExecutor
+from http.server import ThreadingHTTPServer
 
 import requests
+
+from polytope_server.dynamic_grid.service import SwitchingGridHandler
 
 SERVICE_URL = os.environ.get("POLYTOPE_DYNAMIC_GRID_TEST_URL", "http://127.0.0.1:9126")
 
@@ -23,6 +27,20 @@ DEODE_SWITCHING_GRID_U1516B_REQUEST = {
 }
 
 
+class _DynamicGridServer:
+    def __enter__(self):
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), SwitchingGridHandler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        host, port = self.server.server_address
+        return f"http://{host}:{port}"
+
+    def __exit__(self, exc_type, exc, tb):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=5)
+
+
 def test_dynamic_grid_service_healthz():
     response = requests.get(f"{SERVICE_URL}/healthz", timeout=5)
 
@@ -34,6 +52,18 @@ def test_dynamic_grid_service_lookup_bologna_deode_request():
     payload = _lookup_bologna_deode_request()
 
     assert_valid_bologna_deode_response(payload)
+
+
+def test_dynamic_grid_service_rejects_request_without_georef():
+    with _DynamicGridServer() as service_url:
+        response = requests.post(
+            f"{service_url}/lookup-grid-config",
+            json={"request": {"class": "d1"}},
+            timeout=5,
+        )
+
+    assert response.status_code == 400
+    assert response.json() == {"error": "request.georef is required"}
 
 
 def test_dynamic_grid_service_handles_concurrent_lookup_requests():
