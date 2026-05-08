@@ -48,13 +48,15 @@ build:
         developer_mode: '{{ default "false" .developer_mode }}'
         polytope_python_git: '{{ default "https://github.com/ecmwf/polytope.git" .polytope_python_git }}'
         polytope_python_ref: '{{ default "feat/sub_hourly_mixed_steps" .polytope_python_ref }}'
-        # mars_client_c_version: 6.33.20.2
-        mars_client_cpp_version: 7.1.9.1
-        # ecbuild_version: 3.8.2
-        # eccodes_version: 2.33.1
-        # eckit_version: 1.28.0
-        # pyfdb_version: 0.1.0
-        # fdb_version: 5.13.2
+        mars_client_c_version: '{{ default "6.33.20.2" .mars_client_c_version }}'
+        mars_client_cpp_version: '{{ default "7.1.9.1" .mars_client_cpp_version }}'
+        ecbuild_version: '{{ default "3.14.0" .ecbuild_version }}'
+        libaec_version: '{{ default "v1.1.4" .libaec_version }}'
+        eckit_version: '{{ default "1.33.2" .eckit_version }}'
+        eccodes_version: '{{ default "2.46.0" .eccodes_version }}'
+        metkit_version: '{{ default "1.18.1" .metkit_version }}'
+        fdb_version: '{{ default "5.21.3" .fdb_version }}'
+        gribjump_version: '{{ default "0.12.0" .gribjump_version }}'
         mars_base_c: '{{ if eq .mars_base_c "1" }}mars-base-c{{ else }}blank-base{{ end }}'
         mars_base_cpp: '{{ if eq .mars_base_cpp "1" }}mars-base-cpp{{ else }}blank-base{{ end }}'
         gribjump_source_base: '{{ if eq .gribjump_source_base "1" }}source-gribjump-worker-python{{ else }}blank-base{{ end }}'

@@ -95,6 +95,14 @@ RUN set -eux \
 
 FROM python:3.11-bookworm AS source-gribjump-base
 
+ARG ecbuild_version
+ARG libaec_version
+ARG eckit_version
+ARG eccodes_version
+ARG metkit_version
+ARG fdb_version
+ARG gribjump_version
+
 RUN set -eux \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -118,6 +126,13 @@ RUN set -eux \
     SRC_BUNDLE=/opt/polytope/gribjump-source-src \
     BUILD_DIR=/opt/polytope/gribjump-source-build \
     INSTALL_PREFIX=/opt/polytope/gribjump-source \
+    ECBUILD_VERSION=${ecbuild_version} \
+    LIBAEC_VERSION=${libaec_version} \
+    ECKIT_VERSION=${eckit_version} \
+    ECCODES_VERSION=${eccodes_version} \
+    METKIT_VERSION=${metkit_version} \
+    FDB_VERSION=${fdb_version} \
+    GRIBJUMP_VERSION=${gribjump_version} \
     bash /env_build/build.sh
 
 ENV FDB5_DIR=/opt/polytope/gribjump-source
@@ -158,9 +173,11 @@ RUN python -m build --wheel
 
 FROM source-gribjump-base AS source-gribjump-worker-python
 
+ARG eccodes_version
+
 COPY --from=polytope-python-wheel-builder /build/polytope-python/dist/*.whl /tmp/polytope-python/
 
-RUN VIRTUAL_ENV=/opt/polytope/gribjump-source/.venv PATH="/opt/polytope/gribjump-source/.venv/bin:${PATH}" uv pip install --no-binary eccodes "eccodes==2.46.0" \
+RUN VIRTUAL_ENV=/opt/polytope/gribjump-source/.venv PATH="/opt/polytope/gribjump-source/.venv/bin:${PATH}" uv pip install --no-binary eccodes "eccodes==${eccodes_version}" \
     && VIRTUAL_ENV=/opt/polytope/gribjump-source/.venv PATH="/opt/polytope/gribjump-source/.venv/bin:${PATH}" uv pip install /tmp/polytope-python/*.whl \
     && VIRTUAL_ENV=/opt/polytope/gribjump-source/.venv PATH="/opt/polytope/gribjump-source/.venv/bin:${PATH}" python -c "import eccodes, pyfdb, pygribjump; print('source worker imports OK')"
 
@@ -169,8 +186,8 @@ RUN VIRTUAL_ENV=/opt/polytope/gribjump-source/.venv PATH="/opt/polytope/gribjump
 #######################################################
 FROM python:3.11-bookworm AS mars-base
 ARG rpm_repo
-ARG mars_client_cpp_version=6.99.3.0
-ARG mars_client_c_version=6.33.20.2
+ARG mars_client_cpp_version
+ARG mars_client_c_version
 
 RUN response=$(curl -s -w "%{http_code}" ${rpm_repo}) \
     && if [ "$response" = "403" ]; then echo "Unauthorized access to ${rpm_repo} "; fi
@@ -186,7 +203,6 @@ FROM mars-base AS mars-base-c
 RUN apt update && apt install -y liblapack3 mars-client=${mars_client_c_version} mars-client-cloud
 
 FROM mars-base AS mars-base-cpp
-ARG pyfdb_version=0.1.0
 RUN apt update && apt install -y mars-client-cpp=${mars_client_cpp_version}
 
 FROM blank-base AS blank-base-c
