@@ -33,6 +33,9 @@ cmake --install build --prefix "${INSTALL_PREFIX}"
 if [ ! -d "${SRC_BUNDLE}/ecbuild" ]; then
   git clone https://github.com/ecmwf/ecbuild.git "${SRC_BUNDLE}/ecbuild"
 fi
+cd "${SRC_BUNDLE}/ecbuild"
+git fetch --tags
+git checkout 3.14.0
 export PATH="${SRC_BUNDLE}/ecbuild/bin:$PATH"
 
 
