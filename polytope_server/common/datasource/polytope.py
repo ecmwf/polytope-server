@@ -22,6 +22,7 @@ import copy
 import json
 import logging
 import os
+import subprocess
 import sys
 import tempfile
 from importlib import import_module
@@ -52,6 +53,25 @@ def _import_polytope_mars():
 
 def _python_site_packages(bundle_root: Path) -> Path:
     return bundle_root / ".venv" / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
+
+
+def _source_profile(profile: Path) -> dict[str, str]:
+    command = 'source "$1" >/dev/null && env -0'
+    output = subprocess.check_output(["bash", "-c", command, "bash", str(profile)])
+    return {
+        key.decode(): value.decode()
+        for key, _, value in (entry.partition(b"=") for entry in output.split(b"\0") if entry)
+    }
+
+
+SOURCE_BUNDLE_ENV_NAMES = {
+    "ECCODES_DIR",
+    "FDB5_DIR",
+    "FINDLIBS_DISABLE_PACKAGE",
+    "GRIBJUMP_DIR",
+    "LD_LIBRARY_PATH",
+    "PATH",
+}
 
 
 class PolytopeDataSource(datasource.DataSource):
@@ -98,35 +118,25 @@ class PolytopeDataSource(datasource.DataSource):
             self._saved_env[name] = os.environ.get(name)
 
     def _activate_source_bundle(self, bundle_root: Path) -> None:
-        bundle_lib = str(bundle_root / "lib")
+        profile = bundle_root / "profile"
+        if not profile.is_file():
+            raise FileNotFoundError(f"Source-built GribJump profile not found: {profile}")
+
         logging.info(
             "Activating source-built GribJump bundle",
             extra={
                 "source_bundle_root": str(bundle_root),
+                "profile": str(profile),
             },
         )
-        self._save_env("GRIBJUMP_HOME")
-        self._save_env("FDB_HOME")
-        self._save_env("FDB5_HOME")
-        self._save_env("GRIBJUMP_DIR")
-        self._save_env("FDB5_DIR")
-        self._save_env("ECCODES_DIR")
-        self._save_env("FINDLIBS_DISABLE_PACKAGE")
-        self._save_env("LD_LIBRARY_PATH")
-
-        os.environ["GRIBJUMP_HOME"] = str(bundle_root)
-        os.environ["FDB_HOME"] = str(bundle_root)
-        os.environ["FDB5_HOME"] = str(bundle_root)
-        os.environ["GRIBJUMP_DIR"] = str(bundle_root)
-        os.environ["FDB5_DIR"] = str(bundle_root)
-        os.environ["ECCODES_DIR"] = str(bundle_root)
-        os.environ["FINDLIBS_DISABLE_PACKAGE"] = "yes"
-
-        ld_library_path = os.environ.get("LD_LIBRARY_PATH")
-        if ld_library_path:
-            os.environ["LD_LIBRARY_PATH"] = f"{bundle_lib}:{ld_library_path}"
-        else:
-            os.environ["LD_LIBRARY_PATH"] = bundle_lib
+        profile_env = _source_profile(profile)
+        for name in SOURCE_BUNDLE_ENV_NAMES:
+            if name not in profile_env:
+                continue
+            value = profile_env[name]
+            if os.environ.get(name) != value:
+                self._save_env(name)
+                os.environ[name] = value
 
     def _restore_env(self) -> None:
         for name, value in self._saved_env.items():
