@@ -101,12 +101,13 @@ echo "Testing pyfdb and pygribjump imports"
 python -c "import pyfdb; print('pyfdb import OK')"
 python -c "import pygribjump; print('pygribjump import OK')"
 
-profile=$SCRIPT_DIR/profile
-echo "source ${INSTALL_PREFIX}/.venv/bin/activate" > $profile
+profile=${INSTALL_PREFIX}/profile
+echo "if [ -f ${INSTALL_PREFIX}/.venv/bin/activate ]; then source ${INSTALL_PREFIX}/.venv/bin/activate; fi" > $profile
 echo "export PATH=${INSTALL_PREFIX}/bin:\$PATH" >> $profile
 echo "export FINDLIBS_DISABLE_PACKAGE=yes # dont use system installed fdb/gribjump..." >> $profile
 echo "export FDB5_DIR=${INSTALL_PREFIX} # use this one" >> $profile
 echo "export GRIBJUMP_DIR=${INSTALL_PREFIX} # use this one." >> $profile
 echo "export ECCODES_DIR=${INSTALL_PREFIX} # use this one." >> $profile
+echo "export LD_LIBRARY_PATH=${INSTALL_PREFIX}/lib:\${LD_LIBRARY_PATH:-}" >> $profile
 
 echo "To use, 'source $profile', or add to your environment some other way."

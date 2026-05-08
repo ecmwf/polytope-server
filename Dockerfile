@@ -22,8 +22,35 @@ ARG fdb_base=blank-base
 ARG mars_base_c=blank-base
 ARG mars_base_cpp=blank-base
 ARG gribjump_source_base=blank-base
-ARG polytope_python_git=https://github.com/ecmwf/polytope.git
-ARG polytope_python_ref=feat/new-pyfdb-api
+
+#######################################################
+#           P Y T H O N   W H E E L H O U S E
+#      Build/download all wheels from requirements
+#######################################################
+
+FROM python:3.11-bookworm AS polytope-requirements-wheel-builder
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    curl \
+    git \
+    libldap2-dev \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV CARGO_HOME=/root/.cargo
+ENV RUSTUP_HOME=/root/.rustup
+ENV PATH=/root/.cargo/bin:${PATH}
+
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain stable
+
+RUN python -m pip install --no-cache-dir --upgrade pip wheel
+
+WORKDIR /build/polytope-server
+COPY ./requirements.txt .
+RUN GIT_TERMINAL_PROMPT=0 python -m pip wheel -r requirements.txt -w /wheels
 
 #######################################################
 #                     C O M M O N
@@ -36,7 +63,7 @@ ARG HOME_DIR=/home/polytope
 ARG developer_mode
 
 # Install build dependencies
-RUN apt update && apt install -y --no-install-recommends gcc libc6-dev libldap2-dev curl git \
+RUN apt update && apt install -y --no-install-recommends bash gcc libc6-dev libldap2-dev curl git \
     && apt clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -44,41 +71,38 @@ RUN apt update && apt install -y --no-install-recommends gcc libc6-dev libldap2-
 RUN set -eux \
     && addgroup --system polytope --gid 474 \
     && adduser --system polytope --ingroup polytope --home ${HOME_DIR} \
-    && mkdir -p ${HOME_DIR}/polytope-server \
-    && chown -R polytope:polytope ${HOME_DIR}
+    && mkdir -p /polytope \
+    && chown -R polytope:polytope ${HOME_DIR} /polytope
 
 # Switch to user polytope
 USER polytope
 
-WORKDIR ${HOME_DIR}/polytope-server
+WORKDIR /polytope
 
 # Copy requirements.txt with correct ownership
-COPY --chown=polytope:polytope ./requirements.txt $PWD
+COPY --chown=polytope:polytope ./requirements.txt ./requirements.txt
+COPY --from=polytope-requirements-wheel-builder --chown=polytope:polytope /wheels /wheels
 
-# Install uv in user space
-RUN pip install --user uv
+# Use one application virtual environment.
+ENV VIRTUAL_ENV=${HOME_DIR}/.venv
+ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 
-# **Update PATH to include virtual environment and user local bin**
-# This makes sure that the default python and pip commands
-# point to the versions in the virtual environment.
-ENV PATH="${HOME_DIR}/.venv/bin:${HOME_DIR}/.local/bin:${PATH}"
-
-# Create a virtual environment
-RUN uv venv ${HOME_DIR}/.venv
-
-# Install requirements
-RUN uv pip install -r requirements.txt
+# Install every wheel produced from requirements.txt. This avoids re-resolving
+# direct git requirements in the runtime stage.
+RUN python -m venv ${VIRTUAL_ENV} \
+    && pip install --no-index --find-links=/wheels /wheels/*.whl \
+    && rm -rf /wheels
 
 # Copy the rest of the application code
 COPY --chown=polytope:polytope . $PWD
 
 RUN set -eux \
-    && if [ $developer_mode = true ]; then \
-    uv pip install ./polytope-mars ./polytope ./covjsonkit; \
+    && if [ "${developer_mode}" = true ]; then \
+    pip install ./polytope-mars ./polytope ./covjsonkit; \
     fi
 
-# Install the application
-RUN uv pip install --upgrade .
+# Install the application. Dependencies are already installed from requirements.txt.
+RUN pip install --no-deps --upgrade .
 
 
 #######################################################
@@ -91,6 +115,7 @@ RUN set -eux \
     && mkdir -p /opt/ecmwf/mars-client-cpp \
     && mkdir -p /opt/ecmwf/mars-client-cloud \
     && mkdir -p /opt/polytope/gribjump-source \
+    && mkdir -p /opt/polytope/gribjump-source-wheels \
     && touch /usr/local/bin/mars
 
 FROM python:3.11-bookworm AS source-gribjump-base
@@ -145,41 +170,24 @@ ENV LD_LIBRARY_PATH=/opt/polytope/gribjump-source/lib
 
 RUN /opt/polytope/gribjump-source/.venv/bin/python -c "import pyfdb, pygribjump; print('source bundle imports OK')"
 
-FROM python:3.11-bookworm AS polytope-python-wheel-builder
-
-ARG polytope_python_git
-ARG polytope_python_ref
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-    build-essential \
-    ca-certificates \
-    curl \
-    git \
-    python3-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-ENV CARGO_HOME=/root/.cargo
-ENV RUSTUP_HOME=/root/.rustup
-ENV PATH=/root/.cargo/bin:${PATH}
-
-RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain stable
-
-RUN python -m pip install --no-cache-dir build uv
-
-WORKDIR /build/polytope-python
-RUN GIT_TERMINAL_PROMPT=0 git clone --branch "${polytope_python_ref}" --depth 1 "${polytope_python_git}" .
-RUN python -m build --wheel
-
 FROM source-gribjump-base AS source-gribjump-worker-python
 
 ARG eccodes_version
 
-COPY --from=polytope-python-wheel-builder /build/polytope-python/dist/*.whl /tmp/polytope-python/
+COPY --from=polytope-requirements-wheel-builder /wheels /tmp/wheels
 
 RUN VIRTUAL_ENV=/opt/polytope/gribjump-source/.venv PATH="/opt/polytope/gribjump-source/.venv/bin:${PATH}" uv pip install --no-binary eccodes "eccodes==${eccodes_version}" \
-    && VIRTUAL_ENV=/opt/polytope/gribjump-source/.venv PATH="/opt/polytope/gribjump-source/.venv/bin:${PATH}" uv pip install /tmp/polytope-python/*.whl \
+    && VIRTUAL_ENV=/opt/polytope/gribjump-source/.venv PATH="/opt/polytope/gribjump-source/.venv/bin:${PATH}" uv pip install --no-index --find-links=/tmp/wheels polytope-python \
+    && rm -rf /tmp/wheels \
     && VIRTUAL_ENV=/opt/polytope/gribjump-source/.venv PATH="/opt/polytope/gribjump-source/.venv/bin:${PATH}" python -c "import eccodes, pyfdb, pygribjump; print('source worker imports OK')"
+
+RUN set -eux \
+    && mkdir -p /opt/polytope/gribjump-source-wheels \
+    && cp /opt/polytope/gribjump-source-build/pyfdb*.whl /opt/polytope/gribjump-source-wheels/ \
+    && VIRTUAL_ENV=/opt/polytope/gribjump-source/.venv PATH="/opt/polytope/gribjump-source/.venv/bin:${PATH}" \
+    python -m pip wheel --no-binary eccodes "eccodes==${eccodes_version}" -w /opt/polytope/gribjump-source-wheels \
+    && VIRTUAL_ENV=/opt/polytope/gribjump-source/.venv PATH="/opt/polytope/gribjump-source/.venv/bin:${PATH}" \
+    python -m pip wheel --no-deps /opt/polytope/gribjump-source-src/gribjump -w /opt/polytope/gribjump-source-wheels
 
 #######################################################
 #               M A R S    B A S E
@@ -220,72 +228,69 @@ FROM ${gribjump_source_base} AS source-gribjump-base-final
 
 
 #######################################################
-#        S E R V E R   R U N T I M E   L A Y E R
-#######################################################
-FROM polytope-common AS server-runtime
-
-#######################################################
 #                    W O R K E R
 #               based on debian bookworm
 #######################################################
 
-FROM python:3.11-slim-bookworm AS worker
+FROM polytope-common AS worker
 
 ARG mars_config_branch
 ARG mars_config_repo
 ARG rpm_repo
 
-
-RUN set -eux \
-    && addgroup --system polytope --gid 474 \
-    && adduser --system polytope --ingroup polytope --home /home/polytope \
-    && mkdir /polytope && chmod -R o+rw /polytope
+USER root
 
 RUN apt update \
-    && apt install -y curl nano sudo ssh libgomp1 vim
-
-# Add polytope user to passwordless sudo group during build
-RUN usermod -aG sudo polytope
-RUN echo "%sudo  ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+    && apt install -y --no-install-recommends \
+    bash \
+    curl \
+    git \
+    libfftw3-bin \
+    libgomp1 \
+    liblapack3 \
+    libnetcdf19 \
+    libopenjp2-7 \
+    libproj25 \
+    nano \
+    ssh \
+    sudo \
+    vim \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /polytope
-USER polytope
-
 
 # Copy MARS-related artifacts
 COPY --chown=polytope --from=mars-cpp-base-final   /opt/ecmwf/mars-client-cpp  /opt/ecmwf/mars-client-cpp
 COPY --chown=polytope --from=mars-c-base-final     /opt/ecmwf/mars-client      /opt/ecmwf/mars-client
 COPY --chown=polytope --from=mars-c-base-final     /usr/local/bin/mars      /usr/local/bin/mars
-RUN sudo apt update \
-    && sudo apt install -y libgomp1 git libnetcdf19 liblapack3  libfftw3-bin libproj25 \
-    && sudo rm -rf /var/lib/apt/lists/*
-
 
 # all of this is needed by the C client, would be nice to remove it at some point
 RUN set -eux \
     && mkdir -p /home/polytope/.ssh \
     && chmod 0700 /home/polytope/.ssh \
-    && ssh-keyscan git.ecmwf.int > /home/polytope/.ssh/known_hosts
+    && ssh-keyscan git.ecmwf.int > /home/polytope/.ssh/known_hosts \
+    && mkdir -p /home/polytope/data \
+    && chown -R polytope:polytope /home/polytope
 
 ENV MARS_CONFIGS_REPO=${mars_config_repo}
 ENV MARS_CONFIGS_BRANCH=${mars_config_branch}
-ENV PATH="/opt/polytope/gribjump-source/.venv/bin:/home/polytope/.venv/bin:/polytope/bin/:/opt/ecmwf/mars-client/bin:/opt/ecmwf/mars-client-cloud/bin:${PATH}"
-ENV PYTHONPATH="/opt/polytope/gribjump-source/.venv/lib/python3.11/site-packages:/home/polytope/.venv/lib/python3.11/site-packages"
+ENV PATH="/home/polytope/.venv/bin:/polytope/bin/:/opt/ecmwf/mars-client/bin:/opt/ecmwf/mars-client-cloud/bin:${PATH}"
 
 # Copy gribjump-related artifacts
 COPY --chown=polytope --from=source-gribjump-base-final /opt/polytope/gribjump-source /opt/polytope/gribjump-source
-RUN sudo apt update \
-    && sudo apt install -y libopenjp2-7 \
-    && sudo rm -rf /var/lib/apt/lists/*
-# COPY polytope-deployment/common/default_fdb_schema /polytope/config/fdb/default
-
-COPY --chown=polytope --from=server-runtime /home/polytope/.venv /home/polytope/.venv
-
-# Install the server source
-COPY --chown=polytope --from=server-runtime /home/polytope/polytope-server /polytope/
+COPY --chown=polytope --from=source-gribjump-base-final /opt/polytope/gribjump-source-wheels /tmp/gribjump-source-wheels
 
 RUN set -eux \
-    && mkdir /home/polytope/data
+    && if ls /tmp/gribjump-source-wheels/*.whl >/dev/null 2>&1; then \
+    /home/polytope/.venv/bin/pip install --no-index --find-links=/tmp/gribjump-source-wheels /tmp/gribjump-source-wheels/*.whl; \
+    fi \
+    && rm -rf /tmp/gribjump-source-wheels /opt/polytope/gribjump-source/.venv
 
-# Remove itself from sudo group
-RUN sudo deluser polytope sudo
+RUN set -eux \
+    && if [ -f /opt/polytope/gribjump-source/profile ]; then \
+    bash -c 'source /opt/polytope/gribjump-source/profile && /home/polytope/.venv/bin/python -c "import eccodes, pyfdb, pygribjump; print(\"worker source bundle imports OK\")"'; \
+    fi
+
+# COPY polytope-deployment/common/default_fdb_schema /polytope/config/fdb/default
+
+USER polytope

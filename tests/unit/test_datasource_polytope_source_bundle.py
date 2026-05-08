@@ -38,13 +38,27 @@ def _make_request() -> Any:
 def _prepare_bundle(bundle_root: Path) -> Path:
     site_packages = _python_site_packages(bundle_root)
     site_packages.mkdir(parents=True)
+    profile = bundle_root / "profile"
+    profile.write_text(
+        "\n".join(
+            [
+                f"export PATH={bundle_root}/bin:$PATH",
+                "export FINDLIBS_DISABLE_PACKAGE=yes",
+                f"export FDB5_DIR={bundle_root}",
+                f"export GRIBJUMP_DIR={bundle_root}",
+                f"export ECCODES_DIR={bundle_root}",
+                f"export LD_LIBRARY_PATH={bundle_root}/lib:${{LD_LIBRARY_PATH:-}}",
+                "",
+            ]
+        )
+    )
     return site_packages
 
 
 def _fake_polytope_mars_class():
     class FakePolytopeMars:
         def __init__(self, config, log_context):
-            self.marker = Path(os.environ["GRIBJUMP_HOME"]).name
+            self.marker = Path(os.environ["GRIBJUMP_DIR"]).name
 
         def extract(self, request):
             return {
@@ -88,9 +102,9 @@ def test_polytope_datasource_resolves_sequential_source_bundles(monkeypatch, tmp
     assert ds_a.retrieve(_make_request()) is True
     assert ds_a.output is not None
     assert json.loads(ds_a.output.decode("utf-8"))["marker"] == "bundle-a"
-    assert os.environ["GRIBJUMP_HOME"] == str(bundle_a)
-    assert os.environ["FDB_HOME"] == str(bundle_a)
-    assert os.environ["FDB5_HOME"] == str(bundle_a)
+    assert os.environ["GRIBJUMP_HOME"] == "/existing/gribjump"
+    assert os.environ["FDB_HOME"] == "/existing/fdb"
+    assert os.environ["FDB5_HOME"] == "/existing/fdb5"
     assert os.environ["GRIBJUMP_DIR"] == str(bundle_a)
     assert os.environ["FDB5_DIR"] == str(bundle_a)
     assert os.environ["ECCODES_DIR"] == str(bundle_a)
@@ -205,9 +219,9 @@ def test_polytope_datasource_source_mode_sets_bundle_env_without_path_injection(
 
     ds = PolytopeDataSource(_base_config(bundle_root))
 
-    assert os.environ["GRIBJUMP_HOME"] == str(bundle_root)
-    assert os.environ["FDB_HOME"] == str(bundle_root)
-    assert os.environ["FDB5_HOME"] == str(bundle_root)
+    assert "GRIBJUMP_HOME" not in os.environ
+    assert "FDB_HOME" not in os.environ
+    assert "FDB5_HOME" not in os.environ
     assert os.environ["GRIBJUMP_DIR"] == str(bundle_root)
     assert os.environ["FDB5_DIR"] == str(bundle_root)
     assert os.environ["ECCODES_DIR"] == str(bundle_root)
