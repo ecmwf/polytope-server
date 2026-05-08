@@ -1,4 +1,3 @@
-
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -14,7 +13,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_BUNDLE="${SRC_BUNDLE:-${SCRIPT_DIR}/git}"
 BUILD_DIR="${BUILD_DIR:-${SCRIPT_DIR}/build}"
 INSTALL_PREFIX="${INSTALL_PREFIX:-${SCRIPT_DIR}/install}"
-PYTHON_VERSION="${PYTHON_VERSION:-3.12}"
+
+DEPS_FILE="${DEPS_FILE:-${SCRIPT_DIR}/deps.env}"
+if [ -f "${DEPS_FILE}" ]; then
+  # deps.env contains non-secret dependency pins shared with Skaffold builds.
+  # shellcheck source=/dev/null
+  source "${DEPS_FILE}"
+fi
+
+PYTHON_VERSION="${PYTHON_VERSION:-3.11}"
 
 : "${ECBUILD_VERSION:?Set ECBUILD_VERSION}"
 : "${LIBAEC_VERSION:?Set LIBAEC_VERSION}"
@@ -108,6 +115,8 @@ echo "export FINDLIBS_DISABLE_PACKAGE=yes # dont use system installed fdb/gribju
 echo "export FDB5_DIR=${INSTALL_PREFIX} # use this one" >> $profile
 echo "export GRIBJUMP_DIR=${INSTALL_PREFIX} # use this one." >> $profile
 echo "export ECCODES_DIR=${INSTALL_PREFIX} # use this one." >> $profile
-echo "export LD_LIBRARY_PATH=${INSTALL_PREFIX}/lib:\${LD_LIBRARY_PATH:-}" >> $profile
+echo "export ECCODES_DEFINITION_PATH=${INSTALL_PREFIX}/share/eccodes/definitions" >> $profile
+echo "export ECCODES_SAMPLES_PATH=${INSTALL_PREFIX}/share/eccodes/samples" >> $profile
+echo "export LD_LIBRARY_PATH=${INSTALL_PREFIX}/lib64:${INSTALL_PREFIX}/lib:\${LD_LIBRARY_PATH:-}" >> $profile
 
 echo "To use, 'source $profile', or add to your environment some other way."
