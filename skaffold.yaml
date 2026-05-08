@@ -24,7 +24,7 @@ build:
           template: '{{default "" .PREFIX}}'
       - name: GIT_TAG
         gitCommit:
-          ignoreChanges: true
+          ignoreChanges: false
   platforms:
     - linux/amd64
     # - linux/arm64
