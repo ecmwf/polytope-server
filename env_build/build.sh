@@ -16,15 +16,23 @@ BUILD_DIR="${BUILD_DIR:-${SCRIPT_DIR}/build}"
 INSTALL_PREFIX="${INSTALL_PREFIX:-${SCRIPT_DIR}/install}"
 PYTHON_VERSION="${PYTHON_VERSION:-3.12}"
 
+: "${ECBUILD_VERSION:?Set ECBUILD_VERSION}"
+: "${LIBAEC_VERSION:?Set LIBAEC_VERSION}"
+: "${ECKIT_VERSION:?Set ECKIT_VERSION}"
+: "${ECCODES_VERSION:?Set ECCODES_VERSION}"
+: "${METKIT_VERSION:?Set METKIT_VERSION}"
+: "${FDB_VERSION:?Set FDB_VERSION}"
+: "${GRIBJUMP_VERSION:?Set GRIBJUMP_VERSION}"
+
 # rm -rf "${BUILD_DIR}"
 rm -rf "${INSTALL_PREFIX}/.venv"
 
-# Build and install AEC v1.1.4 from source.
+# Build and install AEC from source.
 if [ ! -d "${SRC_BUNDLE}/libaec" ]; then
   git clone "https://gitlab.dkrz.de/k202009/libaec.git" "${SRC_BUNDLE}/libaec"
 fi
 cd "${SRC_BUNDLE}/libaec"
-git checkout v1.1.4
+git checkout "${LIBAEC_VERSION}"
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="${INSTALL_PREFIX}" -G "Ninja"
 cmake --build build
 cmake --install build --prefix "${INSTALL_PREFIX}"
@@ -35,7 +43,7 @@ if [ ! -d "${SRC_BUNDLE}/ecbuild" ]; then
 fi
 cd "${SRC_BUNDLE}/ecbuild"
 git fetch --tags
-git checkout 3.14.0
+git checkout "${ECBUILD_VERSION}"
 export PATH="${SRC_BUNDLE}/ecbuild/bin:$PATH"
 
 
@@ -74,7 +82,7 @@ ecbuild -G "Ninja" -B ${BUILD_DIR} \
   -DCMAKE_INSTALL_PREFIX="${INSTALL_PREFIX}" \
   "${SRC_BUNDLE}"
 
-# Work around an upstream FDB 5.21.3 typo in the pyfdb setup template.
+# Work around an upstream FDB typo in the pyfdb setup template.
 sed -i 's/uft-8/utf-8/' "${SRC_BUNDLE}/fdb5/cmake/pyfdb_setup.py.in"
 
 cd ${BUILD_DIR} && ninja install
