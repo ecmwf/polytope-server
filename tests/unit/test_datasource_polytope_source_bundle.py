@@ -1,14 +1,17 @@
 import json
 import os
 import sys
+import types
 from pathlib import Path
 from typing import Any
 
 import polytope_server.common.datasource.polytope as polytope_module
+import polytope_server.dynamic_grid.helper as dynamic_grid_helper
 from polytope_server.common.datasource.polytope import (
     PolytopeDataSource,
     _python_site_packages,
 )
+from polytope_server.dynamic_grid.helper import replace_dynamic_grid_options
 
 
 def _base_config(bundle_root: Path) -> dict[str, Any]:
@@ -66,6 +69,17 @@ def _fake_polytope_mars_class():
                 "gribjump_home": os.environ.get("GRIBJUMP_HOME"),
                 "fdb_home": os.environ.get("FDB_HOME"),
             }
+
+    return FakePolytopeMars
+
+
+def _capturing_polytope_mars_class(captured):
+    class FakePolytopeMars:
+        def __init__(self, config, log_context):
+            captured["config"] = config
+
+        def extract(self, request):
+            return {"options": captured["config"]["options"]}
 
     return FakePolytopeMars
 
@@ -229,3 +243,126 @@ def test_polytope_datasource_source_mode_sets_bundle_env_without_path_injection(
     assert os.environ["LD_LIBRARY_PATH"].startswith(str(bundle_root / "lib"))
 
     ds.destroy(None)
+
+
+def test_polytope_datasource_uses_full_request_for_dynamic_grid_lookup(monkeypatch, tmp_path):
+    bundle_root = tmp_path / "bundle"
+    _prepare_bundle(bundle_root)
+
+    config = _base_config(bundle_root)
+    config["dynamic_grid"] = True
+    config["options"] = {
+        "pre_path": ["class", "dataset", "georef"],
+        "axis_config": [{"axis_name": "values", "transformations": [{"name": "mapper", "type": "reduced_gaussian"}]}],
+    }
+
+    captured = {}
+
+    def _fake_replace_dynamic_grid_options(options, req, service_url=None):
+        captured["lookup_request"] = req
+        captured["service_url"] = service_url
+        options["axis_config"][0]["transformations"][0] = {"name": "mapper", "type": "lambert_conformal"}
+        return True
+
+    request = type(
+        "Request",
+        (),
+        {
+            "coerced_request": {
+                "class": "d1",
+                "dataset": "on-demand-extremes-dt",
+                "georef": "gcgkrb",
+                "step": "9",
+                "levelist": "1000",
+                "feature": {"type": "timeseries"},
+            },
+            "user": type("User", (), {"realm": "realm", "username": "user"})(),
+            "id": "req-1",
+        },
+    )()
+
+    helper_module = types.ModuleType("polytope_server.dynamic_grid.helper")
+    helper_module.build_grid_lookup_request = lambda request_dict: {
+        "class": "d1",
+        "dataset": "on-demand-extremes-dt",
+        "georef": "gcgkrb",
+        "step": "9",
+        "levelist": "1000",
+    }
+    helper_module.replace_dynamic_grid_options = _fake_replace_dynamic_grid_options
+    monkeypatch.setitem(sys.modules, "polytope_server.dynamic_grid.helper", helper_module)
+    monkeypatch.setattr(polytope_module, "_import_polytope_mars", lambda: _capturing_polytope_mars_class(captured))
+
+    ds = PolytopeDataSource(config)
+
+    assert ds.retrieve(request) is True
+    assert captured["lookup_request"] == {
+        "class": "d1",
+        "dataset": "on-demand-extremes-dt",
+        "georef": "gcgkrb",
+        "step": "9",
+        "levelist": "1000",
+    }
+    assert captured["service_url"] is None
+    assert captured["config"]["options"]["pre_path"] == {
+        "class": "d1",
+        "dataset": "on-demand-extremes-dt",
+        "georef": "gcgkrb",
+    }
+    assert "dynamic_grid" not in captured["config"]["options"]
+    assert "dynamic_grid_service_url" not in captured["config"]["options"]
+
+    ds.destroy(None)
+
+
+def test_replace_dynamic_grid_options_updates_mapper(monkeypatch):
+    def _fake_lookup_grid_config(req, service_url=None):
+        assert req == {"class": "d1", "georef": "gcgkrb", "step": "9", "levelist": "1000"}
+        assert service_url == "http://grid.example"
+        return (
+            {
+                "type": "lambert_conformal",
+                "earth_round": True,
+                "radius": 6371229,
+                "nv": 0,
+                "nx": 10,
+                "ny": 20,
+                "LoVInDegrees": 1.0,
+                "Dx": 1000.0,
+                "Dy": 1000.0,
+                "latFirstInRadians": 0.1,
+                "lonFirstInRadians": 0.2,
+                "LoVInRadians": 0.3,
+                "Latin1InRadians": 0.4,
+                "Latin2InRadians": 0.5,
+                "LaDInRadians": 0.6,
+            },
+            "abc123",
+        )
+
+    monkeypatch.setattr(dynamic_grid_helper, "lookup_grid_config", _fake_lookup_grid_config)
+
+    options = {
+        "dynamic_grid_service_url": "http://grid.example",
+        "axis_config": [
+            {
+                "axis_name": "values",
+                "transformations": [
+                    {"name": "mapper", "type": "reduced_gaussian", "resolution": 320, "axes": ["latitude", "longitude"]}
+                ],
+            }
+        ],
+    }
+
+    replaced = replace_dynamic_grid_options(
+        options,
+        {"class": "d1", "georef": "gcgkrb", "step": "9", "levelist": "1000"},
+        service_url="http://grid.example",
+    )
+
+    assert replaced is True
+    mapper = options["axis_config"][0]["transformations"][0]
+    assert mapper["name"] == "mapper"
+    assert mapper["type"] == "lambert_conformal"
+    assert mapper["md5_hash"] == "abc123"
+    assert mapper["axes"] == ["latitude", "longitude"]
