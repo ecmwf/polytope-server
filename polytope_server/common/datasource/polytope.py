@@ -79,6 +79,8 @@ class PolytopeDataSource(datasource.DataSource):
         self.config = copy.deepcopy(config)
         self.type = config["type"]
         assert self.type == "polytope"
+        self.dynamic_grid = self.config.pop("dynamic_grid", False)
+        self.dynamic_grid_service_url = self.config.pop("dynamic_grid_service_url", None)
         self.pre_path = self.config.get("options", {}).pop("pre_path", [])
         self.defaults = self.config.get("defaults", {})
         # https://github.com/ecmwf/polytope-server/issues/68
@@ -187,7 +189,17 @@ class PolytopeDataSource(datasource.DataSource):
                         pre_path[k] = v
 
         polytope_mars_config = copy.deepcopy(self.config)
-        polytope_mars_config["options"]["pre_path"] = pre_path
+        options_config = polytope_mars_config["options"]
+        options_config["pre_path"] = pre_path
+
+        if self.dynamic_grid:
+            from polytope_server.dynamic_grid.helper import (
+                build_grid_lookup_request,
+                replace_dynamic_grid_options,
+            )
+
+            grid_lookup_request = build_grid_lookup_request(r)
+            replace_dynamic_grid_options(options_config, grid_lookup_request, service_url=self.dynamic_grid_service_url)
 
         if self.gh69_fix_grids:
             change_grids(r, polytope_mars_config)

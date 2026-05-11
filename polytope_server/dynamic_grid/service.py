@@ -1,43 +1,13 @@
 import argparse
-import importlib.util
 import json
 import logging
-import os
-import sys
-from functools import lru_cache
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+
+from .local import lookup_grid_config_local
 
 LOGGER = logging.getLogger(__name__)
 
 MAX_REQUEST_BYTES = 64 * 1024
-
-
-@lru_cache(maxsize=1)
-def _load_lookup_grid_config_local():
-    """Load only the local switching-grid implementation from polytope-feature.
-
-    Importing ``polytope_feature.datacube.switching_grid_local`` normally also
-    executes ``polytope_feature/__init__.py`` and pulls in unrelated feature
-    dependencies. The standalone dynamic-grid service only needs this one file,
-    so load it directly from a source checkout or installed package path.
-    """
-
-    candidates = []
-    feature_source = os.environ.get("POLYTOPE_FEATURE_SOURCE")
-    if feature_source:
-        candidates.append(Path(feature_source))
-    candidates.extend(Path(path) for path in sys.path if path)
-
-    for candidate in candidates:
-        module_path = candidate / "polytope_feature" / "datacube" / "switching_grid_local.py"
-        if module_path.is_file():
-            spec = importlib.util.spec_from_file_location("polytope_switching_grid_local", module_path)
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            return module.lookup_grid_config_local
-
-    raise ModuleNotFoundError("Could not find polytope_feature/datacube/switching_grid_local.py")
 
 
 class SwitchingGridHandler(BaseHTTPRequestHandler):
@@ -94,7 +64,6 @@ class SwitchingGridHandler(BaseHTTPRequestHandler):
                 return
 
             LOGGER.info("lookup-grid-config request received for georef=%s", req.get("georef", "unknown"))
-            lookup_grid_config_local = _load_lookup_grid_config_local()
             gridspec, md5hash = lookup_grid_config_local(req)
             self._send_json(200, {"gridspec": gridspec, "md5hash": md5hash})
             LOGGER.info("lookup-grid-config request succeeded for georef=%s", req.get("georef", "unknown"))
