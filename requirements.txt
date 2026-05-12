@@ -27,7 +27,7 @@ opentelemetry-instrumentation-flask==0.59b0
 opentelemetry-sdk==1.38.0
 pika==1.3.2
 polytope-mars==0.3.11
-polytope-python @ git+https://github.com/ecmwf/polytope.git@645bb3fecd624a6457e58dfe59b976116ec27cd0
+polytope-python @ git+https://github.com/ecmwf/polytope.git@a41c634f8cc2785cf2266e9e38c87c04d4571509
 qubed==0.3.0
 prometheus-client==0.21.0
 py-bcrypt==0.4
