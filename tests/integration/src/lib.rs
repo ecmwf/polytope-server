@@ -193,16 +193,17 @@ pub async fn spawn_bobs() -> Result<(String, JoinHandle<()>, tempfile::TempDir),
         config.max_cache_bytes,
     )?);
 
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
     let state = Arc::new(bobs::http::AppState {
         manager,
         config: config.clone(),
         hostname: "test-bobs-0".to_string(),
         ordinal: "0".to_string(),
+        internal_base_url: format!("http://{addr}/api/v1"),
     });
 
     let app = bobs::http::router::<bobs::io::TokioFileIO>().with_state(state);
-    let listener = TcpListener::bind("127.0.0.1:0").await?;
-    let addr = listener.local_addr()?;
     let handle = tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
     });
@@ -684,7 +685,7 @@ async fn bobs_delivery_pipeline() {
 
     let delivery = polytope_worker_common::delivery_config::DeliveryConfig {
         delivery_type: polytope_worker_common::delivery_config::DeliveryType::Bobs,
-        bobs_url: Some(format!("{bobs_url}/api/v1")),
+        bobs_url: Some(bobs_url.clone()),
         s3_bucket: None,
         s3_region: None,
         s3_endpoint_url: None,

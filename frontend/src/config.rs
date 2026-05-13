@@ -121,7 +121,7 @@ fn require_site_env_tag(field: &str, value: Option<&serde_yaml::Value>) -> Resul
         _ => return Err(format!("{field} must be a string or unsigned integer tag")),
     };
 
-    bits::polytope_id::pack_tag(&tag)
+    bits::request_id::pack_tag(&tag)
         .map(|_| tag)
         .map_err(|err| format!("{field}: {err}"))
 }

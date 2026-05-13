@@ -1,6 +1,6 @@
 use clap::Parser;
 use polytope_worker_common::config::{DEFAULT_CONFIG_PATH, WorkerConfigFile};
-use polytope_worker_common::{ProcessResult, WorkItem, WorkerConfig, run_worker_loop};
+use polytope_worker_common::{WorkerConfig, run_worker_loop};
 use test_worker::*;
 use tracing::info;
 
@@ -59,12 +59,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
     use futures::TryStreamExt;
-    use polytope_worker_common::Processor;
+    use polytope_worker_common::{ProcessResult, Processor, WorkItem};
 
     fn dummy_work() -> WorkItem {
         WorkItem {
             job_id: "test-1".into(),
             request: serde_json::json!({"collection": "era5", "level": 500}),
+            user: serde_json::json!({}),
+            metadata: serde_json::json!({}),
+        }
+    }
+
+    fn stress_work(delay_ms: u64, response_bytes: u64) -> WorkItem {
+        WorkItem {
+            job_id: "stress-1".into(),
+            request: serde_json::json!({
+                "stress": {
+                    "delay_ms": delay_ms,
+                    "response_bytes": response_bytes,
+                }
+            }),
+            user: serde_json::json!({}),
+            metadata: serde_json::json!({}),
+        }
+    }
+
+    fn stress_work_with_chunk(delay_ms: u64, response_bytes: u64, chunk_bytes: u64) -> WorkItem {
+        WorkItem {
+            job_id: "stress-1".into(),
+            request: serde_json::json!({
+                "stress": {
+                    "delay_ms": delay_ms,
+                    "response_bytes": response_bytes,
+                    "chunk_bytes": chunk_bytes,
+                }
+            }),
             user: serde_json::json!({}),
             metadata: serde_json::json!({}),
         }
@@ -79,6 +108,7 @@ mod tests {
         }
     }
 
+    /// Collect all stream chunks into a single flat byte vec.
     async fn collect_success_body(result: ProcessResult) -> (String, Vec<u8>) {
         match result {
             ProcessResult::Success { content_type, body } => {
@@ -90,6 +120,18 @@ mod tests {
                     .await
                     .unwrap();
                 (content_type, bytes)
+            }
+            other => panic!("expected Success, got {:?}", variant_name(&other)),
+        }
+    }
+
+    /// Collect all stream chunks, preserving individual chunk boundaries.
+    async fn collect_success_chunks(result: ProcessResult) -> (String, Vec<Vec<u8>>) {
+        match result {
+            ProcessResult::Success { content_type, body } => {
+                let chunks = body.try_collect::<Vec<_>>().await.unwrap();
+                let chunks: Vec<Vec<u8>> = chunks.into_iter().map(|b| b.to_vec()).collect();
+                (content_type, chunks)
             }
             other => panic!("expected Success, got {:?}", variant_name(&other)),
         }
@@ -164,6 +206,59 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stress_uses_request_delay_and_response_size() {
+        let start = std::time::Instant::now();
+        let result = processor(Behaviour::Stress {
+            default_delay_ms: 0,
+            default_response_bytes: 10,
+            default_chunk_bytes: default_stress_chunk_bytes(),
+            max_delay_ms: 1000,
+            max_response_bytes: 1000,
+            max_chunk_bytes: default_stress_max_chunk_bytes(),
+        })
+        .process(stress_work(50, 123))
+        .await;
+        let elapsed = start.elapsed();
+        assert!(elapsed.as_millis() >= 40);
+        let (content_type, body) = collect_success_body(result).await;
+        assert_eq!(content_type, "application/json");
+        assert_eq!(body.len(), 123);
+        assert_eq!(&body[..4], b"abcd");
+    }
+
+    #[tokio::test]
+    async fn stress_caps_request_values() {
+        let result = processor(Behaviour::Stress {
+            default_delay_ms: 0,
+            default_response_bytes: 10,
+            default_chunk_bytes: default_stress_chunk_bytes(),
+            max_delay_ms: 0,
+            max_response_bytes: 32,
+            max_chunk_bytes: default_stress_max_chunk_bytes(),
+        })
+        .process(stress_work(500, 500))
+        .await;
+        let (_, body) = collect_success_body(result).await;
+        assert_eq!(body.len(), 32);
+    }
+
+    #[tokio::test]
+    async fn stress_defaults_when_request_has_no_stress_block() {
+        let result = processor(Behaviour::Stress {
+            default_delay_ms: 0,
+            default_response_bytes: 17,
+            default_chunk_bytes: default_stress_chunk_bytes(),
+            max_delay_ms: 0,
+            max_response_bytes: 100,
+            max_chunk_bytes: default_stress_max_chunk_bytes(),
+        })
+        .process(dummy_work())
+        .await;
+        let (_, body) = collect_success_body(result).await;
+        assert_eq!(body.len(), 17);
+    }
+
+    #[tokio::test]
     async fn config_content_type_is_honoured() {
         let p = BehaviourProcessor {
             config: TestConfig {
@@ -174,5 +269,93 @@ mod tests {
         let result = p.process(dummy_work()).await;
         let (content_type, _) = collect_success_body(result).await;
         assert_eq!(content_type, "application/octet-stream");
+    }
+
+    // --- chunk-streaming tests ---
+
+    #[tokio::test]
+    async fn stress_emits_multiple_chunks_when_chunk_bytes_smaller_than_response() {
+        // 1000 bytes total, 256 bytes per chunk → ceil(1000/256) = 4 chunks
+        let result = processor(Behaviour::Stress {
+            default_delay_ms: 0,
+            default_response_bytes: 1000,
+            default_chunk_bytes: default_stress_chunk_bytes(),
+            max_delay_ms: 0,
+            max_response_bytes: 10_000,
+            max_chunk_bytes: default_stress_max_chunk_bytes(),
+        })
+        .process(stress_work_with_chunk(0, 1000, 256))
+        .await;
+
+        let (content_type, chunks) = collect_success_chunks(result).await;
+        assert_eq!(content_type, "application/json");
+        assert!(
+            chunks.len() >= 4,
+            "expected ≥ 4 chunks, got {}",
+            chunks.len()
+        );
+
+        // Reassemble and verify total length and byte pattern.
+        let body: Vec<u8> = chunks.into_iter().flatten().collect();
+        assert_eq!(body.len(), 1000);
+        assert_eq!(&body[..4], b"abcd");
+    }
+
+    #[tokio::test]
+    async fn stress_chunk_bytes_capped_by_max() {
+        // default_chunk_bytes=1024, max_chunk_bytes=512
+        // request asks for chunk_bytes=10000 → capped to 512
+        // response_bytes=2048, chunk_bytes effective=512 → exactly 4 chunks of 512
+        let result = processor(Behaviour::Stress {
+            default_delay_ms: 0,
+            default_response_bytes: 2048,
+            default_chunk_bytes: 1024,
+            max_delay_ms: 0,
+            max_response_bytes: 10_000,
+            max_chunk_bytes: 512,
+        })
+        .process(stress_work_with_chunk(0, 2048, 10_000))
+        .await;
+
+        let (_, chunks) = collect_success_chunks(result).await;
+        assert_eq!(chunks.len(), 4, "expected 4 chunks, got {}", chunks.len());
+        for (i, chunk) in chunks.iter().enumerate() {
+            assert_eq!(
+                chunk.len(),
+                512,
+                "chunk {} has wrong length: {}",
+                i,
+                chunk.len()
+            );
+        }
+
+        let body: Vec<u8> = chunks.into_iter().flatten().collect();
+        assert_eq!(body.len(), 2048);
+    }
+
+    #[tokio::test]
+    async fn stress_defaults_chunk_bytes_when_request_omits_it() {
+        // default_chunk_bytes=256; response_bytes=1000, no chunk_bytes in request
+        // → uses default 256, so ≥ 4 chunks
+        let result = processor(Behaviour::Stress {
+            default_delay_ms: 0,
+            default_response_bytes: 1000,
+            default_chunk_bytes: 256,
+            max_delay_ms: 0,
+            max_response_bytes: 10_000,
+            max_chunk_bytes: default_stress_max_chunk_bytes(),
+        })
+        .process(stress_work(0, 1000))
+        .await;
+
+        let (_, chunks) = collect_success_chunks(result).await;
+        assert!(
+            chunks.len() >= 4,
+            "expected ≥ 4 chunks with default chunk_bytes=256, got {}",
+            chunks.len()
+        );
+
+        let body: Vec<u8> = chunks.into_iter().flatten().collect();
+        assert_eq!(body.len(), 1000);
     }
 }

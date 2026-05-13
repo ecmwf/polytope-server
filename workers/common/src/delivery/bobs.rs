@@ -7,7 +7,8 @@ use crate::Completion;
 
 pub(super) struct BobsPush {
     pub(super) api_base: String,
-    pub(super) client: reqwest::Client,
+    pub(super) create_client: reqwest::Client,
+    pub(super) body_client: reqwest::Client,
 }
 
 #[async_trait]
@@ -52,7 +53,7 @@ impl BobsPush {
             create_body["content_encoding"] = serde_json::json!(enc);
         }
         let create_resp = self
-            .client
+            .create_client
             .put(format!("{}/create", self.api_base))
             .json(&create_body)
             .send()
@@ -64,6 +65,12 @@ impl BobsPush {
         let key = create_json["key"]
             .as_str()
             .ok_or("missing key in response")?
+            .to_string();
+        let write_base = create_json["write_url"]
+            .as_str()
+            .ok_or(
+                "missing write_url in create response: BOBS server does not support write routing",
+            )?
             .to_string();
 
         let mut stream = BodyDataStream::new(body);
@@ -78,8 +85,8 @@ impl BobsPush {
         {
             let chunk_len = chunk.len() as u64;
             let write_resp = self
-                .client
-                .post(format!("{}/write/{}/{}", self.api_base, key, offset))
+                .body_client
+                .post(format!("{}/write/{}/{}", write_base, key, offset))
                 .body(chunk)
                 .send()
                 .await?;
@@ -90,8 +97,8 @@ impl BobsPush {
         }
 
         let complete_resp = self
-            .client
-            .post(format!("{}/complete/{}", self.api_base, key))
+            .body_client
+            .post(format!("{}/complete/{}", write_base, key))
             .send()
             .await?;
         if !complete_resp.status().is_success() {
@@ -101,8 +108,7 @@ impl BobsPush {
         let read_url = create_json["read_url"]
             .as_str()
             .ok_or("missing read_url in response")?
-            .to_string()
-            .replace("/read/", "/");
+            .to_string();
         tracing::info!(key = %key, read_url = %read_url, "result pushed to BOBS");
         Ok(read_url)
     }
@@ -119,8 +125,8 @@ mod tests {
     };
     use std::sync::{Arc, Mutex};
 
-    #[derive(Default)]
     struct BobsState {
+        base_url: String,
         created_keys: Mutex<Vec<String>>,
         written_data: Mutex<Vec<u8>>,
         completed: Mutex<bool>,
@@ -131,10 +137,13 @@ mod tests {
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
         let key = "test-key-123".to_string();
         let read_url = format!("http://public.example.com/download-0/{key}");
+        let write_url = state.base_url.clone();
         state.created_keys.lock().unwrap().push(key.clone());
         (
             StatusCode::CREATED,
-            axum::Json(serde_json::json!({ "key": key, "read_url": read_url })),
+            axum::Json(
+                serde_json::json!({ "key": key, "read_url": read_url, "write_url": write_url }),
+            ),
         )
     }
 
@@ -161,21 +170,32 @@ mod tests {
 
     #[tokio::test]
     async fn bobs_push_delivers_and_returns_redirect() {
-        let state = Arc::new(BobsState::default());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let bobs_url = format!("http://{addr}");
+
+        let state = Arc::new(BobsState {
+            base_url: bobs_url.clone(),
+            created_keys: Mutex::new(vec![]),
+            written_data: Mutex::new(vec![]),
+            completed: Mutex::new(false),
+        });
         let app = Router::new()
             .route("/create", put(mock_create))
             .route("/write/{key}/{offset}", post(mock_write))
             .route("/complete/{key}", post(mock_complete))
             .with_state(state.clone());
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
 
-        let bobs_url = format!("http://{addr}");
+        let h2_client = reqwest::Client::builder()
+            .http2_prior_knowledge()
+            .build()
+            .expect("build h2 client");
         let push = BobsPush {
             api_base: bobs_url.clone(),
-            client: reqwest::Client::new(),
+            create_client: h2_client.clone(),
+            body_client: h2_client,
         };
         let data = b"hello bobs".to_vec();
         let result = push
@@ -201,8 +221,8 @@ mod tests {
         assert_eq!(*state.written_data.lock().unwrap(), data);
     }
 
-    #[derive(Default)]
     struct StreamingBobsState {
+        base_url: String,
         created_keys: Mutex<Vec<String>>,
         writes: Mutex<Vec<(u64, Vec<u8>)>>,
         completed: Mutex<bool>,
@@ -213,10 +233,13 @@ mod tests {
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
         let key = "stream-key".to_string();
         let read_url = format!("http://public.example.com/download-0/{key}");
+        let write_url = state.base_url.clone();
         state.created_keys.lock().unwrap().push(key.clone());
         (
             StatusCode::CREATED,
-            axum::Json(serde_json::json!({ "key": key, "read_url": read_url })),
+            axum::Json(
+                serde_json::json!({ "key": key, "read_url": read_url, "write_url": write_url }),
+            ),
         )
     }
 
@@ -243,21 +266,32 @@ mod tests {
 
     #[tokio::test]
     async fn bobs_push_streams_chunks_at_correct_offsets() {
-        let state = Arc::new(StreamingBobsState::default());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let bobs_url = format!("http://{addr}");
+
+        let state = Arc::new(StreamingBobsState {
+            base_url: bobs_url.clone(),
+            created_keys: Mutex::new(vec![]),
+            writes: Mutex::new(vec![]),
+            completed: Mutex::new(false),
+        });
         let app = Router::new()
             .route("/create", put(streaming_create))
             .route("/write/{key}/{offset}", post(streaming_write))
             .route("/complete/{key}", post(streaming_complete))
             .with_state(state.clone());
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
 
-        let bobs_url = format!("http://{addr}");
+        let h2_client = reqwest::Client::builder()
+            .http2_prior_knowledge()
+            .build()
+            .expect("build h2 client");
         let push = BobsPush {
             api_base: bobs_url.clone(),
-            client: reqwest::Client::new(),
+            create_client: h2_client.clone(),
+            body_client: h2_client,
         };
 
         // Build a body from a multi-chunk stream (3 bytes, then 4 bytes).
@@ -294,9 +328,14 @@ mod tests {
 
     #[tokio::test]
     async fn bobs_push_returns_error_when_unreachable() {
+        let h2_client = reqwest::Client::builder()
+            .http2_prior_knowledge()
+            .build()
+            .expect("build h2 client");
         let push = BobsPush {
             api_base: "http://127.0.0.1:1".to_string(),
-            client: reqwest::Client::new(),
+            create_client: h2_client.clone(),
+            body_client: h2_client,
         };
         let result = push
             .deliver(
@@ -310,6 +349,54 @@ mod tests {
         match result {
             Completion::Error { message } => {
                 assert!(message.starts_with("delivery failed:"));
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn bobs_push_errors_on_missing_write_url() {
+        // Mock create handler that omits write_url.
+        async fn create_no_write_url() -> (StatusCode, axum::Json<serde_json::Value>) {
+            (
+                StatusCode::CREATED,
+                axum::Json(serde_json::json!({
+                    "key": "k",
+                    "read_url": "http://x/k",
+                })),
+            )
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = Router::new().route("/create", put(create_no_write_url));
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+        let h2_client = reqwest::Client::builder()
+            .http2_prior_knowledge()
+            .build()
+            .expect("build h2 client");
+        let push = BobsPush {
+            api_base: format!("http://{addr}"),
+            create_client: h2_client.clone(),
+            body_client: h2_client,
+        };
+        let result = push
+            .deliver(
+                "application/octet-stream",
+                None,
+                reqwest::Body::from(vec![]),
+                &serde_json::json!({}),
+            )
+            .await;
+
+        match result {
+            Completion::Error { message } => {
+                assert!(
+                    message.contains("missing write_url"),
+                    "expected 'missing write_url' in error message, got: {message}"
+                );
             }
             other => panic!("expected Error, got {other:?}"),
         }

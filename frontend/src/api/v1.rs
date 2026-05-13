@@ -178,6 +178,11 @@ pub async fn get_request(State(state): State<Arc<AppState>>, Path(id): Path<Stri
                 Json(json!({"status": "failed", "message": reason})),
             )
                 .into_response(),
+            JobResult::Overloaded { reason } => super::overloaded_response(json!({
+                "status": "failed",
+                "message": reason,
+                "retryable": true,
+            })),
             JobResult::Cancelled => {
                 (StatusCode::OK, Json(json!({"status": "cancelled"}))).into_response()
             }

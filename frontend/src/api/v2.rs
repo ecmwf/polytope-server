@@ -121,6 +121,9 @@ pub async fn submit_collection(
                 Json(json!({"error": reason})),
             )
                 .into_response(),
+            JobResult::Overloaded { reason } => {
+                super::overloaded_response(json!({"error": reason, "retryable": true}))
+            }
             JobResult::ClientGone => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "client disconnected before data could be delivered"})),
@@ -175,6 +178,9 @@ pub async fn poll(State(state): State<Arc<AppState>>, Path(id): Path<String>) ->
                 Json(json!({"error": reason})),
             )
                 .into_response(),
+            JobResult::Overloaded { reason } => {
+                super::overloaded_response(json!({"error": reason, "retryable": true}))
+            }
             JobResult::ClientGone => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "client disconnected before data could be delivered"})),

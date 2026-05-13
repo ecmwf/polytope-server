@@ -2,6 +2,13 @@ use async_trait::async_trait;
 use polytope_worker_common::{ProcessResult, Processor, WorkItem};
 use serde::Deserialize;
 
+const DEFAULT_STRESS_DELAY_MS: u64 = 0;
+const DEFAULT_STRESS_RESPONSE_BYTES: usize = 1024;
+const DEFAULT_STRESS_CHUNK_BYTES: usize = 1024 * 1024;
+const DEFAULT_STRESS_MAX_DELAY_MS: u64 = 10_000;
+const DEFAULT_STRESS_MAX_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
+const DEFAULT_STRESS_MAX_CHUNK_BYTES: usize = 16 * 1024 * 1024;
+
 #[derive(Debug, Deserialize)]
 pub struct TestConfig {
     pub behaviour: Behaviour,
@@ -26,10 +33,48 @@ pub enum Behaviour {
         #[serde(default = "default_dummy_count")]
         count: u64,
     },
+    Stress {
+        #[serde(default = "default_stress_delay_ms")]
+        default_delay_ms: u64,
+        #[serde(default = "default_stress_response_bytes")]
+        default_response_bytes: usize,
+        #[serde(default = "default_stress_chunk_bytes")]
+        default_chunk_bytes: usize,
+        #[serde(default = "default_stress_max_delay_ms")]
+        max_delay_ms: u64,
+        #[serde(default = "default_stress_max_response_bytes")]
+        max_response_bytes: usize,
+        #[serde(default = "default_stress_max_chunk_bytes")]
+        max_chunk_bytes: usize,
+    },
 }
 
 pub fn default_dummy_count() -> u64 {
     10
+}
+
+pub fn default_stress_delay_ms() -> u64 {
+    DEFAULT_STRESS_DELAY_MS
+}
+
+pub fn default_stress_response_bytes() -> usize {
+    DEFAULT_STRESS_RESPONSE_BYTES
+}
+
+pub fn default_stress_chunk_bytes() -> usize {
+    DEFAULT_STRESS_CHUNK_BYTES
+}
+
+pub fn default_stress_max_delay_ms() -> u64 {
+    DEFAULT_STRESS_MAX_DELAY_MS
+}
+
+pub fn default_stress_max_response_bytes() -> usize {
+    DEFAULT_STRESS_MAX_RESPONSE_BYTES
+}
+
+pub fn default_stress_max_chunk_bytes() -> usize {
+    DEFAULT_STRESS_MAX_CHUNK_BYTES
 }
 
 pub struct BehaviourProcessor {
@@ -46,6 +91,37 @@ pub fn json_success(content_type: &str, payload: Vec<u8>) -> ProcessResult {
     let body = bytes::Bytes::from(payload);
     let stream = futures::stream::once(futures::future::ready(Ok::<_, std::io::Error>(body)));
     ProcessResult::success(content_type, Box::new(stream))
+}
+
+fn nested_stress_config(request: &serde_json::Value) -> Option<&serde_json::Value> {
+    request
+        .get("stress")
+        .or_else(|| request.get("request").and_then(|inner| inner.get("stress")))
+}
+
+fn stress_u64(request: &serde_json::Value, key: &str) -> Option<u64> {
+    nested_stress_config(request)?.get(key)?.as_u64()
+}
+
+fn stress_usize(request: &serde_json::Value, key: &str) -> Option<usize> {
+    stress_u64(request, key).and_then(|value| usize::try_from(value).ok())
+}
+
+/// Build a lazily-evaluated stream of byte chunks totalling `total` bytes.
+///
+/// Byte values follow the pattern `b'a' + (global_position % 26)`, keeping
+/// the per-byte content deterministic regardless of chunk size. The last chunk
+/// may be smaller than `chunk` bytes when `total` is not evenly divisible.
+fn stress_stream(
+    total: usize,
+    chunk: usize,
+) -> impl futures::Stream<Item = Result<bytes::Bytes, std::io::Error>> + Send + Unpin + 'static {
+    let chunks = (0..total).step_by(chunk).map(move |start| {
+        let end = (start + chunk).min(total);
+        let buf: Vec<u8> = (start..end).map(|i| b'a' + ((i % 26) as u8)).collect();
+        Ok(bytes::Bytes::from(buf))
+    });
+    Box::pin(futures::stream::iter(chunks))
 }
 
 #[async_trait]
@@ -70,6 +146,33 @@ impl Processor for BehaviourProcessor {
                 let data: Vec<u64> = (1..=*count).collect();
                 let payload = serde_json::to_vec(&data).unwrap_or_default();
                 json_success(&self.config.content_type, payload)
+            }
+
+            Behaviour::Stress {
+                default_delay_ms,
+                default_response_bytes,
+                default_chunk_bytes,
+                max_delay_ms,
+                max_response_bytes,
+                max_chunk_bytes,
+            } => {
+                let delay_ms = stress_u64(&work.request, "delay_ms")
+                    .unwrap_or(*default_delay_ms)
+                    .min(*max_delay_ms);
+                let response_bytes = stress_usize(&work.request, "response_bytes")
+                    .unwrap_or(*default_response_bytes)
+                    .min(*max_response_bytes);
+                let chunk_bytes = stress_usize(&work.request, "chunk_bytes")
+                    .unwrap_or(*default_chunk_bytes)
+                    .min(*max_chunk_bytes)
+                    .max(1);
+
+                if delay_ms > 0 {
+                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                }
+
+                let stream = stress_stream(response_bytes, chunk_bytes);
+                ProcessResult::success(&self.config.content_type, Box::new(stream))
             }
         }
     }

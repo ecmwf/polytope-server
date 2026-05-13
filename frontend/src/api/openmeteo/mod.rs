@@ -13,7 +13,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use bits::{Job, JobResult, PollOutcome};
+use bits::{Job, JobResult, PollOutcome, SubmitOutcome};
 use bytes::BytesMut;
 use chrono::Utc;
 use futures::TryStreamExt;
@@ -159,7 +159,14 @@ async fn forecast(
             &state.admin_bypass_roles,
         );
         super::set_job_mock_time_metadata(&mut job, mock_time_extensions.mock_time.as_ref());
-        let id = state.bits.submit(job).id;
+        let id = match state.bits.submit(job) {
+            SubmitOutcome::Accepted(handle) => handle.id,
+            SubmitOutcome::Overloaded => {
+                return super::overloaded_response(response::build_error_response(
+                    "broker at capacity",
+                ));
+            }
+        };
         super::audit_mock_job_submission(mock_audit.as_ref().map(|Extension(audit)| audit), &id);
         super::audit_mock_time_job_submission(mock_time_extensions.mock_time_audit.as_ref(), &id);
         submitted.push((group, param_list, id));
@@ -221,6 +228,9 @@ async fn forecast(
                     StatusCode::BAD_GATEWAY,
                     &format!("worker failed: {reason}"),
                 );
+            }
+            PollOutcome::Ready(JobResult::Overloaded { reason }) => {
+                return super::overloaded_response(response::build_error_response(&reason));
             }
             PollOutcome::NotFound => {
                 return error_response(StatusCode::BAD_GATEWAY, &format!("job {id} not found"));
