@@ -5,13 +5,26 @@ pub mod v2;
 use std::convert::Infallible;
 
 use authotron_types::User as AuthUser;
+use axum::Json;
 use axum::extract::FromRequestParts;
-use axum::http::{HeaderMap, request::Parts};
+use axum::http::{HeaderMap, StatusCode, header, request::Parts};
+use axum::response::{IntoResponse, Response};
 use bits::Job;
 use serde_json::{Value, json};
 
 use crate::auth::mock_time::{MOCK_TIME_HEADER, normalise_mocked_now};
 use crate::auth::{MockRolesAudit, MockTime, MockTimeAudit, is_admin_bypass_user};
+
+const OVERLOADED_RETRY_AFTER_SECS: &str = "5";
+
+pub fn overloaded_response(payload: Value) -> Response {
+    (
+        StatusCode::from_u16(529).expect("529 is a valid HTTP status code"),
+        [(header::RETRY_AFTER, OVERLOADED_RETRY_AFTER_SECS)],
+        Json(payload),
+    )
+        .into_response()
+}
 
 /// Flatten a v1-style `{"request": "...yaml..."}` or `{"request": {...}}` wrapper
 /// into a top-level MARS field object. Passes through already-flat requests unchanged.

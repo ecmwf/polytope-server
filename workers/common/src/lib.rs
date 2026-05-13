@@ -209,7 +209,7 @@ pub async fn run_worker_loop<P: Processor>(
     });
 
     let client = reqwest::Client::builder().build()?;
-    let delivery: Box<dyn ResultDelivery> = make_delivery(&delivery_config, client.clone()).await;
+    let delivery: Box<dyn ResultDelivery> = make_delivery(&delivery_config).await;
     let mut sigterm = signal(SignalKind::terminate()).expect("failed to register SIGTERM handler");
     let mut shutting_down = false;
 
@@ -434,8 +434,8 @@ mod tests {
         }
     }
 
-    #[derive(Default)]
     struct BobsState {
+        write_base_url: String,
         calls: Mutex<Vec<String>>,
         writes: Mutex<Vec<Vec<u8>>>,
     }
@@ -520,9 +520,11 @@ mod tests {
         state.calls.lock().unwrap().push("create".to_string());
         (
             StatusCode::CREATED,
-            axum::Json(
-                serde_json::json!({ "key": "redirect-key", "read_url": "https://polytope.example.com/download-0/redirect-key" }),
-            ),
+            axum::Json(serde_json::json!({
+                "key": "redirect-key",
+                "read_url": "https://polytope.example.com/download-0/redirect-key",
+                "write_url": state.write_base_url.clone(),
+            })),
         )
     }
 
@@ -649,16 +651,25 @@ mod tests {
 
     #[tokio::test]
     async fn worker_with_bobs_delivery_posts_redirect_completion() {
-        let bobs_state = Arc::new(BobsState::default());
-        let bobs_app = Router::new()
-            .route("/create", put(bobs_create))
-            .route("/write/{key}/{offset}", post(bobs_write))
-            .route("/complete/{key}", post(bobs_complete))
-            .with_state(bobs_state.clone());
         let bobs_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let bobs_addr = bobs_listener.local_addr().unwrap();
-        tokio::spawn(async move { axum::serve(bobs_listener, bobs_app).await.unwrap() });
         let bobs_url = format!("http://{bobs_addr}");
+        // make_delivery strips the scheme and appends "/api/v1", so the worker's
+        // api_base (for /create) and write_base (for /write and /complete) are
+        // both rooted at "{bobs_url}/api/v1".  Mirror that in the mock.
+        let bobs_api_base = format!("{bobs_url}/api/v1");
+
+        let bobs_state = Arc::new(BobsState {
+            write_base_url: bobs_api_base.clone(),
+            calls: Mutex::new(vec![]),
+            writes: Mutex::new(vec![]),
+        });
+        let bobs_app = Router::new()
+            .route("/api/v1/create", put(bobs_create))
+            .route("/api/v1/write/{key}/{offset}", post(bobs_write))
+            .route("/api/v1/complete/{key}", post(bobs_complete))
+            .with_state(bobs_state.clone());
+        tokio::spawn(async move { axum::serve(bobs_listener, bobs_app).await.unwrap() });
 
         let broker_state = Arc::new(BrokerState::default());
         let broker_app = Router::new()

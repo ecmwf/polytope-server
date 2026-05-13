@@ -175,7 +175,14 @@ impl polytope_edr::RequestSubmitter for BitsSubmitter {
             let job = bits::Job::new(request);
             let handle = if collection.is_empty() {
                 // Backward compat: no collection specified, use default bits.submit()
-                state.bits.submit(job)
+                match state.bits.submit(job) {
+                    bits::SubmitOutcome::Accepted(handle) => handle,
+                    bits::SubmitOutcome::Overloaded => {
+                        return Err(polytope_edr::SubmitError::Upstream(
+                            "broker at capacity".to_string(),
+                        ));
+                    }
+                }
             } else {
                 let route_handle = state
                     .collections
@@ -213,8 +220,11 @@ bits: {}
             serde_yaml::from_str(yaml).expect("top-level polytope site/env config should parse");
         let (_, state) = build_app(cfg).expect("polytope site/env should be injected into BITS");
 
-        let handle = state.bits.submit(bits::Job::new(serde_json::json!({})));
-        let decoded = bits::polytope_id::decode(&handle.id)
+        let handle = state
+            .bits
+            .submit(bits::Job::new(serde_json::json!({})))
+            .expect_accepted("test broker should accept the request");
+        let decoded = bits::request_id::decode(&handle.id)
             .expect("server-emitted request ID should use the new decodable format");
 
         assert_eq!(decoded.site, "bol");

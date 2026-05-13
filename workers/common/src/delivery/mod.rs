@@ -21,10 +21,7 @@ pub trait ResultDelivery: Send + Sync {
     ) -> Completion;
 }
 
-pub async fn make_delivery(
-    config: &DeliveryConfig,
-    client: reqwest::Client,
-) -> Box<dyn ResultDelivery> {
+pub async fn make_delivery(config: &DeliveryConfig) -> Box<dyn ResultDelivery> {
     match config.delivery_type {
         DeliveryType::Direct => Box::new(DirectDelivery),
         DeliveryType::Bobs => {
@@ -35,7 +32,20 @@ pub async fn make_delivery(
                 .trim_start_matches("http://")
                 .trim_start_matches("https://");
             let api_base = format!("http://{host}/api/v1");
-            Box::new(BobsPush { api_base, client })
+            let create_client = reqwest::Client::builder()
+                .http2_prior_knowledge()
+                .pool_max_idle_per_host(0)
+                .build()
+                .expect("build BOBS create_client");
+            let body_client = reqwest::Client::builder()
+                .http2_prior_knowledge()
+                .build()
+                .expect("build BOBS body_client");
+            Box::new(BobsPush {
+                api_base,
+                create_client,
+                body_client,
+            })
         }
         DeliveryType::S3 => {
             let shared_config = aws_config::load_defaults(BehaviorVersion::latest()).await;
