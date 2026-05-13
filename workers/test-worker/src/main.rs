@@ -223,7 +223,7 @@ mod tests {
         let (content_type, body) = collect_success_body(result).await;
         assert_eq!(content_type, "application/json");
         assert_eq!(body.len(), 123);
-        assert_eq!(&body[..4], b"abcd");
+        assert_eq!(&body[..4], b"xxxx");
     }
 
     #[tokio::test]
@@ -295,10 +295,10 @@ mod tests {
             chunks.len()
         );
 
-        // Reassemble and verify total length and byte pattern.
+        // Reassemble and verify total length and deterministic bytes.
         let body: Vec<u8> = chunks.into_iter().flatten().collect();
         assert_eq!(body.len(), 1000);
-        assert_eq!(&body[..4], b"abcd");
+        assert_eq!(&body[..4], b"xxxx");
     }
 
     #[tokio::test]
