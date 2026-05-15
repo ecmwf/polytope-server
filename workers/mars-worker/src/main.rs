@@ -6,7 +6,7 @@ use mars_client::{Error as MarsError, MarsClient};
 use polytope_worker_common::config::{DEFAULT_CONFIG_PATH, WorkerConfigFile};
 use polytope_worker_common::{ProcessResult, Processor, WorkItem, WorkerConfig, run_worker_loop};
 use tokio_stream::wrappers::ReceiverStream;
-use tracing::warn;
+use tracing::{info, warn};
 
 mod convert;
 mod k8s;
@@ -16,6 +16,7 @@ struct MarsProcessor {
     /// Port the C++ MARS client binds for DHS callbacks. We forcibly close any
     /// leaked listener on this port between retrieves; see `port_cleanup`.
     local_port: u16,
+    env_lock: std::sync::Arc<std::sync::Mutex<()>>,
 }
 
 #[async_trait]
@@ -37,8 +38,11 @@ impl Processor for MarsProcessor {
 
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(32);
         let local_port = self.local_port;
+        let env_lock = self.env_lock.clone();
         tokio::task::spawn_blocking(move || {
-            // SAFETY: run_worker_loop processes one request at a time — no concurrent set_var.
+            let _env_guard = env_lock.lock().expect("MARS environment lock poisoned");
+            // SAFETY: this mutex serializes all per-request mutation of process environment
+            // variables used by the MARS client.
             unsafe {
                 std::env::set_var("MARS_USER_EMAIL", &mars_email);
                 std::env::set_var("MARS_USER_TOKEN", &mars_token);
@@ -126,6 +130,25 @@ struct Cli {
     mars_dhs_local_port: u16,
     #[arg(long, default_value = DEFAULT_CONFIG_PATH)]
     config_path: String,
+    #[arg(long, default_value_t = 1)]
+    worker_concurrency: usize,
+}
+
+fn resolved_worker_concurrency(cli_value: usize) -> usize {
+    match std::env::var("POLYTOPE_WORKER_CONCURRENCY") {
+        Ok(value) => match value.parse::<usize>() {
+            Ok(parsed) if parsed >= 1 => parsed,
+            _ => {
+                warn!(value = %value, "ignoring invalid POLYTOPE_WORKER_CONCURRENCY");
+                cli_value
+            }
+        },
+        Err(std::env::VarError::NotPresent) => cli_value,
+        Err(err) => {
+            warn!(error = %err, "ignoring invalid POLYTOPE_WORKER_CONCURRENCY");
+            cli_value
+        }
+    }
 }
 
 #[tokio::main]
@@ -136,6 +159,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     mars_client::log_bridge::init();
 
     let cli = Cli::parse();
+    let worker_concurrency = resolved_worker_concurrency(cli.worker_concurrency);
+    info!(worker_concurrency, "resolved worker concurrency");
 
     let config = WorkerConfigFile::load(&cli.config_path)
         .unwrap_or_else(|err| panic!("failed to load config at {}: {err}", cli.config_path));
@@ -160,10 +185,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             heartbeat_interval: std::time::Duration::from_secs_f64(cli.heartbeat_secs),
             retry_backoff: std::time::Duration::from_secs(1),
             management_port: config.management_port,
+            worker_concurrency,
         },
         config.delivery,
         MarsProcessor {
             local_port: manager.local_port(),
+            env_lock: std::sync::Arc::new(std::sync::Mutex::new(())),
         },
     )
     .await?;
@@ -182,7 +209,10 @@ mod tests {
 
     #[tokio::test]
     async fn process_returns_error_for_invalid_request() {
-        let processor = MarsProcessor { local_port: 8100 };
+        let processor = MarsProcessor {
+            local_port: 8100,
+            env_lock: std::sync::Arc::new(std::sync::Mutex::new(())),
+        };
         let result = processor
             .process(WorkItem {
                 job_id: "job-1".into(),

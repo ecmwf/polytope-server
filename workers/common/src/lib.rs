@@ -134,6 +134,8 @@ pub struct WorkerConfig {
     pub heartbeat_interval: Duration,
     pub retry_backoff: Duration,
     pub management_port: u16,
+    /// Number of independent in-flight jobs processed by this worker pod. Must be at least 1.
+    pub worker_concurrency: usize,
 }
 
 impl WorkerConfig {
@@ -186,49 +188,24 @@ pub trait Processor: Send + Sync {
     async fn process(&self, work: WorkItem) -> ProcessResult;
 }
 
-pub async fn run_worker_loop<P: Processor>(
+async fn worker_task<P: Processor + 'static>(
     config: WorkerConfig,
-    delivery_config: DeliveryConfig,
-    processor: P,
+    client: reqwest::Client,
+    delivery: std::sync::Arc<dyn ResultDelivery>,
+    processor: std::sync::Arc<P>,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<(), reqwest::Error> {
-    let management_app = management::router();
-    let management_listener = tokio::net::TcpListener::bind(("0.0.0.0", config.management_port))
-        .await
-        .unwrap_or_else(|err| {
-            panic!(
-                "failed to bind management server on port {}: {err}",
-                config.management_port
-            )
-        });
-    let management_port = management_listener.local_addr().unwrap().port();
-    tracing::info!(port = management_port, "management server listening");
-    tokio::spawn(async move {
-        axum::serve(management_listener, management_app)
-            .await
-            .unwrap();
-    });
-
-    let client = reqwest::Client::builder().build()?;
-    let delivery: Box<dyn ResultDelivery> = make_delivery(&delivery_config).await;
-    let mut sigterm = signal(SignalKind::terminate()).expect("failed to register SIGTERM handler");
-    let mut shutting_down = false;
-
     loop {
-        if shutting_down {
-            tracing::info!("graceful shutdown complete");
+        if *shutdown.borrow() {
             break;
         }
 
         let response = tokio::select! {
             biased;
-            _ = sigterm.recv() => {
-                tracing::info!("received shutdown signal, completing in-flight work then exiting");
-                shutting_down = true;
-                continue;
-            }
-            _ = tokio::signal::ctrl_c() => {
-                tracing::info!("received shutdown signal, completing in-flight work then exiting");
-                shutting_down = true;
+            changed = shutdown.changed() => {
+                if changed.is_ok() && *shutdown.borrow() {
+                    break;
+                }
                 continue;
             }
             result = client.get(config.work_url()).send() => {
@@ -363,6 +340,84 @@ pub async fn run_worker_loop<P: Processor>(
     Ok(())
 }
 
+pub async fn run_worker_loop<P: Processor + 'static>(
+    config: WorkerConfig,
+    delivery_config: DeliveryConfig,
+    processor: P,
+) -> Result<(), reqwest::Error> {
+    assert!(
+        config.worker_concurrency >= 1,
+        "worker_concurrency must be at least 1"
+    );
+
+    let management_app = management::router();
+    let management_listener = tokio::net::TcpListener::bind(("0.0.0.0", config.management_port))
+        .await
+        .unwrap_or_else(|err| {
+            panic!(
+                "failed to bind management server on port {}: {err}",
+                config.management_port
+            )
+        });
+    let management_port = management_listener.local_addr().unwrap().port();
+    tracing::info!(port = management_port, "management server listening");
+    tokio::spawn(async move {
+        axum::serve(management_listener, management_app)
+            .await
+            .unwrap();
+    });
+
+    let client = reqwest::Client::builder().build()?;
+    let delivery: std::sync::Arc<dyn ResultDelivery> =
+        std::sync::Arc::from(make_delivery(&delivery_config).await);
+    let processor = std::sync::Arc::new(processor);
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
+    let mut tasks = Vec::with_capacity(config.worker_concurrency);
+    for worker_index in 0..config.worker_concurrency {
+        let task_config = config.clone();
+        let task_client = client.clone();
+        let task_delivery = delivery.clone();
+        let task_processor = processor.clone();
+        let task_shutdown = shutdown_rx.clone();
+        tasks.push(tokio::spawn(async move {
+            tracing::debug!(worker_index, "worker task started");
+            let result = worker_task(
+                task_config,
+                task_client,
+                task_delivery,
+                task_processor,
+                task_shutdown,
+            )
+            .await;
+            tracing::debug!(worker_index, "worker task stopped");
+            result
+        }));
+    }
+
+    let mut sigterm = signal(SignalKind::terminate()).expect("failed to register SIGTERM handler");
+    tokio::select! {
+        _ = sigterm.recv() => {
+            tracing::info!("received shutdown signal, completing in-flight work then exiting");
+        }
+        _ = tokio::signal::ctrl_c() => {
+            tracing::info!("received shutdown signal, completing in-flight work then exiting");
+        }
+    }
+
+    let _ = shutdown_tx.send(true);
+    for task in tasks {
+        match task.await {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => return Err(err),
+            Err(err) => panic!("worker task failed: {err}"),
+        }
+    }
+    tracing::info!("graceful shutdown complete");
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -374,7 +429,10 @@ mod tests {
         routing::{get, post, put},
     };
     use futures::TryStreamExt;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
 
     #[derive(Default)]
     struct MockState {
@@ -617,6 +675,7 @@ mod tests {
             heartbeat_interval: Duration::from_millis(5),
             retry_backoff: Duration::from_millis(5),
             management_port: 0,
+            worker_concurrency: 1,
         };
 
         let run = tokio::spawn(run_worker_loop(
@@ -695,6 +754,7 @@ mod tests {
             heartbeat_interval: Duration::from_millis(5),
             retry_backoff: Duration::from_millis(5),
             management_port: 0,
+            worker_concurrency: 1,
         };
 
         let run = tokio::spawn(run_worker_loop(
@@ -771,6 +831,7 @@ mod tests {
             heartbeat_interval: Duration::from_millis(5),
             retry_backoff: Duration::from_millis(5),
             management_port: 0,
+            worker_concurrency: 1,
         };
 
         *broker_state.work_metadata.lock().unwrap() =
@@ -834,6 +895,7 @@ mod tests {
             heartbeat_interval: Duration::from_millis(5),
             retry_backoff: Duration::from_millis(5),
             management_port: 0,
+            worker_concurrency: 1,
         };
 
         let run = tokio::spawn(run_worker_loop(
@@ -894,6 +956,7 @@ mod tests {
             heartbeat_interval: Duration::from_millis(5),
             retry_backoff: Duration::from_millis(5),
             management_port: 0,
+            worker_concurrency: 1,
         };
 
         let run = tokio::spawn(run_worker_loop(
@@ -926,5 +989,173 @@ mod tests {
         assert_eq!(completions.len(), 1);
         assert_eq!(completions[0].0, "error");
         assert!(!completions.iter().any(|(kind, _)| kind == "data"));
+    }
+
+    struct ConcurrentBrokerState {
+        polls: AtomicUsize,
+        completions: Mutex<Vec<String>>,
+    }
+
+    async fn concurrent_work(
+        State(state): State<Arc<ConcurrentBrokerState>>,
+    ) -> Result<axum::Json<WorkItem>, StatusCode> {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let poll = state.polls.fetch_add(1, Ordering::SeqCst);
+        if poll < 2 {
+            Ok(axum::Json(WorkItem {
+                job_id: format!("job-{}", poll + 1),
+                request: serde_json::json!({"index": poll}),
+                user: serde_json::json!({}),
+                metadata: serde_json::json!({}),
+            }))
+        } else {
+            Err(StatusCode::NO_CONTENT)
+        }
+    }
+
+    async fn concurrent_complete(
+        Path(job_id): Path<String>,
+        State(state): State<Arc<ConcurrentBrokerState>>,
+    ) -> StatusCode {
+        state.completions.lock().unwrap().push(job_id);
+        StatusCode::OK
+    }
+
+    struct ConcurrentProcessor {
+        concurrent_in_process: Arc<AtomicUsize>,
+        peak: Arc<AtomicUsize>,
+        reached_two: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait]
+    impl Processor for ConcurrentProcessor {
+        async fn process(&self, _work: WorkItem) -> ProcessResult {
+            let current = self.concurrent_in_process.fetch_add(1, Ordering::SeqCst) + 1;
+            self.peak.fetch_max(current, Ordering::SeqCst);
+            if current >= 2 {
+                self.reached_two.notify_waiters();
+            }
+
+            self.release.notified().await;
+            self.concurrent_in_process.fetch_sub(1, Ordering::SeqCst);
+
+            let stream =
+                futures::stream::once(futures::future::ready(Ok::<bytes::Bytes, std::io::Error>(
+                    bytes::Bytes::from_static(b"ok"),
+                )));
+            ProcessResult::success("application/octet-stream", Box::new(stream))
+        }
+    }
+
+    #[tokio::test]
+    async fn worker_loop_processes_jobs_concurrently_when_worker_concurrency_is_two() {
+        let state = Arc::new(ConcurrentBrokerState {
+            polls: AtomicUsize::new(0),
+            completions: Mutex::new(Vec::new()),
+        });
+        let app = Router::new()
+            .route("/work", get(concurrent_work))
+            .route("/heartbeat/{job_id}", post(heartbeat))
+            .route("/complete/data/{job_id}", post(concurrent_complete))
+            .with_state(state.clone());
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let concurrent_in_process = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let reached_two = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+
+        let config = WorkerConfig {
+            broker_url: format!("http://{addr}"),
+            poll_timeout_ms: 10,
+            heartbeat_interval: Duration::from_millis(5),
+            retry_backoff: Duration::from_millis(5),
+            management_port: 0,
+            worker_concurrency: 2,
+        };
+
+        let run = tokio::spawn(run_worker_loop(
+            config,
+            delivery_config::DeliveryConfig {
+                delivery_type: delivery_config::DeliveryType::Direct,
+                bobs_url: None,
+                s3_bucket: None,
+                s3_region: None,
+                s3_endpoint_url: None,
+                s3_force_path_style: None,
+                s3_access_key_id: None,
+                s3_secret_access_key: None,
+                s3_presigned_url_expiry_secs: None,
+                s3_public_url: None,
+                s3_key_prefix: String::new(),
+            },
+            ConcurrentProcessor {
+                concurrent_in_process,
+                peak: peak.clone(),
+                reached_two: reached_two.clone(),
+                release: release.clone(),
+            },
+        ));
+
+        tokio::time::timeout(Duration::from_secs(2), reached_two.notified())
+            .await
+            .unwrap();
+        release.notify_waiters();
+
+        for _ in 0..40 {
+            if state.completions.lock().unwrap().len() == 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        run.abort();
+
+        assert!(peak.load(Ordering::SeqCst) >= 2);
+        let mut completions = state.completions.lock().unwrap().clone();
+        completions.sort();
+        assert_eq!(completions, vec!["job-1".to_string(), "job-2".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn worker_loop_validates_nonzero_worker_concurrency() {
+        let config = WorkerConfig {
+            broker_url: "http://127.0.0.1:1".to_string(),
+            poll_timeout_ms: 10,
+            heartbeat_interval: Duration::from_millis(5),
+            retry_backoff: Duration::from_millis(5),
+            management_port: 0,
+            worker_concurrency: 0,
+        };
+
+        let run = tokio::spawn(run_worker_loop(
+            config,
+            delivery_config::DeliveryConfig {
+                delivery_type: delivery_config::DeliveryType::Direct,
+                bobs_url: None,
+                s3_bucket: None,
+                s3_region: None,
+                s3_endpoint_url: None,
+                s3_force_path_style: None,
+                s3_access_key_id: None,
+                s3_secret_access_key: None,
+                s3_presigned_url_expiry_secs: None,
+                s3_public_url: None,
+                s3_key_prefix: String::new(),
+            },
+            StubProcessor,
+        ));
+
+        let err = run.await.unwrap_err();
+        assert!(err.is_panic());
+        let message = if let Some(message) = err.try_into_panic().unwrap().downcast_ref::<&str>() {
+            (*message).to_string()
+        } else {
+            "".to_string()
+        };
+        assert!(message.contains("worker_concurrency"));
     }
 }

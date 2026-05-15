@@ -107,21 +107,49 @@ fn stress_usize(request: &serde_json::Value, key: &str) -> Option<usize> {
     stress_u64(request, key).and_then(|value| usize::try_from(value).ok())
 }
 
+struct StressStream {
+    remaining: usize,
+    chunk: bytes::Bytes,
+}
+
+impl futures::Stream for StressStream {
+    type Item = Result<bytes::Bytes, std::io::Error>;
+
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        if this.remaining == 0 {
+            return std::task::Poll::Ready(None);
+        }
+
+        let bytes_to_send = this.remaining.min(this.chunk.len());
+        this.remaining -= bytes_to_send;
+        let bytes = if bytes_to_send == this.chunk.len() {
+            this.chunk.clone()
+        } else {
+            this.chunk.slice(..bytes_to_send)
+        };
+        std::task::Poll::Ready(Some(Ok(bytes)))
+    }
+}
+
 /// Build a lazily-evaluated stream of byte chunks totalling `total` bytes.
 ///
-/// Byte values follow the pattern `b'a' + (global_position % 26)`, keeping
-/// the per-byte content deterministic regardless of chunk size. The last chunk
-/// may be smaller than `chunk` bytes when `total` is not evenly divisible.
+/// The stream reuses a fixed byte buffer for full-sized chunks so synthetic
+/// data generation does not become the throughput bottleneck being measured.
+/// The last chunk may be smaller than `chunk` bytes when `total` is not evenly
+/// divisible.
 fn stress_stream(
     total: usize,
     chunk: usize,
 ) -> impl futures::Stream<Item = Result<bytes::Bytes, std::io::Error>> + Send + Unpin + 'static {
-    let chunks = (0..total).step_by(chunk).map(move |start| {
-        let end = (start + chunk).min(total);
-        let buf: Vec<u8> = (start..end).map(|i| b'a' + ((i % 26) as u8)).collect();
-        Ok(bytes::Bytes::from(buf))
-    });
-    Box::pin(futures::stream::iter(chunks))
+    let chunk_len = chunk.max(1).min(total).max(1);
+    StressStream {
+        remaining: total,
+        chunk: bytes::Bytes::from(vec![b'x'; chunk_len]),
+    }
 }
 
 #[async_trait]
