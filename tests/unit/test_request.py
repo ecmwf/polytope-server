@@ -78,7 +78,8 @@ class Test:
 
         d = r1.serialize_logging()
 
-        assert d["coerced_request"]["param"] == ("x" * 1000) + "...<truncated>"
+        assert "coerced_request" not in d
+        assert d["user_request"]["param"] == ("x" * 1000) + "...<truncated>"
 
     def test_serialize_logging_summarizes_oversized_lists_recursively(self):
         r1 = request.PolytopeRequest(user=self.user, verb=request.Verb.RETRIEVE)
@@ -90,8 +91,26 @@ class Test:
 
         d = r1.serialize_logging()
 
-        assert d["coerced_request"]["feature"]["points"] == {
+        assert d["user_request"]["feature"]["points"] == {
             "_summary": "list",
             "count": 105,
             "preview": list(range(10)),
         }
+
+    def test_serialize_logging_uses_raw_request_before_coercion(self):
+        r1 = request.PolytopeRequest(user=self.user, verb=request.Verb.RETRIEVE)
+        r1.user_request = "x" * 1005
+
+        d = r1.serialize_logging()
+
+        assert "coerced_request" not in d
+        assert d["user_request"] == ("x" * 1000) + "...<truncated>"
+
+    def test_serialize_logging_prefers_coerced_request(self):
+        r1 = request.PolytopeRequest(user=self.user, verb=request.Verb.RETRIEVE)
+        r1.user_request = "raw-request"
+        r1.coerced_request = {"param": "coerced-request"}
+
+        d = r1.serialize_logging()
+
+        assert d["user_request"] == {"param": "coerced-request"}

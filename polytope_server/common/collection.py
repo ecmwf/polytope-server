@@ -57,6 +57,8 @@ class Collection:
         Raises a BadRequest exception if no datasource matches.
         """
         coerced_ur = coercion.coerce(yaml.safe_load(request.user_request))
+        # Intentionally keep both raw and coerced forms distinct here; all other
+        # request logging should use the unified `user_request` field.
         logging.info(
             "Coerced user request", extra={"coerced_request": coerced_ur, "user_request": request.user_request}
         )

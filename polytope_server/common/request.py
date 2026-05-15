@@ -199,7 +199,9 @@ class PolytopeRequest:
         result = self.serialize()
         # unnecessary for request logging
         result.pop("user", None)
-        result.pop("user_request", None)
+        user_request = result.pop("user_request", None)
+        coerced_request = result.pop("coerced_request", None)
+        result["user_request"] = coerced_request or user_request
         return self._bound_logging_value(
             result,
             max_string_length=max_string_length,
