@@ -87,6 +87,25 @@ struct Cli {
     python_path: String,
     #[arg(long, default_value = DEFAULT_CONFIG_PATH)]
     config_path: String,
+    #[arg(long, default_value_t = 1)]
+    worker_concurrency: usize,
+}
+
+fn resolved_worker_concurrency(cli_value: usize) -> usize {
+    match std::env::var("POLYTOPE_WORKER_CONCURRENCY") {
+        Ok(value) => match value.parse::<usize>() {
+            Ok(parsed) if parsed >= 1 => parsed,
+            _ => {
+                tracing::warn!(value = %value, "ignoring invalid POLYTOPE_WORKER_CONCURRENCY");
+                cli_value
+            }
+        },
+        Err(std::env::VarError::NotPresent) => cli_value,
+        Err(err) => {
+            tracing::warn!(error = %err, "ignoring invalid POLYTOPE_WORKER_CONCURRENCY");
+            cli_value
+        }
+    }
 }
 
 #[tokio::main]
@@ -95,6 +114,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
     let cli = Cli::parse();
+    let worker_concurrency = resolved_worker_concurrency(cli.worker_concurrency);
+    info!(worker_concurrency, "resolved worker concurrency");
 
     let config = WorkerConfigFile::load(&cli.config_path)
         .unwrap_or_else(|err| panic!("failed to load config at {}: {err}", cli.config_path));
@@ -127,6 +148,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             heartbeat_interval: std::time::Duration::from_secs_f64(cli.heartbeat_secs),
             retry_backoff: std::time::Duration::from_secs(1),
             management_port: config.management_port,
+            worker_concurrency,
         },
         config.delivery,
         PolytopeProcessor {

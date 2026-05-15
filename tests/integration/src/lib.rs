@@ -222,6 +222,7 @@ pub async fn spawn_test_worker(
         heartbeat_interval: std::time::Duration::from_secs(30),
         retry_backoff: std::time::Duration::from_millis(100),
         management_port: 0,
+        worker_concurrency: 1,
     };
 
     let processor = test_worker::BehaviourProcessor::new(test_worker::TestConfig {

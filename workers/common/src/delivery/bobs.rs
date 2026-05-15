@@ -1,6 +1,4 @@
 use async_trait::async_trait;
-use futures::TryStreamExt;
-use http_body_util::BodyDataStream;
 
 use super::ResultDelivery;
 use crate::Completion;
@@ -73,27 +71,17 @@ impl BobsPush {
             )?
             .to_string();
 
-        let mut stream = BodyDataStream::new(body);
-        let mut offset: u64 = 0;
-        while let Some(chunk) =
-            stream
-                .try_next()
-                .await
-                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    format!("body stream error: {e}").into()
-                })?
-        {
-            let chunk_len = chunk.len() as u64;
-            let write_resp = self
-                .body_client
-                .post(format!("{}/write/{}/{}", write_base, key, offset))
-                .body(chunk)
-                .send()
-                .await?;
-            if !write_resp.status().is_success() {
-                return Err(format!("write failed: {}", write_resp.status()).into());
-            }
-            offset += chunk_len;
+        // Stream the entire response body to BOBS as a single chunked HTTP/2
+        // request at offset 0. BOBS appends page-by-page as the body arrives;
+        // the worker no longer pays one round-trip per producer chunk.
+        let write_resp = self
+            .body_client
+            .post(format!("{}/write/{}/0", write_base, key))
+            .body(body)
+            .send()
+            .await?;
+        if !write_resp.status().is_success() {
+            return Err(format!("write failed: {}", write_resp.status()).into());
         }
 
         let complete_resp = self
@@ -265,7 +253,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn bobs_push_streams_chunks_at_correct_offsets() {
+    async fn bobs_push_streams_whole_body_as_one_request() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let bobs_url = format!("http://{addr}");
@@ -294,7 +282,9 @@ mod tests {
             body_client: h2_client,
         };
 
-        // Build a body from a multi-chunk stream (3 bytes, then 4 bytes).
+        // Build a body from a multi-chunk producer stream. The delivery layer
+        // must coalesce these into one streamed HTTP request to BOBS, not
+        // emit one POST per producer chunk.
         let stream = futures::stream::iter(vec![
             Ok::<bytes::Bytes, std::io::Error>(bytes::Bytes::from_static(b"abc")),
             Ok(bytes::Bytes::from_static(b"defg")),
@@ -319,11 +309,13 @@ mod tests {
         assert!(*state.completed.lock().unwrap());
 
         let writes = state.writes.lock().unwrap();
-        assert_eq!(writes.len(), 2, "expected 2 streamed writes");
-        assert_eq!(writes[0].0, 0, "first chunk should be at offset 0");
-        assert_eq!(writes[0].1, b"abc");
-        assert_eq!(writes[1].0, 3, "second chunk should be at offset 3");
-        assert_eq!(writes[1].1, b"defg");
+        assert_eq!(
+            writes.len(),
+            1,
+            "expected exactly one streamed write covering the whole body"
+        );
+        assert_eq!(writes[0].0, 0, "write must start at offset 0");
+        assert_eq!(writes[0].1, b"abcdefg");
     }
 
     #[tokio::test]
