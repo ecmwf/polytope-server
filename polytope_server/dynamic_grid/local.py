@@ -25,6 +25,18 @@ _GRID_CACHE = None
 _GRID_CACHE_LOCK = threading.Lock()
 
 
+def _get_grid_spacing(gid, metric_key, fallback_key):
+    try:
+        spacing = eccodes.codes_get(gid, metric_key)
+    except Exception:
+        spacing = None
+
+    if spacing is not None and spacing > 0:
+        return spacing
+
+    return eccodes.codes_get(gid, fallback_key)
+
+
 def _grid_cache_enabled():
     return os.environ.get("POLYTOPE_DISABLE_GRID_CACHE", "").lower() not in {"1", "true", "yes", "on"}
 
@@ -92,8 +104,8 @@ def get_gridspec_lamebert_conformal(gid):
     nx = eccodes.codes_get(gid, "Nx")
     ny = eccodes.codes_get(gid, "Ny")
     LoVInDegrees = eccodes.codes_get(gid, "LoV") / 1000000
-    Dx = eccodes.codes_get(gid, "Dx")
-    Dy = eccodes.codes_get(gid, "Dy")
+    Dx = _get_grid_spacing(gid, "DxInMetres", "Dx")
+    Dy = _get_grid_spacing(gid, "DyInMetres", "Dy")
     latFirstInRadians = eccodes.codes_get(gid, "latitudeOfFirstGridPoint") / 1000000 * to_rad
     lonFirstInRadians = eccodes.codes_get(gid, "longitudeOfFirstGridPoint") / 1000000 * to_rad
     LoVInRadians = eccodes.codes_get(gid, "LoV") / 1000000 * to_rad

@@ -193,3 +193,62 @@ def test_lookup_grid_config_local_skips_cache_when_disabled(tmp_path, monkeypatc
     assert gids == ["gid-0", "gid-1"]
     assert releases == ["gid-0", "gid-1"]
     assert not cache_file.exists()
+
+
+def test_get_gridspec_lamebert_conformal_prefers_metric_spacing(monkeypatch):
+    values = {
+        "md5GridSection": "abc123",
+        "shapeOfTheEarth": 6,
+        "NV": 0,
+        "Nx": 10,
+        "Ny": 20,
+        "LoV": 1000000,
+        "Dx": 500000,
+        "Dy": 500000,
+        "DxInMetres": 500.0,
+        "DyInMetres": 500.0,
+        "latitudeOfFirstGridPoint": 100000,
+        "longitudeOfFirstGridPoint": 200000,
+        "Latin1": 300000,
+        "Latin2": 400000,
+        "LaD": 500000,
+    }
+
+    monkeypatch.setattr(switching_grid_local.eccodes, "codes_get", lambda gid, key: values[key])
+
+    gridspec, md5hash = switching_grid_local.get_gridspec_lamebert_conformal("gid")
+
+    assert md5hash == "abc123"
+    assert gridspec["Dx"] == 500.0
+    assert gridspec["Dy"] == 500.0
+
+
+def test_get_gridspec_lamebert_conformal_falls_back_when_metric_spacing_missing(monkeypatch):
+    values = {
+        "md5GridSection": "abc123",
+        "shapeOfTheEarth": 6,
+        "NV": 0,
+        "Nx": 10,
+        "Ny": 20,
+        "LoV": 1000000,
+        "Dx": 1000.0,
+        "Dy": 2000.0,
+        "latitudeOfFirstGridPoint": 100000,
+        "longitudeOfFirstGridPoint": 200000,
+        "Latin1": 300000,
+        "Latin2": 400000,
+        "LaD": 500000,
+    }
+
+    def _codes_get(gid, key):
+        if key in {"DxInMetres", "DyInMetres"}:
+            raise RuntimeError(f"missing {key}")
+        return values[key]
+
+    monkeypatch.setattr(switching_grid_local.eccodes, "codes_get", _codes_get)
+
+    gridspec, md5hash = switching_grid_local.get_gridspec_lamebert_conformal("gid")
+
+    assert md5hash == "abc123"
+    assert gridspec["Dx"] == 1000.0
+    assert gridspec["Dy"] == 2000.0
