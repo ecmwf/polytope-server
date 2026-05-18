@@ -2,7 +2,7 @@ use clap::Parser;
 use polytope_worker_common::config::{DEFAULT_CONFIG_PATH, WorkerConfigFile};
 use polytope_worker_common::{WorkerConfig, run_worker_loop};
 use test_worker::*;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 #[derive(Parser)]
 struct Cli {
@@ -37,12 +37,15 @@ fn resolved_worker_concurrency(cli_value: usize) -> usize {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt::init();
+    polytope_observability::init_tracing("polytope-worker-test");
     let cli = Cli::parse();
     let worker_concurrency = resolved_worker_concurrency(cli.worker_concurrency);
     info!(worker_concurrency, "resolved worker concurrency");
-    let config = WorkerConfigFile::load(&cli.config_path)
-        .unwrap_or_else(|err| panic!("failed to load config at {}: {err}", cli.config_path));
+    let config = WorkerConfigFile::load(&cli.config_path).unwrap_or_else(|err| {
+        tracing::error!("event.name" = "startup.config.failed", outcome = "error", config_path = %cli.config_path, error = %err, "failed to load config");
+        std::process::exit(1);
+    });
+    tracing::info!("event.name" = "startup.config.loaded", outcome = "success", config_path = %cli.config_path, "config loaded");
 
     let test_section = config
         .section("test")
@@ -52,12 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let test_config: TestConfig =
         serde_yml::from_value(test_section).expect("failed to parse 'test' config section");
 
-    info!(
-        path = cli.config_path,
-        behaviour = ?test_config.behaviour,
-        content_type = test_config.content_type.as_str(),
-        "loaded config"
-    );
+    debug!(path = cli.config_path, behaviour = ?test_config.behaviour, content_type = test_config.content_type.as_str(), "loaded test config section");
 
     run_worker_loop(
         WorkerConfig {

@@ -1951,6 +1951,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "clap",
+ "polytope-observability",
  "polytope-worker-common",
  "reqwest 0.12.28",
  "rsfdb",
@@ -3768,11 +3769,24 @@ dependencies = [
  "bytes",
  "clap",
  "futures",
+ "polytope-observability",
  "polytope-worker-common",
  "pyo3",
  "reqwest 0.12.28",
  "serde_json",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "polytope-observability"
+version = "0.1.0"
+dependencies = [
+ "regex",
+ "serde",
+ "serde_json",
+ "time",
  "tracing",
  "tracing-subscriber",
 ]
@@ -3796,6 +3810,7 @@ dependencies = [
  "metkit",
  "mockito",
  "polytope-edr",
+ "polytope-observability",
  "roxmltree",
  "serde",
  "serde_json",
@@ -3841,6 +3856,7 @@ dependencies = [
  "bytes",
  "futures",
  "http-body-util",
+ "polytope-observability",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -3849,6 +3865,7 @@ dependencies = [
  "tokio-util",
  "tower",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 
@@ -5309,6 +5326,7 @@ dependencies = [
  "bytes",
  "clap",
  "futures",
+ "polytope-observability",
  "polytope-worker-common",
  "serde",
  "serde_json",

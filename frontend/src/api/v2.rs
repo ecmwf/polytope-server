@@ -23,6 +23,13 @@ pub async fn health() -> &'static str {
 pub async fn list_collections(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let mut names: Vec<String> = state.collections.keys().cloned().collect();
     names.sort();
+    tracing::info!(
+        "event.name" = "api.collection.list",
+        outcome = "success",
+        collection_count = names.len() as u64,
+        api.version = "v2",
+        "listed collections"
+    );
     (StatusCode::OK, Json(json!({"collections": names})))
 }
 
@@ -38,6 +45,7 @@ pub async fn submit_collection(
     let route_handle = match state.collections.get(&collection) {
         Some(handle) => handle.clone(),
         None => {
+            tracing::warn!("event.name" = "api.job.rejected", outcome = "rejected", collection = %collection, reason = "unknown_collection", "job rejected");
             return (
                 StatusCode::NOT_FOUND,
                 Json(json!({"error": format!("unknown collection '{collection}'")})),
@@ -47,6 +55,7 @@ pub async fn submit_collection(
     };
 
     if let Err(msg) = super::flatten_request(&mut body) {
+        tracing::warn!("event.name" = "api.job.rejected", outcome = "rejected", reason = "invalid_request", error = %msg, "job rejected");
         return (StatusCode::BAD_REQUEST, Json(json!({"error": msg}))).into_response();
     }
 
@@ -66,17 +75,19 @@ pub async fn submit_collection(
         job.metadata_mut()["accept_encoding"] = serde_json::json!(enc);
     }
     super::set_job_mock_time_metadata(&mut job, mock_time_extensions.mock_time.as_ref());
-    let proxy_proto_addr = headers
-        .get("x-proxy-protocol-addr")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("<not set>");
-    tracing::info!(
-        "client IP candidates: x-forwarded-for={:?}, x-real-ip={:?}, x-proxy-protocol-addr={:?}",
-        headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()),
-        headers.get("x-real-ip").and_then(|v| v.to_str().ok()),
-        proxy_proto_addr,
+    tracing::debug!(
+        x_forwarded_for_present = headers.get("x-forwarded-for").is_some(),
+        x_real_ip_present = headers.get("x-real-ip").is_some(),
+        x_proxy_protocol_addr_present = headers.get("x-proxy-protocol-addr").is_some(),
+        "client IP candidate headers present"
     );
+    let submitted_request = job.request.clone();
     let id = route_handle.submit(job).id;
+    if let Some(Extension(user)) = auth_user.as_ref() {
+        tracing::info!("event.name" = "api.job.submitted", outcome = "success", job.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, polytope.request = %polytope_observability::request(&submitted_request), "job submitted");
+    } else {
+        tracing::info!("event.name" = "api.job.submitted", outcome = "success", job.id = %id, polytope.request = %polytope_observability::request(&submitted_request), "job submitted");
+    }
     super::audit_mock_job_submission(mock_audit.as_ref().map(|Extension(audit)| audit), &id);
     super::audit_mock_time_job_submission(mock_time_extensions.mock_time_audit.as_ref(), &id);
 
@@ -195,9 +206,15 @@ pub async fn poll(State(state): State<Arc<AppState>>, Path(id): Path<String>) ->
 
 pub async fn cancel(
     State(state): State<Arc<AppState>>,
+    auth_user: Option<Extension<AuthUser>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     state.bits.cancel(&id);
+    if let Some(Extension(user)) = auth_user.as_ref() {
+        tracing::info!("event.name" = "api.job.cancelled", outcome = "cancelled", job.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, "job cancelled");
+    } else {
+        tracing::info!("event.name" = "api.job.cancelled", outcome = "cancelled", job.id = %id, "job cancelled");
+    }
     (
         StatusCode::OK,
         Json(json!({"id": id, "status": "cancelled"})),

@@ -153,17 +153,18 @@ fn resolved_worker_concurrency(cli_value: usize) -> usize {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
+    polytope_observability::init_tracing("polytope-worker-mars");
     mars_client::log_bridge::init();
 
     let cli = Cli::parse();
     let worker_concurrency = resolved_worker_concurrency(cli.worker_concurrency);
     info!(worker_concurrency, "resolved worker concurrency");
 
-    let config = WorkerConfigFile::load(&cli.config_path)
-        .unwrap_or_else(|err| panic!("failed to load config at {}: {err}", cli.config_path));
+    let config = WorkerConfigFile::load(&cli.config_path).unwrap_or_else(|err| {
+        tracing::error!("event.name" = "startup.config.failed", outcome = "error", config_path = %cli.config_path, error = %err, "failed to load config");
+        std::process::exit(1);
+    });
+    tracing::info!("event.name" = "startup.config.loaded", outcome = "success", config_path = %cli.config_path, "config loaded");
 
     let manager = NodePortManager::new(cli.mars_dhs_local_port).await?;
     // SAFETY: set once at startup before run_worker_loop spawns any processing threads;
@@ -173,7 +174,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::env::set_var("MARS_DHS_CALLBACK_HOST", manager.node_name());
         std::env::set_var("MARS_DHS_CALLBACK_PORT", manager.node_port().to_string());
     }
-    tracing::info!(
+    tracing::debug!(
         node_port = manager.node_port(),
         "NodePort service created, MARS DHS callback configured"
     );

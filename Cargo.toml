@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "observability",
     "frontend",
     "client",
     "tests/integration",

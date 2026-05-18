@@ -5,7 +5,7 @@ use polytope_worker_common::{ProcessResult, Processor, WorkItem, WorkerConfig, r
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyTuple};
 use serde_json::json;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 struct PolytopeProcessor {
     config_path: String,
@@ -110,17 +110,18 @@ fn resolved_worker_concurrency(cli_value: usize) -> usize {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
+    polytope_observability::init_tracing("polytope-worker-polytope-fe");
     let cli = Cli::parse();
     let worker_concurrency = resolved_worker_concurrency(cli.worker_concurrency);
     info!(worker_concurrency, "resolved worker concurrency");
 
-    let config = WorkerConfigFile::load(&cli.config_path)
-        .unwrap_or_else(|err| panic!("failed to load config at {}: {err}", cli.config_path));
+    let config = WorkerConfigFile::load(&cli.config_path).unwrap_or_else(|err| {
+        tracing::error!("event.name" = "startup.config.failed", outcome = "error", config_path = %cli.config_path, error = %err, "failed to load config");
+        std::process::exit(1);
+    });
+    tracing::info!("event.name" = "startup.config.loaded", outcome = "success", config_path = %cli.config_path, "config loaded");
 
-    info!(python_path = %cli.python_path, config_path = %cli.config_path, "initializing python interpreter");
+    debug!(python_path = %cli.python_path, config_path = %cli.config_path, "initializing python interpreter");
 
     pyo3::prepare_freethreaded_python();
     Python::with_gil(|py| -> PyResult<()> {
@@ -129,13 +130,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         path.call_method1("insert", (0i32, &cli.python_path))?;
 
         let py_path: Vec<String> = path.extract()?;
-        info!(sys_path = ?py_path, "python sys.path configured");
+        debug!(sys_path = ?py_path, "python sys.path configured");
 
         let wrapper = py.import("run_polytope_worker")?;
-        info!("run_polytope_worker module imported");
+        debug!("run_polytope_worker module imported");
 
         wrapper.call_method1("_get_datasource", (&cli.config_path,))?;
-        info!("polytope datasource initialized");
+        debug!("polytope datasource initialized");
         Ok(())
     })?;
 

@@ -8,6 +8,7 @@ name = "test_worker"
 path = "src/lib.rs"
 
 [dependencies]
+polytope-observability = { path = "../../observability" }
 async-trait = "0.1"
 bytes = "1"
 clap = { version = "4", features = ["derive"] }

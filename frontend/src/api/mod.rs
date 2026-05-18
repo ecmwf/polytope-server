@@ -136,14 +136,14 @@ where
 pub fn audit_mock_job_submission(mock_audit: Option<&MockRolesAudit>, job_id: &str) {
     if let Some(audit) = mock_audit {
         tracing::info!(
-            event = "polytope_mock_roles_job_submitted",
+            "event.name" = "api.auth.mock_accepted",
             real_username = audit.real_username.as_str(),
             real_realm = audit.real_realm.as_str(),
             mocked_realm = audit.mocked_realm.as_str(),
             mocked_roles = ?audit.mocked_roles,
             path = audit.path.as_str(),
             request_id = audit.request_id.as_deref(),
-            job_id = job_id,
+            job.id = job_id,
             "accepted mocked-role request submitted job"
         );
     }
@@ -152,14 +152,14 @@ pub fn audit_mock_job_submission(mock_audit: Option<&MockRolesAudit>, job_id: &s
 pub fn audit_mock_time_job_submission(mock_audit: Option<&MockTimeAudit>, job_id: &str) {
     if let Some(audit) = mock_audit {
         tracing::info!(
-            event = "polytope_mock_time_job_submitted",
+            "event.name" = "api.auth.mock_accepted",
             real_username = audit.real_username.as_str(),
             real_realm = audit.real_realm.as_str(),
             mocked_now = audit.mocked_now.as_str(),
             path = audit.path.as_str(),
             request_id = audit.request_id.as_deref(),
             header = MOCK_TIME_HEADER,
-            job_id = job_id,
+            job.id = job_id,
             "accepted mocked-time request submitted job"
         );
     }

@@ -12,7 +12,7 @@ pub mod delivery_config;
 pub mod encoding;
 pub mod management;
 
-use crate::delivery::{ResultDelivery, make_delivery};
+use crate::delivery::{DeliveryContext, ResultDelivery, make_delivery};
 use crate::delivery_config::{Codec, DeliveryConfig};
 use crate::encoding::encode_stream;
 
@@ -138,6 +138,17 @@ pub struct WorkerConfig {
     pub worker_concurrency: usize,
 }
 
+fn enduser_fields(user: &serde_json::Value) -> (Option<&str>, Option<&str>) {
+    (
+        user.get("auth")
+            .and_then(|auth| auth.get("username"))
+            .and_then(|value| value.as_str()),
+        user.get("auth")
+            .and_then(|auth| auth.get("realm"))
+            .and_then(|value| value.as_str()),
+    )
+}
+
 impl WorkerConfig {
     pub fn work_url(&self) -> String {
         format!(
@@ -212,7 +223,7 @@ async fn worker_task<P: Processor + 'static>(
                 match result {
                     Ok(response) => response,
                     Err(err) => {
-                        tracing::warn!(broker_url = %config.broker_url, error = %err, "worker poll failed");
+                        tracing::warn!("event.name" = "worker.broker.poll.failed", outcome = "error", broker_url = %config.broker_url, error = %err, "worker poll failed");
                         tokio::time::sleep(config.retry_backoff).await;
                         continue;
                     }
@@ -224,7 +235,7 @@ async fn worker_task<P: Processor + 'static>(
             continue;
         }
         if !response.status().is_success() {
-            tracing::warn!(broker_url = %config.broker_url, status = %response.status(), "worker poll returned unexpected status");
+            tracing::warn!("event.name" = "worker.broker.poll.failed", outcome = "error", broker_url = %config.broker_url, status = %response.status(), "worker poll returned unexpected status");
             tokio::time::sleep(config.retry_backoff).await;
             continue;
         }
@@ -232,19 +243,26 @@ async fn worker_task<P: Processor + 'static>(
         let work: WorkItem = match response.json().await {
             Ok(work) => work,
             Err(err) => {
-                tracing::warn!(error = %err, "worker failed to decode work item");
+                tracing::warn!("event.name" = "worker.broker.poll.failed", outcome = "error", error = %err, "worker failed to decode work item");
                 tokio::time::sleep(config.retry_backoff).await;
                 continue;
             }
         };
 
-        tracing::info!(job_id = %work.job_id, "job started");
+        let (enduser_id, enduser_realm) = enduser_fields(&work.user);
+        if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
+            tracing::info!("event.name" = "worker.job.started", outcome = "success", job.id = %work.job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "job started");
+        } else {
+            tracing::info!("event.name" = "worker.job.started", outcome = "success", job.id = %work.job_id, "job started");
+        }
 
         let stop = std::sync::Arc::new(tokio::sync::Notify::new());
         let stop_heartbeat = stop.clone();
         let heartbeat_client = client.clone();
         let heartbeat_cfg = config.clone();
         let job_id = work.job_id.clone();
+        let heartbeat_enduser_id = enduser_id.map(str::to_string);
+        let heartbeat_enduser_realm = enduser_realm.map(str::to_string);
         let heartbeat = tokio::spawn(async move {
             loop {
                 tokio::select! {
@@ -253,8 +271,20 @@ async fn worker_task<P: Processor + 'static>(
                         match heartbeat_client.post(heartbeat_cfg.heartbeat_url(&job_id)).send().await {
                             Ok(resp) if resp.status() == StatusCode::OK => {}
                             Ok(resp) if resp.status() == StatusCode::NOT_FOUND => break,
-                            Ok(resp) => tracing::warn!(status=%resp.status(), job_id=%job_id, "heartbeat returned unexpected status"),
-                            Err(err) => tracing::warn!(error=%err, job_id=%job_id, "heartbeat request failed"),
+                            Ok(resp) => {
+                                if let (Some(enduser_id), Some(enduser_realm)) = (heartbeat_enduser_id.as_deref(), heartbeat_enduser_realm.as_deref()) {
+                                    tracing::warn!("event.name" = "worker.heartbeat.failed", outcome = "error", status=%resp.status(), job.id=%job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "heartbeat returned unexpected status")
+                                } else {
+                                    tracing::warn!("event.name" = "worker.heartbeat.failed", outcome = "error", status=%resp.status(), job.id=%job_id, "heartbeat returned unexpected status")
+                                }
+                            },
+                            Err(err) => {
+                                if let (Some(enduser_id), Some(enduser_realm)) = (heartbeat_enduser_id.as_deref(), heartbeat_enduser_realm.as_deref()) {
+                                    tracing::warn!("event.name" = "worker.heartbeat.failed", outcome = "error", error=%err, job.id=%job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "heartbeat request failed")
+                                } else {
+                                    tracing::warn!("event.name" = "worker.heartbeat.failed", outcome = "error", error=%err, job.id=%job_id, "heartbeat request failed")
+                                }
+                            },
                         }
                     }
                 }
@@ -274,11 +304,29 @@ async fn worker_task<P: Processor + 'static>(
                         content_encoding.as_deref(),
                         encoded,
                         &work.metadata,
+                        DeliveryContext {
+                            job_id: &work.job_id,
+                            user: &work.user,
+                        },
                     )
                     .await
             }
-            ProcessResult::Reject { reason } => Completion::Reject { reason },
-            ProcessResult::Error { message } => Completion::Error { message },
+            ProcessResult::Reject { reason } => {
+                if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
+                    tracing::warn!("event.name" = "worker.job.rejected", outcome = "rejected", job.id = %work.job_id, reason = %reason, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "job rejected");
+                } else {
+                    tracing::warn!("event.name" = "worker.job.rejected", outcome = "rejected", job.id = %work.job_id, reason = %reason, "job rejected");
+                }
+                Completion::Reject { reason }
+            }
+            ProcessResult::Error { message } => {
+                if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
+                    tracing::error!("event.name" = "worker.job.failed", outcome = "error", job.id = %work.job_id, error = %message, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "job failed");
+                } else {
+                    tracing::error!("event.name" = "worker.job.failed", outcome = "error", job.id = %work.job_id, error = %message, "job failed");
+                }
+                Completion::Error { message }
+            }
         };
 
         stop.notify_one();
@@ -331,9 +379,19 @@ async fn worker_task<P: Processor + 'static>(
                 (resp, "redirect")
             }
         };
-        tracing::info!(job_id = %work.job_id, outcome = outcome, "job completed");
+        if matches!(outcome, "data" | "redirect") {
+            if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
+                tracing::info!("event.name" = "worker.job.completed", outcome = "success", job.id = %work.job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "job completed");
+            } else {
+                tracing::info!("event.name" = "worker.job.completed", outcome = "success", job.id = %work.job_id, "job completed");
+            }
+        }
         if response.status() != StatusCode::OK && response.status() != StatusCode::NOT_FOUND {
-            tracing::warn!(status=%response.status(), job_id=%work.job_id, "worker completion returned unexpected status");
+            if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
+                tracing::error!("event.name" = "worker.job.failed", outcome = "error", status=%response.status(), job.id=%work.job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "worker completion returned unexpected status");
+            } else {
+                tracing::error!("event.name" = "worker.job.failed", outcome = "error", status=%response.status(), job.id=%work.job_id, "worker completion returned unexpected status");
+            }
         }
     }
 
@@ -360,7 +418,12 @@ pub async fn run_worker_loop<P: Processor + 'static>(
             )
         });
     let management_port = management_listener.local_addr().unwrap().port();
-    tracing::info!(port = management_port, "management server listening");
+    tracing::info!(
+        "event.name" = "startup.server.listening",
+        outcome = "success",
+        port = management_port,
+        "management server listening"
+    );
     tokio::spawn(async move {
         axum::serve(management_listener, management_app)
             .await
@@ -398,10 +461,10 @@ pub async fn run_worker_loop<P: Processor + 'static>(
     let mut sigterm = signal(SignalKind::terminate()).expect("failed to register SIGTERM handler");
     tokio::select! {
         _ = sigterm.recv() => {
-            tracing::info!("received shutdown signal, completing in-flight work then exiting");
+            tracing::info!("event.name" = "startup.shutdown.received", outcome = "success", "received shutdown signal");
         }
         _ = tokio::signal::ctrl_c() => {
-            tracing::info!("received shutdown signal, completing in-flight work then exiting");
+            tracing::info!("event.name" = "startup.shutdown.received", outcome = "success", "received shutdown signal");
         }
     }
 
@@ -413,7 +476,11 @@ pub async fn run_worker_loop<P: Processor + 'static>(
             Err(err) => panic!("worker task failed: {err}"),
         }
     }
-    tracing::info!("graceful shutdown complete");
+    tracing::info!(
+        "event.name" = "startup.shutdown.complete",
+        outcome = "success",
+        "graceful shutdown complete"
+    );
 
     Ok(())
 }
@@ -433,6 +500,17 @@ mod tests {
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     };
+
+    #[test]
+    fn enduser_fields_extracts_username_and_realm_when_present() {
+        let user = serde_json::json!({"auth": {"username": "alice", "realm": "ecmwf"}});
+        assert_eq!(enduser_fields(&user), (Some("alice"), Some("ecmwf")));
+    }
+
+    #[test]
+    fn enduser_fields_omits_missing_user() {
+        assert_eq!(enduser_fields(&serde_json::json!({})), (None, None));
+    }
 
     #[derive(Default)]
     struct MockState {
