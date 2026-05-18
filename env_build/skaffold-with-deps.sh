@@ -22,6 +22,8 @@ export eccodes_version="${eccodes_version:-${ECCODES_VERSION}}"
 export metkit_version="${metkit_version:-${METKIT_VERSION}}"
 export fdb_version="${fdb_version:-${FDB_VERSION}}"
 export gribjump_version="${gribjump_version:-${GRIBJUMP_VERSION}}"
+export mars_client_c_bundle_ref="${mars_client_c_bundle_ref:-${MARS_CLIENT_C_BUNDLE_REF}}"
+export mars_client_cpp_bundle_ref="${mars_client_cpp_bundle_ref:-${MARS_CLIENT_CPP_BUNDLE_REF}}"
 
 cd "${REPO_DIR}"
 exec skaffold "$@"

@@ -37,6 +37,48 @@ or outside Docker.
 PREFIX=dev_ env_build/skaffold-with-deps.sh build
 ```
 
+The default worker build keeps the existing apt-based MARS path. That path now
+defaults to `mars-client=6.33.20.2` and `mars-client-cpp=7.1.9.1`, while still
+allowing the versions to be overridden through Skaffold build args.
+
+To build publishable source-built replacement base images for the C and C++
+MARS clients:
+
+```bash
+GITHUB_TOKEN="$(gh auth token)" \
+  PREFIX=dev_ env_build/skaffold-with-deps.sh build -f skaffold.mars-client.yaml
+```
+
+These images source-build the C and C++ MARS clients from
+`ecmwf/mars-client-bundle` into the same locations used by the worker build:
+`mars-base-c` provides `/opt/ecmwf/mars-client` and the `mars` binary, while
+`mars-base-cpp` provides `/opt/ecmwf/mars-client-cpp`.
+The source build uses a BuildKit secret backed by `GITHUB_TOKEN` so private
+GitHub dependencies can be fetched without baking the token into the final
+image.
+
+The main worker build resolves `mars_base_c` and `mars_base_cpp` like this:
+
+- `1`: use the existing local apt-backed stage (`mars-base-c` or `mars-base-cpp`)
+- empty or unset: use `blank-base`
+- any other value: pass it through as an external image reference
+
+To make the worker consume previously published source-built replacements,
+override `mars_base_c` and `mars_base_cpp` directly:
+
+```bash
+PREFIX=dev_ \
+  mars_base_c=registry.example/mars-base-c:tag \
+  mars_base_cpp=registry.example/mars-base-cpp:tag \
+  env_build/skaffold-with-deps.sh build
+```
+
+This keeps the source-built path optional while reusing the same worker copy
+contract as the current apt-based stages.
+
+Use `skaffold build --file-output=/tmp/builds.json` or `skaffold build -q` when
+you need the exact published image references for a later worker build.
+
 To build the same source GribJump/FDB environment outside Docker:
 
 ```bash

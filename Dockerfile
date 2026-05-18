@@ -113,7 +113,6 @@ FROM python:3.11-bookworm AS blank-base
 RUN set -eux \
     && mkdir -p /opt/ecmwf/mars-client \
     && mkdir -p /opt/ecmwf/mars-client-cpp \
-    && mkdir -p /opt/ecmwf/mars-client-cloud \
     && mkdir -p /opt/polytope/gribjump-source \
     && mkdir -p /opt/polytope/gribjump-source-wheels \
     && touch /usr/local/bin/mars
@@ -208,17 +207,14 @@ RUN set -eux \
     && apt install -y libnetcdf19 liblapack3
 
 FROM mars-base AS mars-base-c
-RUN apt update && apt install -y liblapack3 mars-client=${mars_client_c_version} mars-client-cloud
+RUN set -eux \
+    && apt update \
+    && apt install -y liblapack3 mars-client=${mars_client_c_version} \
+    && if [ -x /opt/ecmwf/mars-client/bin/mars.bin ] && [ ! -e /opt/ecmwf/mars-client/bin/mars ]; then ln -s mars.bin /opt/ecmwf/mars-client/bin/mars; fi \
+    && cp /opt/ecmwf/mars-client/bin/mars /usr/local/bin/mars
 
 FROM mars-base AS mars-base-cpp
 RUN apt update && apt install -y mars-client-cpp=${mars_client_cpp_version}
-
-FROM blank-base AS blank-base-c
-FROM blank-base AS blank-base-cpp
-
-#######################################################
-#         S W I T C H   B A S E    I M A G E S
-#######################################################
 
 FROM ${mars_base_c} AS mars-c-base-final
 
@@ -262,7 +258,7 @@ WORKDIR /polytope
 # Copy MARS-related artifacts
 COPY --chown=polytope --from=mars-cpp-base-final   /opt/ecmwf/mars-client-cpp  /opt/ecmwf/mars-client-cpp
 COPY --chown=polytope --from=mars-c-base-final     /opt/ecmwf/mars-client      /opt/ecmwf/mars-client
-COPY --chown=polytope --from=mars-c-base-final     /usr/local/bin/mars      /usr/local/bin/mars
+COPY --chown=polytope --from=mars-c-base-final     /usr/local/bin/mars         /usr/local/bin/mars
 
 # all of this is needed by the C client, would be nice to remove it at some point
 RUN set -eux \
@@ -274,7 +270,7 @@ RUN set -eux \
 
 ENV MARS_CONFIGS_REPO=${mars_config_repo}
 ENV MARS_CONFIGS_BRANCH=${mars_config_branch}
-ENV PATH="/home/polytope/.venv/bin:/polytope/bin/:/opt/ecmwf/mars-client/bin:/opt/ecmwf/mars-client-cloud/bin:${PATH}"
+ENV PATH="/home/polytope/.venv/bin:/polytope/bin/:/opt/ecmwf/mars-client/bin:${PATH}"
 
 # Copy gribjump-related artifacts
 COPY --chown=polytope --from=source-gribjump-base-final /opt/polytope/gribjump-source /opt/polytope/gribjump-source
