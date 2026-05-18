@@ -18,7 +18,6 @@
 ## does it submit to any jurisdiction.
 ##
 
-ARG fdb_base=blank-base
 ARG mars_base_c=blank-base
 ARG mars_base_cpp=blank-base
 ARG gribjump_source_base=blank-base
@@ -116,77 +115,6 @@ RUN set -eux \
     && mkdir -p /opt/polytope/gribjump-source \
     && mkdir -p /opt/polytope/gribjump-source-wheels \
     && touch /usr/local/bin/mars
-
-FROM python:3.11-bookworm AS source-gribjump-base
-
-ARG ecbuild_version
-ARG libaec_version
-ARG eckit_version
-ARG eccodes_version
-ARG metkit_version
-ARG fdb_version
-ARG gribjump_version
-
-RUN set -eux \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends \
-    build-essential \
-    cmake \
-    git \
-    liblz4-dev \
-    ninja-build \
-    python3-dev \
-    python3-venv \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN python -m pip install --no-cache-dir uv cmake
-
-COPY ./env_build /env_build
-
-RUN set -eux \
-    && mkdir -p /opt/polytope/gribjump-source-src /opt/polytope/gribjump-source-build \
-    && PYTHON_VERSION=3.11 \
-    SRC_BUNDLE=/opt/polytope/gribjump-source-src \
-    BUILD_DIR=/opt/polytope/gribjump-source-build \
-    INSTALL_PREFIX=/opt/polytope/gribjump-source \
-    ECBUILD_VERSION=${ecbuild_version} \
-    LIBAEC_VERSION=${libaec_version} \
-    ECKIT_VERSION=${eckit_version} \
-    ECCODES_VERSION=${eccodes_version} \
-    METKIT_VERSION=${metkit_version} \
-    FDB_VERSION=${fdb_version} \
-    GRIBJUMP_VERSION=${gribjump_version} \
-    bash /env_build/build.sh
-
-ENV FDB5_DIR=/opt/polytope/gribjump-source
-ENV GRIBJUMP_DIR=/opt/polytope/gribjump-source
-ENV ECCODES_DIR=/opt/polytope/gribjump-source
-ENV ECCODES_DEFINITION_PATH=/opt/polytope/gribjump-source/share/eccodes/definitions
-ENV ECCODES_SAMPLES_PATH=/opt/polytope/gribjump-source/share/eccodes/samples
-ENV FINDLIBS_DISABLE_PACKAGE=yes
-ENV LD_LIBRARY_PATH=/opt/polytope/gribjump-source/lib64:/opt/polytope/gribjump-source/lib
-
-RUN /opt/polytope/gribjump-source/.venv/bin/python -c "import pyfdb, pygribjump; print('source bundle imports OK')"
-
-FROM source-gribjump-base AS source-gribjump-worker-python
-
-ARG eccodes_version
-
-COPY --from=polytope-requirements-wheel-builder /wheels /tmp/wheels
-
-RUN VIRTUAL_ENV=/opt/polytope/gribjump-source/.venv PATH="/opt/polytope/gribjump-source/.venv/bin:${PATH}" uv pip install --no-binary eccodes "eccodes==${eccodes_version}" \
-    && VIRTUAL_ENV=/opt/polytope/gribjump-source/.venv PATH="/opt/polytope/gribjump-source/.venv/bin:${PATH}" uv pip install --no-index --find-links=/tmp/wheels polytope-python \
-    && rm -rf /tmp/wheels \
-    && VIRTUAL_ENV=/opt/polytope/gribjump-source/.venv PATH="/opt/polytope/gribjump-source/.venv/bin:${PATH}" python -c "import eccodes, pyfdb, pygribjump; print('source worker imports OK')"
-
-RUN set -eux \
-    && mkdir -p /opt/polytope/gribjump-source-wheels \
-    && cp /opt/polytope/gribjump-source-build/pyfdb*.whl /opt/polytope/gribjump-source-wheels/ \
-    && VIRTUAL_ENV=/opt/polytope/gribjump-source/.venv PATH="/opt/polytope/gribjump-source/.venv/bin:${PATH}" \
-    python -m pip wheel --no-binary eccodes "eccodes==${eccodes_version}" -w /opt/polytope/gribjump-source-wheels \
-    && VIRTUAL_ENV=/opt/polytope/gribjump-source/.venv PATH="/opt/polytope/gribjump-source/.venv/bin:${PATH}" \
-    python -m pip wheel --no-deps /opt/polytope/gribjump-source-src/gribjump -w /opt/polytope/gribjump-source-wheels
 
 #######################################################
 #               M A R S    B A S E

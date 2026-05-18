@@ -57,24 +57,39 @@ The source build uses a BuildKit secret backed by `GITHUB_TOKEN` so private
 GitHub dependencies can be fetched without baking the token into the final
 image.
 
+To build the publishable source-built GribJump/FDB image that the worker can
+copy from:
+
+```bash
+PREFIX=dev_ env_build/skaffold-with-deps.sh build -f skaffold.gribjump-source.yaml
+```
+
+This image builds the source bundle into `/opt/polytope/gribjump-source` and
+the worker-installable wheels into `/opt/polytope/gribjump-source-wheels`.
+
 The main worker build resolves `mars_base_c` and `mars_base_cpp` like this:
 
 - `1`: use the existing local apt-backed stage (`mars-base-c` or `mars-base-cpp`)
 - empty or unset: use `blank-base`
 - any other value: pass it through as an external image reference
 
-To make the worker consume previously published source-built replacements,
-override `mars_base_c` and `mars_base_cpp` directly:
+`gribjump_source_base` should be either unset or an explicit image reference.
+
+To make the worker consume previously built source-built replacements,
+override `mars_base_c`, `mars_base_cpp`, and `gribjump_source_base` directly:
 
 ```bash
 PREFIX=dev_ \
   mars_base_c=registry.example/mars-base-c:tag \
   mars_base_cpp=registry.example/mars-base-cpp:tag \
+  gribjump_source_base=registry.example/gribjump-source-worker-python:tag \
   env_build/skaffold-with-deps.sh build
 ```
 
 This keeps the source-built path optional while reusing the same worker copy
-contract as the current apt-based stages.
+contract as the current apt-based and source-built stages. Leave
+`gribjump_source_base` unset to skip copying GribJump into the worker, or set it
+to the exact image tag produced by `skaffold build -f skaffold.gribjump-source.yaml`.
 
 Use `skaffold build --file-output=/tmp/builds.json` or `skaffold build -q` when
 you need the exact published image references for a later worker build.

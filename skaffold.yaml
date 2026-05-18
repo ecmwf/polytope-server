@@ -39,7 +39,7 @@ build:
       buildArgs:
         developer_mode: '{{ default "false" .developer_mode }}'
 
-  # Worker with source-built GribJump and optional MARS clients
+  # Worker with optional source-built GribJump and MARS clients
   - image: "worker"
     docker:
       target: worker
@@ -50,18 +50,8 @@ build:
         developer_mode: '{{ default "false" .developer_mode }}'
         mars_client_c_version: '{{ default "6.33.20.2" .mars_client_c_version }}'
         mars_client_cpp_version: '{{ default "7.1.9.1" .mars_client_cpp_version }}'
-        # Fallback defaults mirror env_build/deps.env so existing direct
-        # `skaffold build` workflows keep working. Prefer
-        # env_build/skaffold-with-deps.sh for the shared source of truth.
-        ecbuild_version: '{{ default "3.14.0" .ecbuild_version }}'
-        libaec_version: '{{ default "v1.1.4" .libaec_version }}'
-        eckit_version: '{{ default "1.33.2" .eckit_version }}'
-        eccodes_version: '{{ default "2.46.0" .eccodes_version }}'
-        metkit_version: '{{ default "1.18.1" .metkit_version }}'
-        fdb_version: '{{ default "5.21.3" .fdb_version }}'
-        gribjump_version: '{{ default "0.12.0" .gribjump_version }}'
         mars_base_c: '{{ if eq (default "" .mars_base_c) "1" }}mars-base-c{{ else if eq (default "" .mars_base_c) "" }}blank-base{{ else }}{{ .mars_base_c }}{{ end }}'
         mars_base_cpp: '{{ if eq (default "" .mars_base_cpp) "1" }}mars-base-cpp{{ else if eq (default "" .mars_base_cpp) "" }}blank-base{{ else }}{{ .mars_base_cpp }}{{ end }}'
-        gribjump_source_base: '{{ if eq .gribjump_source_base "1" }}source-gribjump-worker-python{{ else }}blank-base{{ end }}'
+        gribjump_source_base: '{{ default "blank-base" .gribjump_source_base }}'
       # cliFlags: 
       #   - --no-cache # for debug purposes

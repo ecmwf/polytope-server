@@ -1,0 +1,32 @@
+apiVersion: skaffold/v4beta10
+kind: Config
+
+build:
+  local:
+    useBuildkit: True
+    concurrency: 1
+  tagPolicy:
+    customTemplate:
+      template: "{{.PREFIX}}{{.GIT_TAG}}"
+      components:
+      - name: PREFIX
+        envTemplate:
+          template: '{{default "" .PREFIX}}'
+      - name: GIT_TAG
+        gitCommit:
+          ignoreChanges: false
+  platforms:
+    - linux/amd64
+  artifacts:
+  - image: "gribjump-source-worker-python"
+    docker:
+      dockerfile: Dockerfile.gribjump-source
+      target: gribjump-source-worker-python
+      buildArgs:
+        ecbuild_version: '{{ default "3.14.0" .ecbuild_version }}'
+        libaec_version: '{{ default "v1.1.4" .libaec_version }}'
+        eckit_version: '{{ default "1.33.2" .eckit_version }}'
+        eccodes_version: '{{ default "2.46.0" .eccodes_version }}'
+        metkit_version: '{{ default "1.18.1" .metkit_version }}'
+        fdb_version: '{{ default "5.21.3" .fdb_version }}'
+        gribjump_version: '{{ default "0.12.0" .gribjump_version }}'
