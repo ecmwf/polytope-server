@@ -121,6 +121,7 @@ FROM chef-base AS chef
 ARG GIT_AUTH_TOKEN=""
 WORKDIR /ecmwf/polytope-server
 COPY Cargo.lock Cargo.lock
+COPY observability/ observability/
 COPY workers/common/ workers/common/
 COPY workers/mars-worker/ workers/mars-worker/
 RUN mkdir -p .cargo && echo "[net]" > .cargo/config.toml && echo "git-fetch-with-cli = true" >> .cargo/config.toml
@@ -143,6 +144,7 @@ ENV METKIT_INCLUDE_DIR=/opt/mars-client/include
 ENV METKIT_BUILD_INCLUDE_DIR=/opt/mars-client/include
 COPY --from=chef /ecmwf/polytope-server/workers/mars-worker/recipe.json workers/mars-worker/recipe.json
 COPY --from=chef /ecmwf/polytope-server/.cargo/config.toml .cargo/config.toml
+COPY observability/ observability/
 COPY workers/common/ workers/common/
 RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi
 RUN cd workers/mars-worker && cargo chef cook --release --recipe-path recipe.json
@@ -157,6 +159,7 @@ COPY Cargo.lock Cargo.lock
 ARG PACKAGE_NAME=mars-worker
 ARG BIN_NAME=mars-worker
 COPY --from=mars-libs /opt/mars-client /opt/mars-client
+COPY observability/ observability/
 COPY workers/common/ workers/common/
 COPY workers/mars-worker/ workers/mars-worker/
 RUN mkdir -p .cargo && echo "[net]" > .cargo/config.toml && echo "git-fetch-with-cli = true" >> .cargo/config.toml

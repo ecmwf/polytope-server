@@ -46,6 +46,13 @@ pub async fn test() -> &'static str {
 pub async fn list_collections(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let mut collections: Vec<String> = state.collections.keys().cloned().collect();
     collections.sort();
+    tracing::info!(
+        "event.name" = "api.collection.list",
+        outcome = "success",
+        collection_count = collections.len() as u64,
+        api.version = "v1",
+        "listed collections"
+    );
     (StatusCode::OK, Json(json!({"collections": collections})))
 }
 
@@ -65,6 +72,7 @@ pub async fn submit_request(
     let route_handle = match state.collections.get(&collection) {
         Some(handle) => handle.clone(),
         None => {
+            tracing::warn!("event.name" = "api.job.rejected", outcome = "rejected", collection = %collection, reason = "unknown_collection", "job rejected");
             return (
                 StatusCode::NOT_FOUND,
                 Json(json!({"error": format!("unknown collection '{collection}'")})),
@@ -75,6 +83,7 @@ pub async fn submit_request(
 
     let mut request = json!({ "request": body.request });
     if let Err(msg) = super::flatten_request(&mut request) {
+        tracing::warn!("event.name" = "api.job.rejected", outcome = "rejected", reason = "invalid_request", error = %msg, "job rejected");
         return (StatusCode::BAD_REQUEST, Json(json!({"error": msg}))).into_response();
     }
 
@@ -91,6 +100,7 @@ pub async fn submit_request(
     job.metadata_mut()["buffer_full_output"] = json!(true);
     super::set_job_mock_time_metadata(&mut job, mock_time_extensions.mock_time.as_ref());
 
+    let submitted_request = job.request.clone();
     let handle = route_handle.submit(job);
     super::audit_mock_job_submission(
         mock_audit.as_ref().map(|Extension(audit)| audit),
@@ -101,6 +111,11 @@ pub async fn submit_request(
         &handle.id,
     );
 
+    if let Some(Extension(user)) = auth_user.as_ref() {
+        tracing::info!("event.name" = "api.job.submitted", outcome = "success", job.id = %handle.id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, polytope.request = %polytope_observability::request(&submitted_request), "job submitted");
+    } else {
+        tracing::info!("event.name" = "api.job.submitted", outcome = "success", job.id = %handle.id, polytope.request = %polytope_observability::request(&submitted_request), "job submitted");
+    }
     let location = format!("/api/v1/requests/{}", handle.id);
     (
         StatusCode::ACCEPTED,
@@ -114,33 +129,63 @@ pub async fn submit_request(
         .into_response()
 }
 
-pub async fn get_request(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> Response {
+pub async fn get_request(
+    State(state): State<Arc<AppState>>,
+    auth_user: Option<Extension<AuthUser>>,
+    Path(id): Path<String>,
+) -> Response {
     match state.bits.poll(&id, Some(POLL_TIMEOUT)).await {
-        PollOutcome::Pending { id } => (
-            StatusCode::ACCEPTED,
-            Json(Queued {
-                status: "queued",
-                id,
-                message: "Request is being processed",
-            }),
-        )
-            .into_response(),
-        PollOutcome::NotFound => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "request not found"})),
-        )
-            .into_response(),
-        PollOutcome::JobLost => (
-            StatusCode::GONE,
-            Json(json!({"error": "request state expired or was lost"})),
-        )
-            .into_response(),
+        PollOutcome::Pending { id } => {
+            if let Some(Extension(user)) = auth_user.as_ref() {
+                tracing::debug!("event.name" = "api.job.poll.pending", outcome = "success", job.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, "job poll pending");
+            } else {
+                tracing::debug!("event.name" = "api.job.poll.pending", outcome = "success", job.id = %id, "job poll pending");
+            }
+            (
+                StatusCode::ACCEPTED,
+                Json(Queued {
+                    status: "queued",
+                    id,
+                    message: "Request is being processed",
+                }),
+            )
+                .into_response()
+        }
+        PollOutcome::NotFound => {
+            if let Some(Extension(user)) = auth_user.as_ref() {
+                tracing::debug!("event.name" = "api.job.poll.failed", outcome = "error", job.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, reason = "not_found", "job poll failed");
+            } else {
+                tracing::debug!("event.name" = "api.job.poll.failed", outcome = "error", job.id = %id, reason = "not_found", "job poll failed");
+            }
+            (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "request not found"})),
+            )
+                .into_response()
+        }
+        PollOutcome::JobLost => {
+            if let Some(Extension(user)) = auth_user.as_ref() {
+                tracing::warn!("event.name" = "api.job.poll.failed", outcome = "error", job.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, reason = "job_lost", "job poll failed");
+            } else {
+                tracing::warn!("event.name" = "api.job.poll.failed", outcome = "error", job.id = %id, reason = "job_lost", "job poll failed");
+            }
+            (
+                StatusCode::GONE,
+                Json(json!({"error": "request state expired or was lost"})),
+            )
+                .into_response()
+        }
         PollOutcome::Ready(result) => match result {
             JobResult::Success {
                 content_type,
                 size,
                 stream,
             } => {
+                if let Some(Extension(user)) = auth_user.as_ref() {
+                    tracing::info!("event.name" = "api.job.poll.completed", outcome = "success", job.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, content_length = size, "job poll completed");
+                } else {
+                    tracing::info!("event.name" = "api.job.poll.completed", outcome = "success", job.id = %id, content_length = size, "job poll completed");
+                }
                 if size >= 0 {
                     Response::builder()
                         .status(StatusCode::OK)
@@ -163,11 +208,18 @@ pub async fn get_request(State(state): State<Arc<AppState>>, Path(id): Path<Stri
                         .unwrap()
                 }
             }
-            JobResult::Redirect { location, message } => Response::builder()
-                .status(StatusCode::SEE_OTHER)
-                .header(header::LOCATION, location)
-                .body(Body::from(message))
-                .unwrap(),
+            JobResult::Redirect { location, message } => {
+                if let Some(Extension(user)) = auth_user.as_ref() {
+                    tracing::info!("event.name" = "api.job.poll.completed", outcome = "success", job.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, "job poll completed");
+                } else {
+                    tracing::info!("event.name" = "api.job.poll.completed", outcome = "success", job.id = %id, "job poll completed");
+                }
+                Response::builder()
+                    .status(StatusCode::SEE_OTHER)
+                    .header(header::LOCATION, location)
+                    .body(Body::from(message))
+                    .unwrap()
+            }
             JobResult::Error { message } => (
                 StatusCode::BAD_REQUEST,
                 Json(json!({"status": "failed", "message": message})),
@@ -184,6 +236,11 @@ pub async fn get_request(State(state): State<Arc<AppState>>, Path(id): Path<Stri
                 "retryable": true,
             })),
             JobResult::Cancelled => {
+                if let Some(Extension(user)) = auth_user.as_ref() {
+                    tracing::info!("event.name" = "api.job.poll.cancelled", outcome = "cancelled", job.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, "job poll cancelled");
+                } else {
+                    tracing::info!("event.name" = "api.job.poll.cancelled", outcome = "cancelled", job.id = %id, "job poll cancelled");
+                }
                 (StatusCode::OK, Json(json!({"status": "cancelled"}))).into_response()
             }
             JobResult::ClientGone => (
@@ -197,9 +254,15 @@ pub async fn get_request(State(state): State<Arc<AppState>>, Path(id): Path<Stri
 
 pub async fn delete_request(
     State(state): State<Arc<AppState>>,
+    auth_user: Option<Extension<AuthUser>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     state.bits.cancel(&id);
+    if let Some(Extension(user)) = auth_user.as_ref() {
+        tracing::info!("event.name" = "api.job.cancelled", outcome = "cancelled", job.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, "job cancelled");
+    } else {
+        tracing::info!("event.name" = "api.job.cancelled", outcome = "cancelled", job.id = %id, "job cancelled");
+    }
     // The polytope-client SDK reads `messages["message"]` from the JSON
     // body of this endpoint and KeyErrors if it isn't present. The legacy
     // polytope-server included a `message` field, so keep one here for

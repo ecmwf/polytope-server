@@ -1849,6 +1849,7 @@ dependencies = [
  "kube",
  "libc",
  "mars-client",
+ "polytope-observability",
  "polytope-worker-common",
  "reqwest",
  "serde_json",
@@ -2124,6 +2125,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
 
 [[package]]
+name = "polytope-observability"
+version = "0.1.0"
+dependencies = [
+ "regex",
+ "serde",
+ "serde_json",
+ "time",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "polytope-worker-common"
 version = "0.1.0"
 dependencies = [
@@ -2135,6 +2148,7 @@ dependencies = [
  "bytes",
  "futures",
  "http-body-util",
+ "polytope-observability",
  "reqwest",
  "serde",
  "serde_json",
@@ -2143,6 +2157,7 @@ dependencies = [
  "tokio-util",
  "tower 0.5.3",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 
@@ -2933,6 +2948,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "743bd48c283afc0388f9b8827b976905fb217ad9e647fae3a379a9283c4def2c"
 dependencies = [
  "deranged",
+ "itoa",
  "num-conv",
  "powerfmt",
  "serde_core",

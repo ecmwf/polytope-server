@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use super::ResultDelivery;
+use super::{DeliveryContext, ResultDelivery, enduser_fields};
 use crate::Completion;
 
 pub(super) struct BobsPush {
@@ -17,20 +17,36 @@ impl ResultDelivery for BobsPush {
         content_encoding: Option<&str>,
         body: reqwest::Body,
         metadata: &serde_json::Value,
+        context: DeliveryContext<'_>,
     ) -> Completion {
         let buffer_full =
             metadata.get("buffer_full_output").and_then(|v| v.as_bool()) == Some(true);
         match self
-            .push(content_type, content_encoding, body, buffer_full)
+            .push(
+                content_type,
+                content_encoding,
+                body,
+                buffer_full,
+                context.job_id,
+                context.user,
+            )
             .await
         {
             Ok(location) => Completion::Redirect {
                 location,
                 message: "result available for download".to_string(),
             },
-            Err(e) => Completion::Error {
-                message: format!("delivery failed: {e}"),
-            },
+            Err(e) => {
+                let (enduser_id, enduser_realm) = enduser_fields(context.user);
+                if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
+                    tracing::error!("event.name" = "worker.delivery.failed", outcome = "error", job.id = %context.job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, error = %e, "result delivery failed");
+                } else {
+                    tracing::error!("event.name" = "worker.delivery.failed", outcome = "error", job.id = %context.job_id, error = %e, "result delivery failed");
+                }
+                Completion::Error {
+                    message: format!("delivery failed: {e}"),
+                }
+            }
         }
     }
 }
@@ -42,6 +58,8 @@ impl BobsPush {
         content_encoding: Option<&str>,
         body: reqwest::Body,
         write_locked: bool,
+        job_id: &str,
+        user: &serde_json::Value,
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let mut create_body = serde_json::json!({
             "content_type": content_type,
@@ -53,6 +71,7 @@ impl BobsPush {
         let create_resp = self
             .create_client
             .put(format!("{}/create", self.api_base))
+            .header("X-Polytope-Job-Id", job_id)
             .json(&create_body)
             .send()
             .await?;
@@ -77,6 +96,7 @@ impl BobsPush {
         let write_resp = self
             .body_client
             .post(format!("{}/write/{}/0", write_base, key))
+            .header("X-Polytope-Job-Id", job_id)
             .body(body)
             .send()
             .await?;
@@ -87,6 +107,7 @@ impl BobsPush {
         let complete_resp = self
             .body_client
             .post(format!("{}/complete/{}", write_base, key))
+            .header("X-Polytope-Job-Id", job_id)
             .send()
             .await?;
         if !complete_resp.status().is_success() {
@@ -97,7 +118,12 @@ impl BobsPush {
             .as_str()
             .ok_or("missing read_url in response")?
             .to_string();
-        tracing::info!(key = %key, read_url = %read_url, "result pushed to BOBS");
+        let (enduser_id, enduser_realm) = enduser_fields(user);
+        if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
+            tracing::debug!("event.name" = "worker.delivery.completed", outcome = "success", job.id = %job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, bobs.key = %key, read_url = %read_url, "result pushed to BOBS");
+        } else {
+            tracing::debug!("event.name" = "worker.delivery.completed", outcome = "success", job.id = %job_id, bobs.key = %key, read_url = %read_url, "result pushed to BOBS");
+        }
         Ok(read_url)
     }
 }
@@ -108,7 +134,7 @@ mod tests {
     use axum::{
         Router,
         extract::{Path, State},
-        http::StatusCode,
+        http::{HeaderMap, StatusCode},
         routing::{post, put},
     };
     use std::sync::{Arc, Mutex};
@@ -118,14 +144,26 @@ mod tests {
         created_keys: Mutex<Vec<String>>,
         written_data: Mutex<Vec<u8>>,
         completed: Mutex<bool>,
+        job_headers: Mutex<Vec<String>>,
+    }
+
+    fn record_job_header(target: &Mutex<Vec<String>>, headers: &HeaderMap) {
+        let value = headers
+            .get("x-polytope-job-id")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        target.lock().unwrap().push(value);
     }
 
     async fn mock_create(
+        headers: HeaderMap,
         State(state): State<Arc<BobsState>>,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
         let key = "test-key-123".to_string();
         let read_url = format!("http://public.example.com/download-0/{key}");
         let write_url = state.base_url.clone();
+        record_job_header(&state.job_headers, &headers);
         state.created_keys.lock().unwrap().push(key.clone());
         (
             StatusCode::CREATED,
@@ -138,8 +176,10 @@ mod tests {
     async fn mock_write(
         Path((_key, _offset)): Path<(String, u64)>,
         State(state): State<Arc<BobsState>>,
+        headers: HeaderMap,
         body: axum::body::Body,
     ) -> StatusCode {
+        record_job_header(&state.job_headers, &headers);
         let data: Vec<u8> = axum::body::to_bytes(body, usize::MAX)
             .await
             .unwrap()
@@ -150,8 +190,10 @@ mod tests {
 
     async fn mock_complete(
         Path(_key): Path<String>,
+        headers: HeaderMap,
         State(state): State<Arc<BobsState>>,
     ) -> StatusCode {
+        record_job_header(&state.job_headers, &headers);
         *state.completed.lock().unwrap() = true;
         StatusCode::OK
     }
@@ -167,6 +209,7 @@ mod tests {
             created_keys: Mutex::new(vec![]),
             written_data: Mutex::new(vec![]),
             completed: Mutex::new(false),
+            job_headers: Mutex::new(vec![]),
         });
         let app = Router::new()
             .route("/create", put(mock_create))
@@ -192,6 +235,10 @@ mod tests {
                 None,
                 reqwest::Body::from(data.clone()),
                 &serde_json::json!({}),
+                DeliveryContext {
+                    job_id: "job-1",
+                    user: &serde_json::json!({}),
+                },
             )
             .await;
 
@@ -207,6 +254,10 @@ mod tests {
         }
         assert!(*state.completed.lock().unwrap());
         assert_eq!(*state.written_data.lock().unwrap(), data);
+        assert_eq!(
+            *state.job_headers.lock().unwrap(),
+            vec!["job-1", "job-1", "job-1"]
+        );
     }
 
     struct StreamingBobsState {
@@ -297,6 +348,10 @@ mod tests {
                 None,
                 body,
                 &serde_json::json!({}),
+                DeliveryContext {
+                    job_id: "job-1",
+                    user: &serde_json::json!({}),
+                },
             )
             .await;
 
@@ -335,6 +390,10 @@ mod tests {
                 None,
                 reqwest::Body::from(vec![]),
                 &serde_json::json!({}),
+                DeliveryContext {
+                    job_id: "job-1",
+                    user: &serde_json::json!({}),
+                },
             )
             .await;
 
@@ -380,6 +439,10 @@ mod tests {
                 None,
                 reqwest::Body::from(vec![]),
                 &serde_json::json!({}),
+                DeliveryContext {
+                    job_id: "job-1",
+                    user: &serde_json::json!({}),
+                },
             )
             .await;
 

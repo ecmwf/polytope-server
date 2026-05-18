@@ -159,14 +159,26 @@ async fn forecast(
             &state.admin_bypass_roles,
         );
         super::set_job_mock_time_metadata(&mut job, mock_time_extensions.mock_time.as_ref());
+        let submitted_request = job.request.clone();
         let id = match state.bits.submit(job) {
             SubmitOutcome::Accepted(handle) => handle.id,
             SubmitOutcome::Overloaded => {
+                tracing::warn!(
+                    "event.name" = "api.job.rejected",
+                    outcome = "overloaded",
+                    reason = "broker_overloaded",
+                    "openmeteo job rejected"
+                );
                 return super::overloaded_response(response::build_error_response(
                     "broker at capacity",
                 ));
             }
         };
+        if let Some(Extension(user)) = auth_user.as_ref() {
+            tracing::info!("event.name" = "api.job.submitted", outcome = "success", job.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, polytope.request = %polytope_observability::request(&submitted_request), api = "openmeteo", "openmeteo job submitted");
+        } else {
+            tracing::info!("event.name" = "api.job.submitted", outcome = "success", job.id = %id, polytope.request = %polytope_observability::request(&submitted_request), api = "openmeteo", "openmeteo job submitted");
+        }
         super::audit_mock_job_submission(mock_audit.as_ref().map(|Extension(audit)| audit), &id);
         super::audit_mock_time_job_submission(mock_time_extensions.mock_time_audit.as_ref(), &id);
         submitted.push((group, param_list, id));
@@ -289,10 +301,23 @@ async fn forecast(
         hourly_results: &hourly_results,
     });
 
+    tracing::info!(
+        "event.name" = "api.openmeteo.processed",
+        outcome = "success",
+        duration_ms = started.elapsed().as_millis() as u64,
+        "openmeteo request processed"
+    );
     (StatusCode::OK, Json(payload)).into_response()
 }
 
 fn error_response(status: StatusCode, reason: &str) -> Response {
+    tracing::warn!(
+        "event.name" = "api.openmeteo.failed",
+        outcome = "error",
+        status = status.as_u16() as u64,
+        reason,
+        "openmeteo request failed"
+    );
     (status, Json(response::build_error_response(reason))).into_response()
 }
 

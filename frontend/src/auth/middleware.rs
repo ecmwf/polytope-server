@@ -22,7 +22,18 @@ use super::mock_time::{
 use super::{AuthError, AuthUser, is_admin_bypass_user};
 use crate::state::AppState;
 
+fn log_auth_rejected(status: StatusCode, reason: &str) {
+    tracing::warn!(
+        "event.name" = "api.auth.rejected",
+        outcome = "rejected",
+        status = status.as_u16() as u64,
+        reason,
+        "authentication rejected"
+    );
+}
+
 fn unauthorized(message: &str) -> Response {
+    log_auth_rejected(StatusCode::UNAUTHORIZED, message);
     (
         StatusCode::UNAUTHORIZED,
         [(header::WWW_AUTHENTICATE, "Bearer")],
@@ -32,10 +43,12 @@ fn unauthorized(message: &str) -> Response {
 }
 
 fn bad_request(message: &str) -> Response {
+    log_auth_rejected(StatusCode::BAD_REQUEST, message);
     (StatusCode::BAD_REQUEST, Json(json!({"error": message}))).into_response()
 }
 
 fn forbidden(message: &str) -> Response {
+    log_auth_rejected(StatusCode::FORBIDDEN, message);
     (StatusCode::FORBIDDEN, Json(json!({"error": message}))).into_response()
 }
 
@@ -116,7 +129,7 @@ pub async fn auth_middleware(
                     header: MOCK_TIME_HEADER,
                 };
                 tracing::info!(
-                    event = "polytope_mock_time_accepted",
+                    "event.name" = "api.auth.mock_accepted",
                     real_username = audit.real_username.as_str(),
                     real_realm = audit.real_realm.as_str(),
                     mocked_now = audit.mocked_now.as_str(),
@@ -139,7 +152,7 @@ pub async fn auth_middleware(
                     request_id,
                 };
                 tracing::info!(
-                    event = "polytope_mock_roles_accepted",
+                    "event.name" = "api.auth.mock_accepted",
                     real_username = audit.real_username.as_str(),
                     real_realm = audit.real_realm.as_str(),
                     mocked_realm = audit.mocked_realm.as_str(),
@@ -169,23 +182,35 @@ pub async fn auth_middleware(
         Err(AuthError::Unauthorized {
             message,
             www_authenticate,
-        }) => (
-            StatusCode::UNAUTHORIZED,
-            [(header::WWW_AUTHENTICATE, www_authenticate.as_str())],
-            Json(json!({"error": message})),
-        )
-            .into_response(),
-        Err(AuthError::InvalidJwt { message }) => (
-            StatusCode::UNAUTHORIZED,
-            [(header::WWW_AUTHENTICATE, "Bearer")],
-            Json(json!({"error": format!("invalid token: {}", message)})),
-        )
-            .into_response(),
-        Err(AuthError::ServiceUnavailable { message }) => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({"error": message})),
-        )
-            .into_response(),
+        }) => {
+            log_auth_rejected(
+                StatusCode::UNAUTHORIZED,
+                "auth service rejected credentials",
+            );
+            (
+                StatusCode::UNAUTHORIZED,
+                [(header::WWW_AUTHENTICATE, www_authenticate.as_str())],
+                Json(json!({"error": message})),
+            )
+                .into_response()
+        }
+        Err(AuthError::InvalidJwt { message }) => {
+            log_auth_rejected(StatusCode::UNAUTHORIZED, "invalid jwt");
+            (
+                StatusCode::UNAUTHORIZED,
+                [(header::WWW_AUTHENTICATE, "Bearer")],
+                Json(json!({"error": format!("invalid token: {}", message)})),
+            )
+                .into_response()
+        }
+        Err(AuthError::ServiceUnavailable { message }) => {
+            log_auth_rejected(StatusCode::SERVICE_UNAVAILABLE, "auth service unavailable");
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({"error": message})),
+            )
+                .into_response()
+        }
     }
 }
 

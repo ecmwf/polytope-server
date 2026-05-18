@@ -4,6 +4,23 @@ use aws_config::BehaviorVersion;
 use crate::Completion;
 use crate::delivery_config::{DeliveryConfig, DeliveryType};
 
+#[derive(Debug, Clone, Copy)]
+pub struct DeliveryContext<'a> {
+    pub job_id: &'a str,
+    pub user: &'a serde_json::Value,
+}
+
+pub(crate) fn enduser_fields(user: &serde_json::Value) -> (Option<&str>, Option<&str>) {
+    (
+        user.get("auth")
+            .and_then(|auth| auth.get("username"))
+            .and_then(|value| value.as_str()),
+        user.get("auth")
+            .and_then(|auth| auth.get("realm"))
+            .and_then(|value| value.as_str()),
+    )
+}
+
 mod bobs;
 mod s3;
 
@@ -18,6 +35,7 @@ pub trait ResultDelivery: Send + Sync {
         content_encoding: Option<&str>,
         body: reqwest::Body,
         metadata: &serde_json::Value,
+        context: DeliveryContext<'_>,
     ) -> Completion;
 }
 
@@ -105,6 +123,7 @@ impl ResultDelivery for DirectDelivery {
         content_encoding: Option<&str>,
         body: reqwest::Body,
         metadata: &serde_json::Value,
+        _context: DeliveryContext<'_>,
     ) -> Completion {
         if metadata.get("buffer_full_output").and_then(|v| v.as_bool()) == Some(true) {
             return Completion::Error {

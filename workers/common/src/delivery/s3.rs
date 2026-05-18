@@ -6,7 +6,7 @@ use aws_sdk_s3::{
 };
 use bytes::BytesMut;
 
-use super::ResultDelivery;
+use super::{DeliveryContext, ResultDelivery};
 use crate::Completion;
 
 const S3_PART_SIZE_BYTES: usize = 5 * 1024 * 1024;
@@ -27,6 +27,7 @@ impl ResultDelivery for S3Push {
         content_encoding: Option<&str>,
         body: reqwest::Body,
         _metadata: &serde_json::Value,
+        _context: DeliveryContext<'_>,
     ) -> Completion {
         match self.push(content_type, content_encoding, body).await {
             Ok(location) => Completion::Redirect {
@@ -246,6 +247,10 @@ mod tests {
                 Some("gzip"),
                 reqwest::Body::from(vec![1, 2, 3]),
                 &serde_json::json!({}),
+                DeliveryContext {
+                    job_id: "job-1",
+                    user: &serde_json::json!({}),
+                },
             )
             .await;
 

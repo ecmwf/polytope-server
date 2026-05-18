@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+polytope-observability = { path = "../../observability" }
 async-trait = "0.1"
 bytes = "1"
 clap = { version = "4", features = ["derive"] }

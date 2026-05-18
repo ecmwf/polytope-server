@@ -58,6 +58,7 @@ ARG FEATURES="metkit"
 COPY Cargo.toml Cargo.toml
 COPY Cargo.lock Cargo.lock
 COPY utils/metkit/ utils/metkit/
+COPY observability/ observability/
 COPY frontend/ frontend/
 COPY client/ client/
 COPY tests/integration/ tests/integration/

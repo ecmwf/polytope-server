@@ -5,7 +5,7 @@ use polytope_worker_common::config::{DEFAULT_CONFIG_PATH, WorkerConfigFile};
 use polytope_worker_common::{ProcessResult, Processor, WorkItem, WorkerConfig, run_worker_loop};
 use rsfdb::{FDB, request::Request};
 use tokio_stream::wrappers::ReceiverStream;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 struct FdbProcessor {
     fdb_config: String,
@@ -98,24 +98,21 @@ fn resolved_worker_concurrency(cli_value: usize) -> usize {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
+    polytope_observability::init_tracing("polytope-worker-fdb");
     let cli = Cli::parse();
     let worker_concurrency = resolved_worker_concurrency(cli.worker_concurrency);
     info!(worker_concurrency, "resolved worker concurrency");
-    let config = WorkerConfigFile::load(&cli.config_path)
-        .unwrap_or_else(|err| panic!("failed to load config at {}: {err}", cli.config_path));
+    let config = WorkerConfigFile::load(&cli.config_path).unwrap_or_else(|err| {
+        tracing::error!("event.name" = "startup.config.failed", outcome = "error", config_path = %cli.config_path, error = %err, "failed to load config");
+        std::process::exit(1);
+    });
+    tracing::info!("event.name" = "startup.config.loaded", outcome = "success", config_path = %cli.config_path, "config loaded");
 
     let fdb_section = config.section("fdb").expect("config missing 'fdb' section");
     let fdb_config =
         serde_yml::to_string(fdb_section).expect("failed to serialize fdb config section");
 
-    info!(
-        path = cli.config_path,
-        fdb_config = fdb_config.as_str(),
-        "loaded config"
-    );
+    debug!(path = cli.config_path, "loaded fdb config section");
 
     run_worker_loop(
         WorkerConfig {
