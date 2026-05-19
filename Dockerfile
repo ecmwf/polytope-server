@@ -62,8 +62,8 @@ ARG HOME_DIR=/home/polytope
 ARG developer_mode
 
 # Install build dependencies
-RUN apt update && apt install -y --no-install-recommends bash gcc libc6-dev libldap2-dev curl git \
-    && apt clean \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends bash gcc libc6-dev libldap2-dev curl git \
     && rm -rf /var/lib/apt/lists/*
 
 # Create user and group
@@ -124,30 +124,40 @@ ARG rpm_repo
 ARG mars_client_cpp_version
 ARG mars_client_c_version
 
+RUN set -eux \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN response=$(curl -s -w "%{http_code}" ${rpm_repo}) \
     && if [ "$response" = "403" ]; then echo "Unauthorized access to ${rpm_repo} "; fi
 
 RUN set -eux \
-    && curl -o stable-public.gpg.key "${rpm_repo}/private-raw-repos-config/debian/bookworm/stable/public.gpg.key" \
-    && echo "deb ${rpm_repo}/private-debian-bookworm-stable/ bookworm main" >> /etc/apt/sources.list \
-    && apt-key add stable-public.gpg.key \
+    && curl -o /tmp/stable-public.gpg.key "${rpm_repo}/private-raw-repos-config/debian/bookworm/stable/public.gpg.key" \
+    && gpg --dearmor -o /usr/share/keyrings/mars-client.gpg /tmp/stable-public.gpg.key \
+    && echo "deb [signed-by=/usr/share/keyrings/mars-client.gpg] ${rpm_repo}/private-debian-bookworm-stable/ bookworm main" > /etc/apt/sources.list.d/mars-client.list \
     && apt-get update \
-    && apt install -y libnetcdf19 liblapack3
+    && apt-get install -y --no-install-recommends libnetcdf19 liblapack3 \
+    && rm -rf /var/lib/apt/lists/* /tmp/stable-public.gpg.key
 
 FROM mars-base AS mars-base-c
 RUN set -eux \
-    && apt update \
-    && apt install -y liblapack3 mars-client=${mars_client_c_version} \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends liblapack3 mars-client=${mars_client_c_version} \
+    && rm -rf /var/lib/apt/lists/* \
     && if [ -x /opt/ecmwf/mars-client/bin/mars.bin ] && [ ! -e /opt/ecmwf/mars-client/bin/mars ]; then ln -s mars.bin /opt/ecmwf/mars-client/bin/mars; fi
 
 FROM mars-base AS mars-cloud-wrapper
 RUN set -eux \
-    && apt update \
-    && apt install -y mars-client-cloud=0.2.1 \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends mars-client-cloud=0.2.1 \
+    && rm -rf /var/lib/apt/lists/* \
     && test -x /usr/local/bin/mars
 
 FROM mars-base AS mars-base-cpp
-RUN apt update && apt install -y mars-client-cpp=${mars_client_cpp_version}
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends mars-client-cpp=${mars_client_cpp_version} \
+    && rm -rf /var/lib/apt/lists/*
 
 FROM ${mars_base_c} AS mars-c-base-final
 COPY --from=mars-cloud-wrapper /usr/local/bin/mars /usr/local/bin/mars
@@ -170,8 +180,8 @@ ARG rpm_repo
 
 USER root
 
-RUN apt update \
-    && apt install -y --no-install-recommends \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
     bash \
     curl \
     git \
