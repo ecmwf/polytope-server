@@ -1,0 +1,18 @@
+# Keep ad-hoc local build output and seed data out of image contexts when building
+# directly from this directory. The documented repository-root build uses the
+# repository-root .dockerignore mechanism, not this file.
+.git
+build/
+dist/
+.cache/
+.pytest_cache/
+__pycache__/
+*.pyc
+*.pyo
+*.swp
+*.tmp
+*.log
+seed/data/
+seed/cache/
+.data/
+data/

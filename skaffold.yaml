@@ -74,6 +74,23 @@ metadata:
   GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
   PACKAGE_NAME: test-worker
 
+# mars-fdb-mock is a self-contained MARS + FDB server for dev/ci stress
+# testing (see polytope-server/tools/mars-fdb-mock/README.md). The build
+# clones ecmwf/mars-server-bundle and pins every upstream component by SHA
+# so the image is reproducible. Override any of the *_SHA env vars to bump.
+.mars_fdb_mock_build_args: &mars_fdb_mock_build_args
+  GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+  MARS_SERVER_BUNDLE_SHA: '{{default "2786a97f" .MARS_FDB_MOCK_BUNDLE_SHA}}'
+  ECBUILD_SHA: '{{default "158ae848" .MARS_FDB_MOCK_ECBUILD_SHA}}'
+  LIBAEC_SHA: '{{default "7204505a" .MARS_FDB_MOCK_LIBAEC_SHA}}'
+  ECKIT_SHA: '{{default "9daf0377" .MARS_FDB_MOCK_ECKIT_SHA}}'
+  ECCODES_SHA: '{{default "cf28d1a6" .MARS_FDB_MOCK_ECCODES_SHA}}'
+  ODC_SHA: '{{default "424ce3dc" .MARS_FDB_MOCK_ODC_SHA}}'
+  METKIT_SHA: '{{default "b280949e" .MARS_FDB_MOCK_METKIT_SHA}}'
+  FDB5_SHA: '{{default "54bfbb4d" .MARS_FDB_MOCK_FDB5_SHA}}'
+  DHSKIT_SHA: '{{default "13c161d9" .MARS_FDB_MOCK_DHSKIT_SHA}}'
+  MARS_SERVER_SHA: '{{default "bcb1e412" .MARS_FDB_MOCK_MARS_SERVER_SHA}}'
+
 .kaniko_cache: &kaniko_cache
   repo: eccr.ecmwf.int/polytope/kaniko-cache
   cacheTTL: 480h
@@ -127,6 +144,15 @@ build:
         target: release
         buildArgs:
           <<: *test_build_args
+
+    - image: eccr.ecmwf.int/polytope/mars-fdb-mock
+      context: .
+      docker:
+        dockerfile: tools/mars-fdb-mock/Dockerfile
+        # No `target: release` — the Dockerfile has only the default
+        # `builder` and final stages; the final stage IS the runtime.
+        buildArgs:
+          <<: *mars_fdb_mock_build_args
 
   tagPolicy:
     customTemplate:
@@ -234,3 +260,16 @@ profiles:
           <<: *kaniko_common
           buildArgs:
             <<: *test_build_args
+
+      - op: remove
+        path: /build/artifacts/5/docker
+      - op: add
+        path: /build/artifacts/5/kaniko
+        value:
+          dockerfile: tools/mars-fdb-mock/Dockerfile
+          # mars-fdb-mock has no `release` target; the final stage is runtime.
+          cache: *kaniko_cache
+          skipUnusedStages: true
+          useNewRun: true
+          buildArgs:
+            <<: *mars_fdb_mock_build_args

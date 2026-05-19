@@ -1,0 +1,11 @@
+Dispatcher.queue.numberOfThreads: 2
+Dispatcher.mars.numberOfThreads: 120
+maxRequests: 10
+doubleBuffer: True
+doubleBufferSize: 20971520
+doubleBufferCount: 10
+reserveDiskSpace: False
+FileHandleIOBufferSize: 1048576
+fdbServer: True
+fdbAsyncWrite: False
+fdbDataLustreStripeHandle: False

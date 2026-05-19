@@ -1,0 +1,9 @@
+# Minimal FDB schema for the mars-fdb-mock smoke dataset.
+#
+# The surface forecast probe exposes domain=g in GRIB metadata, so domain is
+# indexed. model is omitted until real opendata seed ingestion proves it is
+# present as an indexed key.
+
+[ class=od, expver=9999, stream=oper, date, time, domain
+    [ type=fc, levtype=sfc
+        [ step, param ]]]
