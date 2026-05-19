@@ -25,6 +25,7 @@ build:
       cliFlags:
         - --secret=id=github_token,env=GITHUB_TOKEN
       buildArgs:
+        rpm_repo: '{{ .rpm_repo }}'
         ecbuild_version: '{{ default "3.14.0" .ecbuild_version }}'
         mars_client_c_bundle_ref: '{{ default "develop" .mars_client_c_bundle_ref }}'
   - image: "mars-base-cpp"
@@ -34,5 +35,6 @@ build:
       cliFlags:
         - --secret=id=github_token,env=GITHUB_TOKEN
       buildArgs:
+        rpm_repo: '{{ .rpm_repo }}'
         ecbuild_version: '{{ default "3.14.0" .ecbuild_version }}'
         mars_client_cpp_bundle_ref: '{{ default "develop-cpp" .mars_client_cpp_bundle_ref }}'

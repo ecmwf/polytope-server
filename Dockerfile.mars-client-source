@@ -203,10 +203,23 @@ RUN --mount=type=secret,id=github_token set -eu \
     && test -d /opt/ecmwf/mars-client-cpp \
     && [ "$(ls -A /opt/ecmwf/mars-client-cpp)" ]
 
+FROM debian:bookworm-slim AS mars-cloud-wrapper
+ARG rpm_repo
+
+RUN set -eux \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+    && curl -o /tmp/stable-public.gpg.key "${rpm_repo}/private-raw-repos-config/debian/bookworm/stable/public.gpg.key" \
+    && gpg --dearmor -o /usr/share/keyrings/mars-client-cloud.gpg /tmp/stable-public.gpg.key \
+    && echo "deb [signed-by=/usr/share/keyrings/mars-client-cloud.gpg] ${rpm_repo}/private-debian-bookworm-stable/ bookworm main" > /etc/apt/sources.list.d/mars-client-cloud.list \
+    && apt-get update \
+    && apt-get install -y mars-client-cloud=0.2.1 \
+    && rm -rf /var/lib/apt/lists/* /tmp/stable-public.gpg.key
+
 FROM debian:bookworm-slim AS mars-base-c
 
 COPY --from=mars-client-c-bundle-build /opt/ecmwf/mars-client /opt/ecmwf/mars-client
-COPY --from=mars-client-c-bundle-build /opt/ecmwf/mars-client/bin/mars.bin /usr/local/bin/mars
+COPY --from=mars-cloud-wrapper /usr/local/bin/mars /usr/local/bin/mars
 
 RUN set -eux \
     && test -x /usr/local/bin/mars \

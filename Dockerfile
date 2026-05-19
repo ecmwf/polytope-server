@@ -138,13 +138,19 @@ FROM mars-base AS mars-base-c
 RUN set -eux \
     && apt update \
     && apt install -y liblapack3 mars-client=${mars_client_c_version} \
-    && if [ -x /opt/ecmwf/mars-client/bin/mars.bin ] && [ ! -e /opt/ecmwf/mars-client/bin/mars ]; then ln -s mars.bin /opt/ecmwf/mars-client/bin/mars; fi \
-    && cp /opt/ecmwf/mars-client/bin/mars /usr/local/bin/mars
+    && if [ -x /opt/ecmwf/mars-client/bin/mars.bin ] && [ ! -e /opt/ecmwf/mars-client/bin/mars ]; then ln -s mars.bin /opt/ecmwf/mars-client/bin/mars; fi
+
+FROM mars-base AS mars-cloud-wrapper
+RUN set -eux \
+    && apt update \
+    && apt install -y mars-client-cloud=0.2.1 \
+    && test -x /usr/local/bin/mars
 
 FROM mars-base AS mars-base-cpp
 RUN apt update && apt install -y mars-client-cpp=${mars_client_cpp_version}
 
 FROM ${mars_base_c} AS mars-c-base-final
+COPY --from=mars-cloud-wrapper /usr/local/bin/mars /usr/local/bin/mars
 
 FROM ${mars_base_cpp} AS mars-cpp-base-final
 
