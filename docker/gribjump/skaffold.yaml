@@ -7,11 +7,14 @@ build:
     concurrency: 1
   tagPolicy:
     customTemplate:
-      template: "{{.PREFIX}}{{.GIT_TAG}}"
+      template: "{{.PREFIX}}gj-{{.GRIBJUMP_VERSION}}-{{.GIT_TAG}}"
       components:
       - name: PREFIX
         envTemplate:
           template: '{{default "" .PREFIX}}'
+      - name: GRIBJUMP_VERSION
+        envTemplate:
+          template: '{{ default "0.12.0" .gribjump_version | replace "/" "-" | replace ":" "-" | replace "@" "-" | replace "+" "-" | trunc 40 }}'
       - name: GIT_TAG
         gitCommit:
           ignoreChanges: false
@@ -19,8 +22,9 @@ build:
     - linux/amd64
   artifacts:
   - image: "gribjump-source-worker-python"
+    context: .
     docker:
-      dockerfile: Dockerfile.gribjump-source
+      dockerfile: docker/gribjump/Dockerfile
       target: gribjump-source-worker-python
       buildArgs:
         ecbuild_version: '{{ default "3.14.0" .ecbuild_version }}'

@@ -2,7 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+DEFAULT_CONFIG="${SCRIPT_DIR}/skaffold.yaml"
 
 DEPS_FILE="${DEPS_FILE:-${SCRIPT_DIR}/deps.env}"
 if [ ! -f "${DEPS_FILE}" ]; then
@@ -22,8 +23,15 @@ export eccodes_version="${eccodes_version:-${ECCODES_VERSION}}"
 export metkit_version="${metkit_version:-${METKIT_VERSION}}"
 export fdb_version="${fdb_version:-${FDB_VERSION}}"
 export gribjump_version="${gribjump_version:-${GRIBJUMP_VERSION}}"
-export mars_client_c_bundle_ref="${mars_client_c_bundle_ref:-${MARS_CLIENT_C_BUNDLE_REF}}"
-export mars_client_cpp_bundle_ref="${mars_client_cpp_bundle_ref:-${MARS_CLIENT_CPP_BUNDLE_REF}}"
+
+for arg in "$@"; do
+  case "$arg" in
+    -f|--filename|-f=*|--filename=*)
+      echo "docker/gribjump/skaffold.sh is GribJump-only and always uses ${DEFAULT_CONFIG}; run skaffold directly for other configs." >&2
+      exit 2
+      ;;
+  esac
+done
 
 cd "${REPO_DIR}"
-exec skaffold "$@"
+exec skaffold -f "${DEFAULT_CONFIG}" "$@"

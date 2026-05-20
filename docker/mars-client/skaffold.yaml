@@ -1,0 +1,112 @@
+apiVersion: skaffold/v4beta10
+kind: Config
+
+build:
+  local:
+    useBuildkit: True
+    concurrency: 1
+  tagPolicy:
+    customTemplate:
+      template: "{{.PREFIX}}mc-{{.MARS_CLIENT_C_REF}}-mcpp-{{.MARS_CLIENT_CPP_REF}}-{{.GIT_TAG}}"
+      components:
+      - name: PREFIX
+        envTemplate:
+          template: '{{default "" .PREFIX}}'
+      - name: MARS_CLIENT_C_REF
+        envTemplate:
+          template: '{{ default "develop" .mars_client_c_bundle_ref | replace "/" "-" | replace ":" "-" | replace "@" "-" | replace "+" "-" | trunc 24 }}'
+      - name: MARS_CLIENT_CPP_REF
+        envTemplate:
+          template: '{{ default "develop-cpp" .mars_client_cpp_bundle_ref | replace "/" "-" | replace ":" "-" | replace "@" "-" | replace "+" "-" | trunc 24 }}'
+      - name: GIT_TAG
+        gitCommit:
+          ignoreChanges: false
+  platforms:
+    - linux/amd64
+  artifacts:
+  - image: "mars-base-c"
+    context: .
+    docker:
+      dockerfile: docker/mars-client/Dockerfile
+      target: mars-base-c
+      cliFlags:
+        - --secret=id=github_token,env=GITHUB_TOKEN
+      buildArgs:
+        rpm_repo: '{{ .rpm_repo }}'
+        ecbuild_version: '{{ default "3.14.2" .ecbuild_version }}'
+        mars_client_c_bundle_ref: '{{ default "develop" .mars_client_c_bundle_ref }}'
+  - image: "mars-base-cpp"
+    context: .
+    docker:
+      dockerfile: docker/mars-client/Dockerfile
+      target: mars-base-cpp
+      cliFlags:
+        - --secret=id=github_token,env=GITHUB_TOKEN
+      buildArgs:
+        rpm_repo: '{{ .rpm_repo }}'
+        ecbuild_version: '{{ default "3.14.2" .ecbuild_version }}'
+        mars_client_cpp_bundle_ref: '{{ default "develop-cpp" .mars_client_cpp_bundle_ref }}'
+
+profiles:
+  - name: mars-c
+    patches:
+      - op: replace
+        path: /build/artifacts
+        value:
+          - image: "mars-base-c"
+            context: .
+            docker:
+              dockerfile: docker/mars-client/Dockerfile
+              target: mars-base-c
+              cliFlags:
+                - --secret=id=github_token,env=GITHUB_TOKEN
+              buildArgs:
+                rpm_repo: '{{ .rpm_repo }}'
+                ecbuild_version: '{{ default "3.14.2" .ecbuild_version }}'
+                mars_client_c_bundle_ref: '{{ default "develop" .mars_client_c_bundle_ref }}'
+      - op: replace
+        path: /build/tagPolicy/customTemplate/template
+        value: "{{.PREFIX}}mc-{{.MARS_CLIENT_C_REF}}-{{.GIT_TAG}}"
+      - op: replace
+        path: /build/tagPolicy/customTemplate/components
+        value:
+          - name: PREFIX
+            envTemplate:
+              template: '{{default "" .PREFIX}}'
+          - name: MARS_CLIENT_C_REF
+            envTemplate:
+              template: '{{ default "develop" .mars_client_c_bundle_ref | replace "/" "-" | replace ":" "-" | replace "@" "-" | replace "+" "-" | trunc 40 }}'
+          - name: GIT_TAG
+            gitCommit:
+              ignoreChanges: false
+  - name: mars-cpp
+    patches:
+      - op: replace
+        path: /build/artifacts
+        value:
+          - image: "mars-base-cpp"
+            context: .
+            docker:
+              dockerfile: docker/mars-client/Dockerfile
+              target: mars-base-cpp
+              cliFlags:
+                - --secret=id=github_token,env=GITHUB_TOKEN
+              buildArgs:
+                rpm_repo: '{{ .rpm_repo }}'
+                ecbuild_version: '{{ default "3.14.2" .ecbuild_version }}'
+                mars_client_cpp_bundle_ref: '{{ default "develop-cpp" .mars_client_cpp_bundle_ref }}'
+      - op: replace
+        path: /build/tagPolicy/customTemplate/template
+        value: "{{.PREFIX}}mcpp-{{.MARS_CLIENT_CPP_REF}}-{{.GIT_TAG}}"
+      - op: replace
+        path: /build/tagPolicy/customTemplate/components
+        value:
+          - name: PREFIX
+            envTemplate:
+              template: '{{default "" .PREFIX}}'
+          - name: MARS_CLIENT_CPP_REF
+            envTemplate:
+              template: '{{ default "develop-cpp" .mars_client_cpp_bundle_ref | replace "/" "-" | replace ":" "-" | replace "@" "-" | replace "+" "-" | trunc 40 }}'
+          - name: GIT_TAG
+            gitCommit:
+              ignoreChanges: false

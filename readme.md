@@ -27,26 +27,50 @@ Through common abstraction layers, these components speak to various other servi
 ## Build and deploy
 
 Build images from this repository with Skaffold. Site-specific and
-secret-bearing values live in `skaffold.env`; source-build dependency pins live
-in `env_build/deps.env` so the same GribJump/FDB environment can be built inside
-or outside Docker.
+secret-bearing values live in `skaffold.env`; GribJump/FDB source-build
+dependency pins live in `docker/gribjump/deps.env` so the same bundle can be
+built inside or outside Docker.
 
 ```bash
 # Create skaffold.env with SKAFFOLD_DEFAULT_REPO, rpm_repo,
 # mars_config_repo, and mars_config_branch.
-PREFIX=dev_ env_build/skaffold-with-deps.sh build
+PREFIX=dev_ skaffold build
 ```
 
-The default worker build keeps the existing apt-based MARS path. That path now
-defaults to `mars-client=6.33.20.2` and `mars-client-cpp=7.1.9.1`, while still
-allowing the versions to be overridden through Skaffold build args.
+With the default settings, the worker expects the helper images from
+`docker/mars-client/` and `docker/gribjump/` to exist already. Build those
+first, or override the worker modes to `off`/`rpm` as needed before running the
+main `skaffold build`.
+
+The worker now wires its optional dependencies with explicit per-component mode
+variables:
+
+- `worker_mars_c_mode=off|rpm|image`
+- `worker_mars_c_image=<image-ref>`
+- `worker_mars_cpp_mode=off|rpm|image`
+- `worker_mars_cpp_image=<image-ref>`
+- `worker_gribjump_mode=off|image`
+- `worker_gribjump_image=<image-ref>`
+
+All three components default to `image` mode. In that default mode, the worker
+will derive helper image references automatically from `SKAFFOLD_DEFAULT_REPO`
+(when set) plus the same tag patterns used by the dedicated helper Skaffold
+configs. If `SKAFFOLD_DEFAULT_REPO` is unset, the worker falls back to local
+image names with the same computed tags.
+
+The local rpm-backed MARS path is still available through `worker_mars_c_mode`
+and `worker_mars_cpp_mode`. Those stages install `mars-client=6.33.20.2` and
+`mars-client-cpp=7.1.9.1` by default, while still allowing the versions to be
+overridden through Skaffold build args. GribJump does not advertise an rpm
+mode; invalid mode values fail the worker build clearly.
 
 To build publishable source-built replacement base images for the C and C++
-MARS clients:
+MARS clients, use the dedicated config under `docker/mars-client/`:
 
 ```bash
-GITHUB_TOKEN="$(gh auth token)" \
-  PREFIX=dev_ env_build/skaffold-with-deps.sh build -f skaffold.mars-client.yaml
+PREFIX=dev_ docker/mars-client/skaffold.sh build -p mars-c
+
+PREFIX=dev_ docker/mars-client/skaffold.sh build -p mars-cpp
 ```
 
 These images source-build the C and C++ MARS clients from
@@ -55,41 +79,69 @@ These images source-build the C and C++ MARS clients from
 `mars-base-cpp` provides `/opt/ecmwf/mars-client-cpp`.
 The source build uses a BuildKit secret backed by `GITHUB_TOKEN` so private
 GitHub dependencies can be fetched without baking the token into the final
-image.
+image. `docker/mars-client/skaffold.sh` runs from the repository root and will
+populate `GITHUB_TOKEN` from `gh auth token` when needed.
 
 To build the publishable source-built GribJump/FDB image that the worker can
-copy from:
+copy from, use the dedicated bundle config under `docker/gribjump/`:
 
 ```bash
-PREFIX=dev_ env_build/skaffold-with-deps.sh build -f skaffold.gribjump-source.yaml
+PREFIX=dev_ docker/gribjump/skaffold.sh build
 ```
 
 This image builds the source bundle into `/opt/polytope/gribjump-source` and
 the worker-installable wheels into `/opt/polytope/gribjump-source-wheels`.
+`docker/gribjump/skaffold.sh` is GribJump-only: it always runs
+`skaffold -f docker/gribjump/skaffold.yaml` from the repository root. Because
+`docker/gribjump/skaffold.yaml` sets `context: .`, the Docker build context is
+the whole `polytope-server/` tree.
 
-The main worker build resolves `mars_base_c` and `mars_base_cpp` like this:
+For a default image-mode worker build, the usual order is:
 
-- `1`: use the existing local apt-backed stage (`mars-base-c` or `mars-base-cpp`)
-- empty or unset: use `blank-base`
-- any other value: pass it through as an external image reference
-
-`gribjump_source_base` should be either unset or an explicit image reference.
+```bash
+PREFIX=dev_ docker/mars-client/skaffold.sh build -p mars-c
+PREFIX=dev_ docker/mars-client/skaffold.sh build -p mars-cpp
+PREFIX=dev_ docker/gribjump/skaffold.sh build
+PREFIX=dev_ skaffold build
+```
 
 To make the worker consume previously built source-built replacements,
-override `mars_base_c`, `mars_base_cpp`, and `gribjump_source_base` directly:
+override the `worker_*_image` values directly while keeping the matching mode in
+`image`:
 
 ```bash
 PREFIX=dev_ \
-  mars_base_c=registry.example/mars-base-c:tag \
-  mars_base_cpp=registry.example/mars-base-cpp:tag \
-  gribjump_source_base=registry.example/gribjump-source-worker-python:tag \
-  env_build/skaffold-with-deps.sh build
+  worker_mars_c_mode=image \
+  worker_mars_c_image=registry.example/mars-base-c:tag \
+  worker_mars_cpp_mode=image \
+  worker_mars_cpp_image=registry.example/mars-base-cpp:tag \
+  worker_gribjump_mode=image \
+  worker_gribjump_image=registry.example/gribjump-source-worker-python:tag \
+  skaffold build
+```
+
+To switch components off independently:
+
+```bash
+PREFIX=dev_ \
+  worker_mars_c_mode=off \
+  worker_mars_cpp_mode=off \
+  worker_gribjump_mode=off \
+  skaffold build
+```
+
+To keep the local rpm-backed MARS path while disabling GribJump:
+
+```bash
+PREFIX=dev_ \
+  worker_mars_c_mode=rpm \
+  worker_mars_cpp_mode=rpm \
+  worker_gribjump_mode=off \
+  skaffold build
 ```
 
 This keeps the source-built path optional while reusing the same worker copy
-contract as the current apt-based and source-built stages. Leave
-`gribjump_source_base` unset to skip copying GribJump into the worker, or set it
-to the exact image tag produced by `skaffold build -f skaffold.gribjump-source.yaml`.
+contract across the blank, local rpm-backed, and helper-image paths.
 
 Use `skaffold build --file-output=/tmp/builds.json` or `skaffold build -q` when
 you need the exact published image references for a later worker build.
@@ -97,8 +149,8 @@ you need the exact published image references for a later worker build.
 To build the same source GribJump/FDB environment outside Docker:
 
 ```bash
-env_build/build.sh
-source env_build/install/profile
+docker/gribjump/build.sh
+source docker/gribjump/install/profile
 ```
 
 Deployments are managed from `polytope-config`, for example:

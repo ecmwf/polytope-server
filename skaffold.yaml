@@ -8,9 +8,11 @@ kind: Config
 # - mars_config_repo: The URL of the MARS configuration repository
 # - mars_config_branch: The branch of the MARS configuration repository to use
 #
-# Source-built GribJump/FDB dependency pins live in env_build/deps.env. Use
-# env_build/skaffold-with-deps.sh build so Docker and local env_build/build.sh
-# consume the same versions.
+# Source-built GribJump/FDB dependency pins live in docker/gribjump/deps.env.
+# docker/gribjump/skaffold.sh targets the dedicated
+# docker/gribjump/skaffold.yaml build, while this main config uses the normal
+# Skaffold entrypoint. By default the worker expects the helper images produced
+# by docker/gribjump/skaffold.sh and docker/mars-client/skaffold.sh.
 
 
 build:
@@ -50,8 +52,11 @@ build:
         developer_mode: '{{ default "false" .developer_mode }}'
         mars_client_c_version: '{{ default "6.33.20.2" .mars_client_c_version }}'
         mars_client_cpp_version: '{{ default "7.1.9.1" .mars_client_cpp_version }}'
-        mars_base_c: '{{ if eq (default "" .mars_base_c) "1" }}mars-base-c{{ else if eq (default "" .mars_base_c) "" }}blank-base{{ else }}{{ .mars_base_c }}{{ end }}'
-        mars_base_cpp: '{{ if eq (default "" .mars_base_cpp) "1" }}mars-base-cpp{{ else if eq (default "" .mars_base_cpp) "" }}blank-base{{ else }}{{ .mars_base_cpp }}{{ end }}'
-        gribjump_source_base: '{{ default "blank-base" .gribjump_source_base }}'
+        worker_mars_c_mode: '{{ default "image" .worker_mars_c_mode }}'
+        worker_mars_c_image: '{{ if eq (default "image" .worker_mars_c_mode) "off" }}blank-base{{ else if eq (default "image" .worker_mars_c_mode) "rpm" }}mars-rpm-c-with-wrapper{{ else if eq (default "image" .worker_mars_c_mode) "image" }}{{ if .worker_mars_c_image }}{{ .worker_mars_c_image }}{{ else }}{{ if .SKAFFOLD_DEFAULT_REPO }}{{ .SKAFFOLD_DEFAULT_REPO }}/{{ end }}mars-base-c:{{ default "" .PREFIX }}mc-{{ default "develop" .mars_client_c_bundle_ref | replace "/" "-" | replace ":" "-" | replace "@" "-" | replace "+" "-" | trunc 40 }}-{{ cmd "bash" "-c" "git describe --tags --always --dirty" }}{{ end }}{{ else }}blank-base{{ end }}'
+        worker_mars_cpp_mode: '{{ default "image" .worker_mars_cpp_mode }}'
+        worker_mars_cpp_image: '{{ if eq (default "image" .worker_mars_cpp_mode) "off" }}blank-base{{ else if eq (default "image" .worker_mars_cpp_mode) "rpm" }}mars-rpm-cpp{{ else if eq (default "image" .worker_mars_cpp_mode) "image" }}{{ if .worker_mars_cpp_image }}{{ .worker_mars_cpp_image }}{{ else }}{{ if .SKAFFOLD_DEFAULT_REPO }}{{ .SKAFFOLD_DEFAULT_REPO }}/{{ end }}mars-base-cpp:{{ default "" .PREFIX }}mcpp-{{ default "develop-cpp" .mars_client_cpp_bundle_ref | replace "/" "-" | replace ":" "-" | replace "@" "-" | replace "+" "-" | trunc 40 }}-{{ cmd "bash" "-c" "git describe --tags --always --dirty" }}{{ end }}{{ else }}blank-base{{ end }}'
+        worker_gribjump_mode: '{{ default "image" .worker_gribjump_mode }}'
+        worker_gribjump_image: '{{ if eq (default "image" .worker_gribjump_mode) "off" }}blank-base{{ else if eq (default "image" .worker_gribjump_mode) "image" }}{{ if .worker_gribjump_image }}{{ .worker_gribjump_image }}{{ else }}{{ if .SKAFFOLD_DEFAULT_REPO }}{{ .SKAFFOLD_DEFAULT_REPO }}/{{ end }}gribjump-source-worker-python:{{ default "" .PREFIX }}gj-{{ default "0.12.0" .gribjump_version | replace "/" "-" | replace ":" "-" | replace "@" "-" | replace "+" "-" | trunc 40 }}-{{ cmd "bash" "-c" "git describe --tags --always --dirty" }}{{ end }}{{ else }}blank-base{{ end }}'
       # cliFlags: 
       #   - --no-cache # for debug purposes

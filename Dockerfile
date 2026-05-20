@@ -18,9 +18,12 @@
 ## does it submit to any jurisdiction.
 ##
 
-ARG mars_base_c=blank-base
-ARG mars_base_cpp=blank-base
-ARG gribjump_source_base=blank-base
+ARG worker_mars_c_mode=image
+ARG worker_mars_c_image=blank-base
+ARG worker_mars_cpp_mode=image
+ARG worker_mars_cpp_image=blank-base
+ARG worker_gribjump_mode=image
+ARG worker_gribjump_image=blank-base
 
 #######################################################
 #           P Y T H O N   W H E E L H O U S E
@@ -140,7 +143,7 @@ RUN set -eux \
     && apt-get install -y --no-install-recommends libnetcdf19 liblapack3 \
     && rm -rf /var/lib/apt/lists/* /tmp/stable-public.gpg.key
 
-FROM mars-base AS mars-base-c
+FROM mars-base AS mars-rpm-c
 RUN set -eux \
     && apt-get update \
     && apt-get install -y --no-install-recommends liblapack3 mars-client=${mars_client_c_version} \
@@ -154,17 +157,19 @@ RUN set -eux \
     && rm -rf /var/lib/apt/lists/* \
     && test -x /usr/local/bin/mars
 
-FROM mars-base AS mars-base-cpp
+FROM mars-base AS mars-rpm-cpp
 RUN apt-get update \
     && apt-get install -y --no-install-recommends mars-client-cpp=${mars_client_cpp_version} \
     && rm -rf /var/lib/apt/lists/*
 
-FROM ${mars_base_c} AS mars-c-base-final
+FROM mars-rpm-c AS mars-rpm-c-with-wrapper
 COPY --from=mars-cloud-wrapper /usr/local/bin/mars /usr/local/bin/mars
 
-FROM ${mars_base_cpp} AS mars-cpp-base-final
+FROM ${worker_mars_c_image} AS worker-mars-c-final
 
-FROM ${gribjump_source_base} AS source-gribjump-base-final
+FROM ${worker_mars_cpp_image} AS worker-mars-cpp-final
+
+FROM ${worker_gribjump_image} AS worker-gribjump-final
 
 
 #######################################################
@@ -177,6 +182,9 @@ FROM polytope-common AS worker
 ARG mars_config_branch
 ARG mars_config_repo
 ARG rpm_repo
+ARG worker_mars_c_mode
+ARG worker_mars_cpp_mode
+ARG worker_gribjump_mode
 
 USER root
 
@@ -197,12 +205,17 @@ RUN apt-get update \
     vim \
     && rm -rf /var/lib/apt/lists/*
 
+RUN set -eux \
+    && case "${worker_mars_c_mode}" in off|rpm|image) ;; *) echo "Invalid worker_mars_c_mode: ${worker_mars_c_mode}. Expected off, rpm, or image." >&2; exit 1 ;; esac \
+    && case "${worker_mars_cpp_mode}" in off|rpm|image) ;; *) echo "Invalid worker_mars_cpp_mode: ${worker_mars_cpp_mode}. Expected off, rpm, or image." >&2; exit 1 ;; esac \
+    && case "${worker_gribjump_mode}" in off|image) ;; *) echo "Invalid worker_gribjump_mode: ${worker_gribjump_mode}. Expected off or image." >&2; exit 1 ;; esac
+
 WORKDIR /polytope
 
 # Copy MARS-related artifacts
-COPY --chown=polytope --from=mars-cpp-base-final   /opt/ecmwf/mars-client-cpp  /opt/ecmwf/mars-client-cpp
-COPY --chown=polytope --from=mars-c-base-final     /opt/ecmwf/mars-client      /opt/ecmwf/mars-client
-COPY --chown=polytope --from=mars-c-base-final     /usr/local/bin/mars         /usr/local/bin/mars
+COPY --chown=polytope --from=worker-mars-cpp-final /opt/ecmwf/mars-client-cpp  /opt/ecmwf/mars-client-cpp
+COPY --chown=polytope --from=worker-mars-c-final   /opt/ecmwf/mars-client      /opt/ecmwf/mars-client
+COPY --chown=polytope --from=worker-mars-c-final   /usr/local/bin/mars         /usr/local/bin/mars
 
 # all of this is needed by the C client, would be nice to remove it at some point
 RUN set -eux \
@@ -217,8 +230,8 @@ ENV MARS_CONFIGS_BRANCH=${mars_config_branch}
 ENV PATH="/home/polytope/.venv/bin:/polytope/bin/:/opt/ecmwf/mars-client/bin:${PATH}"
 
 # Copy gribjump-related artifacts
-COPY --chown=polytope --from=source-gribjump-base-final /opt/polytope/gribjump-source /opt/polytope/gribjump-source
-COPY --chown=polytope --from=source-gribjump-base-final /opt/polytope/gribjump-source-wheels /tmp/gribjump-source-wheels
+COPY --chown=polytope --from=worker-gribjump-final /opt/polytope/gribjump-source /opt/polytope/gribjump-source
+COPY --chown=polytope --from=worker-gribjump-final /opt/polytope/gribjump-source-wheels /tmp/gribjump-source-wheels
 
 RUN set -eux \
     && if ls /tmp/gribjump-source-wheels/*.whl >/dev/null 2>&1; then \

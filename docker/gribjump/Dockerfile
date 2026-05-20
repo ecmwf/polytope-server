@@ -64,7 +64,7 @@ RUN set -eux \
 
 RUN python -m pip install --no-cache-dir uv cmake
 
-COPY ./env_build /env_build
+COPY ./docker/gribjump /env_build
 
 RUN set -eux \
     && mkdir -p /opt/polytope/gribjump-source-src /opt/polytope/gribjump-source-build \

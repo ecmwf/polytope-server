@@ -64,7 +64,9 @@ ARG mars_client_c_bundle_ref
 
 RUN --mount=type=secret,id=github_token set -eu \
     && token=$(cat /run/secrets/github_token) \
-    && git config --global url."https://x-access-token:${token}@github.com/".insteadOf "https://github.com/" \
+    && git config --global --add url."https://x-access-token:${token}@github.com/".insteadOf "https://github.com/" \
+    && git config --global --add url."https://x-access-token:${token}@github.com/".insteadOf "ssh://git@github.com/" \
+    && git config --global --add url."https://x-access-token:${token}@github.com/".insteadOf "git@github.com:" \
     && export INPUT_GITHUB_TOKEN="${token}" \
     && git clone https://github.com/ecmwf/mars-client-bundle.git /tmp/mars-client-c-bundle \
     && git -C /tmp/mars-client-c-bundle checkout "${mars_client_c_bundle_ref}" \
@@ -124,10 +126,9 @@ RUN --mount=type=secret,id=github_token set -eu \
     } \
     && bundle_runtime_deps "$bundle_prefix" \
     && if [ -x /opt/ecmwf/mars-client/bin/mars.bin ] && [ ! -e /opt/ecmwf/mars-client/bin/mars ]; then ln -s mars.bin /opt/ecmwf/mars-client/bin/mars; fi \
-    && if grep -R -F -- "${token}" /opt/ecmwf/mars-client >/dev/null 2>&1; then exit 1; fi \
-    && if grep -R -F -- "${token}" /tmp/mars-client-c-bundle /tmp/mars-client-c-build >/dev/null 2>&1; then exit 1; fi \
     && rm -rf /tmp/mars-client-c-bundle /tmp/mars-client-c-build \
     && rm -f /root/.gitconfig \
+    && if grep -R -F -- "${token}" /opt/ecmwf/mars-client >/dev/null 2>&1; then exit 1; fi \
     && unset token INPUT_GITHUB_TOKEN \
     && test -x /opt/ecmwf/mars-client/bin/mars
 
@@ -136,7 +137,9 @@ ARG mars_client_cpp_bundle_ref
 
 RUN --mount=type=secret,id=github_token set -eu \
     && token=$(cat /run/secrets/github_token) \
-    && git config --global url."https://x-access-token:${token}@github.com/".insteadOf "https://github.com/" \
+    && git config --global --add url."https://x-access-token:${token}@github.com/".insteadOf "https://github.com/" \
+    && git config --global --add url."https://x-access-token:${token}@github.com/".insteadOf "ssh://git@github.com/" \
+    && git config --global --add url."https://x-access-token:${token}@github.com/".insteadOf "git@github.com:" \
     && export INPUT_GITHUB_TOKEN="${token}" \
     && git clone https://github.com/ecmwf/mars-client-bundle.git /tmp/mars-client-cpp-bundle \
     && git -C /tmp/mars-client-cpp-bundle checkout "${mars_client_cpp_bundle_ref}" \
@@ -195,10 +198,9 @@ RUN --mount=type=secret,id=github_token set -eu \
         done; \
     } \
     && bundle_runtime_deps "$bundle_prefix" \
-    && if grep -R -F -- "${token}" /opt/ecmwf/mars-client-cpp >/dev/null 2>&1; then exit 1; fi \
-    && if grep -R -F -- "${token}" /tmp/mars-client-cpp-bundle /tmp/mars-client-cpp-build >/dev/null 2>&1; then exit 1; fi \
     && rm -rf /tmp/mars-client-cpp-bundle /tmp/mars-client-cpp-build \
     && rm -f /root/.gitconfig \
+    && if grep -R -F -- "${token}" /opt/ecmwf/mars-client-cpp >/dev/null 2>&1; then exit 1; fi \
     && unset token INPUT_GITHUB_TOKEN \
     && test -d /opt/ecmwf/mars-client-cpp \
     && [ "$(ls -A /opt/ecmwf/mars-client-cpp)" ]
