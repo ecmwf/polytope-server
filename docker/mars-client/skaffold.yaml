@@ -7,7 +7,7 @@ build:
     concurrency: 1
   tagPolicy:
     customTemplate:
-      template: "{{.PREFIX}}mc-{{.MARS_CLIENT_C_REF}}-mcpp-{{.MARS_CLIENT_CPP_REF}}-{{.GIT_TAG}}"
+      template: "{{.PREFIX}}mc-{{.MARS_CLIENT_C_REF}}-mcpp-{{.MARS_CLIENT_CPP_REF}}"
       components:
       - name: PREFIX
         envTemplate:
@@ -18,9 +18,6 @@ build:
       - name: MARS_CLIENT_CPP_REF
         envTemplate:
           template: '{{ default "develop-cpp" .mars_client_cpp_bundle_ref | replace "/" "-" | replace ":" "-" | replace "@" "-" | replace "+" "-" | trunc 24 }}'
-      - name: GIT_TAG
-        gitCommit:
-          ignoreChanges: false
   platforms:
     - linux/amd64
   artifacts:
@@ -66,7 +63,7 @@ profiles:
                 mars_client_c_bundle_ref: '{{ default "develop" .mars_client_c_bundle_ref }}'
       - op: replace
         path: /build/tagPolicy/customTemplate/template
-        value: "{{.PREFIX}}mc-{{.MARS_CLIENT_C_REF}}-{{.GIT_TAG}}"
+        value: "{{.PREFIX}}mc-{{.MARS_CLIENT_C_REF}}"
       - op: replace
         path: /build/tagPolicy/customTemplate/components
         value:
@@ -76,9 +73,6 @@ profiles:
           - name: MARS_CLIENT_C_REF
             envTemplate:
               template: '{{ default "develop" .mars_client_c_bundle_ref | replace "/" "-" | replace ":" "-" | replace "@" "-" | replace "+" "-" | trunc 40 }}'
-          - name: GIT_TAG
-            gitCommit:
-              ignoreChanges: false
   - name: mars-cpp
     patches:
       - op: replace
@@ -97,7 +91,7 @@ profiles:
                 mars_client_cpp_bundle_ref: '{{ default "develop-cpp" .mars_client_cpp_bundle_ref }}'
       - op: replace
         path: /build/tagPolicy/customTemplate/template
-        value: "{{.PREFIX}}mcpp-{{.MARS_CLIENT_CPP_REF}}-{{.GIT_TAG}}"
+        value: "{{.PREFIX}}mcpp-{{.MARS_CLIENT_CPP_REF}}"
       - op: replace
         path: /build/tagPolicy/customTemplate/components
         value:
@@ -107,6 +101,3 @@ profiles:
           - name: MARS_CLIENT_CPP_REF
             envTemplate:
               template: '{{ default "develop-cpp" .mars_client_cpp_bundle_ref | replace "/" "-" | replace ":" "-" | replace "@" "-" | replace "+" "-" | trunc 40 }}'
-          - name: GIT_TAG
-            gitCommit:
-              ignoreChanges: false

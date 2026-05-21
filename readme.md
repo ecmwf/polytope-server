@@ -58,6 +58,19 @@ will derive helper image references automatically from `SKAFFOLD_DEFAULT_REPO`
 configs. If `SKAFFOLD_DEFAULT_REPO` is unset, the worker falls back to local
 image names with the same computed tags.
 
+Helper tags are intentionally low-friction now: they depend only on the
+selected helper ref, branch, or version inputs, not on the surrounding
+`polytope-server` git state. The default tag formats are:
+
+- MARS C: `PREFIX + mc-<sanitized mars_client_c_bundle_ref>`
+- MARS C++: `PREFIX + mcpp-<sanitized mars_client_cpp_bundle_ref>`
+- GribJump/FDB: `PREFIX + gj-<sanitized gribjump_version>`
+
+If you build helpers with non-default refs or versions, pass the same
+variables into the main worker build so its derived `worker_*_image` values
+still match. Otherwise, set `worker_mars_c_image`, `worker_mars_cpp_image`,
+and/or `worker_gribjump_image` explicitly.
+
 The local rpm-backed MARS path is still available through `worker_mars_c_mode`
 and `worker_mars_cpp_mode`. Those stages install `mars-client=6.33.20.2` and
 `mars-client-cpp=7.1.9.1` by default, while still allowing the versions to be
@@ -82,6 +95,10 @@ GitHub dependencies can be fetched without baking the token into the final
 image. `docker/mars-client/skaffold.sh` runs from the repository root and will
 populate `GITHUB_TOKEN` from `gh auth token` when needed.
 
+The dedicated MARS helper profiles tag their outputs from the selected bundle
+refs only, so the default worker image-mode lookup will match as long as you
+reuse the same `PREFIX` and `mars_client_*_bundle_ref` values.
+
 To build the publishable source-built GribJump/FDB image that the worker can
 copy from, use the dedicated bundle config under `docker/gribjump/`:
 
@@ -95,6 +112,11 @@ the worker-installable wheels into `/opt/polytope/gribjump-source-wheels`.
 `skaffold -f docker/gribjump/skaffold.yaml` from the repository root. Because
 `docker/gribjump/skaffold.yaml` sets `context: .`, the Docker build context is
 the whole `polytope-server/` tree.
+
+The dedicated GribJump helper tag is version-only: `PREFIX + gj-<gribjump>`.
+The ecbuild, libaec, eckit, eccodes, metkit, and FDB input pins are recorded
+on the published image as labels and remain part of the image digest
+provenance, so they can still be inspected without expanding the tag.
 
 For a default image-mode worker build, the usual order is:
 

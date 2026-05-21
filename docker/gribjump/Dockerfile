@@ -93,7 +93,21 @@ RUN /opt/polytope/gribjump-source/.venv/bin/python -c "import pyfdb, pygribjump;
 
 FROM gribjump-source-build-base AS gribjump-source-worker-python
 
+ARG gribjump_version
+ARG ecbuild_version
+ARG libaec_version
+ARG eckit_version
 ARG eccodes_version
+ARG metkit_version
+ARG fdb_version
+
+LABEL org.ecmwf.polytope.gribjump_version="${gribjump_version}" \
+      org.ecmwf.polytope.ecbuild_version="${ecbuild_version}" \
+      org.ecmwf.polytope.libaec_version="${libaec_version}" \
+      org.ecmwf.polytope.eckit_version="${eckit_version}" \
+      org.ecmwf.polytope.eccodes_version="${eccodes_version}" \
+      org.ecmwf.polytope.metkit_version="${metkit_version}" \
+      org.ecmwf.polytope.fdb_version="${fdb_version}"
 
 COPY --from=polytope-requirements-wheel-builder /wheels /tmp/wheels
 

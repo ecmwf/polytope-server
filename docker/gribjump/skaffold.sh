@@ -5,6 +5,27 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 DEFAULT_CONFIG="${SCRIPT_DIR}/skaffold.yaml"
 
+sanitize_tag_component() {
+  local value="$1"
+  local max_len="$2"
+  value="${value//\//-}"
+  value="${value//:/-}"
+  value="${value//@/-}"
+  value="${value//+/-}"
+  printf '%s' "${value:0:max_len}"
+}
+
+resolve_default_repo() {
+  if [ -n "${SKAFFOLD_DEFAULT_REPO:-}" ]; then
+    printf '%s' "${SKAFFOLD_DEFAULT_REPO}"
+    return
+  fi
+
+  if [ -f "${REPO_DIR}/skaffold.env" ]; then
+    bash -c 'set -a; source "$1" >/dev/null 2>&1; printf "%s" "${SKAFFOLD_DEFAULT_REPO:-}"' _ "${REPO_DIR}/skaffold.env"
+  fi
+}
+
 DEPS_FILE="${DEPS_FILE:-${SCRIPT_DIR}/deps.env}"
 if [ ! -f "${DEPS_FILE}" ]; then
   echo "Dependency file not found: ${DEPS_FILE}" >&2
@@ -32,6 +53,15 @@ for arg in "$@"; do
       ;;
   esac
 done
+
+default_repo="$(resolve_default_repo)"
+gribjump_tag="${PREFIX:-}gj-$(sanitize_tag_component "${gribjump_version}" 16)"
+gribjump_image="gribjump-source-worker-python:${gribjump_tag}"
+if [ -n "${default_repo}" ]; then
+  gribjump_image="${default_repo}/${gribjump_image}"
+fi
+
+printf 'GribJump helper image: %s\n' "${gribjump_image}" >&2
 
 cd "${REPO_DIR}"
 exec skaffold -f "${DEFAULT_CONFIG}" "$@"
