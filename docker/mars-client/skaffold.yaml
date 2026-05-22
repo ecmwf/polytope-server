@@ -14,10 +14,10 @@ build:
           template: '{{default "" .PREFIX}}'
       - name: MARS_CLIENT_C_REF
         envTemplate:
-          template: '{{ default "develop" .mars_client_c_bundle_ref | replace "/" "-" | replace ":" "-" | replace "@" "-" | replace "+" "-" | trunc 24 }}'
+          template: '{{ default "6.34.4.11" .mars_client_c_bundle_ref | replace "/" "-" | replace ":" "-" | replace "@" "-" | replace "+" "-" | trunc 24 }}'
       - name: MARS_CLIENT_CPP_REF
         envTemplate:
-          template: '{{ default "develop-cpp" .mars_client_cpp_bundle_ref | replace "/" "-" | replace ":" "-" | replace "@" "-" | replace "+" "-" | trunc 24 }}'
+          template: '{{ default "7.1.9.1" .mars_client_cpp_bundle_ref | replace "/" "-" | replace ":" "-" | replace "@" "-" | replace "+" "-" | trunc 24 }}'
   platforms:
     - linux/amd64
   artifacts:
@@ -31,7 +31,7 @@ build:
       buildArgs:
         rpm_repo: '{{ .rpm_repo }}'
         ecbuild_version: '{{ default "3.14.2" .ecbuild_version }}'
-        mars_client_c_bundle_ref: '{{ default "develop" .mars_client_c_bundle_ref }}'
+        mars_client_c_bundle_ref: '{{ default "6.34.4.11" .mars_client_c_bundle_ref }}'
   - image: "mars-base-cpp"
     context: .
     docker:
@@ -42,7 +42,7 @@ build:
       buildArgs:
         rpm_repo: '{{ .rpm_repo }}'
         ecbuild_version: '{{ default "3.14.2" .ecbuild_version }}'
-        mars_client_cpp_bundle_ref: '{{ default "develop-cpp" .mars_client_cpp_bundle_ref }}'
+        mars_client_cpp_bundle_ref: '{{ default "7.1.9.1" .mars_client_cpp_bundle_ref }}'
 
 profiles:
   - name: mars-c
@@ -60,7 +60,7 @@ profiles:
               buildArgs:
                 rpm_repo: '{{ .rpm_repo }}'
                 ecbuild_version: '{{ default "3.14.2" .ecbuild_version }}'
-                mars_client_c_bundle_ref: '{{ default "develop" .mars_client_c_bundle_ref }}'
+                mars_client_c_bundle_ref: '{{ default "6.34.4.11" .mars_client_c_bundle_ref }}'
       - op: replace
         path: /build/tagPolicy/customTemplate/template
         value: "{{.PREFIX}}mc-{{.MARS_CLIENT_C_REF}}"
@@ -72,7 +72,7 @@ profiles:
               template: '{{default "" .PREFIX}}'
           - name: MARS_CLIENT_C_REF
             envTemplate:
-              template: '{{ default "develop" .mars_client_c_bundle_ref | replace "/" "-" | replace ":" "-" | replace "@" "-" | replace "+" "-" | trunc 40 }}'
+               template: '{{ default "6.34.4.11" .mars_client_c_bundle_ref | replace "/" "-" | replace ":" "-" | replace "@" "-" | replace "+" "-" | trunc 40 }}'
   - name: mars-cpp
     patches:
       - op: replace
@@ -88,7 +88,7 @@ profiles:
               buildArgs:
                 rpm_repo: '{{ .rpm_repo }}'
                 ecbuild_version: '{{ default "3.14.2" .ecbuild_version }}'
-                mars_client_cpp_bundle_ref: '{{ default "develop-cpp" .mars_client_cpp_bundle_ref }}'
+                mars_client_cpp_bundle_ref: '{{ default "7.1.9.1" .mars_client_cpp_bundle_ref }}'
       - op: replace
         path: /build/tagPolicy/customTemplate/template
         value: "{{.PREFIX}}mcpp-{{.MARS_CLIENT_CPP_REF}}"
@@ -100,4 +100,4 @@ profiles:
               template: '{{default "" .PREFIX}}'
           - name: MARS_CLIENT_CPP_REF
             envTemplate:
-              template: '{{ default "develop-cpp" .mars_client_cpp_bundle_ref | replace "/" "-" | replace ":" "-" | replace "@" "-" | replace "+" "-" | trunc 40 }}'
+               template: '{{ default "7.1.9.1" .mars_client_cpp_bundle_ref | replace "/" "-" | replace ":" "-" | replace "@" "-" | replace "+" "-" | trunc 40 }}'

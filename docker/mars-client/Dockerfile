@@ -59,6 +59,15 @@ RUN set -eux \
     && rm -rf /tmp/ecbuild /tmp/ecbuild-build \
     && test -f /usr/local/share/ecbuild/cmake/ecbuild-config.cmake
 
+RUN set -eux \
+    && git clone https://gitlab.dkrz.de/dkrz-sw/libaec.git /tmp/libaec \
+    && git -C /tmp/libaec checkout v1.1.4 \
+    && cmake -S /tmp/libaec -B /tmp/libaec-build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build /tmp/libaec-build --parallel \
+    && cmake --install /tmp/libaec-build \
+    && rm -rf /tmp/libaec /tmp/libaec-build \
+    && test -f /usr/local/lib/cmake/libaec/libaec-config.cmake
+
 FROM mars-source-build-base AS mars-client-c-bundle-build
 ARG mars_client_c_bundle_ref
 
@@ -73,6 +82,7 @@ RUN --mount=type=secret,id=github_token set -eu \
     && cmake -S /tmp/mars-client-c-bundle -B /tmp/mars-client-c-build -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=/opt/ecmwf/mars-client \
+    -DAEC_DIR=/usr/local \
     -DSTACK_DEP_LIBAEC=ON \
     -DSTACK_DEP_PROJ=ON \
     -DECMWF_NEXUS_NIGHTLY=1 \
@@ -146,6 +156,7 @@ RUN --mount=type=secret,id=github_token set -eu \
     && cmake -S /tmp/mars-client-cpp-bundle -B /tmp/mars-client-cpp-build -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=/opt/ecmwf/mars-client-cpp \
+    -DAEC_DIR=/usr/local \
     -DSTACK_DEP_LIBAEC=ON \
     -DSTACK_DEP_PROJ=ON \
     -DECMWF_NEXUS_NIGHTLY=1 \

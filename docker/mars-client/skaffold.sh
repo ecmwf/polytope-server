@@ -88,8 +88,8 @@ if [ -z "${GITHUB_TOKEN:-}" ]; then
 fi
 
 default_repo="$(resolve_default_repo)"
-mars_c_ref="${mars_client_c_bundle_ref:-develop}"
-mars_cpp_ref="${mars_client_cpp_bundle_ref:-develop-cpp}"
+mars_c_ref="${mars_client_c_bundle_ref:-6.34.4.11}"
+mars_cpp_ref="${mars_client_cpp_bundle_ref:-7.1.9.1}"
 
 if printf '%s\n' "${selected_profiles[@]:-}" | grep -qx 'mars-c'; then
   mars_c_tag="${PREFIX:-}mc-$(sanitize_tag_component "${mars_c_ref}" 40)"

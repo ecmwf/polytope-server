@@ -72,7 +72,7 @@ still match. Otherwise, set `worker_mars_c_image`, `worker_mars_cpp_image`,
 and/or `worker_gribjump_image` explicitly.
 
 The local rpm-backed MARS path is still available through `worker_mars_c_mode`
-and `worker_mars_cpp_mode`. Those stages install `mars-client=6.33.20.2` and
+and `worker_mars_cpp_mode`. Those stages install `mars-client=6.34.4.11` and
 `mars-client-cpp=7.1.9.1` by default, while still allowing the versions to be
 overridden through Skaffold build args. GribJump does not advertise an rpm
 mode; invalid mode values fail the worker build clearly.
