@@ -19,6 +19,7 @@
 #
 
 import logging
+from unittest.mock import patch
 
 import polytope_server.common.config as polytope_config
 from polytope_server import worker
@@ -31,6 +32,7 @@ class TestWorker:
         self.request = PolytopeRequest()
         self.request.collection = "debug"
         self.request.user_request = "hello_world"  # all default
+        self.request.coerced_request = {"data": "hello_world"}
         self.worker = worker.Worker(polytope_config.global_config)
 
     def test_worker(self):
@@ -44,8 +46,16 @@ class TestWorker:
     def test_worker_failed(self):
 
         self.request.user_request = {"abcdef": 789}
+        self.request.coerced_request = {"abcdef": 789}
 
         try:
             self.worker.process_request(self.request)
         except Exception as e:
-            self.worker.on_request_fail(self.request, e)
+            self.worker.on_request_fail(e)
+
+    def test_dispatch_skips_coercion_when_coerced_request_set(self):
+        """dispatch does NOT call coercion.coerce when coerced_request is already populated."""
+
+        with patch("polytope_server.common.collection.coercion.coerce") as mock_coerce:
+            self.worker.process_request(self.request)
+            mock_coerce.assert_not_called()

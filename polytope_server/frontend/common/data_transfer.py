@@ -22,9 +22,12 @@ import hashlib
 import logging
 import sys
 
+import yaml
+
 # TODO: Remove flask from this module, it should be agnostic
 from flask import Request, Response
 
+from ...common.coercion import CoercionError, coerce_request
 from ...common.exceptions import BadRequest, NotFound, ServerError
 from ...common.request import PolytopeRequest, Status, Verb
 from ...common.request_store.request_store import RequestStore
@@ -50,7 +53,18 @@ class DataTransfer:
             verb=Verb.RETRIEVE,
             user_request=str(payload["request"]),
         )
-        logging.info("Received user request", extra={"request_id": request.id, "user_request": request.user_request})
+        try:
+            request.coerced_request = coerce_request(request.user_request)
+        except (CoercionError, yaml.YAMLError) as e:
+            raise BadRequest(str(e))
+        logging.info(
+            "Received user request",
+            extra={
+                "request_id": request.id,
+                "user_request": request.user_request,
+                "coerced_request": request.coerced_request,
+            },
+        )
         try:
             self.request_store.add_request(request)
         except Exception:
@@ -74,7 +88,18 @@ class DataTransfer:
             verb=Verb.ARCHIVE,
             user_request=str(payload["request"]),
         )
-        logging.info("Received user request", extra={"request_id": request.id, "user_request": request.user_request})
+        try:
+            request.coerced_request = coerce_request(request.user_request)
+        except (CoercionError, yaml.YAMLError) as e:
+            raise BadRequest(str(e))
+        logging.info(
+            "Received user request",
+            extra={
+                "request_id": request.id,
+                "user_request": request.user_request,
+                "coerced_request": request.coerced_request,
+            },
+        )
 
         if url not in (None, ""):
             request.set_status(Status.WAITING)

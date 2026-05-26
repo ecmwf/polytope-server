@@ -17,6 +17,7 @@
 # granted to it by virtue of its status as an intergovernmental organisation nor
 # does it submit to any jurisdiction.
 #
+import copy
 import logging
 from typing import Dict
 
@@ -56,7 +57,12 @@ class Collection:
         Instantiates, dispatches and returns the first matching datasource.
         Raises a BadRequest exception if no datasource matches.
         """
-        coerced_ur = coercion.coerce(yaml.safe_load(request.user_request))
+        coerced_ur = request.coerced_request
+        if not coerced_ur:
+            logging.warning("Legacy request %s missing coerced_request, coercing at dispatch time", request.id)
+            coerced_ur = coercion.coerce(yaml.safe_load(request.user_request))
+            request.coerced_request = coerced_ur
+
         # Intentionally keep both raw and coerced forms distinct here; all other
         # request logging should use the unified `user_request` field.
         logging.info(
@@ -64,13 +70,12 @@ class Collection:
         )
         match_errors = []
         for ds_config in self.ds_configs:
-            match_result = DataSource.match(ds_config, coerced_ur, request.user)
+            match_result = DataSource.match(ds_config, copy.deepcopy(coerced_ur), request.user)
             if match_result == "success":
                 message = f"Matched datasource {DataSource.repr(ds_config)}"
                 request.user_message += message + "\n"
                 logging.info(message)
                 request.datasource = ds_config.get("name")
-                request.coerced_request = coerced_ur
                 ds = create_datasource(ds_config)
                 ds.dispatch(request, input_data)
                 return ds

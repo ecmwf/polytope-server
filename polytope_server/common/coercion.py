@@ -4,6 +4,8 @@ import re
 from datetime import datetime, timedelta
 from typing import Any, Dict
 
+import yaml
+
 from . import config as polytope_config
 
 
@@ -279,6 +281,11 @@ def coerce_expver(value: Any) -> str:
 
 def coerce_ignore_cases(value: Any) -> str:
     return value.lower()
+
+
+def coerce_request(raw_request_str) -> Dict[str, Any]:
+    """Parse a raw request string with yaml.safe_load and coerce the result."""
+    return coerce(yaml.safe_load(raw_request_str))
 
 
 coercer = {
