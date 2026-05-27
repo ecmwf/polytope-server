@@ -15,6 +15,15 @@ class _LazyEccodes:
             self._module = _eccodes
         return self._module
 
+    def codes_get(self, *args, **kwargs):
+        return self._load().codes_get(*args, **kwargs)
+
+    def codes_new_from_message(self, *args, **kwargs):
+        return self._load().codes_new_from_message(*args, **kwargs)
+
+    def codes_release(self, *args, **kwargs):
+        return self._load().codes_release(*args, **kwargs)
+
     def __getattr__(self, name):
         return getattr(self._load(), name)
 

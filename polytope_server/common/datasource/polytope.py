@@ -22,8 +22,6 @@ import copy
 import json
 import logging
 import os
-import subprocess
-import sys
 import tempfile
 from importlib import import_module
 from pathlib import Path
@@ -38,40 +36,14 @@ from . import datasource
 
 
 def _import_polytope_mars():
-    for module_name in list(sys.modules):
-        if (
-            module_name == "polytope_mars"
-            or module_name.startswith("polytope_mars.")
-            or module_name == "pygribjump"
-            or module_name.startswith("pygribjump.")
-            or module_name == "pyfdb"
-            or module_name.startswith("pyfdb.")
-        ):
-            sys.modules.pop(module_name, None)
     return import_module("polytope_mars.api").PolytopeMars
 
 
-def _python_site_packages(bundle_root: Path) -> Path:
-    return bundle_root / ".venv" / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
-
-
-def _source_profile(profile: Path) -> dict[str, str]:
-    command = 'source "$1" >/dev/null && env -0'
-    output = subprocess.check_output(["bash", "-c", command, "bash", str(profile)])
-    return {
-        key.decode(): value.decode()
-        for key, _, value in (entry.partition(b"=") for entry in output.split(b"\0") if entry)
-    }
-
-
-SOURCE_BUNDLE_ENV_NAMES = {
-    "ECCODES_DIR",
-    "FDB5_DIR",
-    "FINDLIBS_DISABLE_PACKAGE",
-    "GRIBJUMP_DIR",
-    "LD_LIBRARY_PATH",
-    "PATH",
-}
+def _prepend_env_path(parts: list[str], current_value: str | None) -> str:
+    values = [part for part in parts if part]
+    if current_value:
+        values.append(current_value)
+    return ":".join(values)
 
 
 class PolytopeDataSource(datasource.DataSource):
@@ -93,7 +65,9 @@ class PolytopeDataSource(datasource.DataSource):
         self.obey_schedule = self.config.get("obey_schedule", False)
         self.output = None
         self._saved_env = {}
-        self._source_bundle_root = self.config.get("source_bundle_root")
+        source_bundle_root = self.config.pop("source_bundle_root", None)
+        if source_bundle_root:
+            self._activate_source_bundle(Path(source_bundle_root))
 
         # Create a temp file to store gribjump config
         self._save_env("GRIBJUMP_CONFIG_FILE")
@@ -112,30 +86,31 @@ class PolytopeDataSource(datasource.DataSource):
                 f.write(yaml.dump(self.config.pop("fdb_config")))
             os.environ["FDB5_CONFIG_FILE"] = self.fdb_config_file
 
-        if self._source_bundle_root:
-            self._activate_source_bundle(Path(self._source_bundle_root))
-
     def _save_env(self, name: str) -> None:
         if name not in self._saved_env:
             self._saved_env[name] = os.environ.get(name)
 
     def _activate_source_bundle(self, bundle_root: Path) -> None:
-        profile = bundle_root / "profile"
-        if not profile.is_file():
-            raise FileNotFoundError(f"Source-built GribJump profile not found: {profile}")
+        if not bundle_root.is_dir():
+            raise FileNotFoundError(f"Source-built GribJump bundle not found: {bundle_root}")
 
         logging.info(
             "Activating source-built GribJump bundle",
-            extra={
-                "source_bundle_root": str(bundle_root),
-                "profile": str(profile),
-            },
+            extra={"source_bundle_root": str(bundle_root)},
         )
-        profile_env = _source_profile(profile)
-        for name in SOURCE_BUNDLE_ENV_NAMES:
-            if name not in profile_env:
-                continue
-            value = profile_env[name]
+        bundle_env = {
+            "FDB5_DIR": str(bundle_root),
+            "GRIBJUMP_DIR": str(bundle_root),
+            "ECCODES_DIR": str(bundle_root),
+            "ECCODES_DEFINITION_PATH": str(bundle_root / "share" / "eccodes" / "definitions"),
+            "ECCODES_SAMPLES_PATH": str(bundle_root / "share" / "eccodes" / "samples"),
+            "FINDLIBS_DISABLE_PACKAGE": "yes",
+            "PATH": _prepend_env_path([str(bundle_root / "bin")], os.environ.get("PATH")),
+            "LD_LIBRARY_PATH": _prepend_env_path(
+                [str(bundle_root / "lib64"), str(bundle_root / "lib")], os.environ.get("LD_LIBRARY_PATH")
+            ),
+        }
+        for name, value in bundle_env.items():
             if os.environ.get(name) != value:
                 self._save_env(name)
                 os.environ[name] = value
@@ -146,6 +121,7 @@ class PolytopeDataSource(datasource.DataSource):
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = value
+        self._saved_env.clear()
 
     def get_type(self):
         return self.type
@@ -199,7 +175,11 @@ class PolytopeDataSource(datasource.DataSource):
             )
 
             grid_lookup_request = build_grid_lookup_request(r)
-            replace_dynamic_grid_options(options_config, grid_lookup_request, service_url=self.dynamic_grid_service_url)
+            replace_dynamic_grid_options(
+                options_config,
+                grid_lookup_request,
+                service_url=self.dynamic_grid_service_url,
+            )
 
         if self.gh69_fix_grids:
             change_grids(r, polytope_mars_config)

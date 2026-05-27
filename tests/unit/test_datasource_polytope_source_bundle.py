@@ -7,10 +7,7 @@ from typing import Any
 
 import polytope_server.common.datasource.polytope as polytope_module
 import polytope_server.dynamic_grid.helper as dynamic_grid_helper
-from polytope_server.common.datasource.polytope import (
-    PolytopeDataSource,
-    _python_site_packages,
-)
+from polytope_server.common.datasource.polytope import PolytopeDataSource
 from polytope_server.dynamic_grid.helper import replace_dynamic_grid_options
 
 
@@ -38,24 +35,8 @@ def _make_request() -> Any:
     )()
 
 
-def _prepare_bundle(bundle_root: Path) -> Path:
-    site_packages = _python_site_packages(bundle_root)
-    site_packages.mkdir(parents=True)
-    profile = bundle_root / "profile"
-    profile.write_text(
-        "\n".join(
-            [
-                f"export PATH={bundle_root}/bin:$PATH",
-                "export FINDLIBS_DISABLE_PACKAGE=yes",
-                f"export FDB5_DIR={bundle_root}",
-                f"export GRIBJUMP_DIR={bundle_root}",
-                f"export ECCODES_DIR={bundle_root}",
-                f"export LD_LIBRARY_PATH={bundle_root}/lib:${{LD_LIBRARY_PATH:-}}",
-                "",
-            ]
-        )
-    )
-    return site_packages
+def _prepare_bundle(bundle_root: Path) -> None:
+    bundle_root.mkdir(parents=True)
 
 
 def _fake_polytope_mars_class():
@@ -91,6 +72,8 @@ def test_polytope_datasource_resolves_sequential_source_bundles(monkeypatch, tmp
     monkeypatch.setenv("GRIBJUMP_DIR", "/existing/gribjump-dir")
     monkeypatch.setenv("FDB5_DIR", "/existing/fdb5-dir")
     monkeypatch.setenv("ECCODES_DIR", "/existing/eccodes-dir")
+    monkeypatch.setenv("ECCODES_DEFINITION_PATH", "/existing/eccodes-definitions")
+    monkeypatch.setenv("ECCODES_SAMPLES_PATH", "/existing/eccodes-samples")
     monkeypatch.setenv("FINDLIBS_DISABLE_PACKAGE", "no")
     monkeypatch.setenv("LD_LIBRARY_PATH", "/existing/lib")
     monkeypatch.setenv("GRIBJUMP_CONFIG_FILE", "/existing/gribjump.yaml")
@@ -122,8 +105,10 @@ def test_polytope_datasource_resolves_sequential_source_bundles(monkeypatch, tmp
     assert os.environ["GRIBJUMP_DIR"] == str(bundle_a)
     assert os.environ["FDB5_DIR"] == str(bundle_a)
     assert os.environ["ECCODES_DIR"] == str(bundle_a)
+    assert os.environ["ECCODES_DEFINITION_PATH"] == str(bundle_a / "share" / "eccodes" / "definitions")
+    assert os.environ["ECCODES_SAMPLES_PATH"] == str(bundle_a / "share" / "eccodes" / "samples")
     assert os.environ["FINDLIBS_DISABLE_PACKAGE"] == "yes"
-    assert os.environ["LD_LIBRARY_PATH"] == f"{bundle_a / 'lib'}:/existing/lib"
+    assert os.environ["LD_LIBRARY_PATH"] == f"{bundle_a / 'lib64'}:{bundle_a / 'lib'}:/existing/lib"
 
     ds_a.destroy(None)
     assert os.environ["GRIBJUMP_HOME"] == "/existing/gribjump"
@@ -132,6 +117,8 @@ def test_polytope_datasource_resolves_sequential_source_bundles(monkeypatch, tmp
     assert os.environ["GRIBJUMP_DIR"] == "/existing/gribjump-dir"
     assert os.environ["FDB5_DIR"] == "/existing/fdb5-dir"
     assert os.environ["ECCODES_DIR"] == "/existing/eccodes-dir"
+    assert os.environ["ECCODES_DEFINITION_PATH"] == "/existing/eccodes-definitions"
+    assert os.environ["ECCODES_SAMPLES_PATH"] == "/existing/eccodes-samples"
     assert os.environ["FINDLIBS_DISABLE_PACKAGE"] == "no"
     assert os.environ["LD_LIBRARY_PATH"] == "/existing/lib"
     assert os.environ["GRIBJUMP_CONFIG_FILE"] == "/existing/gribjump.yaml"
@@ -192,6 +179,8 @@ def test_polytope_datasource_without_source_bundle_does_not_set_bundle_env(monke
     monkeypatch.delenv("GRIBJUMP_DIR", raising=False)
     monkeypatch.delenv("FDB5_DIR", raising=False)
     monkeypatch.delenv("ECCODES_DIR", raising=False)
+    monkeypatch.delenv("ECCODES_DEFINITION_PATH", raising=False)
+    monkeypatch.delenv("ECCODES_SAMPLES_PATH", raising=False)
     monkeypatch.delenv("FINDLIBS_DISABLE_PACKAGE", raising=False)
     monkeypatch.delenv("LD_LIBRARY_PATH", raising=False)
 
@@ -203,6 +192,8 @@ def test_polytope_datasource_without_source_bundle_does_not_set_bundle_env(monke
     assert "GRIBJUMP_DIR" not in os.environ
     assert "FDB5_DIR" not in os.environ
     assert "ECCODES_DIR" not in os.environ
+    assert "ECCODES_DEFINITION_PATH" not in os.environ
+    assert "ECCODES_SAMPLES_PATH" not in os.environ
     assert "FINDLIBS_DISABLE_PACKAGE" not in os.environ
     assert "LD_LIBRARY_PATH" not in os.environ
 
@@ -239,8 +230,10 @@ def test_polytope_datasource_source_mode_sets_bundle_env_without_path_injection(
     assert os.environ["GRIBJUMP_DIR"] == str(bundle_root)
     assert os.environ["FDB5_DIR"] == str(bundle_root)
     assert os.environ["ECCODES_DIR"] == str(bundle_root)
+    assert os.environ["ECCODES_DEFINITION_PATH"] == str(bundle_root / "share" / "eccodes" / "definitions")
+    assert os.environ["ECCODES_SAMPLES_PATH"] == str(bundle_root / "share" / "eccodes" / "samples")
     assert os.environ["FINDLIBS_DISABLE_PACKAGE"] == "yes"
-    assert os.environ["LD_LIBRARY_PATH"].startswith(str(bundle_root / "lib"))
+    assert os.environ["LD_LIBRARY_PATH"].startswith(f"{bundle_root / 'lib64'}:{bundle_root / 'lib'}")
 
     ds.destroy(None)
 
@@ -304,6 +297,7 @@ def test_polytope_datasource_uses_full_request_for_dynamic_grid_lookup(monkeypat
         "levelist": "1000",
     }
     assert captured["service_url"] is None
+    assert "source_bundle_root" not in captured["config"]
     assert captured["config"]["options"]["pre_path"] == {
         "class": "d1",
         "dataset": "on-demand-extremes-dt",
