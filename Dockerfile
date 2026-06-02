@@ -228,6 +228,10 @@ RUN set -eux \
 ENV MARS_CONFIGS_REPO=${mars_config_repo}
 ENV MARS_CONFIGS_BRANCH=${mars_config_branch}
 ENV PATH="/home/polytope/.venv/bin:/polytope/bin/:/opt/ecmwf/mars-client/bin:${PATH}"
+ENV FINDLIBS_DISABLE_PACKAGE=yes
+ENV FDB5_DIR=/opt/polytope/gribjump-source
+ENV GRIBJUMP_DIR=/opt/polytope/gribjump-source
+ENV ECCODES_DIR=/opt/polytope/gribjump-source
 
 # Copy gribjump-related artifacts
 COPY --chown=polytope --from=worker-gribjump-final /opt/polytope/gribjump-source /opt/polytope/gribjump-source
@@ -240,8 +244,13 @@ RUN set -eux \
     && rm -rf /tmp/gribjump-source-wheels /opt/polytope/gribjump-source/.venv
 
 RUN set -eux \
+    && mkdir -p /opt/polytope/gribjump-source/lib64 /opt/polytope/gribjump-source/lib \
+    && printf '%s\n' /opt/polytope/gribjump-source/lib64 /opt/polytope/gribjump-source/lib > /etc/ld.so.conf.d/polytope-gribjump.conf \
+    && ldconfig
+
+RUN set -eux \
     && if [ -f /opt/polytope/gribjump-source/profile ]; then \
-    bash -c 'source /opt/polytope/gribjump-source/profile && /home/polytope/.venv/bin/python -c "import eccodes, pyfdb, pygribjump; print(\"worker source bundle imports OK\")"'; \
+    /home/polytope/.venv/bin/python -c "import eccodes, pyfdb, pygribjump; print('worker source bundle imports OK')"; \
     fi
 
 USER polytope

@@ -15,29 +15,6 @@
 ## limitations under the License.
 ##
 
-FROM python:3.11-bookworm AS polytope-requirements-wheel-builder
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-    build-essential \
-    ca-certificates \
-    curl \
-    git \
-    libldap2-dev \
-    python3-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-ENV CARGO_HOME=/root/.cargo
-ENV RUSTUP_HOME=/root/.rustup
-ENV PATH=/root/.cargo/bin:${PATH}
-
-RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain stable
-
-RUN python -m pip install --no-cache-dir --upgrade pip wheel
-
-WORKDIR /build/polytope-server
-COPY ./requirements.txt .
-RUN GIT_TERMINAL_PROMPT=0 python -m pip wheel -r requirements.txt -w /wheels
 
 FROM python:3.11-bookworm AS gribjump-source-build-base
 
@@ -81,6 +58,7 @@ RUN set -eux \
     GRIBJUMP_VERSION=${gribjump_version} \
     bash /env_build/build.sh
 
+## TODO: these can be sourced from profile
 ENV FDB5_DIR=/opt/polytope/gribjump-source
 ENV GRIBJUMP_DIR=/opt/polytope/gribjump-source
 ENV ECCODES_DIR=/opt/polytope/gribjump-source
@@ -102,19 +80,12 @@ ARG metkit_version
 ARG fdb_version
 
 LABEL org.ecmwf.polytope.gribjump_version="${gribjump_version}" \
-      org.ecmwf.polytope.ecbuild_version="${ecbuild_version}" \
-      org.ecmwf.polytope.libaec_version="${libaec_version}" \
-      org.ecmwf.polytope.eckit_version="${eckit_version}" \
-      org.ecmwf.polytope.eccodes_version="${eccodes_version}" \
-      org.ecmwf.polytope.metkit_version="${metkit_version}" \
-      org.ecmwf.polytope.fdb_version="${fdb_version}"
-
-COPY --from=polytope-requirements-wheel-builder /wheels /tmp/wheels
-
-RUN VIRTUAL_ENV=/opt/polytope/gribjump-source/.venv PATH="/opt/polytope/gribjump-source/.venv/bin:${PATH}" uv pip install --no-binary eccodes "eccodes==${eccodes_version}" \
-    && VIRTUAL_ENV=/opt/polytope/gribjump-source/.venv PATH="/opt/polytope/gribjump-source/.venv/bin:${PATH}" uv pip install --no-index --find-links=/tmp/wheels polytope-python \
-    && rm -rf /tmp/wheels \
-    && VIRTUAL_ENV=/opt/polytope/gribjump-source/.venv PATH="/opt/polytope/gribjump-source/.venv/bin:${PATH}" python -c "import eccodes, pyfdb, pygribjump; print('source worker imports OK')"
+    org.ecmwf.polytope.ecbuild_version="${ecbuild_version}" \
+    org.ecmwf.polytope.libaec_version="${libaec_version}" \
+    org.ecmwf.polytope.eckit_version="${eckit_version}" \
+    org.ecmwf.polytope.eccodes_version="${eccodes_version}" \
+    org.ecmwf.polytope.metkit_version="${metkit_version}" \
+    org.ecmwf.polytope.fdb_version="${fdb_version}"
 
 RUN set -eux \
     && mkdir -p /opt/polytope/gribjump-source-wheels \

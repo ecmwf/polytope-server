@@ -24,7 +24,6 @@ import logging
 import os
 import tempfile
 from importlib import import_module
-from pathlib import Path
 
 import yaml
 from covjsonkit.param_db import get_param_id_from_db
@@ -37,13 +36,6 @@ from . import datasource
 
 def _import_polytope_mars():
     return import_module("polytope_mars.api").PolytopeMars
-
-
-def _prepend_env_path(parts: list[str], current_value: str | None) -> str:
-    values = [part for part in parts if part]
-    if current_value:
-        values.append(current_value)
-    return ":".join(values)
 
 
 class PolytopeDataSource(datasource.DataSource):
@@ -64,64 +56,20 @@ class PolytopeDataSource(datasource.DataSource):
         self.separate_datetime = self.config.get("separate_datetime", False)
         self.obey_schedule = self.config.get("obey_schedule", False)
         self.output = None
-        self._saved_env = {}
-        source_bundle_root = self.config.pop("source_bundle_root", None)
-        if source_bundle_root:
-            self._activate_source_bundle(Path(source_bundle_root))
+        self.config.pop("source_bundle_root", None)
 
         # Create a temp file to store gribjump config
-        self._save_env("GRIBJUMP_CONFIG_FILE")
         with tempfile.NamedTemporaryFile(mode="w", prefix="gribjump-", suffix=".yaml", delete=False) as f:
             self.config_file = f.name
             f.write(yaml.dump(self.config.pop("gribjump_config")))
         self.config["datacube"]["config"] = self.config_file
-        os.environ["GRIBJUMP_CONFIG_FILE"] = self.config_file
 
         # Create a temp file to store FDB config
         self.fdb_config_file = None
         if "fdb_config" in self.config:
-            self._save_env("FDB5_CONFIG_FILE")
             with tempfile.NamedTemporaryFile(mode="w", prefix="fdb-", suffix=".yaml", delete=False) as f:
                 self.fdb_config_file = f.name
                 f.write(yaml.dump(self.config.pop("fdb_config")))
-            os.environ["FDB5_CONFIG_FILE"] = self.fdb_config_file
-
-    def _save_env(self, name: str) -> None:
-        if name not in self._saved_env:
-            self._saved_env[name] = os.environ.get(name)
-
-    def _activate_source_bundle(self, bundle_root: Path) -> None:
-        if not bundle_root.is_dir():
-            raise FileNotFoundError(f"Source-built GribJump bundle not found: {bundle_root}")
-
-        logging.info(
-            "Activating source-built GribJump bundle",
-            extra={"source_bundle_root": str(bundle_root)},
-        )
-        bundle_env = {
-            "FDB5_DIR": str(bundle_root),
-            "GRIBJUMP_DIR": str(bundle_root),
-            "ECCODES_DIR": str(bundle_root),
-            "ECCODES_DEFINITION_PATH": str(bundle_root / "share" / "eccodes" / "definitions"),
-            "ECCODES_SAMPLES_PATH": str(bundle_root / "share" / "eccodes" / "samples"),
-            "FINDLIBS_DISABLE_PACKAGE": "yes",
-            "PATH": _prepend_env_path([str(bundle_root / "bin")], os.environ.get("PATH")),
-            "LD_LIBRARY_PATH": _prepend_env_path(
-                [str(bundle_root / "lib64"), str(bundle_root / "lib")], os.environ.get("LD_LIBRARY_PATH")
-            ),
-        }
-        for name, value in bundle_env.items():
-            if os.environ.get(name) != value:
-                self._save_env(name)
-                os.environ[name] = value
-
-    def _restore_env(self) -> None:
-        for name, value in self._saved_env.items():
-            if value is None:
-                os.environ.pop(name, None)
-            else:
-                os.environ[name] = value
-        self._saved_env.clear()
 
     def get_type(self):
         return self.type
@@ -215,7 +163,6 @@ class PolytopeDataSource(datasource.DataSource):
             os.remove(self.config_file)
         if self.fdb_config_file and os.path.exists(self.fdb_config_file):
             os.remove(self.fdb_config_file)
-        self._restore_env()
 
     def mime_type(self) -> str:
         return "application/prs.coverage+json"
