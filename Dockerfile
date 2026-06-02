@@ -199,9 +199,7 @@ RUN apt-get update \
     libnetcdf19 \
     libopenjp2-7 \
     libproj25 \
-    nano \
     ssh \
-    sudo \
     vim \
     && rm -rf /var/lib/apt/lists/*
 
@@ -227,7 +225,7 @@ RUN set -eux \
 
 ENV MARS_CONFIGS_REPO=${mars_config_repo}
 ENV MARS_CONFIGS_BRANCH=${mars_config_branch}
-ENV PATH="/home/polytope/.venv/bin:/polytope/bin/:/opt/ecmwf/mars-client/bin:${PATH}"
+ENV PATH="/home/polytope/.venv/bin:/opt/ecmwf/mars-client/bin:${PATH}"
 ENV FINDLIBS_DISABLE_PACKAGE=yes
 ENV FDB5_DIR=/opt/polytope/gribjump-source
 ENV GRIBJUMP_DIR=/opt/polytope/gribjump-source

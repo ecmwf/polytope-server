@@ -56,7 +56,6 @@ class PolytopeDataSource(datasource.DataSource):
         self.separate_datetime = self.config.get("separate_datetime", False)
         self.obey_schedule = self.config.get("obey_schedule", False)
         self.output = None
-        self.config.pop("source_bundle_root", None)
 
         # Create a temp file to store gribjump config
         with tempfile.NamedTemporaryFile(mode="w", prefix="gribjump-", suffix=".yaml", delete=False) as f:
