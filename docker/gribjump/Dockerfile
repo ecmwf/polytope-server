@@ -16,7 +16,7 @@
 ##
 
 
-FROM python:3.11-bookworm AS gribjump-source-build-base
+FROM python:3.11-bookworm AS gribjump-base
 
 ARG ecbuild_version
 ARG libaec_version
@@ -68,16 +68,6 @@ ENV FINDLIBS_DISABLE_PACKAGE=yes
 ENV LD_LIBRARY_PATH=/opt/polytope/gribjump-source/lib64:/opt/polytope/gribjump-source/lib
 
 RUN /opt/polytope/gribjump-source/.venv/bin/python -c "import pyfdb, pygribjump; print('source bundle imports OK')"
-
-FROM gribjump-source-build-base AS gribjump-source-worker-python
-
-ARG gribjump_version
-ARG ecbuild_version
-ARG libaec_version
-ARG eckit_version
-ARG eccodes_version
-ARG metkit_version
-ARG fdb_version
 
 LABEL org.ecmwf.polytope.gribjump_version="${gribjump_version}" \
     org.ecmwf.polytope.ecbuild_version="${ecbuild_version}" \

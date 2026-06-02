@@ -18,12 +18,16 @@
 ## does it submit to any jurisdiction.
 ##
 
+ARG mars_client_c_version=6.34.4.11
+ARG mars_client_cpp_version=7.1.9.1
+ARG gribjump_version=0.12.0
+ARG image_repo=
+ARG gribjump_base=${image_repo}gribjump-base:${gribjump_version}
 ARG worker_mars_c_mode=image
-ARG worker_mars_c_image=blank-base
+ARG worker_mars_c_image=${image_repo}mars-base-c:${mars_client_c_version}
 ARG worker_mars_cpp_mode=image
-ARG worker_mars_cpp_image=blank-base
+ARG worker_mars_cpp_image=${image_repo}mars-base-cpp:${mars_client_cpp_version}
 ARG worker_gribjump_mode=image
-ARG worker_gribjump_image=blank-base
 
 #######################################################
 #           P Y T H O N   W H E E L H O U S E
@@ -165,11 +169,20 @@ RUN apt-get update \
 FROM mars-rpm-c AS mars-rpm-c-with-wrapper
 COPY --from=mars-cloud-wrapper /usr/local/bin/mars /usr/local/bin/mars
 
-FROM ${worker_mars_c_image} AS worker-mars-c-final
 
-FROM ${worker_mars_cpp_image} AS worker-mars-cpp-final
+FROM blank-base AS worker-mars-c-off
+FROM mars-rpm-c-with-wrapper AS worker-mars-c-rpm
+FROM ${worker_mars_c_image} AS worker-mars-c-image
+FROM worker-mars-c-${worker_mars_c_mode} AS worker-mars-c-final
 
-FROM ${worker_gribjump_image} AS worker-gribjump-final
+FROM blank-base AS worker-mars-cpp-off
+FROM mars-rpm-cpp AS worker-mars-cpp-rpm
+FROM ${worker_mars_cpp_image} AS worker-mars-cpp-image
+FROM worker-mars-cpp-${worker_mars_cpp_mode} AS worker-mars-cpp-final
+
+FROM blank-base AS worker-gribjump-off
+FROM ${gribjump_base} AS worker-gribjump-image
+FROM worker-gribjump-${worker_gribjump_mode} AS worker-gribjump-final
 
 
 #######################################################
@@ -206,7 +219,7 @@ RUN apt-get update \
 RUN set -eux \
     && case "${worker_mars_c_mode}" in off|rpm|image) ;; *) echo "Invalid worker_mars_c_mode: ${worker_mars_c_mode}. Expected off, rpm, or image." >&2; exit 1 ;; esac \
     && case "${worker_mars_cpp_mode}" in off|rpm|image) ;; *) echo "Invalid worker_mars_cpp_mode: ${worker_mars_cpp_mode}. Expected off, rpm, or image." >&2; exit 1 ;; esac \
-    && case "${worker_gribjump_mode}" in off|image) ;; *) echo "Invalid worker_gribjump_mode: ${worker_gribjump_mode}. Expected off or image." >&2; exit 1 ;; esac
+    && case "${worker_gribjump_mode}" in off|rpm|image) ;; *) echo "Invalid worker_gribjump_mode: ${worker_gribjump_mode}. Expected off, rpm, or image." >&2; exit 1 ;; esac
 
 WORKDIR /polytope
 

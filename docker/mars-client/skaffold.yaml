@@ -7,17 +7,14 @@ build:
     concurrency: 1
   tagPolicy:
     customTemplate:
-      template: "{{.PREFIX}}mc-{{.MARS_CLIENT_C_REF}}-mcpp-{{.MARS_CLIENT_CPP_REF}}"
+      template: "mc-{{.MARS_CLIENT_C_REF}}-mcpp-{{.MARS_CLIENT_CPP_REF}}"
       components:
-      - name: PREFIX
-        envTemplate:
-          template: '{{default "" .PREFIX}}'
       - name: MARS_CLIENT_C_REF
         envTemplate:
-          template: '{{ default "6.34.4.11" .mars_client_c_bundle_ref | replace "/" "-" | replace ":" "-" | replace "@" "-" | replace "+" "-" | trunc 24 }}'
+          template: '{{ default "6.34.4.11" .mars_client_c_bundle_ref }}'
       - name: MARS_CLIENT_CPP_REF
         envTemplate:
-          template: '{{ default "7.1.9.1" .mars_client_cpp_bundle_ref | replace "/" "-" | replace ":" "-" | replace "@" "-" | replace "+" "-" | trunc 24 }}'
+          template: '{{ default "7.1.9.1" .mars_client_cpp_bundle_ref }}'
   platforms:
     - linux/amd64
   artifacts:
@@ -63,16 +60,13 @@ profiles:
                 mars_client_c_bundle_ref: '{{ default "6.34.4.11" .mars_client_c_bundle_ref }}'
       - op: replace
         path: /build/tagPolicy/customTemplate/template
-        value: "{{.PREFIX}}mc-{{.MARS_CLIENT_C_REF}}"
+        value: "{{.MARS_CLIENT_C_REF}}"
       - op: replace
         path: /build/tagPolicy/customTemplate/components
         value:
-          - name: PREFIX
-            envTemplate:
-              template: '{{default "" .PREFIX}}'
           - name: MARS_CLIENT_C_REF
             envTemplate:
-               template: '{{ default "6.34.4.11" .mars_client_c_bundle_ref | replace "/" "-" | replace ":" "-" | replace "@" "-" | replace "+" "-" | trunc 40 }}'
+               template: '{{ default "6.34.4.11" .mars_client_c_bundle_ref }}'
   - name: mars-cpp
     patches:
       - op: replace
@@ -91,13 +85,10 @@ profiles:
                 mars_client_cpp_bundle_ref: '{{ default "7.1.9.1" .mars_client_cpp_bundle_ref }}'
       - op: replace
         path: /build/tagPolicy/customTemplate/template
-        value: "{{.PREFIX}}mcpp-{{.MARS_CLIENT_CPP_REF}}"
+        value: "{{.MARS_CLIENT_CPP_REF}}"
       - op: replace
         path: /build/tagPolicy/customTemplate/components
         value:
-          - name: PREFIX
-            envTemplate:
-              template: '{{default "" .PREFIX}}'
           - name: MARS_CLIENT_CPP_REF
             envTemplate:
-               template: '{{ default "7.1.9.1" .mars_client_cpp_bundle_ref | replace "/" "-" | replace ":" "-" | replace "@" "-" | replace "+" "-" | trunc 40 }}'
+               template: '{{ default "7.1.9.1" .mars_client_cpp_bundle_ref }}'

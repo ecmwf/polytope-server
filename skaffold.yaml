@@ -50,13 +50,14 @@ build:
         mars_config_repo: '{{ .mars_config_repo }}'
         mars_config_branch: '{{ .mars_config_branch }}'
         developer_mode: '{{ default "false" .developer_mode }}'
-        mars_client_c_version: '{{ default "6.34.4.11" .mars_client_c_version }}'
-        mars_client_cpp_version: '{{ default "7.1.9.1" .mars_client_cpp_version }}'
+        image_repo: '{{ if .SKAFFOLD_DEFAULT_REPO }}{{ .SKAFFOLD_DEFAULT_REPO }}{{ end }}'
+        # These versions are used for rpms, or as tags when in "image" mode.
+        mars_client_c_version: '6.34.4.11'
+        mars_client_cpp_version: '7.1.9.1'
+        gribjump_version: '0.12.0'
+        # modes can be off, rpm or image.
         worker_mars_c_mode: '{{ default "image" .worker_mars_c_mode }}'
-        worker_mars_c_image: '{{ if eq (default "image" .worker_mars_c_mode) "off" }}blank-base{{ else if eq (default "image" .worker_mars_c_mode) "rpm" }}mars-rpm-c-with-wrapper{{ else if eq (default "image" .worker_mars_c_mode) "image" }}{{ if .worker_mars_c_image }}{{ .worker_mars_c_image }}{{ else }}{{ if .SKAFFOLD_DEFAULT_REPO }}{{ .SKAFFOLD_DEFAULT_REPO }}/{{ end }}mars-base-c:{{ default "" .PREFIX }}mc-{{ default "6.34.4.11" .mars_client_c_bundle_ref | replace "/" "-" | replace ":" "-" | replace "@" "-" | replace "+" "-" | trunc 40 }}{{ end }}{{ else }}blank-base{{ end }}'
         worker_mars_cpp_mode: '{{ default "image" .worker_mars_cpp_mode }}'
-        worker_mars_cpp_image: '{{ if eq (default "image" .worker_mars_cpp_mode) "off" }}blank-base{{ else if eq (default "image" .worker_mars_cpp_mode) "rpm" }}mars-rpm-cpp{{ else if eq (default "image" .worker_mars_cpp_mode) "image" }}{{ if .worker_mars_cpp_image }}{{ .worker_mars_cpp_image }}{{ else }}{{ if .SKAFFOLD_DEFAULT_REPO }}{{ .SKAFFOLD_DEFAULT_REPO }}/{{ end }}mars-base-cpp:{{ default "" .PREFIX }}mcpp-{{ default "7.1.9.1" .mars_client_cpp_bundle_ref | replace "/" "-" | replace ":" "-" | replace "@" "-" | replace "+" "-" | trunc 40 }}{{ end }}{{ else }}blank-base{{ end }}'
-        worker_gribjump_mode: '{{ default "image" .worker_gribjump_mode }}'
-        worker_gribjump_image: '{{ if eq (default "image" .worker_gribjump_mode) "off" }}blank-base{{ else if eq (default "image" .worker_gribjump_mode) "image" }}{{ if .worker_gribjump_image }}{{ .worker_gribjump_image }}{{ else }}{{ if .SKAFFOLD_DEFAULT_REPO }}{{ .SKAFFOLD_DEFAULT_REPO }}/{{ end }}gribjump-source-worker-python:{{ default "" .PREFIX }}gj-{{ default "0.12.0" .gribjump_version | replace "/" "-" | replace ":" "-" | replace "@" "-" | replace "+" "-" | trunc 16 }}{{ end }}{{ else }}blank-base{{ end }}'
+        worker_gribjump_mode: '{{ default "image" .worker_gribjump_mode }}' # no rpm option currently due to pyfdb wheel creation
       # cliFlags: 
       #   - --no-cache # for debug purposes
