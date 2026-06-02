@@ -78,11 +78,17 @@ overridden through Skaffold build args. GribJump does not advertise an rpm
 mode; invalid mode values fail the worker build clearly.
 
 To build publishable source-built replacement base images for the C and C++
-MARS clients, use the dedicated config under `docker/mars-client/`:
+MARS clients, use the dedicated wrapper under `docker/mars-client/`. With no
+profile specified, it builds both profile-specific helper images:
+
+```bash
+PREFIX=dev_ docker/mars-client/skaffold.sh build
+```
+
+To build only one client, pass the matching profile:
 
 ```bash
 PREFIX=dev_ docker/mars-client/skaffold.sh build -p mars-c
-
 PREFIX=dev_ docker/mars-client/skaffold.sh build -p mars-cpp
 ```
 
@@ -121,8 +127,7 @@ provenance, so they can still be inspected without expanding the tag.
 For a default image-mode worker build, the usual order is:
 
 ```bash
-PREFIX=dev_ docker/mars-client/skaffold.sh build -p mars-c
-PREFIX=dev_ docker/mars-client/skaffold.sh build -p mars-cpp
+PREFIX=dev_ docker/mars-client/skaffold.sh build
 PREFIX=dev_ docker/gribjump/skaffold.sh build
 PREFIX=dev_ skaffold build
 ```
