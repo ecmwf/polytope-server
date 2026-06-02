@@ -63,6 +63,7 @@ class PolytopeDataSource(datasource.DataSource):
             self.config_file = f.name
             f.write(yaml.dump(self.config.pop("gribjump_config")))
         self.config["datacube"]["config"] = self.config_file
+        os.environ["GRIBJUMP_CONFIG_FILE"] = self.config_file
 
         # Create a temp file to store FDB config
         self.fdb_config_file = None
@@ -70,6 +71,7 @@ class PolytopeDataSource(datasource.DataSource):
             with tempfile.NamedTemporaryFile(mode="w", prefix="fdb-", suffix=".yaml", delete=False) as f:
                 self.fdb_config_file = f.name
                 f.write(yaml.dump(self.config.pop("fdb_config")))
+            os.environ["FDB5_CONFIG_FILE"] = self.fdb_config_file
 
     def get_type(self):
         return self.type
