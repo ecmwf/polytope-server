@@ -40,6 +40,12 @@ build:
       target: polytope-common
       buildArgs:
         developer_mode: '{{ default "false" .developer_mode }}'
+        image_repo: '{{ if .SKAFFOLD_DEFAULT_REPO }}{{ .SKAFFOLD_DEFAULT_REPO }}/{{ end }}'
+        # These are only needed so Skaffold can resolve later Dockerfile FROMs
+        # while hashing this target's dependencies.
+        mars_client_c_version: '6.34.4.11'
+        mars_client_cpp_version: '7.1.9.1'
+        gribjump_version: '0.12.0'
 
   # Worker with optional source-built GribJump and MARS clients
   - image: "worker"
@@ -50,7 +56,7 @@ build:
         mars_config_repo: '{{ .mars_config_repo }}'
         mars_config_branch: '{{ .mars_config_branch }}'
         developer_mode: '{{ default "false" .developer_mode }}'
-        image_repo: '{{ if .SKAFFOLD_DEFAULT_REPO }}{{ .SKAFFOLD_DEFAULT_REPO }}{{ end }}'
+        image_repo: '{{ if .SKAFFOLD_DEFAULT_REPO }}{{ .SKAFFOLD_DEFAULT_REPO }}/{{ end }}'
         # These versions are used for rpms, or as tags when in "image" mode.
         mars_client_c_version: '6.34.4.11'
         mars_client_cpp_version: '7.1.9.1'
