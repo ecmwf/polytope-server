@@ -71,7 +71,10 @@ class MongoRequestStore(request_store.RequestStore):
                 RequestStatusChange(request_id=request.id, status=request.status, user_id=request.user.id)
             )
 
-        logging.info("Request ID {} status set to {}.".format(request.id, request.status))
+        logging.info(
+            "Request ID {} added to request store.".format(request.id),
+            extra={"request": request.serialize_logging(), "request_id": request.id},
+        )
 
     def remove_request(self, id):
         result = self.store.find_one_and_delete({"id": id})
@@ -197,7 +200,7 @@ class MongoRequestStore(request_store.RequestStore):
 
         logging.info(
             "Request ID {} updated on request store. Status is {}.".format(request.id, request.status),
-            extra={"request": request.serialize()},
+            extra={"request": request.serialize_logging()},
         )
 
         return res

@@ -169,10 +169,10 @@ class Worker:
                 self.queue.ack(self.queue_msg)
 
                 self.update_status("idle")
-                await self.terminate()
 
                 self.queue_msg = None
                 self.request = None
+                await self.terminate()
 
     async def terminate(self) -> NoReturn:
         if timeout := self.config.get("timeout"):
@@ -223,7 +223,7 @@ class Worker:
 
         logging.debug(
             "Processing request on collection {}".format(collection.name),
-            extra={"collection": collection.name, "request": request.serialize()},
+            extra={"collection": collection.name, "request": request.serialize_logging()},
         )
 
         input_data = self.fetch_input_data(request.url)

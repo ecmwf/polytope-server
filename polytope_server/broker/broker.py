@@ -56,7 +56,7 @@ class Broker:
 
         # Don't queue if full. We don't need to query request_store.
         if self.queue.count() >= self.max_queue_size:
-            logging.info("Queue is full")
+            logging.debug("Queue is full")
             return
 
         # Find all requests that are waiting to be queued (oldest first)
@@ -120,7 +120,7 @@ class Broker:
                     f"User {request.user} has {user_active_requests} of {limit} "
                     f"active requests in collection {request.collection}"
                 )
-                logging.info(user_limit_message)
+                logging.debug(user_limit_message)
                 if user_active_requests >= limit:
                     return False
                 else:
@@ -132,7 +132,7 @@ class Broker:
 
     def enqueue(self, request: PolytopeRequest):
         with with_baggage_items({"request_id": request.id}):
-            logging.info("Queuing request")
+            logging.debug("Queuing request")
 
             try:
                 # Must update request_store before queue, worker checks request status immediately
@@ -143,6 +143,5 @@ class Broker:
             except Exception as e:
                 # If we fail to call this, the request will be stuck (POLY-21)
                 logging.exception("Failed to queue, error: {}".format(repr(e)))
+                request.user_message = "Failed to queue request due to an internal error. Please try again later."
                 self.request_store.set_request_status(request, Status.FAILED)
-            else:
-                logging.info("Queued request")
