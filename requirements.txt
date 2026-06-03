@@ -40,7 +40,7 @@ pytest==8.3.3
 python-jose==3.4.0
 python-json-logger==4.0.0
 python-keycloak==4.4.0
-PyYAML==6.0.2
+PyYAML==6.0.3
 redis==5.0.8
 requests==2.32.3
 Werkzeug==3.0.6

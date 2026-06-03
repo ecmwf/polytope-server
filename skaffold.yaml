@@ -1,14 +1,18 @@
 apiVersion: skaffold/v4beta10
 kind: Config
 
-# This Skaffold configuration expects to find a skaffold.env file in the current directory.
-# It should contain the following environment variables:
+# This Skaffold configuration expects to find a skaffold.env file in the current directory
+# for site/secret-bearing values. It should contain the following environment variables:
 # - SKAFFOLD_DEFAULT_REPO: The default repository to use for images
 # - rpm_repo: The URL of the RPM repository for MARS/GribJump/FDB images
 # - mars_config_repo: The URL of the MARS configuration repository
 # - mars_config_branch: The branch of the MARS configuration repository to use
-# - ssh_pub_key: The public SSH key to use for cloning the MARS and MARS configuration repositories
-# - ssh_prv_key: The private SSH key to use for cloning the MARS and MARS configuration repositories
+#
+# Source-built GribJump/FDB dependency pins live in docker/gribjump/deps.env.
+# docker/gribjump/skaffold.sh targets the dedicated
+# docker/gribjump/skaffold.yaml build, while this main config uses the normal
+# Skaffold entrypoint. By default the worker expects the helper images produced
+# by docker/gribjump/skaffold.sh and docker/mars-client/skaffold.sh.
 
 
 build:
@@ -24,7 +28,7 @@ build:
           template: '{{default "" .PREFIX}}'
       - name: GIT_TAG
         gitCommit:
-          ignoreChanges: true
+          ignoreChanges: false
   platforms:
     - linux/amd64
     # - linux/arm64
@@ -36,8 +40,14 @@ build:
       target: polytope-common
       buildArgs:
         developer_mode: '{{ default "false" .developer_mode }}'
+        image_repo: '{{ if .SKAFFOLD_DEFAULT_REPO }}{{ .SKAFFOLD_DEFAULT_REPO }}/{{ end }}'
+        # These are only needed so Skaffold can resolve later Dockerfile FROMs
+        # while hashing this target's dependencies.
+        mars_client_c_version: '6.34.4.11'
+        mars_client_cpp_version: '7.1.9.1'
+        gribjump_version: '0.12.0'
 
-  # Worker with all clients (FDB, GribJump, MARS C, MARS CPP)
+  # Worker with optional source-built GribJump and MARS clients
   - image: "worker"
     docker:
       target: worker
@@ -46,18 +56,14 @@ build:
         mars_config_repo: '{{ .mars_config_repo }}'
         mars_config_branch: '{{ .mars_config_branch }}'
         developer_mode: '{{ default "false" .developer_mode }}'
-        # mars_client_c_version: 6.33.20.2
-        gribjump_version: '{{ default "0.10.2" .gribjump_version }}'
-        mars_client_cpp_version: 7.1.9.1
-        # ecbuild_version: 3.8.2
-        # eccodes_version: 2.33.1
-        # eckit_version: 1.28.0
-        # pyfdb_version: 0.1.0
-        # fdb_version: 5.13.2
-        mars_base_c: '{{ if eq .mars_base_c "1" }}mars-base-c{{ else }}blank-base{{ end }}'
-        mars_base_cpp: '{{ if eq .mars_base_cpp "1" }}mars-base-cpp{{ else }}blank-base{{ end }}'
-        fdb_base: '{{ if eq .fdb_base "1" }}fdb-base{{ else }}blank-base{{ end }}'
-        gribjump_base: '{{ if eq .gribjump_base "1" }}gribjump-base{{ else }}blank-base{{ end }}'
+        image_repo: '{{ if .SKAFFOLD_DEFAULT_REPO }}{{ .SKAFFOLD_DEFAULT_REPO }}/{{ end }}'
+        # These versions are used for rpms, or as tags when in "image" mode.
+        mars_client_c_version: '6.34.4.11'
+        mars_client_cpp_version: '7.1.9.1'
+        gribjump_version: '0.12.0'
+        # modes can be off, rpm or image.
+        worker_mars_c_mode: '{{ default "image" .worker_mars_c_mode }}'
+        worker_mars_cpp_mode: '{{ default "image" .worker_mars_cpp_mode }}'
+        worker_gribjump_mode: '{{ default "image" .worker_gribjump_mode }}' # no rpm option currently due to pyfdb wheel creation
       # cliFlags: 
       #   - --no-cache # for debug purposes
-

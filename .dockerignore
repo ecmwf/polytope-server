@@ -8,3 +8,6 @@ skaffold.env
 ./polytope/tests
 ./polytope/examples
 ./polytope/performance
+./docker/gribjump/build
+./docker/gribjump/install
+./docker/gribjump/git
