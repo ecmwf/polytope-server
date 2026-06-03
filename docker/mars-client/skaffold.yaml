@@ -1,0 +1,94 @@
+apiVersion: skaffold/v4beta10
+kind: Config
+
+build:
+  local:
+    useBuildkit: True
+    concurrency: 1
+  tagPolicy:
+    customTemplate:
+      template: "mc-{{.MARS_CLIENT_C_REF}}-mcpp-{{.MARS_CLIENT_CPP_REF}}"
+      components:
+      - name: MARS_CLIENT_C_REF
+        envTemplate:
+          template: '{{ default "6.34.4.11" .mars_client_c_bundle_ref }}'
+      - name: MARS_CLIENT_CPP_REF
+        envTemplate:
+          template: '{{ default "7.1.9.1" .mars_client_cpp_bundle_ref }}'
+  platforms:
+    - linux/amd64
+  artifacts:
+  - image: "mars-base-c"
+    context: .
+    docker:
+      dockerfile: docker/mars-client/Dockerfile
+      target: mars-base-c
+      cliFlags:
+        - --secret=id=github_token,env=GITHUB_TOKEN
+      buildArgs:
+        rpm_repo: '{{ .rpm_repo }}'
+        ecbuild_version: '{{ default "3.14.2" .ecbuild_version }}'
+        mars_client_c_bundle_ref: '{{ default "6.34.4.11" .mars_client_c_bundle_ref }}'
+  - image: "mars-base-cpp"
+    context: .
+    docker:
+      dockerfile: docker/mars-client/Dockerfile
+      target: mars-base-cpp
+      cliFlags:
+        - --secret=id=github_token,env=GITHUB_TOKEN
+      buildArgs:
+        rpm_repo: '{{ .rpm_repo }}'
+        ecbuild_version: '{{ default "3.14.2" .ecbuild_version }}'
+        mars_client_cpp_bundle_ref: '{{ default "7.1.9.1" .mars_client_cpp_bundle_ref }}'
+
+profiles:
+  - name: mars-c
+    patches:
+      - op: replace
+        path: /build/artifacts
+        value:
+          - image: "mars-base-c"
+            context: .
+            docker:
+              dockerfile: docker/mars-client/Dockerfile
+              target: mars-base-c
+              cliFlags:
+                - --secret=id=github_token,env=GITHUB_TOKEN
+              buildArgs:
+                rpm_repo: '{{ .rpm_repo }}'
+                ecbuild_version: '{{ default "3.14.2" .ecbuild_version }}'
+                mars_client_c_bundle_ref: '{{ default "6.34.4.11" .mars_client_c_bundle_ref }}'
+      - op: replace
+        path: /build/tagPolicy/customTemplate/template
+        value: "{{.MARS_CLIENT_C_REF}}"
+      - op: replace
+        path: /build/tagPolicy/customTemplate/components
+        value:
+          - name: MARS_CLIENT_C_REF
+            envTemplate:
+               template: '{{ default "6.34.4.11" .mars_client_c_bundle_ref }}'
+  - name: mars-cpp
+    patches:
+      - op: replace
+        path: /build/artifacts
+        value:
+          - image: "mars-base-cpp"
+            context: .
+            docker:
+              dockerfile: docker/mars-client/Dockerfile
+              target: mars-base-cpp
+              cliFlags:
+                - --secret=id=github_token,env=GITHUB_TOKEN
+              buildArgs:
+                rpm_repo: '{{ .rpm_repo }}'
+                ecbuild_version: '{{ default "3.14.2" .ecbuild_version }}'
+                mars_client_cpp_bundle_ref: '{{ default "7.1.9.1" .mars_client_cpp_bundle_ref }}'
+      - op: replace
+        path: /build/tagPolicy/customTemplate/template
+        value: "{{.MARS_CLIENT_CPP_REF}}"
+      - op: replace
+        path: /build/tagPolicy/customTemplate/components
+        value:
+          - name: MARS_CLIENT_CPP_REF
+            envTemplate:
+               template: '{{ default "7.1.9.1" .mars_client_cpp_bundle_ref }}'

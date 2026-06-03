@@ -31,8 +31,9 @@ __version__ = re.search(
 with open("requirements.txt") as f:
     all_requirements = f.read().splitlines()
 
-# Filter out Git-based dependencies
-install_requires = [req for req in all_requirements if not req.startswith("git+")]
+# Filter out Git-based dependencies. They are useful in requirements.txt for
+# image builds, but should not be embedded in the package metadata.
+install_requires = [req for req in all_requirements if not req.strip().startswith("git+") and " @ git+" not in req]
 
 setup(
     name="polytope_server",

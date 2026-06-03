@@ -18,10 +18,45 @@
 ## does it submit to any jurisdiction.
 ##
 
-ARG fdb_base=blank-base
-ARG mars_base_c=blank-base
-ARG mars_base_cpp=blank-base
-ARG gribjump_base=blank-base
+ARG mars_client_c_version=6.34.4.11
+ARG mars_client_cpp_version=7.1.9.1
+ARG gribjump_version=0.12.0
+ARG image_repo=
+ARG gribjump_base=${image_repo}gribjump-base:${gribjump_version}
+ARG worker_mars_c_mode=image
+ARG worker_mars_c_image=${image_repo}mars-base-c:${mars_client_c_version}
+ARG worker_mars_cpp_mode=image
+ARG worker_mars_cpp_image=${image_repo}mars-base-cpp:${mars_client_cpp_version}
+ARG worker_gribjump_mode=image
+
+#######################################################
+#           P Y T H O N   W H E E L H O U S E
+#      Build/download all wheels from requirements
+#######################################################
+
+FROM python:3.11-bookworm AS polytope-requirements-wheel-builder
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+    build-essential \
+    ca-certificates \
+    curl \
+    git \
+    libldap2-dev \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV CARGO_HOME=/root/.cargo
+ENV RUSTUP_HOME=/root/.rustup
+ENV PATH=/root/.cargo/bin:${PATH}
+
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal --default-toolchain stable
+
+RUN python -m pip install --no-cache-dir --upgrade pip wheel
+
+WORKDIR /build/polytope-server
+COPY ./requirements.txt .
+RUN GIT_TERMINAL_PROMPT=0 python -m pip wheel -r requirements.txt -w /wheels
 
 #######################################################
 #                     C O M M O N
@@ -34,49 +69,46 @@ ARG HOME_DIR=/home/polytope
 ARG developer_mode
 
 # Install build dependencies
-RUN apt update && apt install -y --no-install-recommends gcc libc6-dev libldap2-dev curl git \
-    && apt clean \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends bash gcc libc6-dev libldap2-dev curl git \
     && rm -rf /var/lib/apt/lists/*
 
 # Create user and group
 RUN set -eux \
     && addgroup --system polytope --gid 474 \
     && adduser --system polytope --ingroup polytope --home ${HOME_DIR} \
-    && mkdir -p ${HOME_DIR}/polytope-server \
-    && chown -R polytope:polytope ${HOME_DIR}
+    && mkdir -p /polytope \
+    && chown -R polytope:polytope ${HOME_DIR} /polytope
 
 # Switch to user polytope
 USER polytope
 
-WORKDIR ${HOME_DIR}/polytope-server
+WORKDIR /polytope
 
 # Copy requirements.txt with correct ownership
-COPY --chown=polytope:polytope ./requirements.txt $PWD
+COPY --chown=polytope:polytope ./requirements.txt ./requirements.txt
+COPY --from=polytope-requirements-wheel-builder --chown=polytope:polytope /wheels ${HOME_DIR}/wheels
 
-# Install uv in user space
-RUN pip install --user uv
+# Use one application virtual environment.
+ENV VIRTUAL_ENV=${HOME_DIR}/.venv
+ENV PATH="${VIRTUAL_ENV}/bin:${PATH}"
 
-# **Update PATH to include virtual environment and user local bin**
-# This makes sure that the default python and pip commands
-# point to the versions in the virtual environment.
-ENV PATH="${HOME_DIR}/.venv/bin:${HOME_DIR}/.local/bin:${PATH}"
-
-# Create a virtual environment
-RUN uv venv ${HOME_DIR}/.venv
-
-# Install requirements
-RUN uv pip install -r requirements.txt
+# Install every wheel produced from requirements.txt. This avoids re-resolving
+# direct git requirements in the runtime stage.
+RUN python -m venv ${VIRTUAL_ENV} \
+    && pip install --no-index --find-links=${HOME_DIR}/wheels ${HOME_DIR}/wheels/*.whl \
+    && rm -rf ${HOME_DIR}/wheels
 
 # Copy the rest of the application code
-COPY --chown=polytope:polytope . $PWD
+COPY --chown=polytope:polytope . .
 
 RUN set -eux \
-    && if [ $developer_mode = true ]; then \
-    uv pip install ./polytope-mars ./polytope ./covjsonkit; \
+    && if [ "${developer_mode}" = true ]; then \
+    pip install ./polytope-mars ./polytope ./covjsonkit; \
     fi
 
-# Install the application
-RUN uv pip install --upgrade .
+# Install the application. Dependencies are already installed from requirements.txt.
+RUN pip install --no-deps --upgrade .
 
 
 #######################################################
@@ -85,261 +117,151 @@ RUN uv pip install --upgrade .
 FROM python:3.11-bookworm AS blank-base
 # create blank directories to copy from in the final stage, optional dependencies aren't built
 RUN set -eux \
-    && mkdir -p /root/.local \
     && mkdir -p /opt/ecmwf/mars-client \
     && mkdir -p /opt/ecmwf/mars-client-cpp \
-    && mkdir -p /opt/ecmwf/mars-client-cloud \
-    && mkdir -p /opt/fdb \
-    && mkdir -p /opt/ecmwf/gribjump-server \
+    && mkdir -p /opt/polytope/gribjump-source \
+    && mkdir -p /opt/polytope/gribjump-source-wheels \
     && touch /usr/local/bin/mars
-
-#######################################################
-#                  F D B   B U I L D
-#######################################################
-FROM python:3.11-bookworm AS fdb-base
-ARG ecbuild_version=3.8.2
-ARG eccodes_version=2.33.1
-ARG eckit_version=1.28.0
-ARG fdb_version=5.13.2
-ARG pyfdb_version=0.1.0
-RUN apt update
-# COPY polytope-deployment/common/default_fdb_schema /polytope/config/fdb/default
-
-# Install FDB from open source repositories
-RUN set -eux && \
-    apt install -y cmake gnupg build-essential libtinfo5 net-tools libnetcdf19 libnetcdf-dev bison flex && \
-    rm -rf source && \
-    rm -rf build && \
-    mkdir -p source && \
-    mkdir -p build && \
-    mkdir -p /opt/fdb/
-
-# Download ecbuild
-RUN set -eux && \
-    git clone --depth 1 --branch ${ecbuild_version} https://github.com/ecmwf/ecbuild.git /ecbuild
-
-ENV PATH=/ecbuild/bin:$PATH
-
-# Install eckit
-RUN set -eux && \
-    git clone --depth 1 --branch ${eckit_version} https://github.com/ecmwf/eckit.git /source/eckit && \
-    cd /source/eckit && \
-    mkdir -p /build/eckit && \
-    cd /build/eckit && \
-    ecbuild --prefix=/opt/fdb -- -DCMAKE_PREFIX_PATH=/opt/fdb /source/eckit && \
-    make -j4 && \
-    make install
-
-# Install eccodes
-RUN set -eux && \
-    git clone --depth 1 --branch ${eccodes_version} https://github.com/ecmwf/eccodes.git /source/eccodes && \
-    mkdir -p /build/eccodes && \
-    cd /build/eccodes && \
-    ecbuild --prefix=/opt/fdb -- -DENABLE_FORTRAN=OFF -DCMAKE_PREFIX_PATH=/opt/fdb /source/eccodes && \
-    make -j4 && \
-    make install
-
-# Install metkit
-RUN set -eux && \
-    git clone --depth 1 --branch develop https://github.com/ecmwf/metkit.git /source/metkit && \
-    cd /source/metkit && \
-    mkdir -p /build/metkit && \
-    cd /build/metkit && \
-    ecbuild --prefix=/opt/fdb -- -DCMAKE_PREFIX_PATH=/opt/fdb /source/metkit && \
-    make -j4 && \
-    make install
-
-# Install fdb \
-RUN set -eux && \
-    git clone --depth 1 --branch ${fdb_version} https://github.com/ecmwf/fdb.git /source/fdb && \
-    cd /source/fdb && \
-    mkdir -p /build/fdb && \
-    cd /build/fdb && \
-    ecbuild --prefix=/opt/fdb -- -DCMAKE_PREFIX_PATH="/opt/fdb;/opt/fdb/eckit;/opt/fdb/metkit" /source/fdb && \
-    make -j4 && \
-    make install
-
-RUN set -eux && \
-    rm -rf /source && \ 
-    rm -rf /build 
-
-# Install pyfdb \
-RUN set -eux \
-    && git clone --single-branch --branch ${pyfdb_version} https://github.com/ecmwf/pyfdb.git \
-    && python -m pip install "numpy<2.0" --user\
-    && python -m pip install ./pyfdb --user
-
-#######################################################
-#             G R I B  J U M P   B U I L D
-#######################################################
-
-FROM python:3.11-bookworm AS gribjump-base
-ARG rpm_repo
-ARG gribjump_version=0.10.0
-
-RUN response=$(curl -s -w "%{http_code}" ${rpm_repo}) \
-    && if [ "$response" = "403" ]; then echo "Unauthorized access to ${rpm_repo} "; fi
-
-RUN set -eux \
-    && apt-get update \
-    && apt-get install -y gnupg2 curl ca-certificates \
-    && curl -fsSL "${rpm_repo}/private-raw-repos-config/debian/bookworm/stable/public.gpg.key" | gpg --dearmor -o /usr/share/keyrings/mars-archive-keyring.gpg \
-    && echo "deb [signed-by=/usr/share/keyrings/mars-archive-keyring.gpg] ${rpm_repo}/private-debian-bookworm-stable/ bookworm main" | tee /etc/apt/sources.list.d/mars.list
-
-RUN set -eux \
-    && apt-get update \
-    && apt install -y gribjump-server=${gribjump_version}-gribjumpserver
-
-RUN set -eux \
-    ls -R /opt
-
-RUN set -eux \
-    && git clone --single-branch --branch ${gribjump_version} https://github.com/ecmwf/gribjump.git
-# Install pygribjump
-RUN set -eux \
-    && cd /gribjump \
-    && python -m pip install . --user \
-    && rm -rf /gribjump
 
 #######################################################
 #               M A R S    B A S E
 #######################################################
 FROM python:3.11-bookworm AS mars-base
 ARG rpm_repo
-ARG mars_client_cpp_version=6.99.3.0
-ARG mars_client_c_version=6.33.20.2
+ARG mars_client_cpp_version
+ARG mars_client_c_version
+
+RUN set -eux \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN response=$(curl -s -w "%{http_code}" ${rpm_repo}) \
     && if [ "$response" = "403" ]; then echo "Unauthorized access to ${rpm_repo} "; fi
 
 RUN set -eux \
-    && curl -o stable-public.gpg.key "${rpm_repo}/private-raw-repos-config/debian/bookworm/stable/public.gpg.key" \
-    && echo "deb ${rpm_repo}/private-debian-bookworm-stable/ bookworm main" >> /etc/apt/sources.list \
-    && apt-key add stable-public.gpg.key \
+    && curl -o /tmp/stable-public.gpg.key "${rpm_repo}/private-raw-repos-config/debian/bookworm/stable/public.gpg.key" \
+    && gpg --dearmor -o /usr/share/keyrings/mars-client.gpg /tmp/stable-public.gpg.key \
+    && echo "deb [signed-by=/usr/share/keyrings/mars-client.gpg] ${rpm_repo}/private-debian-bookworm-stable/ bookworm main" > /etc/apt/sources.list.d/mars-client.list \
     && apt-get update \
-    && apt install -y libnetcdf19 liblapack3
+    && apt-get install -y --no-install-recommends libnetcdf19 liblapack3 \
+    && rm -rf /var/lib/apt/lists/* /tmp/stable-public.gpg.key
 
-FROM mars-base AS mars-base-c
-RUN apt update && apt install -y liblapack3 mars-client=${mars_client_c_version} mars-client-cloud
-
-FROM mars-base AS mars-base-cpp
-ARG pyfdb_version=0.1.0
-RUN apt update && apt install -y mars-client-cpp=${mars_client_cpp_version}
-
-FROM blank-base AS blank-base-c
-FROM blank-base AS blank-base-cpp
-
-#######################################################
-#         S W I T C H   B A S E    I M A G E S
-#######################################################
-
-FROM ${fdb_base} AS fdb-base-final
-
-FROM ${mars_base_c} AS mars-c-base-final
-
-FROM ${mars_base_cpp} AS mars-cpp-base-final
-
-FROM ${gribjump_base} AS gribjump-base-final
-
-
-#######################################################
-#           P Y T H O N   R E Q U I R E M E N T S
-#######################################################
-FROM python:3.11-slim-bookworm AS worker-base
-ARG developer_mode
-
-# contains compilers for building wheels which we don't want in the final image
-RUN apt update
-RUN apt-get install -y --no-install-recommends gcc libc6-dev make gnupg2 git
-
-COPY ./requirements.txt /requirements.txt
-RUN pip install uv --user
-ENV PATH="/root/.venv/bin:/root/.local/bin:${PATH}"
-ENV VIRTUAL_ENV=/root/.venv
-RUN uv venv /root/.venv
-RUN uv pip install -r requirements.txt
-RUN uv pip install geopandas==1.0.1
-
-COPY . ./polytope
+FROM mars-base AS mars-rpm-c
 RUN set -eux \
-    && if [ $developer_mode = true ]; then \
-    uv pip install ./polytope/polytope-mars ./polytope/polytope ./polytope/covjsonkit; \
-    fi
+    && apt-get update \
+    && apt-get install -y --no-install-recommends liblapack3 mars-client=${mars_client_c_version} \
+    && rm -rf /var/lib/apt/lists/* \
+    && if [ -x /opt/ecmwf/mars-client/bin/mars.bin ] && [ ! -e /opt/ecmwf/mars-client/bin/mars ]; then ln -s mars.bin /opt/ecmwf/mars-client/bin/mars; fi
+
+FROM mars-base AS mars-cloud-wrapper
+RUN set -eux \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends mars-client-cloud=0.2.1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && test -x /usr/local/bin/mars
+
+FROM mars-base AS mars-rpm-cpp
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends mars-client-cpp=${mars_client_cpp_version} \
+    && rm -rf /var/lib/apt/lists/*
+
+FROM mars-rpm-c AS mars-rpm-c-with-wrapper
+COPY --from=mars-cloud-wrapper /usr/local/bin/mars /usr/local/bin/mars
+
+
+FROM blank-base AS worker-mars-c-off
+FROM mars-rpm-c-with-wrapper AS worker-mars-c-rpm
+FROM ${worker_mars_c_image} AS worker-mars-c-image
+FROM worker-mars-c-${worker_mars_c_mode} AS worker-mars-c-final
+
+FROM blank-base AS worker-mars-cpp-off
+FROM mars-rpm-cpp AS worker-mars-cpp-rpm
+FROM ${worker_mars_cpp_image} AS worker-mars-cpp-image
+FROM worker-mars-cpp-${worker_mars_cpp_mode} AS worker-mars-cpp-final
+
+FROM blank-base AS worker-gribjump-off
+FROM ${gribjump_base} AS worker-gribjump-image
+FROM worker-gribjump-${worker_gribjump_mode} AS worker-gribjump-final
+
 
 #######################################################
 #                    W O R K E R
 #               based on debian bookworm
 #######################################################
 
-FROM python:3.11-slim-bookworm AS worker
+FROM polytope-common AS worker
 
 ARG mars_config_branch
 ARG mars_config_repo
 ARG rpm_repo
+ARG worker_mars_c_mode
+ARG worker_mars_cpp_mode
+ARG worker_gribjump_mode
 
+USER root
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+    bash \
+    curl \
+    git \
+    libfftw3-bin \
+    libgomp1 \
+    liblapack3 \
+    libnetcdf19 \
+    libopenjp2-7 \
+    libproj25 \
+    ssh \
+    vim \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN set -eux \
-    && addgroup --system polytope --gid 474 \
-    && adduser --system polytope --ingroup polytope --home /home/polytope \
-    && mkdir /polytope && chmod -R o+rw /polytope
-
-RUN apt update \
-    && apt install -y curl nano sudo ssh libgomp1 vim
-
-# Add polytope user to passwordless sudo group during build
-RUN usermod -aG sudo polytope
-RUN echo "%sudo  ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+    && case "${worker_mars_c_mode}" in off|rpm|image) ;; *) echo "Invalid worker_mars_c_mode: ${worker_mars_c_mode}. Expected off, rpm, or image." >&2; exit 1 ;; esac \
+    && case "${worker_mars_cpp_mode}" in off|rpm|image) ;; *) echo "Invalid worker_mars_cpp_mode: ${worker_mars_cpp_mode}. Expected off, rpm, or image." >&2; exit 1 ;; esac \
+    && case "${worker_gribjump_mode}" in off|image) ;; *) echo "Invalid worker_gribjump_mode: ${worker_gribjump_mode}. Expected off, rpm, or image." >&2; exit 1 ;; esac
 
 WORKDIR /polytope
-USER polytope
-
 
 # Copy MARS-related artifacts
-COPY --chown=polytope ./aux/mars-wrapper.py  /polytope/bin/mars-wrapper.py 
-COPY --chown=polytope ./aux/mars-wrapper-docker.py  /polytope/bin/mars-wrapper-docker.py
-
-COPY --chown=polytope --from=mars-cpp-base-final   /opt/ecmwf/mars-client-cpp  /opt/ecmwf/mars-client-cpp
-COPY --chown=polytope --from=mars-c-base-final     /opt/ecmwf/mars-client      /opt/ecmwf/mars-client
-COPY --chown=polytope --from=mars-c-base-final     /usr/local/bin/mars      /usr/local/bin/mars
-RUN sudo apt update \
-    && sudo apt install -y libgomp1 git libnetcdf19 liblapack3  libfftw3-bin libproj25 \
-    && sudo rm -rf /var/lib/apt/lists/*
-
+COPY --chown=polytope --from=worker-mars-cpp-final /opt/ecmwf/mars-client-cpp  /opt/ecmwf/mars-client-cpp
+COPY --chown=polytope --from=worker-mars-c-final   /opt/ecmwf/mars-client      /opt/ecmwf/mars-client
+COPY --chown=polytope --from=worker-mars-c-final   /usr/local/bin/mars         /usr/local/bin/mars
 
 # all of this is needed by the C client, would be nice to remove it at some point
 RUN set -eux \
     && mkdir -p /home/polytope/.ssh \
     && chmod 0700 /home/polytope/.ssh \
     && ssh-keyscan git.ecmwf.int > /home/polytope/.ssh/known_hosts \
-    && chmod 755 /polytope/bin/mars-wrapper.py \
-    && chmod 755 /polytope/bin/mars-wrapper-docker.py
+    && mkdir -p /home/polytope/data \
+    && chown -R polytope:polytope /home/polytope
 
 ENV MARS_CONFIGS_REPO=${mars_config_repo}
 ENV MARS_CONFIGS_BRANCH=${mars_config_branch}
-ENV PATH="/polytope/bin/:/opt/ecmwf/mars-client/bin:/opt/ecmwf/mars-client-cloud/bin:${PATH}"
+ENV PATH="/home/polytope/.venv/bin:/opt/ecmwf/mars-client/bin:${PATH}"
+ENV FINDLIBS_DISABLE_PACKAGE=yes
+ENV FDB5_DIR=/opt/polytope/gribjump-source
+ENV GRIBJUMP_DIR=/opt/polytope/gribjump-source
+ENV ECCODES_DIR=/opt/polytope/gribjump-source
 
-# Copy FDB-related artifacts
-COPY --chown=polytope --from=fdb-base-final /opt/fdb/ /opt/fdb/
-COPY --chown=polytope ./aux/default_fdb_schema /polytope/config/fdb/default
-RUN mkdir -p /polytope/fdb/ && sudo chmod -R o+rw /polytope/fdb
-ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/opt/fdb/lib:/opt/ecmwf/gribjump-server/lib
-COPY --chown=polytope --from=fdb-base-final /root/.local /home/polytope/.local
-
-# Copy gribjump-related artifacts, including python libraries
-# COPY --chown=polytope --from=gribjump-base-final /opt/fdb/ /opt/fdb/
-COPY --chown=polytope --from=gribjump-base-final /opt/ecmwf/gribjump-server/ /opt/ecmwf/gribjump-server/
-COPY --chown=polytope --from=gribjump-base-final /root/.local /home/polytope/.local
-# RUN sudo apt install -y libopenjp2-7
-# COPY polytope-deployment/common/default_fdb_schema /polytope/config/fdb/default
-
-# Copy python requirements
-COPY --chown=polytope --from=worker-base /root/.venv /home/polytope/.local
-
-# Install the server source
-COPY --chown=polytope . /polytope/
+# Copy gribjump-related artifacts
+COPY --chown=polytope --from=worker-gribjump-final /opt/polytope/gribjump-source /opt/polytope/gribjump-source
+COPY --chown=polytope --from=worker-gribjump-final /opt/polytope/gribjump-source-wheels /tmp/gribjump-source-wheels
 
 RUN set -eux \
-    && mkdir /home/polytope/data
+    && if ls /tmp/gribjump-source-wheels/*.whl >/dev/null 2>&1; then \
+    /home/polytope/.venv/bin/pip install --no-index --find-links=/tmp/gribjump-source-wheels /tmp/gribjump-source-wheels/*.whl; \
+    fi \
+    && rm -rf /tmp/gribjump-source-wheels /opt/polytope/gribjump-source/.venv
 
-# Remove itself from sudo group
-RUN sudo deluser polytope sudo
+RUN set -eux \
+    && mkdir -p /opt/polytope/gribjump-source/lib64 /opt/polytope/gribjump-source/lib \
+    && printf '%s\n' /opt/polytope/gribjump-source/lib64 /opt/polytope/gribjump-source/lib > /etc/ld.so.conf.d/polytope-gribjump.conf \
+    && ldconfig
+
+RUN set -eux \
+    && if [ -f /opt/polytope/gribjump-source/profile ]; then \
+    /home/polytope/.venv/bin/python -c "import eccodes, pyfdb, pygribjump; print('worker source bundle imports OK')"; \
+    fi
+
+USER polytope

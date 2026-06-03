@@ -22,45 +22,48 @@ import copy
 import json
 import logging
 import os
+import tempfile
 
 import yaml
 from covjsonkit.param_db import get_param_id_from_db
 from polytope_feature.utility.exceptions import PolytopeError
 from polytope_mars.api import PolytopeMars
 
-from ..request import PolytopeRequest
 from ..schedule import SCHEDULE_READER
 from . import datasource
 
 
 class PolytopeDataSource(datasource.DataSource):
     def __init__(self, config):
-        self.config = config
+        self.config = copy.deepcopy(config)
         self.type = config["type"]
         assert self.type == "polytope"
-        self.pre_path = config.get("options", {}).pop("pre_path", [])
-        self.defaults = config.get("defaults", {})
+        self.dynamic_grid = self.config.pop("dynamic_grid", False)
+        self.dynamic_grid_service_url = self.config.pop("dynamic_grid_service_url", None)
+        self.pre_path = self.config.get("options", {}).pop("pre_path", [])
+        self.defaults = self.config.get("defaults", {})
         # https://github.com/ecmwf/polytope-server/issues/68
-        self.gh68_fix_hashes = config.get("gh68_fix_hashes", False)
+        self.gh68_fix_hashes = self.config.get("gh68_fix_hashes", False)
         # https://github.com/ecmwf/polytope-server/issues/69
-        self.gh69_fix_grids = config.get("gh69_fix_grids", False)
+        self.gh69_fix_grids = self.config.get("gh69_fix_grids", False)
         # https://github.com/ecmwf/polytope-server/issues/70
-        self.gh70_fix_step_ranges = config.get("gh70_fix_step_ranges", False)
-        self.separate_datetime = config.get("separate_datetime", False)
-        self.obey_schedule = config.get("obey_schedule", False)
+        self.gh70_fix_step_ranges = self.config.get("gh70_fix_step_ranges", False)
+        self.separate_datetime = self.config.get("separate_datetime", False)
+        self.obey_schedule = self.config.get("obey_schedule", False)
         self.output = None
 
         # Create a temp file to store gribjump config
-        self.config_file = "/tmp/gribjump.yaml"
-        with open(self.config_file, "w") as f:
+        with tempfile.NamedTemporaryFile(mode="w", prefix="gribjump-", suffix=".yaml", delete=False) as f:
+            self.config_file = f.name
             f.write(yaml.dump(self.config.pop("gribjump_config")))
         self.config["datacube"]["config"] = self.config_file
         os.environ["GRIBJUMP_CONFIG_FILE"] = self.config_file
 
         # Create a temp file to store FDB config
-        self.fdb_config_file = "/tmp/fdb.yaml"
-        if "fdb_config" in config:
-            with open(self.fdb_config_file, "w") as f:
+        self.fdb_config_file = None
+        if "fdb_config" in self.config:
+            with tempfile.NamedTemporaryFile(mode="w", prefix="fdb-", suffix=".yaml", delete=False) as f:
+                self.fdb_config_file = f.name
                 f.write(yaml.dump(self.config.pop("fdb_config")))
             os.environ["FDB5_CONFIG_FILE"] = self.fdb_config_file
 
@@ -88,7 +91,10 @@ class PolytopeDataSource(datasource.DataSource):
                             try:
                                 v[0] = get_param_id_from_db(v[0])
                             except Exception:
-                                logging.warning("Could not convert param shortname '%s' to param id", v[0])
+                                logging.warning(
+                                    "Could not convert param shortname '%s' to param id",
+                                    v[0],
+                                )
                             pre_path[k] = v[0]
                     if len(v) == 1:
                         v = v[0]
@@ -96,11 +102,28 @@ class PolytopeDataSource(datasource.DataSource):
                             try:
                                 v = get_param_id_from_db(v)
                             except Exception:
-                                logging.warning("Could not convert param shortname '%s' to param id", v)
+                                logging.warning(
+                                    "Could not convert param shortname '%s' to param id",
+                                    v,
+                                )
                         pre_path[k] = v
 
         polytope_mars_config = copy.deepcopy(self.config)
-        polytope_mars_config["options"]["pre_path"] = pre_path
+        options_config = polytope_mars_config["options"]
+        options_config["pre_path"] = pre_path
+
+        if self.dynamic_grid:
+            from polytope_server.dynamic_grid.helper import (
+                build_grid_lookup_request,
+                replace_dynamic_grid_options,
+            )
+
+            grid_lookup_request = build_grid_lookup_request(r)
+            replace_dynamic_grid_options(
+                options_config,
+                grid_lookup_request,
+                service_url=self.dynamic_grid_service_url,
+            )
 
         if self.gh69_fix_grids:
             change_grids(r, polytope_mars_config)
@@ -133,9 +156,8 @@ class PolytopeDataSource(datasource.DataSource):
         # delete temp files
         if os.path.exists(self.config_file):
             os.remove(self.config_file)
-        if os.path.exists(self.fdb_config_file):
+        if self.fdb_config_file and os.path.exists(self.fdb_config_file):
             os.remove(self.fdb_config_file)
-        pass
 
     def mime_type(self) -> str:
         return "application/prs.coverage+json"
@@ -175,7 +197,13 @@ def change_grids(request, config):
                 res = 512
 
             # Catch all for others that don't fit into exception cases above
-            elif request["activity"] in ["baseline", "cmip6", "highresmip", "projections", "scenariomip"]:
+            elif request["activity"] in [
+                "baseline",
+                "cmip6",
+                "highresmip",
+                "projections",
+                "scenariomip",
+            ]:
                 res = 1024
 
     elif request.get("dataset", None) == "extremes-dt":
@@ -254,6 +282,9 @@ def unmerge_date_time_options(request, config):
             if mappings["axis_name"] == "date":
                 mappings["transformations"] = [{"name": "type_change", "type": "date"}]
         config["options"]["axis_config"].append(
-            {"axis_name": "time", "transformations": [{"name": "type_change", "type": "time"}]}
+            {
+                "axis_name": "time",
+                "transformations": [{"name": "type_change", "type": "time"}],
+            }
         )
     return config

@@ -70,7 +70,14 @@ class Collection:
                 request.datasource = ds_config.get("name")
                 request.coerced_request = coerced_ur
                 ds = create_datasource(ds_config)
-                ds.dispatch(request, input_data)
+                try:
+                    ds.dispatch(request, input_data)
+                except Exception:
+                    try:
+                        ds.destroy(request)
+                    except Exception:
+                        logging.exception("Failed to destroy datasource after dispatch error")
+                    raise
                 return ds
             else:
                 match_errors.append(match_result)
