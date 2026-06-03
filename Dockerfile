@@ -219,7 +219,7 @@ RUN apt-get update \
 RUN set -eux \
     && case "${worker_mars_c_mode}" in off|rpm|image) ;; *) echo "Invalid worker_mars_c_mode: ${worker_mars_c_mode}. Expected off, rpm, or image." >&2; exit 1 ;; esac \
     && case "${worker_mars_cpp_mode}" in off|rpm|image) ;; *) echo "Invalid worker_mars_cpp_mode: ${worker_mars_cpp_mode}. Expected off, rpm, or image." >&2; exit 1 ;; esac \
-    && case "${worker_gribjump_mode}" in off|rpm|image) ;; *) echo "Invalid worker_gribjump_mode: ${worker_gribjump_mode}. Expected off, rpm, or image." >&2; exit 1 ;; esac
+    && case "${worker_gribjump_mode}" in off|image) ;; *) echo "Invalid worker_gribjump_mode: ${worker_gribjump_mode}. Expected off, rpm, or image." >&2; exit 1 ;; esac
 
 WORKDIR /polytope
 

@@ -94,7 +94,7 @@ def get_first_grib_message(req):
     return gid
 
 
-def get_gridspec_lamebert_conformal(gid):
+def get_gridspec_lambert_conformal(gid):
     to_rad = math.pi / 180
 
     md5hash = eccodes.codes_get(gid, "md5GridSection")
@@ -151,7 +151,7 @@ def get_gridspec_icon(gid):
 def get_gridspec_and_hash(gid):
     grid_type = eccodes.codes_get(gid, "gridType")
     if grid_type == "lambert_lam":
-        return get_gridspec_lamebert_conformal(gid)
+        return get_gridspec_lambert_conformal(gid)
     elif grid_type == "icon":
         return get_gridspec_icon(gid)
     else:
@@ -204,8 +204,6 @@ def _get_cache_locked():
 
 
 def lookup_grid_config_local(req):
-    if "georef" not in req.keys():
-        return
     req_georef = req["georef"]
     cache_key = _cache_key(req_georef)
     cache_enabled = _grid_cache_enabled()

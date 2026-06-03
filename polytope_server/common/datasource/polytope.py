@@ -23,19 +23,14 @@ import json
 import logging
 import os
 import tempfile
-from importlib import import_module
 
 import yaml
 from covjsonkit.param_db import get_param_id_from_db
 from polytope_feature.utility.exceptions import PolytopeError
+from polytope_mars.api import PolytopeMars
 
-from ..request import PolytopeRequest
 from ..schedule import SCHEDULE_READER
 from . import datasource
-
-
-def _import_polytope_mars():
-    return import_module("polytope_mars.api").PolytopeMars
 
 
 class PolytopeDataSource(datasource.DataSource):
@@ -137,7 +132,6 @@ class PolytopeDataSource(datasource.DataSource):
         if self.separate_datetime:
             unmerge_date_time_options(r, polytope_mars_config)
 
-        PolytopeMars = _import_polytope_mars()
         polytope_mars = PolytopeMars(
             polytope_mars_config,
             log_context={

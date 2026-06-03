@@ -195,7 +195,7 @@ def test_lookup_grid_config_local_skips_cache_when_disabled(tmp_path, monkeypatc
     assert not cache_file.exists()
 
 
-def test_get_gridspec_lamebert_conformal_prefers_metric_spacing(monkeypatch):
+def test_get_gridspec_lambert_conformal_prefers_metric_spacing(monkeypatch):
     values = {
         "md5GridSection": "abc123",
         "shapeOfTheEarth": 6,
@@ -216,14 +216,14 @@ def test_get_gridspec_lamebert_conformal_prefers_metric_spacing(monkeypatch):
 
     monkeypatch.setattr(switching_grid_local.eccodes, "codes_get", lambda gid, key: values[key])
 
-    gridspec, md5hash = switching_grid_local.get_gridspec_lamebert_conformal("gid")
+    gridspec, md5hash = switching_grid_local.get_gridspec_lambert_conformal("gid")
 
     assert md5hash == "abc123"
     assert gridspec["Dx"] == 500.0
     assert gridspec["Dy"] == 500.0
 
 
-def test_get_gridspec_lamebert_conformal_falls_back_when_metric_spacing_missing(monkeypatch):
+def test_get_gridspec_lambert_conformal_falls_back_when_metric_spacing_missing(monkeypatch):
     values = {
         "md5GridSection": "abc123",
         "shapeOfTheEarth": 6,
@@ -247,7 +247,7 @@ def test_get_gridspec_lamebert_conformal_falls_back_when_metric_spacing_missing(
 
     monkeypatch.setattr(switching_grid_local.eccodes, "codes_get", _codes_get)
 
-    gridspec, md5hash = switching_grid_local.get_gridspec_lamebert_conformal("gid")
+    gridspec, md5hash = switching_grid_local.get_gridspec_lambert_conformal("gid")
 
     assert md5hash == "abc123"
     assert gridspec["Dx"] == 1000.0

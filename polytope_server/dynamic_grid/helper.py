@@ -104,6 +104,8 @@ def lookup_grid_config(req, service_url=None):
 
 
 def replace_dynamic_grid_options(config_options, req, service_url=None):
+    if "georef" not in req.keys():
+        raise ValueError("Grid lookup requires request.georef")
     gridspec, md5hash = lookup_grid_config(req, service_url=service_url)
     grid_config = gridspec_to_grid_config(gridspec, md5hash)
     if grid_config is None:
