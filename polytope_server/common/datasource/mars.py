@@ -52,6 +52,9 @@ class MARSDataSource(datasource.DataSource):
         self.fifo = None
         self.output_file = None
         self.use_file_io = config.get("use_file_io", False)
+        self.timeout = config.get("timeout")
+        if self.timeout is not None:
+            self.timeout = float(self.timeout)
 
         self.mars_error_filter = config.get("mars_error_filter", "mars - EROR")
 
@@ -107,7 +110,7 @@ class MARSDataSource(datasource.DataSource):
             tmp.write(convert_to_mars_request(r, "retrieve").encode())
 
         # Call MARS
-        self.subprocess = Subprocess()
+        self.subprocess = Subprocess(timeout=self.timeout)
         self.subprocess.run(
             cmd=[self.command, self.request_file],
             cwd=os.path.dirname(__file__),
@@ -126,7 +129,7 @@ class MARSDataSource(datasource.DataSource):
         try:
             while self.subprocess.running():
                 # logging.debug("Checking if MARS process has opened FIFO.")  # this floods the logs
-                if self.fifo.ready():
+                if self.fifo.ready(0.1):
                     logging.debug("FIFO is ready for reading.")
                     break
 
@@ -160,10 +163,23 @@ class MARSDataSource(datasource.DataSource):
             return
 
         # The FIFO will get EOF if MARS exits unexpectedly, so we will break out of this loop automatically
-        for x in self.fifo.data():
-            # logging.debug("Yielding data from FIFO.")  # this floods the logs
+        buffer = b""
+        buffer_size = 2 * 1024 * 1024
+        while True:
+            data = self.fifo.read_raw(wait=False, timeout=0.1)
             self.subprocess.read_output(request, self.mars_error_filter)
-            yield x
+            if data is None:
+                break
+            if data == b"":
+                self.subprocess.running()
+                continue
+            buffer += data
+            while len(buffer) >= buffer_size:
+                yield buffer[:buffer_size]
+                buffer = buffer[buffer_size:]
+
+        if buffer:
+            yield buffer
 
         logging.info("FIFO reached EOF.")
 

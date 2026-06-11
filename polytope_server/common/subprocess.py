@@ -22,14 +22,17 @@ import logging
 import os
 import select
 import subprocess
+import time
 from subprocess import CalledProcessError
 
 from ..telemetry.helpers import obfuscate_apikey
 
 
 class Subprocess:
-    def __init__(self):
+    def __init__(self, timeout=None):
         self.subprocess = None
+        self.timeout = timeout
+        self.start_time = None
         self._stdout_buffer = []
         self._stderr_buffer = []
 
@@ -53,6 +56,7 @@ class Subprocess:
             stderr=subprocess.PIPE,
             stdout=subprocess.PIPE,
         )
+        self.start_time = time.monotonic()
 
     def read_output(self, request, err_filter=None):
         """Read and log output from the subprocess without blocking"""
@@ -70,7 +74,13 @@ class Subprocess:
         self._flush_buffers(request, err_filter)
 
     def running(self):
-        return self.subprocess.poll() is None
+        if self.subprocess.poll() is not None:
+            return False
+        if self.timeout is not None and time.monotonic() - self.start_time > self.timeout:
+            logging.error("Subprocess timed out after %s seconds, killing it", self.timeout)
+            self.subprocess.kill()
+            raise TimeoutError("Subprocess timed out after {} seconds".format(self.timeout))
+        return True
 
     def returncode(self):
         return self.subprocess.poll()

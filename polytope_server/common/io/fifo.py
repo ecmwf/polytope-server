@@ -39,9 +39,9 @@ class FIFO:
         self.fifo = os.open(self.path, os.O_RDONLY | os.O_NONBLOCK)
         logging.debug("FIFO created")
 
-    def ready(self):
+    def ready(self, timeout=0):
         """Wait until FIFO is ready for reading -- i.e. opened by the writing process (man select)"""
-        return len(select.select([self.fifo], [], [], 0)[0]) == 1
+        return len(select.select([self.fifo], [], [], timeout)[0]) == 1
 
     def data(self, buffer_size=2 * 1024 * 1024):
         buffer = b""
@@ -73,7 +73,10 @@ class FIFO:
             logging.info(f"Deleting FIFO had an exception {e}")
             pass
 
-    def read_raw(self, max_read=2 * 1024 * 1024):
+    def read_raw(self, max_read=2 * 1024 * 1024, wait=True, timeout=0):
+        if not wait and not self.ready(timeout):
+            return b""
+
         while True:
             try:
                 buf = os.read(self.fifo, max_read)
@@ -81,7 +84,8 @@ class FIFO:
             except OSError as err:
                 # Because we opened in non-blocking mode we have to filter out these errors
                 if err.errno == errno.EAGAIN or err.errno == errno.EWOULDBLOCK:
-                    pass
+                    if not wait:
+                        return b""
                 else:
                     raise
 
