@@ -79,7 +79,7 @@ def make_request():
     return request
 
 
-def make_datasource(tmp_path, command, timeout, use_file_io=False):
+def make_datasource(tmp_path, command, timeout, use_file_io=False, poll_interval=0.05):
     return MARSDataSource(
         {
             "name": "mars",
@@ -88,6 +88,7 @@ def make_datasource(tmp_path, command, timeout, use_file_io=False):
             "protocol": "remote",
             "tmp_dir": str(tmp_path),
             "timeout": timeout,
+            "poll_interval": poll_interval,
             "use_file_io": use_file_io,
         }
     )

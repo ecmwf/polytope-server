@@ -39,15 +39,28 @@ class FIFO:
         self.fifo = os.open(self.path, os.O_RDONLY | os.O_NONBLOCK)
         logging.debug("FIFO created")
 
-    def ready(self, timeout=0):
-        """Wait until FIFO is ready for reading -- i.e. opened by the writing process (man select)"""
-        return len(select.select([self.fifo], [], [], timeout)[0]) == 1
+    def ready(self):
+        return len(select.select([self.fifo], [], [], 0)[0]) == 1
 
-    def data(self, buffer_size=2 * 1024 * 1024):
+    def data(self, buffer_size=2 * 1024 * 1024, poll_interval=None, on_poll=None):
+        """Yield FIFO data in chunks.
+
+        If poll_interval is set, poll for new data every poll_interval seconds and call
+        on_poll() after each poll attempt. poll_interval is expressed in seconds. This
+        lets callers perform side effects such as checking subprocess health while
+        waiting for more bytes.
+        """
         buffer = b""
 
         while True:
-            data = self.read_raw()
+            if poll_interval is None:
+                data = self.read_raw()
+            else:
+                data = self.read_raw(wait=False, timeout=poll_interval)
+                if on_poll is not None:
+                    on_poll()
+                if data == b"":
+                    continue
             if data is None:
                 break
             buffer += data
@@ -74,7 +87,12 @@ class FIFO:
             pass
 
     def read_raw(self, max_read=2 * 1024 * 1024, wait=True, timeout=0):
-        if not wait and not self.ready(timeout):
+        """Read up to max_read bytes.
+
+        When wait is False, wait up to timeout seconds for readability and return b"" if
+        no data is available yet. Return None on EOF.
+        """
+        if not wait and not select.select([self.fifo], [], [], timeout)[0]:
             return b""
 
         while True:

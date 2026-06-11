@@ -77,7 +77,6 @@ class Subprocess:
         if self.subprocess.poll() is not None:
             return False
         if self.timeout is not None and time.monotonic() - self.start_time > self.timeout:
-            logging.error("Subprocess timed out after %s seconds, killing it", self.timeout)
             self.subprocess.kill()
             raise TimeoutError("Subprocess timed out after {} seconds".format(self.timeout))
         return True

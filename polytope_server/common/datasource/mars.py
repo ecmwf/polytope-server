@@ -55,6 +55,7 @@ class MARSDataSource(datasource.DataSource):
         self.timeout = config.get("timeout")
         if self.timeout is not None:
             self.timeout = float(self.timeout)
+        self.poll_interval = float(config.get("poll_interval", 1))
 
         self.mars_error_filter = config.get("mars_error_filter", "mars - EROR")
 
@@ -129,17 +130,15 @@ class MARSDataSource(datasource.DataSource):
         try:
             while self.subprocess.running():
                 # logging.debug("Checking if MARS process has opened FIFO.")  # this floods the logs
-                if self.fifo.ready(0.1):
+                if self.fifo.ready():
                     logging.debug("FIFO is ready for reading.")
                     break
 
                 self.subprocess.read_output(request, self.mars_error_filter)
             else:
-                logging.info("Detected MARS process has exited before opening FIFO.")
                 self.destroy(request)
                 raise Exception("MARS process exited before returning data.")
-        except Exception as e:
-            logging.exception(f"Error while waiting for MARS process to open FIFO: {e}.")
+        except Exception:
             self.destroy(request)
             raise
 
@@ -162,24 +161,13 @@ class MARSDataSource(datasource.DataSource):
                 raise Exception("MARS retrieval failed unexpectedly with error code {}".format(e.returncode))
             return
 
-        # The FIFO will get EOF if MARS exits unexpectedly, so we will break out of this loop automatically
-        buffer = b""
-        buffer_size = 2 * 1024 * 1024
-        while True:
-            data = self.fifo.read_raw(wait=False, timeout=0.1)
+        def poll_subprocess():
             self.subprocess.read_output(request, self.mars_error_filter)
-            if data is None:
-                break
-            if data == b"":
-                self.subprocess.running()
-                continue
-            buffer += data
-            while len(buffer) >= buffer_size:
-                yield buffer[:buffer_size]
-                buffer = buffer[buffer_size:]
+            self.subprocess.running()
 
-        if buffer:
-            yield buffer
+        # The FIFO will get EOF if MARS exits unexpectedly, so we will break out of this loop automatically
+        for x in self.fifo.data(poll_interval=self.poll_interval, on_poll=poll_subprocess):
+            yield x
 
         logging.info("FIFO reached EOF.")
 
