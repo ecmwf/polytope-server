@@ -88,7 +88,7 @@ class Broker:
                 return
 
     def check_limits(self, active_requests: Iterable, request: PolytopeRequest):
-        with with_baggage_items({"request_id": request.id}):
+        with with_baggage_items({"request_id": request.id, "user.username": request.user.username}):
             logging.debug(f"Checking limits for request {request.id}")
 
             # Get collection limits and calculate active requests
@@ -131,7 +131,7 @@ class Broker:
             return True
 
     def enqueue(self, request: PolytopeRequest):
-        with with_baggage_items({"request_id": request.id}):
+        with with_baggage_items({"request_id": request.id, "user.username": request.user.username}):
             logging.debug("Queuing request")
 
             try:

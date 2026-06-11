@@ -133,15 +133,17 @@ class Worker:
                 continue
 
             id = self.queue_msg.body["id"]
-            with with_baggage_items({"request_id": id}):
-                self.request = self.request_store.get_request(id)
+            self.request = self.request_store.get_request(id)
 
-                # This occurs when a request has been revoked while it was on the queue
-                if self.request is None:
+            # This occurs when a request has been revoked while it was on the queue
+            if self.request is None:
+                with with_baggage_items({"request_id": id}):
                     logging.info("Request no longer exists, ignoring")
                     self.queue.ack(self.queue_msg)
                     self.update_status("idle")
                     continue
+
+            with with_baggage_items({"request_id": id, "user.username": self.request.user.username}):
 
                 # Occurs if a request crashed a worker and the message gets requeued (status will be PROCESSING)
                 # We do not want to try this request again
@@ -308,7 +310,7 @@ class Worker:
         """Called when the worker is asked to exit whilst processing a request, and we want to reschedule the request"""
 
         if self.request is not None:
-            with with_baggage_items({"request_id": self.request.id}):
+            with with_baggage_items({"request_id": self.request.id, "user.username": self.request.user.username}):
                 if self.request.status == Status.PROCESSING:
                     logging.info("Rescheduling request due to worker shutdown.")
                     error_message = self.request.user_message + "\n" + "Worker shutdown, rescheduling request."
