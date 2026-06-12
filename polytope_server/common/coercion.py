@@ -277,6 +277,11 @@ def coerce_expver(value: Any) -> str:
         raise CoercionError("expver must be an integer or a string.")
 
 
+def coerce_timespan(value: Any) -> str:
+    if value is None:
+        return "none"
+
+
 def coerce_ignore_cases(value: Any) -> str:
     return value.lower()
 
@@ -291,4 +296,5 @@ coercer = {
     "model": coerce_ignore_cases,
     "experiment": coerce_ignore_cases,
     "activity": coerce_ignore_cases,
+    "timespan": coerce_timespan,
 }
