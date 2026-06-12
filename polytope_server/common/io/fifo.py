@@ -40,14 +40,27 @@ class FIFO:
         logging.debug("FIFO created")
 
     def ready(self):
-        """Wait until FIFO is ready for reading -- i.e. opened by the writing process (man select)"""
         return len(select.select([self.fifo], [], [], 0)[0]) == 1
 
-    def data(self, buffer_size=2 * 1024 * 1024):
+    def data(self, buffer_size=2 * 1024 * 1024, poll_interval=None, on_poll=None):
+        """Yield FIFO data in chunks.
+
+        If poll_interval is set, poll for new data every poll_interval seconds and call
+        on_poll() after each poll attempt. poll_interval is expressed in seconds. This
+        lets callers perform side effects such as checking subprocess health while
+        waiting for more bytes.
+        """
         buffer = b""
 
         while True:
-            data = self.read_raw()
+            if poll_interval is None:
+                data = self.read_raw()
+            else:
+                data = self.read_raw(wait=False, timeout=poll_interval)
+                if on_poll is not None:
+                    on_poll()
+                if data == b"":
+                    continue
             if data is None:
                 break
             buffer += data
@@ -73,7 +86,15 @@ class FIFO:
             logging.info(f"Deleting FIFO had an exception {e}")
             pass
 
-    def read_raw(self, max_read=2 * 1024 * 1024):
+    def read_raw(self, max_read=2 * 1024 * 1024, wait=True, timeout=0):
+        """Read up to max_read bytes.
+
+        When wait is False, wait up to timeout seconds for readability and return b"" if
+        no data is available yet. Return None on EOF.
+        """
+        if not wait and not select.select([self.fifo], [], [], timeout)[0]:
+            return b""
+
         while True:
             try:
                 buf = os.read(self.fifo, max_read)
@@ -81,7 +102,8 @@ class FIFO:
             except OSError as err:
                 # Because we opened in non-blocking mode we have to filter out these errors
                 if err.errno == errno.EAGAIN or err.errno == errno.EWOULDBLOCK:
-                    pass
+                    if not wait:
+                        return b""
                 else:
                     raise
 

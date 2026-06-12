@@ -453,6 +453,16 @@
           "description": "path to mars client script",
           "default": "/usr/local/bin/mars"
         },
+        "timeout": {
+          "type": "number",
+          "description": "maximum lifetime of the MARS subprocess in seconds; null or omitted disables the timeout",
+          "default": null
+        },
+        "poll_interval": {
+          "type": "number",
+          "description": "seconds between FIFO polling checks while waiting for more data from the MARS output stream after the FIFO has been opened",
+          "default": 1
+        },
         "match": {
           "$ref": "#/definitions/DatasourcesConfig-Datasource-MARS-Match",
           "description": "filters requests based on request keys and values. Non-date keys accept scalar or list values. Date supports comparative rules (e.g. >30d, <40d) or MARS date rules (single/list/range). MARS rules do not support by-step."
@@ -465,6 +475,8 @@
       "preferredOrder": [
         "type",
         "command",
+        "timeout",
+        "poll_interval",
         "match",
         "patch"
       ],
