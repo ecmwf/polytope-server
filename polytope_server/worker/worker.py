@@ -119,6 +119,14 @@ class Worker:
 
             await aio.sleep(self.poll_interval)
 
+    @staticmethod
+    def _request_baggage_items(request_id: str, request: PolytopeRequest | None = None) -> dict[str, str]:
+        items = {"request_id": request_id}
+        username = getattr(getattr(request, "user", None), "username", None)
+        if username is not None:
+            items["user.username"] = username
+        return items
+
     async def listen_queue(self, executor: concurrent.futures.Executor) -> None:
         if self.queue is None:
             raise RuntimeError("queue was not initialised")
@@ -143,7 +151,7 @@ class Worker:
                     self.update_status("idle")
                     continue
 
-            with with_baggage_items({"request_id": id, "user.username": self.request.user.username}):
+            with with_baggage_items(self._request_baggage_items(id, self.request)):
 
                 # Occurs if a request crashed a worker and the message gets requeued (status will be PROCESSING)
                 # We do not want to try this request again
@@ -310,7 +318,7 @@ class Worker:
         """Called when the worker is asked to exit whilst processing a request, and we want to reschedule the request"""
 
         if self.request is not None:
-            with with_baggage_items({"request_id": self.request.id, "user.username": self.request.user.username}):
+            with with_baggage_items(self._request_baggage_items(self.request.id, self.request)):
                 if self.request.status == Status.PROCESSING:
                     logging.info("Rescheduling request due to worker shutdown.")
                     error_message = self.request.user_message + "\n" + "Worker shutdown, rescheduling request."
