@@ -280,6 +280,7 @@ def coerce_expver(value: Any) -> str:
 def coerce_timespan(value: Any) -> str:
     if value is None:
         return "none"
+    return value
 
 
 def coerce_ignore_cases(value: Any) -> str:
