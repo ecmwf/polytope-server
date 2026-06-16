@@ -55,12 +55,13 @@ RUN cd workers/polytope-fe-worker && cargo build --release -p ${PACKAGE_NAME}
 # FDB Build (from source)
 ###############################
 FROM python:3.11-bookworm AS fdb-build
-ARG ecbuild_version=3.8.2
-ARG eccodes_version=2.33.1
-ARG eckit_version=1.28.3
-ARG fdb_version=5.14.0
-ARG gribjump_version=0.10.2
-ARG pyfdb_version=0.1.0
+ARG ecbuild_version=3.12.0
+ARG eccodes_version=2.46.0
+ARG eckit_version=1.33.2
+ARG metkit_version=1.18.1
+ARG fdb_version=5.21.3
+ARG gribjump_version=0.12.0
+ARG pyfdb_version=5.21.0.19
 
 RUN apt-get update && apt-get install -y cmake gnupg build-essential net-tools bison flex git libaec-dev && rm -rf /var/lib/apt/lists/*
 
@@ -83,26 +84,25 @@ RUN git clone --depth 1 --branch ${eccodes_version} https://github.com/ecmwf/ecc
     && ecbuild --prefix=/opt/fdb -- -DENABLE_FORTRAN=OFF -DCMAKE_PREFIX_PATH=/opt/fdb /source/eccodes \
     && make -j$(nproc) && make install
 
-RUN git clone --depth 1 --branch 1.11.22 https://github.com/ecmwf/metkit.git /source/metkit \
+RUN git clone --depth 1 --branch ${metkit_version} https://github.com/ecmwf/metkit.git /source/metkit \
     && mkdir -p /build/metkit && cd /build/metkit \
-    && ecbuild --prefix=/opt/fdb -- -DCMAKE_PREFIX_PATH=/opt/fdb /source/metkit \
+    && ecbuild --prefix=/opt/fdb -- -DCMAKE_PREFIX_PATH=/opt/fdb -DENABLE_TESTS=OFF -DENABLE_BUILD_TOOLS=OFF -DENABLE_MARS2GRIB=OFF /source/metkit \
     && make -j$(nproc) && make install
 
 RUN git clone --depth 1 --branch ${fdb_version} https://github.com/ecmwf/fdb.git /source/fdb \
     && mkdir -p /build/fdb && cd /build/fdb \
-    && ecbuild --prefix=/opt/fdb -- -DCMAKE_PREFIX_PATH="/opt/fdb;/opt/fdb/eckit;/opt/fdb/metkit" -DCMAKE_CXX_FLAGS=-fpermissive /source/fdb \
+    && ecbuild --prefix=/opt/fdb -- -DCMAKE_PREFIX_PATH="/opt/fdb;/opt/fdb/eckit;/opt/fdb/metkit" -DENABLE_TESTS=OFF -DCMAKE_CXX_FLAGS=-fpermissive /source/fdb \
     && make -j$(nproc) && make install
 
 RUN git clone --depth 1 --branch ${gribjump_version} https://github.com/ecmwf/gribjump.git /source/gribjump \
     && mkdir -p /build/gribjump && cd /build/gribjump \
-    && ecbuild --prefix=/opt/fdb -- -DCMAKE_PREFIX_PATH=/opt/fdb /source/gribjump \
+    && ecbuild --prefix=/opt/fdb -- -DCMAKE_PREFIX_PATH=/opt/fdb -DENABLE_TESTS=OFF /source/gribjump \
     && make -j$(nproc) && make install
 
 RUN rm -rf /source /build
 
-RUN git clone --single-branch --branch ${pyfdb_version} https://github.com/ecmwf/pyfdb.git \
-    && python -m pip install "numpy<2.0" --user \
-    && python -m pip install ./pyfdb --user
+RUN python -m pip install "numpy<2.0" --user \
+    && python -m pip install "pyfdb==${pyfdb_version}" --user
 
 
 
