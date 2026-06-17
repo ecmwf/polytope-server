@@ -115,6 +115,13 @@ pub async fn auth_middleware(
                 Ok(mock_user) => mock_user,
                 Err(err) => return bad_request(&err.message()),
             };
+            // A mock username must come with mock roles, so the synthetic
+            // identity never silently inherits the admin's realm/roles.
+            if mock_user.is_some() && mock_roles.is_none() {
+                return bad_request(
+                    "Polytope-Mock-User requires Polytope-Mock-Roles to set the mock identity's realm/roles",
+                );
+            }
 
             if (mock_roles.is_some() || mock_time.is_some() || mock_user.is_some())
                 && !is_admin_bypass_user(&user, &state.admin_bypass_roles)
