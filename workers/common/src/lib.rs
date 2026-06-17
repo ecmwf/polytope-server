@@ -1,3 +1,5 @@
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -14,7 +16,7 @@ pub mod management;
 
 use crate::delivery::{DeliveryContext, ResultDelivery, make_delivery};
 use crate::delivery_config::{Codec, DeliveryConfig};
-use crate::encoding::encode_stream;
+use crate::encoding::encode_stream_counted;
 
 fn codec_from_accept_encoding(accept_encoding: Option<&str>) -> Codec {
     let enc = accept_encoding.unwrap_or("");
@@ -322,11 +324,15 @@ async fn worker_task<P: Processor + 'static>(
         let process_ms = process_started.elapsed().as_millis() as u64;
 
         let mut deliver_ms: u64 = 0;
+        // Counts post-encoding bytes as the result body streams to delivery.
+        // None for non-Success outcomes (which do not emit worker.job.completed).
+        let mut byte_counter: Option<Arc<AtomicU64>> = None;
         let completion = match process_result {
             ProcessResult::Success { content_type, body } => {
                 let codec = codec_from_accept_encoding(work.metadata["accept_encoding"].as_str());
                 let content_encoding = codec.content_encoding_header().map(str::to_string);
-                let encoded = encode_stream(body, &codec);
+                let (encoded, counter) = encode_stream_counted(body, &codec);
+                byte_counter = Some(counter);
                 let deliver_started = Instant::now();
                 let completion = delivery
                     .deliver(
@@ -413,11 +419,17 @@ async fn worker_task<P: Processor + 'static>(
             }
         };
         let complete_ms = complete_started.elapsed().as_millis() as u64;
+        // Bytes delivered for this job, counted as the encoded body streamed out.
+        // Fully settled by now: the body was consumed during delivery/completion.
+        let bytes = byte_counter
+            .as_ref()
+            .map(|counter| counter.load(Ordering::Relaxed))
+            .unwrap_or(0);
         if matches!(outcome, "data" | "redirect") {
             if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
-                tracing::info!("event.name" = "worker.job.completed", outcome = "success", job.id = %work.job_id, poll_wait_ms, idle_ms, process_ms, deliver_ms, complete_ms, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "job completed");
+                tracing::info!("event.name" = "worker.job.completed", outcome = "success", job.id = %work.job_id, bytes, poll_wait_ms, idle_ms, process_ms, deliver_ms, complete_ms, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "job completed");
             } else {
-                tracing::info!("event.name" = "worker.job.completed", outcome = "success", job.id = %work.job_id, poll_wait_ms, idle_ms, process_ms, deliver_ms, complete_ms, "job completed");
+                tracing::info!("event.name" = "worker.job.completed", outcome = "success", job.id = %work.job_id, bytes, poll_wait_ms, idle_ms, process_ms, deliver_ms, complete_ms, "job completed");
             }
         }
         if response.status() != StatusCode::OK && response.status() != StatusCode::NOT_FOUND {
