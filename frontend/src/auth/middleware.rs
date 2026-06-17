@@ -13,8 +13,8 @@ use axum::{
 use serde_json::json;
 
 use super::mock_roles::{
-    MOCK_ROLES_HEADER, MockRolesAudit, REQUEST_ID_HEADER, has_mock_roles_header,
-    parse_mock_roles_header,
+    MockRolesAudit, REQUEST_ID_HEADER, has_mock_roles_header, has_mock_user_header,
+    parse_mock_roles_header, parse_mock_user_header,
 };
 use super::mock_time::{
     MOCK_TIME_HEADER, MockTimeAudit, has_mock_time_header, normalise_mocked_now,
@@ -58,8 +58,9 @@ pub async fn auth_middleware(
     req: Request<Body>,
     next: Next,
 ) -> Response {
-    let mock_header_present =
-        has_mock_roles_header(req.headers()) || has_mock_time_header(req.headers());
+    let mock_header_present = has_mock_roles_header(req.headers())
+        || has_mock_time_header(req.headers())
+        || has_mock_user_header(req.headers());
     let auth_client = match &state.auth_client {
         Some(client) => client,
         None => {
@@ -110,8 +111,12 @@ pub async fn auth_middleware(
                 Ok(mock_time) => mock_time,
                 Err(err) => return bad_request(&err.message()),
             };
+            let mock_user = match parse_mock_user_header(req.headers()) {
+                Ok(mock_user) => mock_user,
+                Err(err) => return bad_request(&err.message()),
+            };
 
-            if (mock_roles.is_some() || mock_time.is_some())
+            if (mock_roles.is_some() || mock_time.is_some() || mock_user.is_some())
                 && !is_admin_bypass_user(&user, &state.admin_bypass_roles)
             {
                 return forbidden("Polytope mock headers require a configured admin user");
@@ -149,12 +154,17 @@ pub async fn auth_middleware(
                 req.extensions_mut().insert(audit);
             }
 
-            let effective_user = if let Some(mock_roles) = mock_roles {
+            let effective_user = if mock_roles.is_some() || mock_user.is_some() {
+                let mocked_username = mock_user.clone().unwrap_or_else(|| user.username.clone());
+                let (mocked_realm, mocked_roles) = match &mock_roles {
+                    Some(mock_roles) => (mock_roles.realm.clone(), mock_roles.roles.clone()),
+                    None => (user.realm.clone(), user.roles.clone()),
+                };
                 let audit = MockRolesAudit {
                     real_username: user.username.clone(),
                     real_realm: user.realm.clone(),
-                    mocked_realm: mock_roles.realm.clone(),
-                    mocked_roles: mock_roles.roles.clone(),
+                    mocked_realm: mocked_realm.clone(),
+                    mocked_roles: mocked_roles.clone(),
                     path,
                     request_id,
                 };
@@ -162,20 +172,20 @@ pub async fn auth_middleware(
                     "event.name" = "api.auth.mock_accepted",
                     real_username = audit.real_username.as_str(),
                     real_realm = audit.real_realm.as_str(),
+                    mocked_username = mocked_username.as_str(),
                     mocked_realm = audit.mocked_realm.as_str(),
                     mocked_roles = ?audit.mocked_roles,
                     path = audit.path.as_str(),
                     request_id = audit.request_id.as_deref(),
-                    header = MOCK_ROLES_HEADER,
-                    "accepted mocked-role request"
+                    "accepted mocked request"
                 );
                 req.extensions_mut().insert(audit);
 
                 AuthUser {
                     version: user.version,
-                    username: user.username,
-                    realm: mock_roles.realm,
-                    roles: mock_roles.roles,
+                    username: mocked_username,
+                    realm: mocked_realm,
+                    roles: mocked_roles,
                     attributes: HashMap::new(),
                     scopes: HashMap::new(),
                 }
