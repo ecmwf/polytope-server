@@ -79,7 +79,7 @@ impl Processor for PolytopeProcessor {
 struct Cli {
     #[arg(long, default_value = "http://127.0.0.1:9001")]
     broker_url: String,
-    #[arg(long, default_value_t = 30000)]
+    #[arg(long, default_value_t = polytope_worker_common::DEFAULT_POLL_TIMEOUT_MS)]
     poll_timeout_ms: u64,
     #[arg(long, default_value_t = 10.0)]
     heartbeat_secs: f64,
@@ -113,7 +113,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     polytope_observability::init_tracing("polytope-worker-polytope-fe");
     let cli = Cli::parse();
     let worker_concurrency = resolved_worker_concurrency(cli.worker_concurrency);
-    info!(worker_concurrency, "resolved worker concurrency");
+    info!(
+        worker_concurrency,
+        poll_timeout_ms = cli.poll_timeout_ms,
+        "resolved worker settings"
+    );
 
     let config = WorkerConfigFile::load(&cli.config_path).unwrap_or_else(|err| {
         tracing::error!("event.name" = "startup.config.failed", outcome = "error", config_path = %cli.config_path, error = %err, "failed to load config");
