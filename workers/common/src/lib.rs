@@ -127,6 +127,8 @@ enum CompletionRequest {
     Error { message: String },
 }
 
+pub const DEFAULT_POLL_TIMEOUT_MS: u64 = 3000;
+
 #[derive(Debug, Clone)]
 pub struct WorkerConfig {
     pub broker_url: String,
@@ -201,15 +203,27 @@ pub trait Processor: Send + Sync {
 
 async fn worker_task<P: Processor + 'static>(
     config: WorkerConfig,
-    client: reqwest::Client,
+    worker_index: usize,
     delivery: std::sync::Arc<dyn ResultDelivery>,
     processor: std::sync::Arc<P>,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<(), reqwest::Error> {
+    let mut poll_cycle: u64 = 0;
     loop {
         if *shutdown.borrow() {
             break;
         }
+
+        poll_cycle = poll_cycle.saturating_add(1);
+        tracing::debug!(
+            "event.name" = "worker.broker.poll_cycle.started",
+            worker_index,
+            poll_cycle,
+            broker_url = %config.broker_url,
+            poll_timeout_ms = config.poll_timeout_ms,
+            "worker broker poll cycle started"
+        );
+        let client = reqwest::Client::builder().build()?;
 
         let response = tokio::select! {
             biased;
@@ -430,7 +444,6 @@ pub async fn run_worker_loop<P: Processor + 'static>(
             .unwrap();
     });
 
-    let client = reqwest::Client::builder().build()?;
     let delivery: std::sync::Arc<dyn ResultDelivery> =
         std::sync::Arc::from(make_delivery(&delivery_config).await);
     let processor = std::sync::Arc::new(processor);
@@ -439,7 +452,6 @@ pub async fn run_worker_loop<P: Processor + 'static>(
     let mut tasks = Vec::with_capacity(config.worker_concurrency);
     for worker_index in 0..config.worker_concurrency {
         let task_config = config.clone();
-        let task_client = client.clone();
         let task_delivery = delivery.clone();
         let task_processor = processor.clone();
         let task_shutdown = shutdown_rx.clone();
@@ -447,7 +459,7 @@ pub async fn run_worker_loop<P: Processor + 'static>(
             tracing::debug!(worker_index, "worker task started");
             let result = worker_task(
                 task_config,
-                task_client,
+                worker_index,
                 task_delivery,
                 task_processor,
                 task_shutdown,
@@ -491,14 +503,17 @@ mod tests {
     use axum::{
         Router,
         body::Bytes,
-        extract::{Path, State},
+        extract::{ConnectInfo, Path, State},
         http::StatusCode,
         routing::{get, post, put},
     };
     use futures::TryStreamExt;
-    use std::sync::{
-        Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
+    use std::{
+        net::SocketAddr,
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicUsize, Ordering},
+        },
     };
 
     #[test]
@@ -690,6 +705,39 @@ mod tests {
         StatusCode::OK
     }
 
+    #[derive(Default)]
+    struct ConnectionState {
+        work_calls: AtomicUsize,
+        work_peers: Mutex<Vec<SocketAddr>>,
+        complete_peers: Mutex<Vec<SocketAddr>>,
+    }
+
+    async fn connection_work(
+        ConnectInfo(peer): ConnectInfo<SocketAddr>,
+        State(state): State<Arc<ConnectionState>>,
+    ) -> Result<axum::Json<WorkItem>, StatusCode> {
+        state.work_peers.lock().unwrap().push(peer);
+        let call = state.work_calls.fetch_add(1, Ordering::SeqCst);
+        if call == 1 {
+            Ok(axum::Json(WorkItem {
+                job_id: "job-connection".into(),
+                request: serde_json::json!({"foo": "bar"}),
+                user: serde_json::json!({}),
+                metadata: serde_json::json!({}),
+            }))
+        } else {
+            Err(StatusCode::NO_CONTENT)
+        }
+    }
+
+    async fn connection_complete(
+        ConnectInfo(peer): ConnectInfo<SocketAddr>,
+        State(state): State<Arc<ConnectionState>>,
+    ) -> StatusCode {
+        state.complete_peers.lock().unwrap().push(peer);
+        StatusCode::OK
+    }
+
     struct StubProcessor;
 
     #[async_trait]
@@ -731,6 +779,79 @@ mod tests {
         async fn process(&self, _work: WorkItem) -> ProcessResult {
             ProcessResult::error("internal error")
         }
+    }
+
+    #[tokio::test]
+    async fn empty_poll_rotates_connection_and_job_callbacks_stay_sticky() {
+        let state = Arc::new(ConnectionState::default());
+        let app = Router::new()
+            .route("/work", get(connection_work))
+            .route("/heartbeat/{job_id}", post(broker_heartbeat))
+            .route("/complete/data/{job_id}", post(connection_complete))
+            .with_state(state.clone());
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await
+            .unwrap()
+        });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        let config = WorkerConfig {
+            broker_url: format!("http://{addr}"),
+            poll_timeout_ms: 10,
+            heartbeat_interval: Duration::from_secs(60),
+            retry_backoff: Duration::from_millis(5),
+            management_port: 0,
+            worker_concurrency: 1,
+        };
+
+        let run = tokio::spawn(run_worker_loop(
+            config,
+            delivery_config::DeliveryConfig {
+                delivery_type: delivery_config::DeliveryType::Direct,
+                bobs_url: None,
+                s3_bucket: None,
+                s3_region: None,
+                s3_endpoint_url: None,
+                s3_force_path_style: None,
+                s3_access_key_id: None,
+                s3_secret_access_key: None,
+                s3_presigned_url_expiry_secs: None,
+                s3_public_url: None,
+                s3_key_prefix: String::new(),
+            },
+            StubProcessor,
+        ));
+
+        for _ in 0..50 {
+            if !state.complete_peers.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        run.abort();
+
+        let work_peers = state.work_peers.lock().unwrap().clone();
+        let complete_peers = state.complete_peers.lock().unwrap().clone();
+        assert!(
+            work_peers.len() >= 2,
+            "expected an empty poll and then a job poll"
+        );
+        assert_eq!(complete_peers.len(), 1, "expected one completion callback");
+        assert_ne!(
+            work_peers[0], work_peers[1],
+            "empty poll and next poll should use different TCP connections"
+        );
+        assert_eq!(
+            work_peers[1], complete_peers[0],
+            "job completion must reuse the job poll connection for in-job stickiness"
+        );
     }
 
     #[tokio::test]
