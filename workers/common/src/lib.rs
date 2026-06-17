@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use futures::Stream;
@@ -209,6 +209,7 @@ async fn worker_task<P: Processor + 'static>(
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<(), reqwest::Error> {
     let mut poll_cycle: u64 = 0;
+    let mut idle_anchor = Instant::now();
     loop {
         if *shutdown.borrow() {
             break;
@@ -225,6 +226,7 @@ async fn worker_task<P: Processor + 'static>(
         );
         let client = reqwest::Client::builder().build()?;
 
+        let poll_started = Instant::now();
         let response = tokio::select! {
             biased;
             changed = shutdown.changed() => {
@@ -246,6 +248,14 @@ async fn worker_task<P: Processor + 'static>(
         };
 
         if response.status() == StatusCode::NO_CONTENT {
+            tracing::debug!(
+                "event.name" = "worker.broker.poll.empty",
+                worker_index,
+                poll_cycle,
+                broker_url = %config.broker_url,
+                wait_ms = poll_started.elapsed().as_millis() as u64,
+                "worker poll returned no work"
+            );
             continue;
         }
         if !response.status().is_success() {
@@ -263,11 +273,13 @@ async fn worker_task<P: Processor + 'static>(
             }
         };
 
+        let poll_wait_ms = poll_started.elapsed().as_millis() as u64;
+        let idle_ms = idle_anchor.elapsed().as_millis() as u64;
         let (enduser_id, enduser_realm) = enduser_fields(&work.user);
         if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
-            tracing::info!("event.name" = "worker.job.started", outcome = "success", job.id = %work.job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "job started");
+            tracing::info!("event.name" = "worker.job.started", outcome = "success", job.id = %work.job_id, poll_wait_ms, idle_ms, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "job started");
         } else {
-            tracing::info!("event.name" = "worker.job.started", outcome = "success", job.id = %work.job_id, "job started");
+            tracing::info!("event.name" = "worker.job.started", outcome = "success", job.id = %work.job_id, poll_wait_ms, idle_ms, "job started");
         }
 
         let stop = std::sync::Arc::new(tokio::sync::Notify::new());
@@ -305,14 +317,18 @@ async fn worker_task<P: Processor + 'static>(
             }
         });
 
+        let process_started = Instant::now();
         let process_result = processor.process(work.clone()).await;
+        let process_ms = process_started.elapsed().as_millis() as u64;
 
+        let mut deliver_ms: u64 = 0;
         let completion = match process_result {
             ProcessResult::Success { content_type, body } => {
                 let codec = codec_from_accept_encoding(work.metadata["accept_encoding"].as_str());
                 let content_encoding = codec.content_encoding_header().map(str::to_string);
                 let encoded = encode_stream(body, &codec);
-                delivery
+                let deliver_started = Instant::now();
+                let completion = delivery
                     .deliver(
                         &content_type,
                         content_encoding.as_deref(),
@@ -323,7 +339,9 @@ async fn worker_task<P: Processor + 'static>(
                             user: &work.user,
                         },
                     )
-                    .await
+                    .await;
+                deliver_ms = deliver_started.elapsed().as_millis() as u64;
+                completion
             }
             ProcessResult::Reject { reason } => {
                 if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
@@ -346,6 +364,7 @@ async fn worker_task<P: Processor + 'static>(
         stop.notify_one();
         let _ = heartbeat.await;
 
+        let complete_started = Instant::now();
         let (response, outcome) = match completion {
             Completion::Complete {
                 content_type,
@@ -393,11 +412,12 @@ async fn worker_task<P: Processor + 'static>(
                 (resp, "redirect")
             }
         };
+        let complete_ms = complete_started.elapsed().as_millis() as u64;
         if matches!(outcome, "data" | "redirect") {
             if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
-                tracing::info!("event.name" = "worker.job.completed", outcome = "success", job.id = %work.job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "job completed");
+                tracing::info!("event.name" = "worker.job.completed", outcome = "success", job.id = %work.job_id, poll_wait_ms, idle_ms, process_ms, deliver_ms, complete_ms, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "job completed");
             } else {
-                tracing::info!("event.name" = "worker.job.completed", outcome = "success", job.id = %work.job_id, "job completed");
+                tracing::info!("event.name" = "worker.job.completed", outcome = "success", job.id = %work.job_id, poll_wait_ms, idle_ms, process_ms, deliver_ms, complete_ms, "job completed");
             }
         }
         if response.status() != StatusCode::OK && response.status() != StatusCode::NOT_FOUND {
@@ -407,6 +427,7 @@ async fn worker_task<P: Processor + 'static>(
                 tracing::error!("event.name" = "worker.job.failed", outcome = "error", status=%response.status(), job.id=%work.job_id, "worker completion returned unexpected status");
             }
         }
+        idle_anchor = Instant::now();
     }
 
     Ok(())

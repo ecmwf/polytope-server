@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::{
     Extension, Json,
@@ -101,7 +101,9 @@ pub async fn submit_request(
     super::set_job_mock_time_metadata(&mut job, mock_time_extensions.mock_time.as_ref());
 
     let submitted_request = job.request.clone();
+    let enqueue_started = Instant::now();
     let handle = route_handle.submit(job);
+    let enqueue_ms = enqueue_started.elapsed().as_millis() as u64;
     super::audit_mock_job_submission(
         mock_audit.as_ref().map(|Extension(audit)| audit),
         &handle.id,
@@ -112,9 +114,9 @@ pub async fn submit_request(
     );
 
     if let Some(Extension(user)) = auth_user.as_ref() {
-        tracing::info!("event.name" = "api.job.submitted", outcome = "success", job.id = %handle.id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, polytope.request = %polytope_observability::request(&submitted_request), "job submitted");
+        tracing::info!("event.name" = "api.job.submitted", outcome = "success", job.id = %handle.id, enqueue_ms, "enduser.id" = %user.username, "enduser.realm" = %user.realm, polytope.request = %polytope_observability::request(&submitted_request), "job submitted");
     } else {
-        tracing::info!("event.name" = "api.job.submitted", outcome = "success", job.id = %handle.id, polytope.request = %polytope_observability::request(&submitted_request), "job submitted");
+        tracing::info!("event.name" = "api.job.submitted", outcome = "success", job.id = %handle.id, enqueue_ms, polytope.request = %polytope_observability::request(&submitted_request), "job submitted");
     }
     let location = format!("/api/v1/requests/{}", handle.id);
     (

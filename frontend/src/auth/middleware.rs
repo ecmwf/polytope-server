@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 use axum::{
     Json,
@@ -69,6 +70,9 @@ pub async fn auth_middleware(
         }
     };
 
+    let prof_t0 = Instant::now();
+    let prof_method = req.method().to_string();
+    let prof_path = req.uri().path().to_string();
     let auth_header = match req.headers().get(header::AUTHORIZATION) {
         Some(value) => match value.to_str() {
             Ok(s) if !s.is_empty() => s.to_string(),
@@ -86,7 +90,10 @@ pub async fn auth_middleware(
         }
     };
 
-    match auth_client.authenticate(&auth_header).await {
+    let prof_auth_started = Instant::now();
+    let prof_auth_result = auth_client.authenticate(&auth_header).await;
+    let prof_auth_ms = prof_auth_started.elapsed().as_millis() as u64;
+    match prof_auth_result {
         Ok(user) => {
             tracing::debug!(
                 username = user.username.as_str(),
@@ -177,7 +184,16 @@ pub async fn auth_middleware(
             };
 
             req.extensions_mut().insert(effective_user);
-            next.run(req).await
+            let prof_response = next.run(req).await;
+            tracing::debug!(
+                "event.name" = "api.request.profiled",
+                method = %prof_method,
+                path = %prof_path,
+                auth_ms = prof_auth_ms,
+                total_ms = prof_t0.elapsed().as_millis() as u64,
+                "request profiled"
+            );
+            prof_response
         }
         Err(AuthError::Unauthorized {
             message,
