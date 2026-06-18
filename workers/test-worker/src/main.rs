@@ -237,7 +237,6 @@ mod tests {
             default_response_bytes: 10,
             default_chunk_bytes: default_stress_chunk_bytes(),
             max_delay_ms: 1000,
-            max_response_bytes: 1000,
             max_chunk_bytes: default_stress_max_chunk_bytes(),
         })
         .process(stress_work(50, 123))
@@ -251,29 +250,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stress_caps_request_values() {
-        let result = processor(Behaviour::Stress {
-            default_delay_ms: 0,
-            default_response_bytes: 10,
-            default_chunk_bytes: default_stress_chunk_bytes(),
-            max_delay_ms: 0,
-            max_response_bytes: 32,
-            max_chunk_bytes: default_stress_max_chunk_bytes(),
-        })
-        .process(stress_work(500, 500))
-        .await;
-        let (_, body) = collect_success_body(result).await;
-        assert_eq!(body.len(), 32);
-    }
-
-    #[tokio::test]
     async fn stress_defaults_when_request_has_no_stress_block() {
         let result = processor(Behaviour::Stress {
             default_delay_ms: 0,
             default_response_bytes: 17,
             default_chunk_bytes: default_stress_chunk_bytes(),
             max_delay_ms: 0,
-            max_response_bytes: 100,
             max_chunk_bytes: default_stress_max_chunk_bytes(),
         })
         .process(dummy_work())
@@ -305,7 +287,6 @@ mod tests {
             default_response_bytes: 1000,
             default_chunk_bytes: default_stress_chunk_bytes(),
             max_delay_ms: 0,
-            max_response_bytes: 10_000,
             max_chunk_bytes: default_stress_max_chunk_bytes(),
         })
         .process(stress_work_with_chunk(0, 1000, 256))
@@ -335,7 +316,6 @@ mod tests {
             default_response_bytes: 2048,
             default_chunk_bytes: 1024,
             max_delay_ms: 0,
-            max_response_bytes: 10_000,
             max_chunk_bytes: 512,
         })
         .process(stress_work_with_chunk(0, 2048, 10_000))
@@ -366,7 +346,6 @@ mod tests {
             default_response_bytes: 1000,
             default_chunk_bytes: 256,
             max_delay_ms: 0,
-            max_response_bytes: 10_000,
             max_chunk_bytes: default_stress_max_chunk_bytes(),
         })
         .process(stress_work(0, 1000))

@@ -6,7 +6,6 @@ const DEFAULT_STRESS_DELAY_MS: u64 = 0;
 const DEFAULT_STRESS_RESPONSE_BYTES: usize = 1024;
 const DEFAULT_STRESS_CHUNK_BYTES: usize = 1024 * 1024;
 const DEFAULT_STRESS_MAX_DELAY_MS: u64 = 10_000;
-const DEFAULT_STRESS_MAX_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
 const DEFAULT_STRESS_MAX_CHUNK_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
@@ -42,8 +41,9 @@ pub enum Behaviour {
         default_chunk_bytes: usize,
         #[serde(default = "default_stress_max_delay_ms")]
         max_delay_ms: u64,
-        #[serde(default = "default_stress_max_response_bytes")]
-        max_response_bytes: usize,
+        // response_bytes is streamed lazily (StressStream), so there is no
+        // allocation to bound -- no max_response_bytes cap. chunk_bytes is a
+        // real per-chunk allocation, so it keeps a cap.
         #[serde(default = "default_stress_max_chunk_bytes")]
         max_chunk_bytes: usize,
     },
@@ -67,10 +67,6 @@ pub fn default_stress_chunk_bytes() -> usize {
 
 pub fn default_stress_max_delay_ms() -> u64 {
     DEFAULT_STRESS_MAX_DELAY_MS
-}
-
-pub fn default_stress_max_response_bytes() -> usize {
-    DEFAULT_STRESS_MAX_RESPONSE_BYTES
 }
 
 pub fn default_stress_max_chunk_bytes() -> usize {
@@ -181,15 +177,13 @@ impl Processor for BehaviourProcessor {
                 default_response_bytes,
                 default_chunk_bytes,
                 max_delay_ms,
-                max_response_bytes,
                 max_chunk_bytes,
             } => {
                 let delay_ms = stress_u64(&work.request, "delay_ms")
                     .unwrap_or(*default_delay_ms)
                     .min(*max_delay_ms);
                 let response_bytes = stress_usize(&work.request, "response_bytes")
-                    .unwrap_or(*default_response_bytes)
-                    .min(*max_response_bytes);
+                    .unwrap_or(*default_response_bytes);
                 let chunk_bytes = stress_usize(&work.request, "chunk_bytes")
                     .unwrap_or(*default_chunk_bytes)
                     .min(*max_chunk_bytes)
