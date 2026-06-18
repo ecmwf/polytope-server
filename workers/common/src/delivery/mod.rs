@@ -50,14 +50,17 @@ pub async fn make_delivery(config: &DeliveryConfig) -> Box<dyn ResultDelivery> {
                 .trim_start_matches("http://")
                 .trim_start_matches("https://");
             let api_base = format!("http://{host}/api/v1");
-            // Two separate clients so the large (16 MiB+) body uploads on
-            // `body_client` cannot head-of-line-block the small `create`/`complete`
-            // requests on a shared h2 connection. Both keep their connection pools
-            // warm: forcing a cold TCP+h2 handshake per create (the previous
-            // `pool_max_idle_per_host(0)`) made the create path fail under load with
-            // "error sending request" while the warm body path stayed healthy.
+            // create_client deliberately keeps NO idle connections
+            // (pool_max_idle_per_host(0)). Each create opens a fresh connection to
+            // the BOBS *service*, so kube-proxy re-load-balances it across BOBS
+            // pods and spools spread evenly. A warm pooled h2 connection would pin
+            // ALL of a worker's creates to one BOBS pod, concentrating load and
+            // memory (and OOM risk) on that pod. The body write/complete then follow
+            // the per-pod write_url returned by create, so body_client correctly
+            // tracks whichever pod owns each spool.
             let create_client = reqwest::Client::builder()
                 .http2_prior_knowledge()
+                .pool_max_idle_per_host(0)
                 .build()
                 .expect("build BOBS create_client");
             let body_client = reqwest::Client::builder()
