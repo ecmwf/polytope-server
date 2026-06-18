@@ -152,6 +152,12 @@ pub fn build_app(
     Ok((app, state))
 }
 
+pub fn build_internal_poll_app(state: Arc<AppState>) -> Router {
+    Router::new()
+        .route("/internal/poll/{id}", get(api::v2::poll))
+        .with_state(state)
+}
+
 /// BitsSubmitter wraps Arc<AppState> to implement the polytope_edr::RequestSubmitter trait.
 struct BitsSubmitter {
     state: Arc<AppState>,
@@ -208,6 +214,46 @@ impl polytope_edr::RequestSubmitter for BitsSubmitter {
 mod tests {
     use super::*;
 
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+    };
+    use tower::ServiceExt;
+
+    fn internal_poll_test_config(auth: bool) -> config::ServerConfig {
+        let authentication = if auth {
+            r#"
+authentication:
+  url: "http://127.0.0.1:1"
+  secret: "testsecret"
+"#
+        } else {
+            ""
+        };
+        let yaml = format!(
+            r#"
+polytope:
+  site: bol
+  env: dev
+bits: {{}}
+{authentication}"#
+        );
+        serde_yaml::from_str(&yaml).expect("test config should parse")
+    }
+
+    async fn response_status(app: Router, method: axum::http::Method, path: &str) -> StatusCode {
+        app.oneshot(
+            Request::builder()
+                .method(method)
+                .uri(path)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+    }
+
     #[tokio::test]
     async fn request_id_config_server_emits_new_format_request_id() {
         let yaml = r#"
@@ -229,6 +275,76 @@ bits: {}
 
         assert_eq!(decoded.site, "bol");
         assert_eq!(decoded.env, "dev");
+    }
+
+    #[tokio::test]
+    async fn internal_poll_router_exposes_only_internal_poll_get() {
+        let (_, state) = build_app(internal_poll_test_config(false)).unwrap();
+        let app = build_internal_poll_app(state);
+
+        let poll_status = response_status(
+            app.clone(),
+            axum::http::Method::GET,
+            "/internal/poll/unknown-request-id",
+        )
+        .await;
+        assert_eq!(poll_status, StatusCode::NOT_FOUND);
+
+        for path in [
+            "/api/v1/test",
+            "/api/v2/health",
+            "/api/v2/collections",
+            "/api/v2/requests/unknown-request-id",
+            "/api/v2/ecmwf/requests",
+            "/openmeteo/v1/forecast",
+        ] {
+            let status = response_status(app.clone(), axum::http::Method::GET, path).await;
+            assert_eq!(
+                status,
+                StatusCode::NOT_FOUND,
+                "{path} should not be mounted"
+            );
+        }
+
+        let submit_status = response_status(
+            app.clone(),
+            axum::http::Method::POST,
+            "/internal/poll/unknown-request-id",
+        )
+        .await;
+        assert_eq!(submit_status, StatusCode::METHOD_NOT_ALLOWED);
+
+        let cancel_status = response_status(
+            app,
+            axum::http::Method::DELETE,
+            "/internal/poll/unknown-request-id",
+        )
+        .await;
+        assert_eq!(cancel_status, StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    #[tokio::test]
+    async fn internal_poll_is_auth_exempt_while_public_poll_remains_protected() {
+        let (public_app, state) = build_app(internal_poll_test_config(true)).unwrap();
+        let internal_app = build_internal_poll_app(state);
+
+        let public_status = response_status(
+            public_app,
+            axum::http::Method::GET,
+            "/api/v2/requests/unknown-request-id",
+        )
+        .await;
+        assert_eq!(public_status, StatusCode::UNAUTHORIZED);
+
+        let internal_status = response_status(
+            internal_app,
+            axum::http::Method::GET,
+            "/internal/poll/unknown-request-id",
+        )
+        .await;
+        assert_eq!(internal_status, StatusCode::NOT_FOUND);
+        assert_ne!(internal_status, StatusCode::UNAUTHORIZED);
+        assert_ne!(internal_status, StatusCode::FORBIDDEN);
     }
 
     #[test]

@@ -132,6 +132,8 @@ pub struct HttpConfig {
     pub host: String,
     #[serde(default = "default_port")]
     pub port: u16,
+    #[serde(default)]
+    pub internal_poll_port: Option<u16>,
 }
 
 impl Default for HttpConfig {
@@ -139,6 +141,7 @@ impl Default for HttpConfig {
         Self {
             host: default_host(),
             port: default_port(),
+            internal_poll_port: None,
         }
     }
 }
@@ -194,6 +197,12 @@ impl ServerConfig {
 
     pub fn bind_addr(&self) -> String {
         format!("{}:{}", self.server.host, self.server.port)
+    }
+
+    pub fn internal_poll_bind_addr(&self) -> Option<String> {
+        self.server
+            .internal_poll_port
+            .map(|port| format!("{}:{}", self.server.host, port))
     }
 }
 
@@ -297,6 +306,26 @@ authentication:
         assert_eq!(auth.secret, "testsecret");
         assert_eq!(auth.timeout_ms, 5000);
         assert!(!auth.allow_anonymous);
+    }
+
+    #[test]
+    fn internal_poll_config_parses_port_and_bind_addr() {
+        let yaml = config_with_polytope(
+            r#"server:
+  host: "127.0.0.1"
+  port: 3000
+  internal_poll_port: 9002
+bits: {}
+"#,
+        );
+        let cfg: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
+
+        assert_eq!(cfg.server.internal_poll_port, Some(9002));
+        assert_eq!(cfg.bind_addr(), "127.0.0.1:3000");
+        assert_eq!(
+            cfg.internal_poll_bind_addr().as_deref(),
+            Some("127.0.0.1:9002")
+        );
     }
 
     #[test]
