@@ -8,7 +8,7 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use bits::{Job, JobResult, PollOutcome};
+use bits::{Job, JobResult, PollOutcome, SubmitOutcome};
 use bytes::BytesMut;
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
@@ -101,7 +101,23 @@ pub async fn submit_request(
     super::set_job_mock_time_metadata(&mut job, mock_time_extensions.mock_time.as_ref());
 
     let submitted_request = job.request.clone();
-    let handle = route_handle.submit(job);
+    let handle = match route_handle.submit(job) {
+        SubmitOutcome::Accepted(handle) => handle,
+        SubmitOutcome::Overloaded => {
+            tracing::warn!(
+                "event.name" = "api.job.rejected",
+                outcome = "overloaded",
+                collection = %collection,
+                reason = "broker_overloaded",
+                "job rejected"
+            );
+            return super::overloaded_response(json!({
+                "status": "failed",
+                "message": "broker at capacity",
+                "retryable": true,
+            }));
+        }
+    };
     super::audit_mock_job_submission(
         mock_audit.as_ref().map(|Extension(audit)| audit),
         &handle.id,
