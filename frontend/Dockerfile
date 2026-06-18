@@ -61,6 +61,7 @@ COPY utils/metkit/ utils/metkit/
 COPY observability/ observability/
 COPY frontend/ frontend/
 COPY client/ client/
+COPY loadgen/ loadgen/
 COPY tests/integration/ tests/integration/
 COPY workers/common/ workers/common/
 COPY workers/polytope-fe-worker/ workers/polytope-fe-worker/
