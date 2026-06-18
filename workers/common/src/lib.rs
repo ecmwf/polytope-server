@@ -203,6 +203,55 @@ pub trait Processor: Send + Sync {
     async fn process(&self, work: WorkItem) -> ProcessResult;
 }
 
+/// Grace window before a *sustained* broker-poll failure is logged at WARN, and
+/// also the re-warn interval once it has. Transient failures — most importantly
+/// a frontend rollout, where the per-cycle reconnect keeps landing the worker on
+/// healthy replicas so only the odd cycle fails — never accumulate this much
+/// *continuous* failure, so they stay at debug (silent at RUST_LOG=info).
+const POLL_FAILURE_GRACE: Duration = Duration::from_secs(30);
+
+/// Tracks consecutive broker-poll failures so a worker only warns once it has
+/// been unable to get work from *any* broker for [`POLL_FAILURE_GRACE`],
+/// re-warning at most once per interval. Any successful poll — real work or a
+/// clean 204 "no work" — resets it.
+struct PollHealth {
+    failing_since: Option<Instant>,
+    last_warned: Option<Instant>,
+}
+
+impl PollHealth {
+    const fn new() -> Self {
+        Self {
+            failing_since: None,
+            last_warned: None,
+        }
+    }
+
+    /// Record a failed poll cycle. Returns `true` if the caller should log at
+    /// WARN (failures have persisted past the grace window and we haven't warned
+    /// within the last interval), `false` to log at debug. `now` is injected so
+    /// the threshold logic is unit-testable.
+    fn record_failure(&mut self, now: Instant) -> bool {
+        let since = *self.failing_since.get_or_insert(now);
+        if now.saturating_duration_since(since) < POLL_FAILURE_GRACE {
+            return false;
+        }
+        match self.last_warned {
+            Some(last) if now.saturating_duration_since(last) < POLL_FAILURE_GRACE => false,
+            _ => {
+                self.last_warned = Some(now);
+                true
+            }
+        }
+    }
+
+    /// Record a successful poll: the broker is reachable and healthy.
+    fn record_success(&mut self) {
+        self.failing_since = None;
+        self.last_warned = None;
+    }
+}
+
 async fn worker_task<P: Processor + 'static>(
     config: WorkerConfig,
     worker_index: usize,
@@ -212,6 +261,7 @@ async fn worker_task<P: Processor + 'static>(
 ) -> Result<(), reqwest::Error> {
     let mut poll_cycle: u64 = 0;
     let mut idle_anchor = Instant::now();
+    let mut poll_health = PollHealth::new();
     loop {
         if *shutdown.borrow() {
             break;
@@ -241,7 +291,11 @@ async fn worker_task<P: Processor + 'static>(
                 match result {
                     Ok(response) => response,
                     Err(err) => {
-                        tracing::warn!("event.name" = "worker.broker.poll.failed", outcome = "error", broker_url = %config.broker_url, error = %err, "worker poll failed");
+                        if poll_health.record_failure(Instant::now()) {
+                            tracing::warn!("event.name" = "worker.broker.poll.failed", outcome = "error", broker_url = %config.broker_url, error = %err, "worker poll failing for >30s");
+                        } else {
+                            tracing::debug!("event.name" = "worker.broker.poll.failed", outcome = "error", broker_url = %config.broker_url, error = %err, "worker poll failed (transient)");
+                        }
                         tokio::time::sleep(config.retry_backoff).await;
                         continue;
                     }
@@ -250,6 +304,7 @@ async fn worker_task<P: Processor + 'static>(
         };
 
         if response.status() == StatusCode::NO_CONTENT {
+            poll_health.record_success();
             tracing::debug!(
                 "event.name" = "worker.broker.poll.empty",
                 worker_index,
@@ -261,15 +316,26 @@ async fn worker_task<P: Processor + 'static>(
             continue;
         }
         if !response.status().is_success() {
-            tracing::warn!("event.name" = "worker.broker.poll.failed", outcome = "error", broker_url = %config.broker_url, status = %response.status(), "worker poll returned unexpected status");
+            if poll_health.record_failure(Instant::now()) {
+                tracing::warn!("event.name" = "worker.broker.poll.failed", outcome = "error", broker_url = %config.broker_url, status = %response.status(), "worker poll returning unexpected status for >30s");
+            } else {
+                tracing::debug!("event.name" = "worker.broker.poll.failed", outcome = "error", broker_url = %config.broker_url, status = %response.status(), "worker poll returned unexpected status (transient)");
+            }
             tokio::time::sleep(config.retry_backoff).await;
             continue;
         }
 
         let work: WorkItem = match response.json().await {
-            Ok(work) => work,
+            Ok(work) => {
+                poll_health.record_success();
+                work
+            }
             Err(err) => {
-                tracing::warn!("event.name" = "worker.broker.poll.failed", outcome = "error", error = %err, "worker failed to decode work item");
+                if poll_health.record_failure(Instant::now()) {
+                    tracing::warn!("event.name" = "worker.broker.poll.failed", outcome = "error", error = %err, "worker failing to decode work item for >30s");
+                } else {
+                    tracing::debug!("event.name" = "worker.broker.poll.failed", outcome = "error", error = %err, "worker failed to decode work item (transient)");
+                }
                 tokio::time::sleep(config.retry_backoff).await;
                 continue;
             }
@@ -533,6 +599,27 @@ pub async fn run_worker_loop<P: Processor + 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn poll_health_warns_only_after_sustained_failure() {
+        let mut h = PollHealth::new();
+        let t0 = Instant::now();
+        // Failures inside the grace window stay quiet (debug), e.g. a rollout.
+        assert!(!h.record_failure(t0));
+        assert!(!h.record_failure(t0 + Duration::from_secs(5)));
+        assert!(!h.record_failure(t0 + Duration::from_secs(29)));
+        // Crossing the grace window warns exactly once.
+        assert!(h.record_failure(t0 + Duration::from_secs(31)));
+        // Then it is rate-limited within the next interval...
+        assert!(!h.record_failure(t0 + Duration::from_secs(40)));
+        // ...and re-warns after another interval of continuous failure.
+        assert!(h.record_failure(t0 + Duration::from_secs(62)));
+        // A successful poll resets the clock: the grace window starts over.
+        h.record_success();
+        assert!(!h.record_failure(t0 + Duration::from_secs(63)));
+        assert!(!h.record_failure(t0 + Duration::from_secs(90)));
+        assert!(h.record_failure(t0 + Duration::from_secs(94)));
+    }
     use axum::{
         Router,
         body::Bytes,
