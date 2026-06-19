@@ -17,7 +17,7 @@ async-trait = "0.1"
 axum = { version = "0.8", features = ["http2"] }
 tower-http = { version = "0.6", features = ["cors", "compression-full"] }
 polytope-edr = { git = "https://github.com/ecmwf/polytope-edr", branch = "master" }
-bits = { git = "https://github.com/ecmwf/bits-broker.git", rev = "bb3766597def7a414e29d765ea8c6a367a1dc7bc", features = ["nats"] }
+bits = { git = "https://github.com/ecmwf/bits-broker.git", rev = "7dfaec5b2b79c8c3429b9ed8d8efcbe099238996", features = ["nats"] }
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
 futures = "0.3"
@@ -30,9 +30,10 @@ tokio-stream = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-opentelemetry = { version = "0.30", optional = true }
-opentelemetry_sdk = { version = "0.30", features = ["metrics"], optional = true }
-opentelemetry-otlp = { version = "0.30", default-features = false, features = ["metrics", "http-proto", "reqwest-blocking-client"], optional = true }
+opentelemetry = { version = "0.32", optional = true }
+opentelemetry_sdk = { version = "0.32", features = ["metrics"], optional = true }
+opentelemetry-prometheus = { version = "0.32", optional = true }
+prometheus = { version = "0.14", optional = true, default-features = false }
 roxmltree = "0.20"
 
 # Metkit expansion (optional — requires C++ metkit libs at build+runtime)
@@ -45,7 +46,7 @@ authotron-types = { git = "https://github.com/ecmwf/auth-o-tron.git", branch = "
 [features]
 default = []
 metkit = ["dep:metkit"]
-telemetry = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp"]
+telemetry = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-prometheus", "dep:prometheus"]
 
 [dev-dependencies]
 mockito = "1.7"

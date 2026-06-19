@@ -49,27 +49,19 @@ pub struct ServerConfig {
     pub edr: Option<serde_yaml::Value>,
     pub authentication: Option<AuthConfig>,
     pub admin_bypass_roles: Option<HashMap<String, Vec<String>>>,
-    pub otlp: Option<OtlpConfig>,
+    pub metrics: Option<MetricsConfig>,
 }
 
-#[derive(Debug, Deserialize, Default)]
-pub struct OtlpConfig {
-    pub endpoint: Option<String>,
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct MetricsConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_metrics_port")]
+    pub port: u16,
 }
 
-impl ServerConfig {
-    /// Returns the resolved OTLP endpoint, preferring the env var over config.
-    pub fn otlp_endpoint(&self) -> Option<String> {
-        std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .or_else(|| {
-                self.otlp
-                    .as_ref()
-                    .and_then(|c| c.endpoint.clone())
-                    .filter(|s| !s.is_empty())
-            })
-    }
+fn default_metrics_port() -> u16 {
+    9090
 }
 
 #[derive(Debug, Clone)]
@@ -96,7 +88,7 @@ impl<'de> Deserialize<'de> for ServerConfig {
             #[serde(default)]
             admin_bypass_roles: Option<HashMap<String, Vec<String>>>,
             #[serde(default)]
-            otlp: Option<OtlpConfig>,
+            metrics: Option<MetricsConfig>,
         }
 
         let raw = RawServerConfig::deserialize(deserializer)?;
@@ -111,7 +103,7 @@ impl<'de> Deserialize<'de> for ServerConfig {
             edr: raw.edr,
             authentication: raw.authentication,
             admin_bypass_roles: raw.admin_bypass_roles,
-            otlp: raw.otlp,
+            metrics: raw.metrics,
         })
     }
 }
@@ -402,41 +394,38 @@ authentication:
     }
 
     #[test]
-    fn otlp_config_parses_when_present() {
+    fn metrics_config_parses_when_present() {
         let yaml = config_with_polytope(
             r#"bits: {}
-otlp:
-  endpoint: "http://localhost:4318"
+metrics:
+  enabled: true
+  port: 9090
 "#,
         );
         let cfg: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
-        assert_eq!(
-            cfg.otlp.as_ref().and_then(|o| o.endpoint.as_deref()),
-            Some("http://localhost:4318")
-        );
-        assert_eq!(
-            cfg.otlp_endpoint(),
-            Some("http://localhost:4318".to_string())
-        );
+        let m = cfg.metrics.unwrap();
+        assert!(m.enabled);
+        assert_eq!(m.port, 9090);
     }
 
     #[test]
-    fn otlp_config_optional() {
+    fn metrics_config_optional() {
         let yaml = config_with_polytope("bits: {}\n");
         let cfg: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
-        assert!(cfg.otlp.is_none());
-        assert!(cfg.otlp_endpoint().is_none());
+        assert!(cfg.metrics.is_none());
     }
 
     #[test]
-    fn otlp_empty_endpoint_treated_as_disabled() {
+    fn metrics_config_defaults() {
         let yaml = config_with_polytope(
             r#"bits: {}
-otlp:
-  endpoint: ""
+metrics:
+  enabled: true
 "#,
         );
         let cfg: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
-        assert!(cfg.otlp_endpoint().is_none());
+        let m = cfg.metrics.unwrap();
+        assert!(m.enabled);
+        assert_eq!(m.port, 9090);
     }
 }

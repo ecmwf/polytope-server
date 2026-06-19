@@ -1,5 +1,4 @@
 {
-  "uid": "polytope-brokers",
   "title": "Polytope Broker Health",
   "tags": [
     "polytope",
@@ -7,7 +6,7 @@
     "infrastructure"
   ],
   "timezone": "browser",
-  "refresh": "10s",
+  "refresh": "30s",
   "time": {
     "from": "now-30m",
     "to": "now"
@@ -25,10 +24,10 @@
       },
       "targets": [
         {
-          "expr": "count(count by (instance)(polytope_requests_finished_total))",
+          "expr": "count(count by (service_instance_id)(polytope_broker_requests_finished_total_total))",
           "datasource": {
             "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
+            "uid": "${DS_PROMETHEUS}"
           }
         }
       ],
@@ -54,10 +53,10 @@
       },
       "targets": [
         {
-          "expr": "sum(increase(polytope_requests_accepted_total[$__range]))",
+          "expr": "sum(increase(polytope_broker_requests_accepted_total_total[$__range]))",
           "datasource": {
             "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
+            "uid": "${DS_PROMETHEUS}"
           }
         }
       ],
@@ -83,11 +82,11 @@
       },
       "targets": [
         {
-          "expr": "sum by (instance)(rate(polytope_requests_accepted_total[5m])) * 60",
-          "legendFormat": "{{instance}}",
+          "expr": "sum by (service_instance_id)(rate(polytope_broker_requests_accepted_total_total[5m])) * 60",
+          "legendFormat": "{{service_instance_id}}",
           "datasource": {
             "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
+            "uid": "${DS_PROMETHEUS}"
           }
         }
       ],
@@ -113,11 +112,11 @@
       },
       "targets": [
         {
-          "expr": "sum by (instance)(rate(polytope_requests_finished_total{outcome=\"success\"}[5m])) / sum by (instance)(rate(polytope_requests_finished_total[5m])) * 100",
-          "legendFormat": "{{instance}}",
+          "expr": "sum by (service_instance_id)(rate(polytope_broker_requests_finished_total_total{outcome=\"success\"}[5m])) / sum by (service_instance_id)(rate(polytope_broker_requests_finished_total_total[5m])) * 100",
+          "legendFormat": "{{service_instance_id}}",
           "datasource": {
             "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
+            "uid": "${DS_PROMETHEUS}"
           }
         }
       ],
@@ -173,11 +172,11 @@
       },
       "targets": [
         {
-          "expr": "sum by (instance, outcome)(rate(polytope_requests_finished_total[5m])) * 60",
-          "legendFormat": "{{instance}} \u2014 {{outcome}}",
+          "expr": "sum by (service_instance_id, outcome)(rate(polytope_broker_requests_finished_total_total[5m])) * 60",
+          "legendFormat": "{{service_instance_id}} \u2014 {{outcome}}",
           "datasource": {
             "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
+            "uid": "${DS_PROMETHEUS}"
           }
         }
       ],
@@ -188,54 +187,7 @@
             "fillOpacity": 20,
             "lineWidth": 2
           }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": ".*success"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "green",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": ".*error"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "orange",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": ".*failed"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "red",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
+        }
       }
     },
     {
@@ -250,11 +202,11 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.95, sum by (le, instance)(rate(polytope_request_duration_seconds_bucket[5m])))",
-          "legendFormat": "{{instance}}",
+          "expr": "histogram_quantile(0.95, sum by (le, service_instance_id)(rate(polytope_broker_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{service_instance_id}}",
           "datasource": {
             "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
+            "uid": "${DS_PROMETHEUS}"
           }
         }
       ],
@@ -292,11 +244,11 @@
       },
       "targets": [
         {
-          "expr": "sum by (instance, route_handle)(rate(polytope_collection_requests_accepted_total[5m])) * 60",
-          "legendFormat": "{{instance}} / {{route_handle}}",
+          "expr": "sum by (service_instance_id, route_handle)(rate(polytope_broker_collection_requests_accepted_total_total[5m])) * 60",
+          "legendFormat": "{{service_instance_id}} / {{route_handle}}",
           "datasource": {
             "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
+            "uid": "${DS_PROMETHEUS}"
           }
         }
       ],
@@ -322,11 +274,11 @@
       },
       "targets": [
         {
-          "expr": "sum by (instance, route_handle)(rate(polytope_collection_requests_finished_total{outcome=\"success\"}[5m])) / sum by (instance, route_handle)(rate(polytope_collection_requests_finished_total[5m])) * 100",
-          "legendFormat": "{{instance}} / {{route_handle}}",
+          "expr": "sum by (service_instance_id, route_handle)(rate(polytope_broker_collection_requests_finished_total_total{outcome=\"success\"}[5m])) / sum by (service_instance_id, route_handle)(rate(polytope_broker_collection_requests_finished_total_total[5m])) * 100",
+          "legendFormat": "{{service_instance_id}} / {{route_handle}}",
           "datasource": {
             "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
+            "uid": "${DS_PROMETHEUS}"
           }
         }
       ],
@@ -342,5 +294,16 @@
         }
       }
     }
-  ]
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "DS_PROMETHEUS",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0
+      }
+    ]
+  }
 }

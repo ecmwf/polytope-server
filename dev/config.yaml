@@ -6,8 +6,9 @@ polytope:
   site: "lcl"
   env: "dev"
 
-otlp:
-  endpoint: "http://localhost:4318"
+metrics:
+  enabled: true
+  port: 9090
 
 bits:
   targets:

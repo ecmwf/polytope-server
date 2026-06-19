@@ -10,22 +10,23 @@ struct Cli {
 
 #[cfg(feature = "telemetry")]
 fn init_meter_provider(
-    endpoint: Option<&str>,
     site: &str,
     env: &str,
     broker_id: &str,
-) -> Option<opentelemetry_sdk::metrics::SdkMeterProvider> {
+) -> (
+    opentelemetry_sdk::metrics::SdkMeterProvider,
+    prometheus::Registry,
+) {
     use opentelemetry::KeyValue;
-    use opentelemetry_otlp::WithExportConfig;
     use opentelemetry_sdk::Resource;
     use opentelemetry_sdk::metrics::SdkMeterProvider;
 
-    let endpoint = endpoint?;
-    let metrics_endpoint = if endpoint.ends_with("/v1/metrics") {
-        endpoint.to_owned()
-    } else {
-        format!("{}/v1/metrics", endpoint.trim_end_matches('/'))
-    };
+    let registry = prometheus::Registry::new();
+
+    let exporter = opentelemetry_prometheus::exporter()
+        .with_registry(registry.clone())
+        .build()
+        .expect("prometheus exporter should build");
 
     let resource = Resource::builder()
         .with_attributes([
@@ -38,24 +39,13 @@ fn init_meter_provider(
         ])
         .build();
 
-    let exporter = opentelemetry_otlp::MetricExporter::builder()
-        .with_http()
-        .with_endpoint(&metrics_endpoint)
-        .build()
-        .unwrap_or_else(|e| {
-            tracing::error!(error = %e, "failed to build OTLP metric exporter");
-            std::process::exit(1);
-        });
-
-    let reader = opentelemetry_sdk::metrics::PeriodicReader::builder(exporter).build();
-
     let rename_view = |i: &opentelemetry_sdk::metrics::Instrument| {
         let name = i.name();
         let renamed = name
-            .replace("bits.jobs.", "polytope.requests.")
-            .replace("bits.job.", "polytope.request.")
-            .replace("bits.route_handle.jobs.", "polytope.collection.requests.")
-            .replace("bits.route_handle.job.", "polytope.collection.request.");
+            .replace("bits.jobs.", "polytope.broker.requests.")
+            .replace("bits.job.", "polytope.broker.request.")
+            .replace("bits.route_handle.jobs.", "polytope.broker.collection.requests.")
+            .replace("bits.route_handle.job.", "polytope.broker.collection.request.");
         if renamed != name {
             Some(
                 opentelemetry_sdk::metrics::Stream::builder()
@@ -70,13 +60,49 @@ fn init_meter_provider(
 
     let provider = SdkMeterProvider::builder()
         .with_resource(resource)
-        .with_reader(reader)
+        .with_reader(exporter)
         .with_view(rename_view)
         .build();
 
     opentelemetry::global::set_meter_provider(provider.clone());
-    tracing::info!(endpoint = %endpoint, broker_id = %broker_id, "OTLP metrics exporter enabled");
-    Some(provider)
+
+    (provider, registry)
+}
+
+#[cfg(feature = "telemetry")]
+async fn serve_metrics(registry: prometheus::Registry, port: u16) {
+    use axum::extract::State;
+    use axum::response::IntoResponse;
+    use axum::{Router, routing::get};
+    use prometheus::Encoder;
+
+    async fn handler(State(reg): State<prometheus::Registry>) -> impl IntoResponse {
+        let encoder = prometheus::TextEncoder::new();
+        let families = reg.gather();
+        let mut buf = Vec::new();
+        encoder.encode(&families, &mut buf).unwrap();
+        (
+            [(
+                axum::http::header::CONTENT_TYPE,
+                encoder.format_type().to_owned(),
+            )],
+            buf,
+        )
+    }
+
+    let app = Router::new()
+        .route("/metrics", get(handler))
+        .with_state(registry);
+
+    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}"))
+        .await
+        .unwrap_or_else(|e| {
+            tracing::error!(port, error = %e, "failed to bind metrics endpoint");
+            std::process::exit(1);
+        });
+
+    tracing::info!(port, "prometheus /metrics endpoint listening");
+    let _ = axum::serve(listener, app).await;
 }
 
 #[tokio::main]
@@ -93,7 +119,7 @@ async fn main() {
     let bind_addr = cfg.bind_addr();
 
     #[cfg(feature = "telemetry")]
-    let otlp_endpoint = cfg.otlp_endpoint();
+    let metrics_config = cfg.metrics.clone().unwrap_or_default();
     #[cfg(feature = "telemetry")]
     let polytope_env = cfg.polytope.env.clone();
     #[cfg(feature = "telemetry")]
@@ -105,12 +131,14 @@ async fn main() {
     });
 
     #[cfg(feature = "telemetry")]
-    let _meter_provider = init_meter_provider(
-        otlp_endpoint.as_deref(),
-        &polytope_site,
-        &polytope_env,
-        state.bits.broker_id(),
-    );
+    let _meter_provider = if metrics_config.enabled {
+        let (provider, registry) =
+            init_meter_provider(&polytope_site, &polytope_env, state.bits.broker_id());
+        tokio::spawn(serve_metrics(registry, metrics_config.port));
+        Some(provider)
+    } else {
+        None
+    };
 
     for name in state.collections.keys() {
         tracing::debug!(collection = %name, "registered collection");
@@ -128,7 +156,7 @@ async fn main() {
     #[cfg(feature = "telemetry")]
     if let Some(provider) = _meter_provider {
         if let Err(e) = provider.shutdown() {
-            tracing::warn!(error = %e, "OTLP meter provider shutdown failed");
+            tracing::warn!(error = %e, "meter provider shutdown failed");
         }
     }
 

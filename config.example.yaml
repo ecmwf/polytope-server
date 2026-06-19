@@ -8,11 +8,12 @@ polytope:
   site: "bol"
   env: "dev"
 
-# Optional — OTLP metrics export.
+# Optional — Prometheus metrics scrape endpoint.
 # Omit the section entirely to disable (zero-cost no-op).
-# Env var OTEL_EXPORTER_OTLP_ENDPOINT takes precedence over the config value.
-# otlp:
-#   endpoint: "http://localhost:4318"
+# Requires the binary to be built with --features telemetry.
+# metrics:
+#   enabled: true
+#   port: 9090       # default 9090
 
 bits:
   routes:
