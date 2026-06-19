@@ -135,7 +135,9 @@ mod tests {
     /// Collect all stream chunks into a single flat byte vec.
     async fn collect_success_body(result: ProcessResult) -> (String, Vec<u8>) {
         match result {
-            ProcessResult::Success { content_type, body } => {
+            ProcessResult::Success {
+                content_type, body, ..
+            } => {
                 let bytes = body
                     .try_fold(Vec::new(), |mut acc, chunk| async move {
                         acc.extend_from_slice(&chunk);
@@ -152,7 +154,9 @@ mod tests {
     /// Collect all stream chunks, preserving individual chunk boundaries.
     async fn collect_success_chunks(result: ProcessResult) -> (String, Vec<Vec<u8>>) {
         match result {
-            ProcessResult::Success { content_type, body } => {
+            ProcessResult::Success {
+                content_type, body, ..
+            } => {
                 let chunks = body.try_collect::<Vec<_>>().await.unwrap();
                 let chunks: Vec<Vec<u8>> = chunks.into_iter().map(|b| b.to_vec()).collect();
                 (content_type, chunks)

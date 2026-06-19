@@ -1,13 +1,20 @@
 use async_trait::async_trait;
 use aws_config::BehaviorVersion;
 
-use crate::Completion;
 use crate::delivery_config::{DeliveryConfig, DeliveryType};
+use crate::{Completion, SourceError};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct DeliveryContext<'a> {
     pub job_id: &'a str,
     pub user: &'a serde_json::Value,
+    pub source_error: Option<SourceError>,
+}
+
+impl DeliveryContext<'_> {
+    pub fn source_error_message(&self) -> Option<String> {
+        self.source_error.as_ref().and_then(SourceError::message)
+    }
 }
 
 pub(crate) fn enduser_fields(user: &serde_json::Value) -> (Option<&str>, Option<&str>) {
@@ -131,7 +138,7 @@ impl ResultDelivery for DirectDelivery {
         content_encoding: Option<&str>,
         body: reqwest::Body,
         metadata: &serde_json::Value,
-        _context: DeliveryContext<'_>,
+        context: DeliveryContext<'_>,
     ) -> Completion {
         if metadata.get("buffer_full_output").and_then(|v| v.as_bool()) == Some(true) {
             return Completion::Error {
@@ -143,6 +150,7 @@ impl ResultDelivery for DirectDelivery {
             content_encoding: content_encoding.map(str::to_string),
             content_length: None,
             body,
+            source_error: context.source_error,
         }
     }
 }
