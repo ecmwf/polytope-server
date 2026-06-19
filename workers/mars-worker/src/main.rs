@@ -320,7 +320,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[cfg(test)]
-mod tests {
+mod processor_tests {
     use super::*;
     use serde_json::json;
 
@@ -336,6 +336,7 @@ mod tests {
                 request: json!({}),
                 user: json!({}),
                 metadata: json!({}),
+                callback_url: None,
             })
             .await;
         assert!(matches!(result, ProcessResult::Error { .. }));
