@@ -1,3 +1,4 @@
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -71,6 +72,8 @@ pub struct WorkItem {
     pub request: serde_json::Value,
     pub user: serde_json::Value,
     pub metadata: serde_json::Value,
+    #[serde(default)]
+    pub callback_url: Option<String>,
 }
 
 #[derive(Debug)]
@@ -169,10 +172,26 @@ impl WorkerConfig {
         )
     }
 
+    pub fn heartbeat_url_for_work(&self, work: &WorkItem) -> String {
+        format!(
+            "{}/heartbeat/{}",
+            self.callback_base_for_work(work),
+            work.job_id
+        )
+    }
+
     pub fn complete_data_url(&self, job_id: &str) -> String {
         format!(
             "{}/complete/data/{job_id}",
             self.broker_url.trim_end_matches('/')
+        )
+    }
+
+    pub fn complete_data_url_for_work(&self, work: &WorkItem) -> String {
+        format!(
+            "{}/complete/data/{}",
+            self.callback_base_for_work(work),
+            work.job_id
         )
     }
 
@@ -183,10 +202,26 @@ impl WorkerConfig {
         )
     }
 
+    pub fn complete_reject_url_for_work(&self, work: &WorkItem) -> String {
+        format!(
+            "{}/complete/reject/{}",
+            self.callback_base_for_work(work),
+            work.job_id
+        )
+    }
+
     pub fn complete_error_url(&self, job_id: &str) -> String {
         format!(
             "{}/complete/error/{job_id}",
             self.broker_url.trim_end_matches('/')
+        )
+    }
+
+    pub fn complete_error_url_for_work(&self, work: &WorkItem) -> String {
+        format!(
+            "{}/complete/error/{}",
+            self.callback_base_for_work(work),
+            work.job_id
         )
     }
 
@@ -196,6 +231,69 @@ impl WorkerConfig {
             self.broker_url.trim_end_matches('/')
         )
     }
+
+    pub fn complete_redirect_url_for_work(&self, work: &WorkItem) -> String {
+        format!(
+            "{}/complete/redirect/{}",
+            self.callback_base_for_work(work),
+            work.job_id
+        )
+    }
+
+    fn callback_base_for_work(&self, work: &WorkItem) -> String {
+        work.callback_url
+            .as_deref()
+            .and_then(|callback_url| self.validated_callback_base(callback_url))
+            .unwrap_or_else(|| self.broker_url.trim_end_matches('/').to_string())
+    }
+
+    fn validated_callback_base(&self, callback_url: &str) -> Option<String> {
+        let callback = reqwest::Url::parse(callback_url).ok()?;
+        if callback.scheme() != "http"
+            || callback.query().is_some()
+            || callback.fragment().is_some()
+        {
+            return None;
+        }
+        if !callback.username().is_empty() || callback.password().is_some() {
+            return None;
+        }
+
+        let expected_port = reqwest::Url::parse(&self.broker_url)
+            .ok()
+            .and_then(|url| url.port_or_known_default())?;
+        if callback.port_or_known_default()? != expected_port {
+            return None;
+        }
+
+        let host: IpAddr = callback
+            .host_str()?
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse()
+            .ok()?;
+        if !is_private_cluster_ip(host) {
+            return None;
+        }
+
+        Some(callback.as_str().trim_end_matches('/').to_string())
+    }
+}
+
+fn is_private_cluster_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => is_private_cluster_ipv4(ip),
+        IpAddr::V6(ip) => is_private_cluster_ipv6(ip),
+    }
+}
+
+fn is_private_cluster_ipv4(ip: Ipv4Addr) -> bool {
+    let octets = ip.octets();
+    ip.is_private() || (octets[0] == 100 && (64..=127).contains(&octets[1]))
+}
+
+fn is_private_cluster_ipv6(ip: Ipv6Addr) -> bool {
+    (ip.segments()[0] & 0xfe00) == 0xfc00
 }
 
 #[async_trait]
@@ -353,7 +451,8 @@ async fn worker_task<P: Processor + 'static>(
         let stop = std::sync::Arc::new(tokio::sync::Notify::new());
         let stop_heartbeat = stop.clone();
         let heartbeat_client = client.clone();
-        let heartbeat_cfg = config.clone();
+        let heartbeat_url = config.heartbeat_url_for_work(&work);
+        let heartbeat_interval = config.heartbeat_interval;
         let job_id = work.job_id.clone();
         let heartbeat_enduser_id = enduser_id.map(str::to_string);
         let heartbeat_enduser_realm = enduser_realm.map(str::to_string);
@@ -361,8 +460,8 @@ async fn worker_task<P: Processor + 'static>(
             loop {
                 tokio::select! {
                     _ = stop_heartbeat.notified() => break,
-                    _ = tokio::time::sleep(heartbeat_cfg.heartbeat_interval) => {
-                        match heartbeat_client.post(heartbeat_cfg.heartbeat_url(&job_id)).send().await {
+                    _ = tokio::time::sleep(heartbeat_interval) => {
+                        match heartbeat_client.post(&heartbeat_url).send().await {
                             Ok(resp) if resp.status() == StatusCode::OK => {}
                             Ok(resp) if resp.status() == StatusCode::NOT_FOUND => break,
                             Ok(resp) => {
@@ -445,7 +544,7 @@ async fn worker_task<P: Processor + 'static>(
                 body,
             } => {
                 let mut request = client
-                    .post(config.complete_data_url(&work.job_id))
+                    .post(config.complete_data_url_for_work(&work))
                     .header(reqwest::header::CONTENT_TYPE, content_type)
                     .body(body);
                 if let Some(content_length) = content_length {
@@ -459,7 +558,7 @@ async fn worker_task<P: Processor + 'static>(
             Completion::Reject { reason } => {
                 let payload = CompletionRequest::Reject { reason };
                 let resp = client
-                    .post(config.complete_reject_url(&work.job_id))
+                    .post(config.complete_reject_url_for_work(&work))
                     .json(&payload)
                     .send()
                     .await?;
@@ -468,7 +567,7 @@ async fn worker_task<P: Processor + 'static>(
             Completion::Error { message } => {
                 let payload = CompletionRequest::Error { message };
                 let resp = client
-                    .post(config.complete_error_url(&work.job_id))
+                    .post(config.complete_error_url_for_work(&work))
                     .json(&payload)
                     .send()
                     .await?;
@@ -477,7 +576,7 @@ async fn worker_task<P: Processor + 'static>(
             Completion::Redirect { location, message } => {
                 let payload = CompletionRequest::Redirect { location, message };
                 let resp = client
-                    .post(config.complete_redirect_url(&work.job_id))
+                    .post(config.complete_redirect_url_for_work(&work))
                     .json(&payload)
                     .send()
                     .await?;
@@ -647,6 +746,113 @@ mod tests {
         assert_eq!(enduser_fields(&serde_json::json!({})), (None, None));
     }
 
+    fn test_worker_config() -> WorkerConfig {
+        WorkerConfig {
+            broker_url: "http://polytope-test-frontend:9001/test_pool".to_string(),
+            poll_timeout_ms: 10,
+            heartbeat_interval: Duration::from_secs(60),
+            retry_backoff: Duration::from_millis(5),
+            management_port: 0,
+            worker_concurrency: 1,
+        }
+    }
+
+    fn test_work_with_callback(callback_url: Option<&str>) -> WorkItem {
+        WorkItem {
+            job_id: "job-1".to_string(),
+            request: serde_json::json!({}),
+            user: serde_json::json!({}),
+            metadata: serde_json::json!({}),
+            callback_url: callback_url.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn worker_uses_valid_callback_url_for_job_callbacks() {
+        let config = test_worker_config();
+        let work = test_work_with_callback(Some("http://10.1.2.3:9001/test_pool"));
+
+        assert_eq!(
+            config.work_url(),
+            "http://polytope-test-frontend:9001/test_pool/work?timeout_ms=10"
+        );
+        assert_eq!(
+            config.heartbeat_url_for_work(&work),
+            "http://10.1.2.3:9001/test_pool/heartbeat/job-1"
+        );
+        assert_eq!(
+            config.complete_data_url_for_work(&work),
+            "http://10.1.2.3:9001/test_pool/complete/data/job-1"
+        );
+        assert_eq!(
+            config.complete_redirect_url_for_work(&work),
+            "http://10.1.2.3:9001/test_pool/complete/redirect/job-1"
+        );
+        assert_eq!(
+            config.complete_reject_url_for_work(&work),
+            "http://10.1.2.3:9001/test_pool/complete/reject/job-1"
+        );
+        assert_eq!(
+            config.complete_error_url_for_work(&work),
+            "http://10.1.2.3:9001/test_pool/complete/error/job-1"
+        );
+    }
+
+    #[test]
+    fn worker_falls_back_to_broker_url_without_callback_url() {
+        let config = test_worker_config();
+        let work = test_work_with_callback(None);
+
+        assert_eq!(
+            config.heartbeat_url_for_work(&work),
+            "http://polytope-test-frontend:9001/test_pool/heartbeat/job-1"
+        );
+        assert_eq!(
+            config.complete_data_url_for_work(&work),
+            "http://polytope-test-frontend:9001/test_pool/complete/data/job-1"
+        );
+    }
+
+    #[test]
+    fn worker_rejects_invalid_callback_urls_and_falls_back_to_broker_url() {
+        let config = test_worker_config();
+        for callback_url in [
+            "https://10.1.2.3:9001/test_pool",
+            "http://10.1.2.3:9002/test_pool",
+            "http://127.0.0.1:9001/test_pool",
+            "http://169.254.169.254:9001/test_pool",
+            "http://8.8.8.8:9001/test_pool",
+            "http://frontend-abcde:9001/test_pool",
+            "http://10.1.2.3:9001/test_pool?x=1",
+        ] {
+            let work = test_work_with_callback(Some(callback_url));
+            assert_eq!(
+                config.heartbeat_url_for_work(&work),
+                "http://polytope-test-frontend:9001/test_pool/heartbeat/job-1",
+                "callback should be rejected: {callback_url}"
+            );
+        }
+    }
+
+    #[test]
+    fn worker_accepts_private_cluster_callback_ranges() {
+        let config = test_worker_config();
+        for callback_url in [
+            "http://10.1.2.3:9001/test_pool",
+            "http://172.16.2.3:9001/test_pool",
+            "http://192.168.2.3:9001/test_pool",
+            "http://100.64.2.3:9001/test_pool",
+            "http://[fd00::1]:9001/test_pool",
+        ] {
+            let work = test_work_with_callback(Some(callback_url));
+            assert_ne!(
+                config.heartbeat_url_for_work(&work),
+                "http://polytope-test-frontend:9001/test_pool/heartbeat/job-1",
+                "callback should be accepted: {callback_url}"
+            );
+        }
+    }
+
     #[derive(Default)]
     struct MockState {
         delivered: Mutex<bool>,
@@ -664,6 +870,7 @@ mod tests {
                 request: serde_json::json!({"foo": "bar"}),
                 user: serde_json::json!({}),
                 metadata: serde_json::json!({}),
+                callback_url: None,
             }))
         }
     }
@@ -724,6 +931,7 @@ mod tests {
                 request: serde_json::json!({"foo": "bar"}),
                 user: serde_json::json!({}),
                 metadata: state.work_metadata.lock().unwrap().clone(),
+                callback_url: None,
             }))
         }
     }
@@ -844,6 +1052,7 @@ mod tests {
                 request: serde_json::json!({"foo": "bar"}),
                 user: serde_json::json!({}),
                 metadata: serde_json::json!({}),
+                callback_url: None,
             }))
         } else {
             Err(StatusCode::NO_CONTENT)
@@ -1326,6 +1535,7 @@ mod tests {
                 request: serde_json::json!({"index": poll}),
                 user: serde_json::json!({}),
                 metadata: serde_json::json!({}),
+                callback_url: None,
             }))
         } else {
             Err(StatusCode::NO_CONTENT)
