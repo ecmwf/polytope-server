@@ -192,6 +192,32 @@ impl ServerConfig {
             serde_yaml::Value::String(self.polytope.env.clone()),
         );
 
+        if let Ok(pod_ip) = std::env::var("POD_IP")
+            && !pod_ip.trim().is_empty()
+        {
+            let worker_server_key = serde_yaml::Value::String("worker_server".to_string());
+            if let Some(worker_server) = inner
+                .get_mut(&worker_server_key)
+                .and_then(serde_yaml::Value::as_mapping_mut)
+            {
+                let port = worker_server
+                    .get(serde_yaml::Value::String("port".to_string()))
+                    .and_then(serde_yaml::Value::as_u64)
+                    .and_then(|port| u16::try_from(port).ok())
+                    .unwrap_or(9001);
+                let pod_ip = pod_ip.trim();
+                let advertised_addr = if pod_ip.contains(':') && !pod_ip.starts_with('[') {
+                    format!("[{pod_ip}]:{port}")
+                } else {
+                    format!("{pod_ip}:{port}")
+                };
+                worker_server.insert(
+                    serde_yaml::Value::String("advertised_addr".to_string()),
+                    serde_yaml::Value::String(advertised_addr),
+                );
+            }
+        }
+
         serde_yaml::to_string(&bits)
     }
 
@@ -209,6 +235,21 @@ impl ServerConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, MutexGuard};
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn env_lock() -> MutexGuard<'static, ()> {
+        ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    fn set_pod_ip(value: &str) {
+        unsafe { std::env::set_var("POD_IP", value) };
+    }
+
+    fn remove_pod_ip() {
+        unsafe { std::env::remove_var("POD_IP") };
+    }
 
     fn config_with_polytope(body: &str) -> String {
         format!(
@@ -286,6 +327,55 @@ bits: {}
             .expect("injected YAML should contain inner bits BitsConfig block");
         assert_eq!(inner.get("site").and_then(|v| v.as_str()), Some("bol"));
         assert_eq!(inner.get("env").and_then(|v| v.as_str()), Some("dev"));
+    }
+
+    #[test]
+    fn bits_yaml_injects_worker_server_advertised_addr_from_pod_ip() {
+        let _guard = env_lock();
+        set_pod_ip("10.1.2.3");
+
+        let yaml = config_with_polytope(
+            r#"bits:
+  bits:
+    worker_server:
+      host: "0.0.0.0"
+      port: 9001
+"#,
+        );
+        let cfg: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
+        let bits_yaml = cfg.bits_yaml().unwrap();
+        remove_pod_ip();
+
+        let bits_cfg: serde_yaml::Value = serde_yaml::from_str(&bits_yaml).unwrap();
+        let worker_server = bits_cfg
+            .get("bits")
+            .and_then(|bits| bits.get("worker_server"))
+            .expect("inner worker_server should exist");
+        assert_eq!(
+            worker_server
+                .get("advertised_addr")
+                .and_then(|v| v.as_str()),
+            Some("10.1.2.3:9001")
+        );
+    }
+
+    #[test]
+    fn bits_yaml_does_not_create_worker_server_for_pod_ip() {
+        let _guard = env_lock();
+        set_pod_ip("10.1.2.3");
+
+        let yaml = config_with_polytope("bits: {}\n");
+        let cfg: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
+        let bits_yaml = cfg.bits_yaml().unwrap();
+        remove_pod_ip();
+
+        let bits_cfg: serde_yaml::Value = serde_yaml::from_str(&bits_yaml).unwrap();
+        assert!(
+            bits_cfg
+                .get("bits")
+                .and_then(|bits| bits.get("worker_server"))
+                .is_none()
+        );
     }
 
     #[test]
