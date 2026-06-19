@@ -103,6 +103,54 @@ fn stress_usize(request: &serde_json::Value, key: &str) -> Option<usize> {
     stress_u64(request, key).and_then(|value| usize::try_from(value).ok())
 }
 
+/// Parse an optional weighted size distribution from the request's stress block:
+/// `response_bytes_choices: [{ "bytes": <usize>, "weight": <u64=1> }, ...]`.
+/// Lets one loadgen payload drive a mixed distribution of object sizes -- the
+/// worker samples a size per job (the loadgen sends a single fixed payload, so
+/// the distribution has to live here, where the size is generated).
+fn stress_response_bytes_choices(request: &serde_json::Value) -> Option<Vec<(usize, u64)>> {
+    let arr = nested_stress_config(request)?
+        .get("response_bytes_choices")?
+        .as_array()?;
+    let mut choices: Vec<(usize, u64)> = Vec::new();
+    for item in arr {
+        let bytes = item
+            .get("bytes")
+            .and_then(|v| v.as_u64())
+            .and_then(|v| usize::try_from(v).ok())?;
+        let weight = item
+            .get("weight")
+            .and_then(|w| w.as_u64())
+            .unwrap_or(1)
+            .max(1);
+        choices.push((bytes, weight));
+    }
+    if choices.is_empty() {
+        None
+    } else {
+        Some(choices)
+    }
+}
+
+/// Pick a size from the weighted choices, keyed by the job id so the draw is
+/// deterministic per job (reproducible) yet well spread across distinct jobs.
+fn sample_weighted_response_bytes(choices: &[(usize, u64)], seed: &str) -> usize {
+    let total: u64 = choices.iter().map(|(_, w)| *w).sum();
+    if total == 0 {
+        return choices.first().map(|(b, _)| *b).unwrap_or(0);
+    }
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    std::hash::Hash::hash(seed, &mut hasher);
+    let mut pick = std::hash::Hasher::finish(&hasher) % total;
+    for (bytes, weight) in choices {
+        if pick < *weight {
+            return *bytes;
+        }
+        pick -= *weight;
+    }
+    choices.last().map(|(b, _)| *b).unwrap_or(0)
+}
+
 struct StressStream {
     remaining: usize,
     chunk: bytes::Bytes,
@@ -182,8 +230,13 @@ impl Processor for BehaviourProcessor {
                 let delay_ms = stress_u64(&work.request, "delay_ms")
                     .unwrap_or(*default_delay_ms)
                     .min(*max_delay_ms);
-                let response_bytes = stress_usize(&work.request, "response_bytes")
-                    .unwrap_or(*default_response_bytes);
+                // A weighted `response_bytes_choices` distribution (sampled per
+                // job) takes precedence over a fixed `response_bytes`.
+                let response_bytes = match stress_response_bytes_choices(&work.request) {
+                    Some(choices) => sample_weighted_response_bytes(&choices, &work.job_id),
+                    None => stress_usize(&work.request, "response_bytes")
+                        .unwrap_or(*default_response_bytes),
+                };
                 let chunk_bytes = stress_usize(&work.request, "chunk_bytes")
                     .unwrap_or(*default_chunk_bytes)
                     .min(*max_chunk_bytes)
@@ -197,5 +250,54 @@ impl Processor for BehaviourProcessor {
                 ProcessResult::success(&self.config.content_type, Box::new(stream))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod weighted_size_tests {
+    use super::{sample_weighted_response_bytes, stress_response_bytes_choices};
+
+    #[test]
+    fn sampling_only_returns_choice_sizes() {
+        let choices = vec![(16usize, 1u64), (200, 8), (1000, 8), (20000, 1)];
+        for i in 0..2000 {
+            let v = sample_weighted_response_bytes(&choices, &format!("job-{i}"));
+            assert!(
+                choices.iter().any(|(b, _)| *b == v),
+                "sampled {v} not in choice set"
+            );
+        }
+    }
+
+    #[test]
+    fn sampling_biases_toward_heavy_weights() {
+        // 200 and 1000 carry weight 8 each (16 of 18 total mass).
+        let choices = vec![(16usize, 1u64), (200, 8), (1000, 8), (20000, 1)];
+        let n = 6000;
+        let dense = (0..n)
+            .filter(|i| {
+                let v = sample_weighted_response_bytes(&choices, &format!("job-{i}"));
+                v == 200 || v == 1000
+            })
+            .count();
+        let frac = dense as f64 / n as f64;
+        assert!(frac > 0.80, "dense-band fraction too low: {frac}");
+    }
+
+    #[test]
+    fn parses_choices_with_default_weight() {
+        let req = serde_json::json!({"stress": {"response_bytes_choices": [
+            {"bytes": 16, "weight": 2}, {"bytes": 200}
+        ]}});
+        assert_eq!(
+            stress_response_bytes_choices(&req).unwrap(),
+            vec![(16usize, 2u64), (200usize, 1u64)]
+        );
+    }
+
+    #[test]
+    fn no_choices_block_returns_none() {
+        let req = serde_json::json!({"stress": {"response_bytes": 16}});
+        assert!(stress_response_bytes_choices(&req).is_none());
     }
 }
