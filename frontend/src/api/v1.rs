@@ -98,6 +98,7 @@ pub async fn submit_request(
     // v1 clients require Content-Length, so delivery must buffer the full
     // output before making it available for download.
     job.metadata_mut()["buffer_full_output"] = json!(true);
+    job.metadata_mut()["collection"] = json!(&collection);
     super::set_job_mock_time_metadata(&mut job, mock_time_extensions.mock_time.as_ref());
 
     let submitted_request = job.request.clone();

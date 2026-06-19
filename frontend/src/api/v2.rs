@@ -74,6 +74,7 @@ pub async fn submit_collection(
     {
         job.metadata_mut()["accept_encoding"] = serde_json::json!(enc);
     }
+    job.metadata_mut()["collection"] = serde_json::json!(&collection);
     super::set_job_mock_time_metadata(&mut job, mock_time_extensions.mock_time.as_ref());
     tracing::debug!(
         x_forwarded_for_present = headers.get("x-forwarded-for").is_some(),

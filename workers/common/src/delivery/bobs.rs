@@ -29,6 +29,7 @@ impl ResultDelivery for BobsPush {
                 buffer_full,
                 context.job_id,
                 context.user,
+                metadata,
             )
             .await
         {
@@ -60,6 +61,7 @@ impl BobsPush {
         write_locked: bool,
         job_id: &str,
         user: &serde_json::Value,
+        metadata: &serde_json::Value,
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let mut create_body = serde_json::json!({
             "content_type": content_type,
@@ -67,6 +69,10 @@ impl BobsPush {
         });
         if let Some(enc) = content_encoding {
             create_body["content_encoding"] = serde_json::json!(enc);
+        }
+        // Propagate collection label for per-collection download metrics in bobs.
+        if let Some(collection) = metadata.get("collection").and_then(|v| v.as_str()) {
+            create_body["labels"] = serde_json::json!({"collection": collection});
         }
         let create_resp = self
             .create_client
