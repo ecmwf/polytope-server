@@ -8,6 +8,12 @@ polytope:
   site: "bol"
   env: "dev"
 
+# Optional — OTLP metrics export.
+# Omit the section entirely to disable (zero-cost no-op).
+# Env var OTEL_EXPORTER_OTLP_ENDPOINT takes precedence over the config value.
+# otlp:
+#   endpoint: "http://localhost:4318"
+
 bits:
   routes:
     - default:

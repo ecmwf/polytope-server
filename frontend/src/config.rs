@@ -49,6 +49,27 @@ pub struct ServerConfig {
     pub edr: Option<serde_yaml::Value>,
     pub authentication: Option<AuthConfig>,
     pub admin_bypass_roles: Option<HashMap<String, Vec<String>>>,
+    pub otlp: Option<OtlpConfig>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct OtlpConfig {
+    pub endpoint: Option<String>,
+}
+
+impl ServerConfig {
+    /// Returns the resolved OTLP endpoint, preferring the env var over config.
+    pub fn otlp_endpoint(&self) -> Option<String> {
+        std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .or_else(|| {
+                self.otlp
+                    .as_ref()
+                    .and_then(|c| c.endpoint.clone())
+                    .filter(|s| !s.is_empty())
+            })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -74,6 +95,8 @@ impl<'de> Deserialize<'de> for ServerConfig {
             authentication: Option<AuthConfig>,
             #[serde(default)]
             admin_bypass_roles: Option<HashMap<String, Vec<String>>>,
+            #[serde(default)]
+            otlp: Option<OtlpConfig>,
         }
 
         let raw = RawServerConfig::deserialize(deserializer)?;
@@ -88,6 +111,7 @@ impl<'de> Deserialize<'de> for ServerConfig {
             edr: raw.edr,
             authentication: raw.authentication,
             admin_bypass_roles: raw.admin_bypass_roles,
+            otlp: raw.otlp,
         })
     }
 }
@@ -375,5 +399,44 @@ authentication:
         let auth = cfg.authentication.unwrap();
         assert_eq!(auth.cache_ttl_secs, Some(300));
         assert_eq!(auth.cache_capacity, Some(50000));
+    }
+
+    #[test]
+    fn otlp_config_parses_when_present() {
+        let yaml = config_with_polytope(
+            r#"bits: {}
+otlp:
+  endpoint: "http://localhost:4318"
+"#,
+        );
+        let cfg: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(
+            cfg.otlp.as_ref().and_then(|o| o.endpoint.as_deref()),
+            Some("http://localhost:4318")
+        );
+        assert_eq!(
+            cfg.otlp_endpoint(),
+            Some("http://localhost:4318".to_string())
+        );
+    }
+
+    #[test]
+    fn otlp_config_optional() {
+        let yaml = config_with_polytope("bits: {}\n");
+        let cfg: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert!(cfg.otlp.is_none());
+        assert!(cfg.otlp_endpoint().is_none());
+    }
+
+    #[test]
+    fn otlp_empty_endpoint_treated_as_disabled() {
+        let yaml = config_with_polytope(
+            r#"bits: {}
+otlp:
+  endpoint: ""
+"#,
+        );
+        let cfg: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert!(cfg.otlp_endpoint().is_none());
     }
 }
