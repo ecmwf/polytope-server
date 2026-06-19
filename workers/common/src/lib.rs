@@ -1,6 +1,6 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -32,10 +32,36 @@ fn codec_from_accept_encoding(accept_encoding: Option<&str>) -> Codec {
 
 pub type RawStream = Box<dyn Stream<Item = Result<bytes::Bytes, std::io::Error>> + Send + Unpin>;
 
+#[derive(Debug, Clone, Default)]
+pub struct SourceError {
+    message: Arc<Mutex<Option<String>>>,
+}
+
+impl SourceError {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn set_once(&self, message: impl Into<String>) {
+        let mut slot = self.message.lock().expect("source error mutex poisoned");
+        if slot.is_none() {
+            *slot = Some(message.into());
+        }
+    }
+
+    pub fn message(&self) -> Option<String> {
+        self.message
+            .lock()
+            .expect("source error mutex poisoned")
+            .clone()
+    }
+}
+
 pub enum ProcessResult {
     Success {
         content_type: String,
         body: RawStream,
+        source_error: Option<SourceError>,
     },
     Reject {
         reason: String,
@@ -50,6 +76,19 @@ impl ProcessResult {
         Self::Success {
             content_type: content_type.into(),
             body,
+            source_error: None,
+        }
+    }
+
+    pub fn success_with_source_error(
+        content_type: impl Into<String>,
+        body: RawStream,
+        source_error: SourceError,
+    ) -> Self {
+        Self::Success {
+            content_type: content_type.into(),
+            body,
+            source_error: Some(source_error),
         }
     }
 
@@ -83,6 +122,7 @@ pub enum Completion {
         content_encoding: Option<String>,
         content_length: Option<u64>,
         body: reqwest::Body,
+        source_error: Option<SourceError>,
     },
     Redirect {
         location: String,
@@ -108,6 +148,7 @@ impl Completion {
             content_encoding,
             content_length,
             body,
+            source_error: None,
         }
     }
 
@@ -493,7 +534,11 @@ async fn worker_task<P: Processor + 'static>(
         // None for non-Success outcomes (which do not emit worker.job.completed).
         let mut byte_counter: Option<Arc<AtomicU64>> = None;
         let completion = match process_result {
-            ProcessResult::Success { content_type, body } => {
+            ProcessResult::Success {
+                content_type,
+                body,
+                source_error,
+            } => {
                 let codec = codec_from_accept_encoding(work.metadata["accept_encoding"].as_str());
                 let content_encoding = codec.content_encoding_header().map(str::to_string);
                 let (encoded, counter) = encode_stream_counted(body, &codec);
@@ -508,6 +553,7 @@ async fn worker_task<P: Processor + 'static>(
                         DeliveryContext {
                             job_id: &work.job_id,
                             user: &work.user,
+                            source_error,
                         },
                     )
                     .await;
@@ -542,6 +588,7 @@ async fn worker_task<P: Processor + 'static>(
                 content_encoding,
                 content_length,
                 body,
+                source_error,
             } => {
                 let mut request = client
                     .post(config.complete_data_url_for_work(&work))
@@ -553,7 +600,30 @@ async fn worker_task<P: Processor + 'static>(
                 if let Some(encoding) = content_encoding {
                     request = request.header(reqwest::header::CONTENT_ENCODING, encoding);
                 }
-                (request.send().await?, "data")
+                match request.send().await {
+                    Ok(resp) => (resp, "data"),
+                    Err(err) => {
+                        if let Some(message) = source_error.and_then(|source| source.message()) {
+                            tracing::error!(
+                                "event.name" = "worker.delivery.failed",
+                                outcome = "error",
+                                job.id = %work.job_id,
+                                source_error = %message,
+                                sink_error = %err,
+                                "direct result delivery failed after source stream error"
+                            );
+                            let payload = CompletionRequest::Error { message };
+                            let resp = client
+                                .post(config.complete_error_url_for_work(&work))
+                                .json(&payload)
+                                .send()
+                                .await?;
+                            (resp, "error")
+                        } else {
+                            return Err(err.into());
+                        }
+                    }
+                }
             }
             Completion::Reject { reason } => {
                 let payload = CompletionRequest::Reject { reason };
@@ -1092,6 +1162,29 @@ mod tests {
         }
     }
 
+    struct SourceFailingStreamProcessor;
+
+    #[async_trait]
+    impl Processor for SourceFailingStreamProcessor {
+        async fn process(&self, _work: WorkItem) -> ProcessResult {
+            let source_error = SourceError::new();
+            source_error.set_once(
+                "The requested post-processing is not supported for this data. Details: mars-client error: Serious bug: Representation::croppedRepresentation() not implemented for HEALPixNested[name=H128]",
+            );
+            let stream = futures::stream::iter(vec![
+                Ok::<bytes::Bytes, std::io::Error>(bytes::Bytes::from(vec![1u8, 2, 3])),
+                Err(std::io::Error::other(
+                    "mars-client error: Serious bug: Representation::croppedRepresentation() not implemented for HEALPixNested[name=H128]",
+                )),
+            ]);
+            ProcessResult::success_with_source_error(
+                "application/octet-stream",
+                Box::new(stream),
+                source_error,
+            )
+        }
+    }
+
     struct RejectProcessor;
 
     #[async_trait]
@@ -1331,6 +1424,96 @@ mod tests {
         let writes = bobs_state.writes.lock().unwrap();
         assert_eq!(writes.len(), 1);
         assert_eq!(writes[0], vec![1, 2, 3]);
+    }
+
+    #[tokio::test]
+    async fn worker_with_bobs_delivery_posts_source_error_completion() {
+        let bobs_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let bobs_addr = bobs_listener.local_addr().unwrap();
+        let bobs_url = format!("http://{bobs_addr}");
+        let bobs_api_base = format!("{bobs_url}/api/v1");
+
+        let bobs_state = Arc::new(BobsState {
+            write_base_url: bobs_api_base.clone(),
+            calls: Mutex::new(vec![]),
+            writes: Mutex::new(vec![]),
+        });
+        let bobs_app = Router::new()
+            .route("/api/v1/create", put(bobs_create))
+            .route("/api/v1/write/{key}/{offset}", post(bobs_write))
+            .route("/api/v1/complete/{key}", post(bobs_complete))
+            .with_state(bobs_state.clone());
+        tokio::spawn(async move { axum::serve(bobs_listener, bobs_app).await.unwrap() });
+
+        let broker_state = Arc::new(BrokerState::default());
+        let broker_app = Router::new()
+            .route("/work", get(broker_work))
+            .route("/heartbeat/{job_id}", post(broker_heartbeat))
+            .route("/complete/data/{job_id}", post(broker_complete_data))
+            .route(
+                "/complete/redirect/{job_id}",
+                post(broker_complete_redirect),
+            )
+            .route("/complete/reject/{job_id}", post(broker_complete_reject))
+            .route("/complete/error/{job_id}", post(broker_complete_error))
+            .with_state(broker_state.clone());
+        let broker_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let broker_addr = broker_listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(broker_listener, broker_app).await.unwrap() });
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        let config = WorkerConfig {
+            broker_url: format!("http://{broker_addr}"),
+            poll_timeout_ms: 10,
+            heartbeat_interval: Duration::from_millis(5),
+            retry_backoff: Duration::from_millis(5),
+            management_port: 0,
+            worker_concurrency: 1,
+        };
+
+        let run = tokio::spawn(run_worker_loop(
+            config,
+            delivery_config::DeliveryConfig {
+                delivery_type: delivery_config::DeliveryType::Bobs,
+                bobs_url: Some(bobs_url.clone()),
+
+                s3_bucket: None,
+                s3_region: None,
+                s3_endpoint_url: None,
+                s3_force_path_style: None,
+                s3_access_key_id: None,
+                s3_secret_access_key: None,
+                s3_presigned_url_expiry_secs: None,
+                s3_public_url: None,
+                s3_key_prefix: String::new(),
+            },
+            SourceFailingStreamProcessor,
+        ));
+        for _ in 0..40 {
+            if !broker_state.completions.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        run.abort();
+
+        let completions = broker_state.completions.lock().unwrap();
+        assert_eq!(completions.len(), 1);
+        assert_eq!(completions[0].0, "error");
+        let body: serde_json::Value = serde_json::from_slice(&completions[0].1).unwrap();
+        let message = body["message"].as_str().unwrap();
+        assert!(message.contains("not supported for this data"));
+        assert!(message.contains("croppedRepresentation"));
+        assert!(!completions.iter().any(|(kind, _)| kind == "redirect"));
+        drop(completions);
+
+        let calls = bobs_state.calls.lock().unwrap();
+        assert!(calls.contains(&"create".to_string()));
+        assert!(
+            !calls.contains(&"complete".to_string()),
+            "BOBS object must not be completed after source stream error"
+        );
     }
 
     #[tokio::test]

@@ -4,13 +4,66 @@ use bytes::Bytes;
 use clap::Parser;
 use mars_client::{Error as MarsError, MarsClient};
 use polytope_worker_common::config::{DEFAULT_CONFIG_PATH, WorkerConfigFile};
-use polytope_worker_common::{ProcessResult, Processor, WorkItem, WorkerConfig, run_worker_loop};
+use polytope_worker_common::{
+    ProcessResult, Processor, SourceError, WorkItem, WorkerConfig, run_worker_loop,
+};
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{info, warn};
 
 mod convert;
 mod k8s;
 mod port_cleanup;
+
+fn mars_user_message(raw: &str) -> String {
+    let lower = raw.to_lowercase();
+    if lower.contains("data not yet available") || lower.contains("scheduled for after") {
+        if let Some(release_time) = extract_release_time(raw) {
+            format!("Data not released yet. Release time is {release_time}.")
+        } else {
+            "Data not released yet. Please try again later.".to_string()
+        }
+    } else if lower.contains("croppedrepresentation") || lower.contains("not implemented for") {
+        format!("The requested post-processing is not supported for this data. Details: {raw}")
+    } else if lower.contains("restricted_access") || lower.contains("not authorised") {
+        format!("You do not have access to some of the requested data. Details: {raw}")
+    } else if lower.contains("mars_expected_fields")
+        || (lower.contains("expected") && lower.contains("got"))
+    {
+        format!("Some of the requested data is not available. Details: {raw}")
+    } else if lower.contains("syntax error")
+        || lower.contains("invalid value")
+        || lower.contains("assertion failed")
+    {
+        format!("Your request is invalid. Details: {raw}")
+    } else if lower.contains("mars_cache_corruption")
+        || lower.contains("uncatched")
+        || lower.contains("signal 1")
+    {
+        format!("The data retrieval system hit an internal error. Details: {raw}")
+    } else {
+        format!("Your request could not be completed. Details: {raw}")
+    }
+}
+
+fn invalidated_user_message() -> String {
+    "The data stream was interrupted before completing. Please retry.".to_string()
+}
+
+fn extract_release_time(raw: &str) -> Option<String> {
+    let lower = raw.to_lowercase();
+    let idx = lower.find("scheduled for after")?;
+    let start = idx + "scheduled for after".len();
+    let tail = raw[start..].trim_start_matches([' ', ':']);
+    let end = tail
+        .find(|c: char| c == ',' || c == '.' || c == '\n' || c == '\r')
+        .unwrap_or(tail.len());
+    let value = tail[..end].trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
 
 struct MarsProcessor {
     /// Port the C++ MARS client binds for DHS callbacks. We forcibly close any
@@ -37,6 +90,8 @@ impl Processor for MarsProcessor {
             .to_owned();
 
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(32);
+        let source_error = SourceError::new();
+        let source_error_for_task = source_error.clone();
         let local_port = self.local_port;
         let env_lock = self.env_lock.clone();
         tokio::task::spawn_blocking(move || {
@@ -51,14 +106,18 @@ impl Processor for MarsProcessor {
             let mut client = match MarsClient::new() {
                 Ok(c) => c,
                 Err(e) => {
-                    let _ = tx.blocking_send(Err(std::io::Error::other(e)));
+                    let raw = e.to_string();
+                    source_error_for_task.set_once(mars_user_message(&raw));
+                    let _ = tx.blocking_send(Err(std::io::Error::other(raw)));
                     return;
                 }
             };
             let mut stream = match client.retrieve(request_map) {
                 Ok(s) => s,
                 Err(e) => {
-                    let _ = tx.blocking_send(Err(std::io::Error::other(e)));
+                    let raw = e.to_string();
+                    source_error_for_task.set_once(mars_user_message(&raw));
+                    let _ = tx.blocking_send(Err(std::io::Error::other(raw)));
                     return;
                 }
             };
@@ -78,14 +137,16 @@ impl Processor for MarsProcessor {
                     }
                     Err(MarsError::Invalidated { offset }) => {
                         warn!(offset, "mars stream invalidated — unrecoverable");
-                        let _ = tx.blocking_send(Err(std::io::Error::other(format!(
-                            "stream invalidated at byte offset {offset}"
-                        ))));
+                        let raw = format!("stream invalidated at byte offset {offset}");
+                        source_error_for_task.set_once(invalidated_user_message());
+                        let _ = tx.blocking_send(Err(std::io::Error::other(raw)));
                         break;
                     }
                     Err(e) => {
                         warn!("mars stream error: {e}");
-                        let _ = tx.blocking_send(Err(std::io::Error::other(e)));
+                        let raw = e.to_string();
+                        source_error_for_task.set_once(mars_user_message(&raw));
+                        let _ = tx.blocking_send(Err(std::io::Error::other(raw)));
                         break;
                     }
                 }
@@ -114,7 +175,58 @@ impl Processor for MarsProcessor {
         });
 
         let stream = ReceiverStream::new(rx);
-        ProcessResult::success("application/x-grib", Box::new(stream))
+        ProcessResult::success_with_source_error(
+            "application/x-grib",
+            Box::new(stream),
+            source_error,
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mars_user_message_matches_data_not_released() {
+        assert_eq!(
+            mars_user_message(
+                "mars - ERROR - Data not yet available. Scheduled for after 11:45:00, (11:45:00)"
+            ),
+            "Data not released yet. Release time is 11:45:00."
+        );
+        assert_eq!(
+            mars_user_message("Data not yet available"),
+            "Data not released yet. Please try again later."
+        );
+    }
+
+    #[test]
+    fn mars_user_message_matches_unsupported_postprocessing() {
+        let msg = mars_user_message(
+            "mars-client error: Serious bug: Representation::croppedRepresentation() not implemented for HEALPixNested[name=H128]",
+        );
+        assert!(msg.contains("not supported for this data"));
+        assert!(msg.contains("croppedRepresentation"));
+    }
+
+    #[test]
+    fn mars_user_message_matches_other_known_classes() {
+        assert!(mars_user_message("MARS_RESTRICTED_ACCESS_TO_DATA").contains("do not have access"));
+        assert!(
+            mars_user_message("MARS_EXPECTED_FIELDS Expected 2, got 1").contains("not available")
+        );
+        assert!(mars_user_message("syntax error near param").contains("request is invalid"));
+        assert!(mars_user_message("MARS_CACHE_CORRUPTION").contains("internal error"));
+        assert!(mars_user_message("something else").contains("could not be completed"));
+    }
+
+    #[test]
+    fn invalidated_message_matches_mapping() {
+        assert_eq!(
+            invalidated_user_message(),
+            "The data stream was interrupted before completing. Please retry."
+        );
     }
 }
 
@@ -158,7 +270,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let cli = Cli::parse();
     let worker_concurrency = resolved_worker_concurrency(cli.worker_concurrency);
-    info!(worker_concurrency, poll_timeout_ms = cli.poll_timeout_ms, "resolved worker settings");
+    info!(
+        worker_concurrency,
+        poll_timeout_ms = cli.poll_timeout_ms,
+        "resolved worker settings"
+    );
 
     let config = WorkerConfigFile::load(&cli.config_path).unwrap_or_else(|err| {
         tracing::error!("event.name" = "startup.config.failed", outcome = "error", config_path = %cli.config_path, error = %err, "failed to load config");

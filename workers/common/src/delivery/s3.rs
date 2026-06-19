@@ -27,16 +27,32 @@ impl ResultDelivery for S3Push {
         content_encoding: Option<&str>,
         body: reqwest::Body,
         _metadata: &serde_json::Value,
-        _context: DeliveryContext<'_>,
+        context: DeliveryContext<'_>,
     ) -> Completion {
-        match self.push(content_type, content_encoding, body).await {
+        match self
+            .push(
+                content_type,
+                content_encoding,
+                body,
+                context.source_error.clone(),
+            )
+            .await
+        {
             Ok(location) => Completion::Redirect {
                 location,
                 message: "result available for download".to_string(),
             },
-            Err(e) => Completion::Error {
-                message: format!("delivery failed: {e}"),
-            },
+            Err(e) => {
+                if let Some(source_error) = context.source_error_message() {
+                    Completion::Error {
+                        message: source_error,
+                    }
+                } else {
+                    Completion::Error {
+                        message: format!("delivery failed: {e}"),
+                    }
+                }
+            }
         }
     }
 }
@@ -47,6 +63,7 @@ impl S3Push {
         content_type: &str,
         content_encoding: Option<&str>,
         body: reqwest::Body,
+        source_error: Option<crate::SourceError>,
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let s3_key = self.next_key();
 
@@ -66,7 +83,10 @@ impl S3Push {
             .ok_or("missing upload_id from CreateMultipartUpload")?
             .to_string();
 
-        let parts = match self.upload_stream_parts(&s3_key, &upload_id, body).await {
+        let parts = match self
+            .upload_stream_parts(&s3_key, &upload_id, body, source_error)
+            .await
+        {
             Ok(parts) => parts,
             Err(err) => {
                 let _ = self
@@ -101,13 +121,26 @@ impl S3Push {
         s3_key: &str,
         upload_id: &str,
         body: reqwest::Body,
+        source_error: Option<crate::SourceError>,
     ) -> Result<Vec<CompletedPart>, Box<dyn std::error::Error + Send + Sync>> {
         let mut completed_parts = Vec::new();
         let mut stream = ByteStream::from_body_1_x(body);
         let mut buffer = BytesMut::new();
         let mut part_number: i32 = 1;
 
-        while let Some(chunk) = stream.try_next().await? {
+        loop {
+            let next = match stream.try_next().await {
+                Ok(next) => next,
+                Err(err) => {
+                    if let Some(message) =
+                        source_error.as_ref().and_then(crate::SourceError::message)
+                    {
+                        return Err(message.into());
+                    }
+                    return Err(err.into());
+                }
+            };
+            let Some(chunk) = next else { break };
             buffer.extend_from_slice(&chunk);
 
             while buffer.len() >= S3_PART_SIZE_BYTES {
@@ -250,6 +283,7 @@ mod tests {
                 DeliveryContext {
                     job_id: "job-1",
                     user: &serde_json::json!({}),
+                    source_error: None,
                 },
             )
             .await;
