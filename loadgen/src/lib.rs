@@ -203,6 +203,16 @@ pub struct Summary {
     pub bytes_total: u64,
     pub per_stream_mibps: StreamPercentiles,
     pub aggregate_mibps: f64,
+    /// Peak sustained read throughput over any [`PEAK_WINDOW_S`]-wide window.
+    ///
+    /// Unlike `aggregate_mibps` (total bytes / first-read-to-last-read span),
+    /// this is not diluted by ramp-up or a heavy-tailed single-stream drain: a
+    /// mixed-size workload whose largest object reads back alone for minutes
+    /// stretches the `aggregate_mibps` denominator, whereas this captures the
+    /// dense concurrent-read plateau. See [`compute_peak_windowed_mibps`].
+    pub peak_windowed_mibps: f64,
+    /// Window width (seconds) used for `peak_windowed_mibps`.
+    pub peak_window_s: f64,
     pub throughput_rps: f64,
     pub success_rate: f64,
     pub error_rate: f64,
@@ -301,6 +311,7 @@ pub fn summarize(
     let mut bytes_total = 0u64;
     let mut first_read_start: Option<Instant> = None;
     let mut last_read_end: Option<Instant> = None;
+    let mut read_intervals: Vec<(Instant, Instant, u64)> = Vec::new();
 
     for result in results {
         if result.submit_ms.is_some() {
@@ -336,6 +347,9 @@ pub fn summarize(
         if let Some(end) = result.read_end {
             last_read_end = Some(last_read_end.map_or(end, |current| current.max(end)));
         }
+        if let (Some(start), Some(end)) = (result.read_start, result.read_end) {
+            read_intervals.push((start, end, result.bytes));
+        }
     }
 
     let total = results.len();
@@ -353,6 +367,22 @@ pub fn summarize(
         (bytes_total as f64 / 1_048_576.0) / read_span_s
     } else {
         0.0
+    };
+    let peak_windowed_mibps = match first_read_start {
+        Some(origin) => {
+            let relative: Vec<(f64, f64, u64)> = read_intervals
+                .iter()
+                .map(|&(start, end, bytes)| {
+                    (
+                        (start - origin).as_secs_f64(),
+                        (end - origin).as_secs_f64(),
+                        bytes,
+                    )
+                })
+                .collect();
+            compute_peak_windowed_mibps(&relative, PEAK_WINDOW_S)
+        }
+        None => 0.0,
     };
     let throughput_rps = if duration_s > 0.0 {
         counts.downloaded as f64 / duration_s
@@ -374,11 +404,114 @@ pub fn summarize(
         bytes_total,
         per_stream_mibps: stream_percentiles(&per_stream_mibps),
         aggregate_mibps,
+        peak_windowed_mibps,
+        peak_window_s: PEAK_WINDOW_S,
         throughput_rps,
         success_rate,
         error_rate,
         duration_s,
     }
+}
+
+/// Window width (seconds) for the peak sustained-throughput metric. A 10s
+/// window smooths per-request jitter while still isolating the dense
+/// concurrent-read plateau from ramp-up and the heavy-tailed drain.
+const PEAK_WINDOW_S: f64 = 10.0;
+
+/// Peak sustained read throughput (MiB/s) over any `window_s`-wide window.
+///
+/// Each download is modeled as delivering its bytes at a constant rate across
+/// its `[start, end]` interval; the instantaneous aggregate rate is the sum
+/// over concurrently-active downloads. This returns the maximum average
+/// throughput over any window of width `window_s`.
+///
+/// `intervals` are `(start_s, end_s, bytes)` relative to a common origin. The
+/// constant-rate-per-read assumption is an approximation (no per-chunk
+/// timestamps), but the windowed maximum reliably captures the plateau where
+/// reads overlap densely, which `aggregate_mibps` understates whenever object
+/// sizes (and therefore read durations) are skewed.
+fn compute_peak_windowed_mibps(intervals: &[(f64, f64, u64)], window_s: f64) -> f64 {
+    if intervals.is_empty() || window_s <= 0.0 {
+        return 0.0;
+    }
+
+    // Rate-change events: +rate at start, -rate at end. Zero/negative-duration
+    // reads are spread over a tiny epsilon so the modeled rate stays finite.
+    let mut events: Vec<(f64, f64)> = Vec::with_capacity(intervals.len() * 2);
+    let mut min_t = f64::INFINITY;
+    let mut max_t = f64::NEG_INFINITY;
+    for &(start, end, bytes) in intervals {
+        let end = if end > start { end } else { start + 1e-6 };
+        let rate = bytes as f64 / (end - start);
+        events.push((start, rate));
+        events.push((end, -rate));
+        min_t = min_t.min(start);
+        max_t = max_t.max(end);
+    }
+    events.sort_by(|a, b| a.0.total_cmp(&b.0));
+
+    // Collapse to unique breakpoint times with the active rate on each segment
+    // [times[k], times[k+1]) and the cumulative bytes delivered at times[k].
+    let mut times: Vec<f64> = Vec::new();
+    let mut seg_rate: Vec<f64> = Vec::new();
+    let mut cur_rate = 0.0;
+    let mut i = 0;
+    while i < events.len() {
+        let t = events[i].0;
+        while i < events.len() && events[i].0 == t {
+            cur_rate += events[i].1;
+            i += 1;
+        }
+        times.push(t);
+        seg_rate.push(cur_rate.max(0.0));
+    }
+    let mut cum: Vec<f64> = Vec::with_capacity(times.len());
+    cum.push(0.0);
+    for k in 0..times.len().saturating_sub(1) {
+        cum.push(cum[k] + seg_rate[k] * (times[k + 1] - times[k]));
+    }
+
+    // C(t): cumulative bytes delivered by time t (piecewise linear).
+    let cumulative = |t: f64| -> f64 {
+        if t <= times[0] {
+            return 0.0;
+        }
+        if t >= *times.last().unwrap() {
+            return *cum.last().unwrap();
+        }
+        let k = match times.binary_search_by(|x| x.total_cmp(&t)) {
+            Ok(k) => k,
+            Err(k) => k - 1,
+        };
+        cum[k] + seg_rate[k] * (t - times[k])
+    };
+
+    let span = max_t - min_t;
+    if span <= window_s {
+        // Whole run fits in one window: the windowed peak is just the overall
+        // read-span average (no tail to exclude).
+        let bytes: f64 = intervals.iter().map(|&(_, _, b)| b as f64).sum();
+        let denom = if span > 0.0 { span } else { window_s };
+        return (bytes / 1_048_576.0) / denom;
+    }
+
+    // (C(t+W) - C(t)) is piecewise linear in t with breakpoints where t or
+    // t+W crosses a segment boundary, so its maximum is at one of those
+    // candidate positions.
+    let lo = min_t;
+    let hi = max_t - window_s;
+    let mut best = 0.0;
+    for &bp in &times {
+        for cand in [bp, bp - window_s] {
+            let t = cand.clamp(lo, hi);
+            let delivered = cumulative(t + window_s) - cumulative(t);
+            let mibps = (delivered / 1_048_576.0) / window_s;
+            if mibps > best {
+                best = mibps;
+            }
+        }
+    }
+    best
 }
 
 fn percentiles(values: &[f64]) -> Percentiles {
@@ -522,5 +655,34 @@ mod tests {
         assert_eq!(summary.throughput_rps, 2.0 / 6.0);
         assert!((summary.error_rate - (1.0 / 3.0)).abs() < f64::EPSILON);
         assert_eq!(summary.per_stream_mibps.mean, Some(1.0));
+        // 3 MiB over a 3s read span (< 10s window) => falls back to span avg.
+        assert_eq!(summary.peak_window_s, 10.0);
+        assert!((summary.peak_windowed_mibps - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn peak_windowed_throughput_excludes_sparse_tail() {
+        let mib = 1_048_576u64;
+        // A fast 100 MiB read in [0,1]s alongside a slow 100 MiB read spread
+        // over [0,100]s. Naive span-average = 200 MiB / 100 s = 2 MiB/s, badly
+        // diluted by the tail. The busiest 10s window [0,10] delivers all
+        // 100 MiB of the fast read plus 10 MiB of the slow one = 110 MiB/10s.
+        let intervals = vec![(0.0, 1.0, 100 * mib), (0.0, 100.0, 100 * mib)];
+        let peak = compute_peak_windowed_mibps(&intervals, 10.0);
+        assert!((peak - 11.0).abs() < 0.01, "peak={peak}");
+    }
+
+    #[test]
+    fn peak_windowed_throughput_short_run_falls_back_to_span_average() {
+        let mib = 1_048_576u64;
+        // 40 MiB over a 4s span, shorter than the 10s window.
+        let intervals = vec![(0.0, 4.0, 40 * mib)];
+        let peak = compute_peak_windowed_mibps(&intervals, 10.0);
+        assert!((peak - 10.0).abs() < 0.01, "peak={peak}");
+    }
+
+    #[test]
+    fn peak_windowed_throughput_empty_is_zero() {
+        assert_eq!(compute_peak_windowed_mibps(&[], 10.0), 0.0);
     }
 }
