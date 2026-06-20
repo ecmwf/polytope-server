@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::env;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
@@ -294,6 +295,183 @@ fn percent_decode(input: &str) -> Result<String, String> {
         }
     }
     String::from_utf8(out).map_err(|_| "invalid UTF-8 in BOBS location URL".to_string())
+}
+
+#[derive(Debug, Default, Clone, Serialize, PartialEq, Eq)]
+pub struct ProgressCounts {
+    pub started: usize,
+    pub submitted: usize,
+    pub ready: usize,
+    pub downloaded: usize,
+    pub error: usize,
+    pub submit_failed: usize,
+    pub poll_failed: usize,
+    pub timed_out: usize,
+    pub download_failed: usize,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct ProgressRates {
+    pub window_rps: f64,
+    pub window_mibps: f64,
+}
+
+/// JSON payload emitted as `LOADGEN_PROGRESS:{json}` during measured runs.
+///
+/// The progress stream is intentionally redaction-safe: it contains only
+/// counters, byte totals, rates, elapsed time, and raw ready-latency samples.
+/// It never includes request configuration, URLs, headers, authorization values,
+/// payloads, mock identities, or precomputed ready-latency percentiles.
+///
+/// `window_s` is the time-based rolling-rate window width in seconds that live
+/// consumers should use when aggregating progress. It defaults to `60`.
+/// `ready_ms_since_last` contains raw ready-latency samples observed since the
+/// previous emitted progress snapshot; consumers compute rolling percentiles
+/// from these raw samples across pods.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct ProgressSnapshot {
+    pub schema_version: u32,
+    pub seq: u64,
+    pub elapsed_s: f64,
+    pub window_s: u64,
+    pub counts: ProgressCounts,
+    pub bytes_total: u64,
+    pub rates: ProgressRates,
+    pub ready_ms_since_last: Vec<f64>,
+}
+
+#[derive(Debug)]
+pub struct ProgressTracker {
+    start: Instant,
+    window_s: u64,
+    state: Mutex<ProgressState>,
+}
+
+#[derive(Debug, Default)]
+struct ProgressState {
+    seq: u64,
+    counts: ProgressCounts,
+    bytes_total: u64,
+    ready_ms: Vec<f64>,
+    last_snapshot_at: Option<Instant>,
+    last_snapshot_downloaded: usize,
+    last_snapshot_bytes: u64,
+    last_snapshot_ready_index: usize,
+}
+
+impl ProgressTracker {
+    pub fn new(start: Instant) -> Self {
+        Self::with_window(start, 60)
+    }
+
+    pub fn with_window(start: Instant, window_s: u64) -> Self {
+        Self {
+            start,
+            window_s,
+            state: Mutex::new(ProgressState::default()),
+        }
+    }
+
+    pub fn record_started(&self) {
+        self.state
+            .lock()
+            .expect("progress mutex poisoned")
+            .counts
+            .started += 1;
+    }
+
+    pub fn record_submitted(&self) {
+        self.state
+            .lock()
+            .expect("progress mutex poisoned")
+            .counts
+            .submitted += 1;
+    }
+
+    pub fn record_ready(&self, ready_ms: f64) {
+        let mut state = self.state.lock().expect("progress mutex poisoned");
+        state.counts.ready += 1;
+        state.ready_ms.push(ready_ms);
+    }
+
+    pub fn record_finished(&self, outcome: Outcome, bytes: u64) {
+        let mut state = self.state.lock().expect("progress mutex poisoned");
+        state.bytes_total += bytes;
+        match outcome {
+            Outcome::Downloaded => state.counts.downloaded += 1,
+            Outcome::SubmitFailed => {
+                state.counts.error += 1;
+                state.counts.submit_failed += 1;
+            }
+            Outcome::PollFailed => {
+                state.counts.error += 1;
+                state.counts.poll_failed += 1;
+            }
+            Outcome::TimedOut => {
+                state.counts.error += 1;
+                state.counts.timed_out += 1;
+            }
+            Outcome::DownloadFailed => {
+                state.counts.error += 1;
+                state.counts.download_failed += 1;
+            }
+        }
+    }
+
+    pub fn snapshot(&self, now: Instant) -> ProgressSnapshot {
+        let mut state = self.state.lock().expect("progress mutex poisoned");
+        let previous = state.last_snapshot_at.unwrap_or(self.start);
+        let interval_s = (now - previous).as_secs_f64();
+        let downloaded_delta = state.counts.downloaded - state.last_snapshot_downloaded;
+        let bytes_delta = state.bytes_total - state.last_snapshot_bytes;
+        let ready_ms_since_last = state.ready_ms[state.last_snapshot_ready_index..].to_vec();
+        state.seq += 1;
+        state.last_snapshot_at = Some(now);
+        state.last_snapshot_downloaded = state.counts.downloaded;
+        state.last_snapshot_bytes = state.bytes_total;
+        state.last_snapshot_ready_index = state.ready_ms.len();
+        ProgressSnapshot {
+            schema_version: 1,
+            seq: state.seq,
+            elapsed_s: (now - self.start).as_secs_f64(),
+            window_s: self.window_s,
+            counts: state.counts.clone(),
+            bytes_total: state.bytes_total,
+            rates: ProgressRates {
+                window_rps: if interval_s > 0.0 {
+                    downloaded_delta as f64 / interval_s
+                } else {
+                    0.0
+                },
+                window_mibps: if interval_s > 0.0 {
+                    (bytes_delta as f64 / 1_048_576.0) / interval_s
+                } else {
+                    0.0
+                },
+            },
+            ready_ms_since_last,
+        }
+    }
+}
+
+pub fn loadgen_progress_interval_from_env() -> Result<Option<Duration>, String> {
+    loadgen_progress_interval_from_value(env::var("LOADGEN_PROGRESS_INTERVAL_MS").ok().as_deref())
+}
+
+pub fn loadgen_progress_interval_from_value(
+    value: Option<&str>,
+) -> Result<Option<Duration>, String> {
+    let millis: u64 = match value.filter(|value| !value.trim().is_empty()) {
+        Some(value) => value
+            .parse()
+            .map_err(|err| format!("LOADGEN_PROGRESS_INTERVAL_MS is invalid: {err}"))?,
+        None => 1000,
+    };
+    if millis == 0 {
+        Ok(None)
+    } else {
+        Ok(Some(Duration::from_millis(millis)))
+    }
 }
 
 pub fn summarize(
@@ -679,6 +857,128 @@ mod tests {
         let intervals = vec![(0.0, 4.0, 40 * mib)];
         let peak = compute_peak_windowed_mibps(&intervals, 10.0);
         assert!((peak - 10.0).abs() < 0.01, "peak={peak}");
+    }
+
+    #[test]
+    fn progress_snapshot_uses_interval_download_and_byte_deltas() {
+        let start = Instant::now();
+        let tracker = ProgressTracker::new(start);
+        tracker.record_started();
+        tracker.record_started();
+        tracker.record_submitted();
+        tracker.record_ready(120.0);
+        tracker.record_finished(Outcome::Downloaded, 2 * 1_048_576);
+
+        let first = tracker.snapshot(start + Duration::from_secs(2));
+        assert_eq!(first.seq, 1);
+        assert_eq!(first.counts.started, 2);
+        assert_eq!(first.counts.submitted, 1);
+        assert_eq!(first.counts.ready, 1);
+        assert_eq!(first.counts.downloaded, 1);
+        assert_eq!(first.bytes_total, 2 * 1_048_576);
+        assert_eq!(first.rates.window_rps, 0.5);
+        assert_eq!(first.rates.window_mibps, 1.0);
+        assert_eq!(first.ready_ms_since_last, vec![120.0]);
+
+        tracker.record_ready(240.0);
+        tracker.record_finished(Outcome::Downloaded, 4 * 1_048_576);
+        let second = tracker.snapshot(start + Duration::from_secs(4));
+        assert_eq!(second.seq, 2);
+        assert_eq!(second.counts.downloaded, 2);
+        assert_eq!(second.bytes_total, 6 * 1_048_576);
+        assert_eq!(second.rates.window_rps, 0.5);
+        assert_eq!(second.rates.window_mibps, 2.0);
+        assert_eq!(second.ready_ms_since_last, vec![240.0]);
+
+        let third = tracker.snapshot(start + Duration::from_secs(5));
+        assert_eq!(third.rates.window_rps, 0.0);
+        assert_eq!(third.rates.window_mibps, 0.0);
+        assert!(third.ready_ms_since_last.is_empty());
+    }
+
+    #[test]
+    fn progress_snapshot_defaults_window_to_sixty_seconds_and_emits_raw_ready_samples() {
+        let start = Instant::now();
+        let tracker = ProgressTracker::new(start);
+        tracker.record_ready(10.0);
+        tracker.record_ready(30.0);
+        let snapshot = tracker.snapshot(start + Duration::from_secs(1));
+        assert_eq!(snapshot.window_s, 60);
+        assert_eq!(snapshot.ready_ms_since_last, vec![10.0, 30.0]);
+    }
+
+    #[test]
+    fn progress_snapshot_serialization_is_redaction_safe() {
+        let start = Instant::now();
+        let tracker = ProgressTracker::new(start);
+        tracker.record_started();
+        tracker.record_submitted();
+        tracker.record_ready(42.0);
+        tracker.record_finished(Outcome::PollFailed, 0);
+        let value = serde_json::to_value(tracker.snapshot(start + Duration::from_secs(1))).unwrap();
+        let text = value.to_string();
+
+        assert_eq!(value["schema_version"], 1);
+        assert!(value.get("counts").is_some());
+        assert!(value.get("rates").is_some());
+        assert_eq!(value["counts"]["error"], 1);
+        assert_eq!(value["counts"]["poll_failed"], 1);
+        assert_eq!(value["ready_ms_since_last"], json!([42.0]));
+        for forbidden in [
+            "auth",
+            "authorization",
+            "header",
+            "config",
+            "frontend_url",
+            "collection",
+            "payload",
+            "EmailKey",
+            "rolling_ready_ms",
+            "p95",
+        ] {
+            assert!(
+                !text.to_lowercase().contains(&forbidden.to_lowercase()),
+                "progress snapshot contains forbidden field/value {forbidden}: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn progress_interval_zero_disables_progress_without_changing_summary_shape() {
+        assert_eq!(
+            loadgen_progress_interval_from_value(Some("0")).unwrap(),
+            None
+        );
+        assert_eq!(
+            loadgen_progress_interval_from_value(None).unwrap(),
+            Some(Duration::from_millis(1000))
+        );
+        assert_eq!(
+            loadgen_progress_interval_from_value(Some("250")).unwrap(),
+            Some(Duration::from_millis(250))
+        );
+
+        let cfg = SummaryConfig {
+            frontend_url: "http://frontend:3000".to_string(),
+            collection: "c".to_string(),
+            mock_realm: None,
+            mock_role: "default".to_string(),
+            mock_user_prefix: "mock-".to_string(),
+            warmup_iters: 5,
+            concurrency: 1,
+            total_iters: 0,
+            ramp_seconds: 0,
+            poll_interval_ms: 250,
+            poll_timeout_s: 600,
+            bobs_svc_template: "http://bobs-{ordinal}:3000".to_string(),
+            max_error_rate: 0.01,
+        };
+        let summary = serde_json::to_value(summarize("measured", cfg, &[], 0.0)).unwrap();
+        assert_eq!(summary["phase"], "measured");
+        assert!(summary.get("config").is_some());
+        assert!(summary.get("counts").is_some());
+        assert!(summary.get("rates").is_none());
+        assert!(summary.get("ready_ms_since_last").is_none());
     }
 
     #[test]
