@@ -1,10 +1,12 @@
 use futures_util::StreamExt;
 use loadgen::{
-    Config, IterationResult, Outcome, summarize, to_bobs_internal, warmup_failed_summary,
+    Config, IterationResult, Outcome, ProgressTracker, loadgen_progress_interval_from_env,
+    summarize, to_bobs_internal, warmup_failed_summary,
 };
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue, LOCATION};
 use reqwest::{Client, StatusCode};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
@@ -33,7 +35,7 @@ async fn main() {
     };
 
     for idx in 0..config.warmup_iters {
-        match run_iteration(client.clone(), config.clone(), idx).await {
+        match run_iteration(client.clone(), config.clone(), idx, None).await {
             Ok(result) if result.outcome == Outcome::Downloaded => {}
             Ok(result) => {
                 eprintln!(
@@ -54,8 +56,40 @@ async fn main() {
     }
     eprintln!("warm-up passed: {} full cycles", config.warmup_iters);
 
+    let progress_interval = match loadgen_progress_interval_from_env() {
+        Ok(interval) => interval,
+        Err(err) => {
+            eprintln!("loadgen config error: {err}");
+            std::process::exit(2);
+        }
+    };
+
     let measured_start = Instant::now();
-    let results = run_measured(client, config.clone()).await;
+    let progress = progress_interval.map(|_| Arc::new(ProgressTracker::new(measured_start)));
+    let progress_done = Arc::new(AtomicBool::new(false));
+    let progress_task = progress_interval
+        .zip(progress.clone())
+        .map(|(interval, progress)| {
+            let done = progress_done.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(interval).await;
+                    if done.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let snapshot = progress.snapshot(Instant::now());
+                    println!(
+                        "LOADGEN_PROGRESS:{snapshot}",
+                        snapshot = serde_json::to_string(&snapshot).expect("progress serializes")
+                    );
+                }
+            })
+        });
+    let results = run_measured(client, config.clone(), progress).await;
+    progress_done.store(true, Ordering::Relaxed);
+    if let Some(task) = progress_task {
+        task.abort();
+    }
     let duration_s = measured_start.elapsed().as_secs_f64();
     let summary = summarize("measured", config.summary_config(), &results, duration_s);
     let error_rate = summary.error_rate;
@@ -68,7 +102,11 @@ async fn main() {
     }
 }
 
-async fn run_measured(client: Arc<Client>, config: Arc<Config>) -> Vec<IterationResult> {
+async fn run_measured(
+    client: Arc<Client>,
+    config: Arc<Config>,
+    progress: Option<Arc<ProgressTracker>>,
+) -> Vec<IterationResult> {
     let semaphore = Arc::new(Semaphore::new(0));
     let permits = semaphore.clone();
     let concurrency = config.concurrency;
@@ -94,8 +132,12 @@ async fn run_measured(client: Arc<Client>, config: Arc<Config>) -> Vec<Iteration
             .expect("semaphore is not closed");
         let client = client.clone();
         let config = config.clone();
+        let progress = progress.clone();
         join_set.spawn(async move {
-            let result = run_iteration(client, config, idx)
+            if let Some(progress) = &progress {
+                progress.record_started();
+            }
+            let result = run_iteration(client, config, idx, progress.clone())
                 .await
                 .unwrap_or(IterationResult {
                     outcome: Outcome::DownloadFailed,
@@ -107,6 +149,9 @@ async fn run_measured(client: Arc<Client>, config: Arc<Config>) -> Vec<Iteration
                     read_start: None,
                     read_end: None,
                 });
+            if let Some(progress) = &progress {
+                progress.record_finished(result.outcome, result.bytes);
+            }
             drop(permit);
             result
         });
@@ -118,6 +163,9 @@ async fn run_measured(client: Arc<Client>, config: Arc<Config>) -> Vec<Iteration
             Ok(result) => results.push(result),
             Err(err) => {
                 eprintln!("iteration task failed: {err}");
+                if let Some(progress) = &progress {
+                    progress.record_finished(Outcome::DownloadFailed, 0);
+                }
                 results.push(IterationResult {
                     outcome: Outcome::DownloadFailed,
                     submit_ms: None,
@@ -138,6 +186,7 @@ async fn run_iteration(
     client: Arc<Client>,
     config: Arc<Config>,
     idx: usize,
+    progress: Option<Arc<ProgressTracker>>,
 ) -> Result<IterationResult, String> {
     let iteration_start = Instant::now();
     let submit_url = format!(
@@ -158,6 +207,9 @@ async fn run_iteration(
         Err(err) => return Err(format!("submit request failed: {err}")),
     };
     let submit_ms = iteration_start.elapsed().as_secs_f64() * 1000.0;
+    if let Some(progress) = &progress {
+        progress.record_submitted();
+    }
     let submit_status = submit_response.status();
     if submit_status != StatusCode::ACCEPTED {
         drain_response(submit_response).await.ok();
@@ -252,6 +304,9 @@ async fn run_iteration(
     };
 
     let ready_ms = iteration_start.elapsed().as_secs_f64() * 1000.0;
+    if let Some(progress) = &progress {
+        progress.record_ready(ready_ms);
+    }
     let (internal_url, _) = match to_bobs_internal(&location, &config.bobs_svc_template) {
         Ok(value) => value,
         Err(err) => return Err(err),
