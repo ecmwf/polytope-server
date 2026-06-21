@@ -5,6 +5,38 @@ use std::env;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum RunLimit {
+    Iterations,
+    Duration {
+        duration: Duration,
+        rps: Option<f64>,
+    },
+}
+
+impl RunLimit {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Iterations => "iterations",
+            Self::Duration { .. } => "duration",
+        }
+    }
+
+    pub fn target_duration_s(&self) -> Option<f64> {
+        match self {
+            Self::Iterations => None,
+            Self::Duration { duration, .. } => Some(duration.as_secs_f64()),
+        }
+    }
+
+    pub fn target_rps(&self) -> Option<f64> {
+        match self {
+            Self::Iterations => None,
+            Self::Duration { rps, .. } => *rps,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub frontend_url: String,
@@ -17,6 +49,7 @@ pub struct Config {
     pub warmup_iters: usize,
     pub concurrency: usize,
     pub total_iters: usize,
+    pub run_limit: RunLimit,
     pub ramp_seconds: u64,
     pub poll_interval: Duration,
     pub poll_timeout: Duration,
@@ -26,28 +59,59 @@ pub struct Config {
 
 impl Config {
     pub fn from_env() -> Result<Self, String> {
-        let frontend_url = required_env("LOADGEN_FRONTEND_URL")?;
-        let collection = required_env("LOADGEN_COLLECTION")?;
-        let auth = required_env("LOADGEN_AUTH")?;
-        let payload_json = serde_json::from_str(&required_env("LOADGEN_PAYLOAD_JSON")?)
+        Self::from_lookup(|name| env::var(name).ok())
+    }
+
+    pub fn from_lookup<F>(lookup: F) -> Result<Self, String>
+    where
+        F: Fn(&str) -> Option<String>,
+    {
+        let frontend_url = required_lookup(&lookup, "LOADGEN_FRONTEND_URL")?;
+        let collection = required_lookup(&lookup, "LOADGEN_COLLECTION")?;
+        let auth = required_lookup(&lookup, "LOADGEN_AUTH")?;
+        let payload_json = serde_json::from_str(&required_lookup(&lookup, "LOADGEN_PAYLOAD_JSON")?)
             .map_err(|err| format!("LOADGEN_PAYLOAD_JSON is not valid JSON: {err}"))?;
-        let bobs_svc_template = required_env("LOADGEN_BOBS_SVC_TEMPLATE")?;
-        let mock_realm = optional_non_empty("LOADGEN_MOCK_REALM");
-        let mock_role = env_or("LOADGEN_MOCK_ROLE", "default");
-        let mock_user_prefix = env_or("LOADGEN_MOCK_USER_PREFIX", "mock-");
-        let warmup_iters = parse_env("LOADGEN_WARMUP_ITERS", 5)?;
-        let concurrency = parse_env("LOADGEN_CONCURRENCY", 64)?;
-        let total_iters = parse_env("LOADGEN_TOTAL_ITERS", 512)?;
-        let ramp_seconds = parse_env("LOADGEN_RAMP_SECONDS", 30)?;
-        let poll_interval = Duration::from_millis(parse_env("LOADGEN_POLL_INTERVAL_MS", 250)?);
-        let poll_timeout = Duration::from_secs(parse_env("LOADGEN_POLL_TIMEOUT_S", 600)?);
-        let max_error_rate = parse_env("LOADGEN_MAX_ERROR_RATE", 0.01)?;
+        let bobs_svc_template = required_lookup(&lookup, "LOADGEN_BOBS_SVC_TEMPLATE")?;
+        let mock_realm = optional_non_empty_lookup(&lookup, "LOADGEN_MOCK_REALM");
+        let mock_role = lookup_or(&lookup, "LOADGEN_MOCK_ROLE", "default");
+        let mock_user_prefix = lookup_or(&lookup, "LOADGEN_MOCK_USER_PREFIX", "mock-");
+        let warmup_iters = parse_lookup(&lookup, "LOADGEN_WARMUP_ITERS", 5)?;
+        let concurrency = parse_lookup(&lookup, "LOADGEN_CONCURRENCY", 64)?;
+        let total_iters = parse_lookup(&lookup, "LOADGEN_TOTAL_ITERS", 512)?;
+        let ramp_seconds = parse_lookup(&lookup, "LOADGEN_RAMP_SECONDS", 30)?;
+        let poll_interval =
+            Duration::from_millis(parse_lookup(&lookup, "LOADGEN_POLL_INTERVAL_MS", 250)?);
+        let poll_timeout =
+            Duration::from_secs(parse_lookup(&lookup, "LOADGEN_POLL_TIMEOUT_S", 600)?);
+        let max_error_rate = parse_lookup(&lookup, "LOADGEN_MAX_ERROR_RATE", 0.01)?;
+        let duration_s = parse_optional_f64(&lookup, "LOADGEN_DURATION_S")?;
+        let rps = parse_optional_f64(&lookup, "LOADGEN_RPS")?;
         if frontend_url.ends_with('/') {
             return Err("LOADGEN_FRONTEND_URL must not have a trailing slash".to_string());
         }
         if concurrency == 0 {
             return Err("LOADGEN_CONCURRENCY must be at least 1".to_string());
         }
+        let run_limit = match (duration_s, rps) {
+            (Some(duration_s), rps) => {
+                if duration_s <= 0.0 || !duration_s.is_finite() {
+                    return Err("LOADGEN_DURATION_S must be a positive finite number".to_string());
+                }
+                if let Some(rps) = rps {
+                    if rps <= 0.0 || !rps.is_finite() {
+                        return Err("LOADGEN_RPS must be a positive finite number".to_string());
+                    }
+                }
+                RunLimit::Duration {
+                    duration: Duration::from_secs_f64(duration_s),
+                    rps,
+                }
+            }
+            (None, Some(_)) => {
+                return Err("LOADGEN_RPS requires LOADGEN_DURATION_S".to_string());
+            }
+            (None, None) => RunLimit::Iterations,
+        };
         Ok(Self {
             frontend_url,
             collection,
@@ -59,6 +123,7 @@ impl Config {
             warmup_iters,
             concurrency,
             total_iters,
+            run_limit,
             ramp_seconds,
             poll_interval,
             poll_timeout,
@@ -81,6 +146,9 @@ impl Config {
             warmup_iters: self.warmup_iters,
             concurrency: self.concurrency,
             total_iters: self.total_iters,
+            run_limit: self.run_limit.name().to_string(),
+            target_duration_s: self.run_limit.target_duration_s(),
+            target_rps: self.run_limit.target_rps(),
             ramp_seconds: self.ramp_seconds,
             poll_interval_ms: self.poll_interval.as_millis() as u64,
             poll_timeout_s: self.poll_timeout.as_secs(),
@@ -90,9 +158,12 @@ impl Config {
     }
 }
 
-fn required_env(name: &str) -> Result<String, String> {
-    env::var(name)
-        .map_err(|_| format!("missing required environment variable {name}"))
+fn required_lookup<F>(lookup: &F, name: &str) -> Result<String, String>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    lookup(name)
+        .ok_or_else(|| format!("missing required environment variable {name}"))
         .and_then(|value| {
             if value.trim().is_empty() {
                 Err(format!("required environment variable {name} is empty"))
@@ -102,27 +173,46 @@ fn required_env(name: &str) -> Result<String, String> {
         })
 }
 
-fn env_or(name: &str, default: &str) -> String {
-    env::var(name)
-        .ok()
+fn lookup_or<F>(lookup: &F, name: &str, default: &str) -> String
+where
+    F: Fn(&str) -> Option<String>,
+{
+    lookup(name)
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| default.to_string())
 }
 
-fn optional_non_empty(name: &str) -> Option<String> {
-    env::var(name).ok().filter(|value| !value.is_empty())
+fn optional_non_empty_lookup<F>(lookup: &F, name: &str) -> Option<String>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    lookup(name).filter(|value| !value.is_empty())
 }
 
-fn parse_env<T>(name: &str, default: T) -> Result<T, String>
+fn parse_lookup<F, T>(lookup: &F, name: &str, default: T) -> Result<T, String>
 where
+    F: Fn(&str) -> Option<String>,
     T: std::str::FromStr,
     T::Err: std::fmt::Display,
 {
-    match env::var(name) {
-        Ok(value) if !value.trim().is_empty() => value
+    match lookup(name) {
+        Some(value) if !value.trim().is_empty() => value
             .parse()
             .map_err(|err| format!("{name} is invalid: {err}")),
         _ => Ok(default),
+    }
+}
+
+fn parse_optional_f64<F>(lookup: &F, name: &str) -> Result<Option<f64>, String>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    match lookup(name) {
+        Some(value) if !value.trim().is_empty() => value
+            .parse()
+            .map(Some)
+            .map_err(|err| format!("{name} is invalid: {err}")),
+        _ => Ok(None),
     }
 }
 
@@ -136,6 +226,9 @@ pub struct SummaryConfig {
     pub warmup_iters: usize,
     pub concurrency: usize,
     pub total_iters: usize,
+    pub run_limit: String,
+    pub target_duration_s: Option<f64>,
+    pub target_rps: Option<f64>,
     pub ramp_seconds: u64,
     pub poll_interval_ms: u64,
     pub poll_timeout_s: u64,
@@ -163,6 +256,7 @@ pub struct IterationResult {
     pub status: Option<u16>,
     pub read_start: Option<Instant>,
     pub read_end: Option<Instant>,
+    pub completed_at: Instant,
 }
 
 #[derive(Debug, Default, Serialize, PartialEq)]
@@ -194,13 +288,59 @@ pub struct StreamPercentiles {
     pub mean: Option<f64>,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct TimeBucketMetrics {
+    pub bucket_start_s: f64,
+    pub bucket_end_s: f64,
+    pub downloaded: usize,
+    pub error: usize,
+    pub bytes: u64,
+    pub throughput_rps: f64,
+    pub error_rate: f64,
+    pub ready_ms_p95: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SummaryMetadata {
+    pub run_limit: String,
+    pub target_duration_s: Option<f64>,
+    pub submission_duration_s: f64,
+    pub drain_duration_s: f64,
+    pub scheduled: usize,
+    pub missed_starts: usize,
+    pub measured_start: Option<Instant>,
+    pub bucket_width_s: f64,
+}
+
+impl SummaryMetadata {
+    pub fn iteration(duration_s: f64, scheduled: usize) -> Self {
+        Self {
+            run_limit: "iterations".to_string(),
+            target_duration_s: None,
+            submission_duration_s: duration_s,
+            drain_duration_s: 0.0,
+            scheduled,
+            missed_starts: 0,
+            measured_start: None,
+            bucket_width_s: DEFAULT_BUCKET_WIDTH_S,
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct Summary {
     pub phase: String,
     pub config: SummaryConfig,
+    pub run_limit: String,
+    pub target_duration_s: Option<f64>,
+    pub submission_duration_s: f64,
+    pub drain_duration_s: f64,
+    pub scheduled: usize,
+    pub missed_starts: usize,
     pub counts: Counts,
     pub errors_by_status: BTreeMap<String, usize>,
     pub percentiles: BTreeMap<String, Percentiles>,
+    pub time_buckets: Vec<TimeBucketMetrics>,
     pub bytes_total: u64,
     pub per_stream_mibps: StreamPercentiles,
     pub aggregate_mibps: f64,
@@ -300,6 +440,8 @@ fn percent_decode(input: &str) -> Result<String, String> {
 #[derive(Debug, Default, Clone, Serialize, PartialEq, Eq)]
 pub struct ProgressCounts {
     pub started: usize,
+    pub scheduled: usize,
+    pub missed_starts: usize,
     pub submitted: usize,
     pub ready: usize,
     pub downloaded: usize,
@@ -373,11 +515,17 @@ impl ProgressTracker {
     }
 
     pub fn record_started(&self) {
+        let mut state = self.state.lock().expect("progress mutex poisoned");
+        state.counts.started += 1;
+        state.counts.scheduled += 1;
+    }
+
+    pub fn record_missed_start(&self) {
         self.state
             .lock()
             .expect("progress mutex poisoned")
             .counts
-            .started += 1;
+            .missed_starts += 1;
     }
 
     pub fn record_submitted(&self) {
@@ -480,6 +628,22 @@ pub fn summarize(
     results: &[IterationResult],
     duration_s: f64,
 ) -> Summary {
+    summarize_with_metadata(
+        phase,
+        config,
+        results,
+        duration_s,
+        SummaryMetadata::iteration(duration_s, results.len()),
+    )
+}
+
+pub fn summarize_with_metadata(
+    phase: &str,
+    config: SummaryConfig,
+    results: &[IterationResult],
+    duration_s: f64,
+    metadata: SummaryMetadata,
+) -> Summary {
     let mut counts = Counts::default();
     let mut errors_by_status = BTreeMap::new();
     let mut submit_ms = Vec::new();
@@ -573,12 +737,21 @@ pub fn summarize(
     metric_percentiles.insert("ready_ms".to_string(), percentiles(&ready_ms));
     metric_percentiles.insert("read_ms".to_string(), percentiles(&read_ms));
 
+    let time_buckets = time_buckets(results, metadata.measured_start, metadata.bucket_width_s);
+
     Summary {
         phase: phase.to_string(),
         config,
+        run_limit: metadata.run_limit,
+        target_duration_s: metadata.target_duration_s,
+        submission_duration_s: metadata.submission_duration_s,
+        drain_duration_s: metadata.drain_duration_s,
+        scheduled: metadata.scheduled,
+        missed_starts: metadata.missed_starts,
         counts,
         errors_by_status,
         percentiles: metric_percentiles,
+        time_buckets,
         bytes_total,
         per_stream_mibps: stream_percentiles(&per_stream_mibps),
         aggregate_mibps,
@@ -591,10 +764,78 @@ pub fn summarize(
     }
 }
 
+const DEFAULT_BUCKET_WIDTH_S: f64 = 60.0;
+
 /// Window width (seconds) for the peak sustained-throughput metric. A 10s
 /// window smooths per-request jitter while still isolating the dense
 /// concurrent-read plateau from ramp-up and the heavy-tailed drain.
 const PEAK_WINDOW_S: f64 = 10.0;
+
+#[derive(Default)]
+struct BucketAccumulator {
+    downloaded: usize,
+    error: usize,
+    bytes: u64,
+    ready_ms: Vec<f64>,
+}
+
+fn time_buckets(
+    results: &[IterationResult],
+    measured_start: Option<Instant>,
+    bucket_width_s: f64,
+) -> Vec<TimeBucketMetrics> {
+    if results.is_empty() || bucket_width_s <= 0.0 || !bucket_width_s.is_finite() {
+        return Vec::new();
+    }
+    let origin = measured_start.unwrap_or_else(|| {
+        results
+            .iter()
+            .map(|result| result.completed_at)
+            .min()
+            .unwrap_or_else(Instant::now)
+    });
+    let mut buckets: BTreeMap<usize, BucketAccumulator> = BTreeMap::new();
+    for result in results {
+        let elapsed_s = result
+            .completed_at
+            .checked_duration_since(origin)
+            .unwrap_or_default()
+            .as_secs_f64();
+        let bucket_index = (elapsed_s / bucket_width_s).floor() as usize;
+        let bucket = buckets.entry(bucket_index).or_default();
+        if result.outcome == Outcome::Downloaded {
+            bucket.downloaded += 1;
+            bucket.bytes += result.bytes;
+        } else {
+            bucket.error += 1;
+        }
+        if let Some(ready_ms) = result.ready_ms {
+            bucket.ready_ms.push(ready_ms);
+        }
+    }
+    buckets
+        .into_iter()
+        .map(|(idx, bucket)| {
+            let bucket_start_s = idx as f64 * bucket_width_s;
+            let bucket_end_s = bucket_start_s + bucket_width_s;
+            let total = bucket.downloaded + bucket.error;
+            TimeBucketMetrics {
+                bucket_start_s,
+                bucket_end_s,
+                downloaded: bucket.downloaded,
+                error: bucket.error,
+                bytes: bucket.bytes,
+                throughput_rps: bucket.downloaded as f64 / bucket_width_s,
+                error_rate: if total == 0 {
+                    0.0
+                } else {
+                    bucket.error as f64 / total as f64
+                },
+                ready_ms_p95: percentile(&bucket.ready_ms, 95.0),
+            }
+        })
+        .collect()
+}
 
 /// Peak sustained read throughput (MiB/s) over any `window_s`-wide window.
 ///
@@ -745,6 +986,75 @@ pub fn redact_auth_for_logs(_: &Config) -> Map<String, Value> {
 mod tests {
     use super::*;
 
+    fn base_env() -> BTreeMap<String, String> {
+        BTreeMap::from([
+            (
+                "LOADGEN_FRONTEND_URL".to_string(),
+                "http://frontend:3000".to_string(),
+            ),
+            ("LOADGEN_COLLECTION".to_string(), "c".to_string()),
+            (
+                "LOADGEN_AUTH".to_string(),
+                "EmailKey redaction-auth-secret".to_string(),
+            ),
+            (
+                "LOADGEN_PAYLOAD_JSON".to_string(),
+                json!({"a": 1}).to_string(),
+            ),
+            (
+                "LOADGEN_BOBS_SVC_TEMPLATE".to_string(),
+                "http://bobs-{ordinal}:3000".to_string(),
+            ),
+        ])
+    }
+
+    fn config_from_map(values: &BTreeMap<String, String>) -> Result<Config, String> {
+        Config::from_lookup(|name| values.get(name).cloned())
+    }
+
+    #[test]
+    fn config_defaults_to_iteration_mode_and_parses_duration_modes() {
+        let mut env = base_env();
+        let config = config_from_map(&env).unwrap();
+        assert_eq!(config.run_limit, RunLimit::Iterations);
+        assert_eq!(config.summary_config().run_limit, "iterations");
+        assert_eq!(config.summary_config().target_duration_s, None);
+        assert_eq!(config.summary_config().target_rps, None);
+        assert_eq!(config.total_iters, 512);
+
+        env.insert("LOADGEN_DURATION_S".to_string(), "900".to_string());
+        let config = config_from_map(&env).unwrap();
+        assert_eq!(config.run_limit.name(), "duration");
+        assert_eq!(config.run_limit.target_duration_s(), Some(900.0));
+        assert_eq!(config.run_limit.target_rps(), None);
+
+        env.insert("LOADGEN_RPS".to_string(), "0.5".to_string());
+        let config = config_from_map(&env).unwrap();
+        assert_eq!(config.run_limit.name(), "duration");
+        assert_eq!(config.run_limit.target_duration_s(), Some(900.0));
+        assert_eq!(config.run_limit.target_rps(), Some(0.5));
+    }
+
+    #[test]
+    fn config_rejects_invalid_duration_rps_and_concurrency_combinations() {
+        let mut env = base_env();
+        env.insert("LOADGEN_CONCURRENCY".to_string(), "0".to_string());
+        assert!(config_from_map(&env).unwrap_err().contains("CONCURRENCY"));
+
+        let mut env = base_env();
+        env.insert("LOADGEN_DURATION_S".to_string(), "0".to_string());
+        assert!(config_from_map(&env).unwrap_err().contains("DURATION"));
+
+        let mut env = base_env();
+        env.insert("LOADGEN_DURATION_S".to_string(), "60".to_string());
+        env.insert("LOADGEN_RPS".to_string(), "0".to_string());
+        assert!(config_from_map(&env).unwrap_err().contains("RPS"));
+
+        let mut env = base_env();
+        env.insert("LOADGEN_RPS".to_string(), "1".to_string());
+        assert!(config_from_map(&env).unwrap_err().contains("requires"));
+    }
+
     #[test]
     fn bobs_location_translation_matches_python_runner() {
         let template = "http://rel-bobs-{ordinal}:3000";
@@ -783,6 +1093,9 @@ mod tests {
             warmup_iters: 5,
             concurrency: 2,
             total_iters: 4,
+            run_limit: "iterations".to_string(),
+            target_duration_s: None,
+            target_rps: None,
             ramp_seconds: 1,
             poll_interval_ms: 250,
             poll_timeout_s: 600,
@@ -799,6 +1112,7 @@ mod tests {
                 status: None,
                 read_start: Some(now),
                 read_end: Some(now + Duration::from_secs(1)),
+                completed_at: now + Duration::from_secs(1),
             },
             IterationResult {
                 outcome: Outcome::Downloaded,
@@ -809,6 +1123,7 @@ mod tests {
                 status: None,
                 read_start: Some(now + Duration::from_secs(1)),
                 read_end: Some(now + Duration::from_secs(3)),
+                completed_at: now + Duration::from_secs(3),
             },
             IterationResult {
                 outcome: Outcome::SubmitFailed,
@@ -819,6 +1134,7 @@ mod tests {
                 status: Some(500),
                 read_start: None,
                 read_end: None,
+                completed_at: now + Duration::from_secs(4),
             },
         ];
         let summary = summarize("measured", cfg, &results, 6.0);
@@ -836,6 +1152,151 @@ mod tests {
         // 3 MiB over a 3s read span (< 10s window) => falls back to span avg.
         assert_eq!(summary.peak_window_s, 10.0);
         assert!((summary.peak_windowed_mibps - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn summary_time_buckets_group_completions_and_ready_p95() {
+        let now = Instant::now();
+        let cfg = SummaryConfig {
+            frontend_url: "http://frontend:3000".to_string(),
+            collection: "c".to_string(),
+            mock_realm: None,
+            mock_role: "default".to_string(),
+            mock_user_prefix: "mock-".to_string(),
+            warmup_iters: 0,
+            concurrency: 2,
+            total_iters: 0,
+            run_limit: "duration".to_string(),
+            target_duration_s: Some(2.0),
+            target_rps: Some(2.0),
+            ramp_seconds: 0,
+            poll_interval_ms: 250,
+            poll_timeout_s: 600,
+            bobs_svc_template: "http://bobs-{ordinal}:3000".to_string(),
+            max_error_rate: 0.01,
+        };
+        let results = vec![
+            IterationResult {
+                outcome: Outcome::Downloaded,
+                submit_ms: Some(1.0),
+                ready_ms: Some(100.0),
+                read_ms: Some(10.0),
+                bytes: 10,
+                status: None,
+                read_start: Some(now),
+                read_end: Some(now + Duration::from_millis(100)),
+                completed_at: now + Duration::from_millis(200),
+            },
+            IterationResult {
+                outcome: Outcome::Downloaded,
+                submit_ms: Some(1.0),
+                ready_ms: Some(300.0),
+                read_ms: Some(10.0),
+                bytes: 20,
+                status: None,
+                read_start: Some(now),
+                read_end: Some(now + Duration::from_millis(100)),
+                completed_at: now + Duration::from_millis(800),
+            },
+            IterationResult {
+                outcome: Outcome::PollFailed,
+                submit_ms: Some(1.0),
+                ready_ms: None,
+                read_ms: None,
+                bytes: 0,
+                status: Some(500),
+                read_start: None,
+                read_end: None,
+                completed_at: now + Duration::from_millis(1200),
+            },
+        ];
+        let summary = summarize_with_metadata(
+            "measured",
+            cfg,
+            &results,
+            2.0,
+            SummaryMetadata {
+                run_limit: "duration".to_string(),
+                target_duration_s: Some(2.0),
+                submission_duration_s: 2.0,
+                drain_duration_s: 0.5,
+                scheduled: 3,
+                missed_starts: 4,
+                measured_start: Some(now),
+                bucket_width_s: 1.0,
+            },
+        );
+        assert_eq!(summary.run_limit, "duration");
+        assert_eq!(summary.scheduled, 3);
+        assert_eq!(summary.missed_starts, 4);
+        assert_eq!(summary.time_buckets.len(), 2);
+        assert_eq!(summary.time_buckets[0].downloaded, 2);
+        assert_eq!(summary.time_buckets[0].bytes, 30);
+        assert_eq!(summary.time_buckets[0].throughput_rps, 2.0);
+        assert_eq!(summary.time_buckets[0].ready_ms_p95, Some(300.0));
+        assert_eq!(summary.time_buckets[1].error, 1);
+        assert_eq!(summary.time_buckets[1].error_rate, 1.0);
+    }
+
+    #[test]
+    fn summary_progress_and_config_serialization_exclude_auth_and_env_secret_values() {
+        let mut env = base_env();
+        env.insert(
+            "LOADGEN_AUTH".to_string(),
+            "EmailKey super-auth-token".to_string(),
+        );
+        env.insert(
+            "POLYTOPE_EMAIL".to_string(),
+            "private-user@example.test".to_string(),
+        );
+        env.insert(
+            "POLYTOPE_KEY".to_string(),
+            "private-polytope-key".to_string(),
+        );
+        env.insert("LOADGEN_DURATION_S".to_string(), "60".to_string());
+        env.insert("LOADGEN_RPS".to_string(), "1".to_string());
+        let config = config_from_map(&env).unwrap();
+        let start = Instant::now();
+        let summary = summarize_with_metadata(
+            "measured",
+            config.summary_config(),
+            &[],
+            0.0,
+            SummaryMetadata {
+                run_limit: config.run_limit.name().to_string(),
+                target_duration_s: config.run_limit.target_duration_s(),
+                submission_duration_s: 0.0,
+                drain_duration_s: 0.0,
+                scheduled: 0,
+                missed_starts: 0,
+                measured_start: Some(start),
+                bucket_width_s: 60.0,
+            },
+        );
+        let tracker = ProgressTracker::new(start);
+        tracker.record_started();
+        tracker.record_missed_start();
+        tracker.record_finished(Outcome::DownloadFailed, 0);
+        let text = format!(
+            "{}\n{}\n{}",
+            serde_json::to_string(&summary).unwrap(),
+            serde_json::to_string(&tracker.snapshot(start + Duration::from_secs(1))).unwrap(),
+            serde_json::to_string(&config.summary_config()).unwrap(),
+        );
+        for forbidden in [
+            "EmailKey super-auth-token",
+            "private-user@example.test",
+            "private-polytope-key",
+            "LOADGEN_AUTH",
+            "Authorization",
+            "POLYTOPE_EMAIL",
+            "POLYTOPE_KEY",
+        ] {
+            assert!(
+                !text.contains(forbidden),
+                "found forbidden value {forbidden}: {text}"
+            );
+        }
     }
 
     #[test]
@@ -967,6 +1428,9 @@ mod tests {
             warmup_iters: 5,
             concurrency: 1,
             total_iters: 0,
+            run_limit: "iterations".to_string(),
+            target_duration_s: None,
+            target_rps: None,
             ramp_seconds: 0,
             poll_interval_ms: 250,
             poll_timeout_s: 600,
