@@ -69,20 +69,39 @@ class PolytopeDataSource:
             if isinstance(v, (int, float)) and not isinstance(v, bool):
                 r[k] = str(v)
 
-        pre_path = {}
-        for k, v in r.items():
-            v = v.split("/") if isinstance(v, str) else v
-            if k in self.pre_path:
-                if isinstance(v, list):
-                    if self.gh70_fix_step_ranges:
-                        if k == "param":
-                            pre_path[k] = v[0]
-                    if len(v) == 1:
-                        v = v[0]
-                        pre_path[k] = v
-
+        # Start with a per-request deepcopy of the base config
         polytope_mars_config = copy.deepcopy(self.config)
-        polytope_mars_config["options"]["pre_path"] = pre_path
+
+        # Merge trusted metadata options if present
+        metadata_polytope_mars = request.metadata.get("polytope_mars")
+        if metadata_polytope_mars is not None:
+            if not isinstance(metadata_polytope_mars, dict):
+                raise ValueError(
+                    f"request.metadata['polytope_mars'] must be a dict, got {type(metadata_polytope_mars).__name__}"
+                )
+            # Overlay only allowed structural keys: datacube and options
+            if "datacube" in metadata_polytope_mars:
+                polytope_mars_config["datacube"] = metadata_polytope_mars["datacube"]
+            if "options" in metadata_polytope_mars:
+                if not isinstance(metadata_polytope_mars["options"], dict):
+                    raise ValueError(
+                        "request.metadata['polytope_mars']['options'] must be a dict"
+                    )
+                polytope_mars_config["options"].update(metadata_polytope_mars["options"])
+        else:
+            # Backward compatibility: build pre_path from request when no metadata
+            pre_path = {}
+            for k, v in r.items():
+                v = v.split("/") if isinstance(v, str) else v
+                if k in self.pre_path:
+                    if isinstance(v, list):
+                        if self.gh70_fix_step_ranges:
+                            if k == "param":
+                                pre_path[k] = v[0]
+                        if len(v) == 1:
+                            v = v[0]
+                            pre_path[k] = v
+            polytope_mars_config["options"]["pre_path"] = pre_path
 
         if self.gh69_fix_grids:
             change_grids(r, polytope_mars_config)

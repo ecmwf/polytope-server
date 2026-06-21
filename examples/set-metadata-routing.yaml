@@ -1,0 +1,123 @@
+# Example: Using set_metadata to Attach Trusted Job Metadata
+#
+# This example demonstrates how the `set_metadata` transform action attaches
+# trusted configuration to jobs during routing, without reading or merging
+# client request fields.
+#
+# Use case: A polytope deployment serves multiple datasets (climate-dt, extremes-dt, ng)
+# from a single worker pool. Each dataset requires different FDB paths, catalogue
+# selection, and datacube configuration. Routing rules discriminate by dataset and
+# attach the correct trusted options via job.metadata, which the FE worker then
+# reads to configure the Polytope data source.
+
+broker:
+  # Define reusable transforms for each dataset's metadata
+  transforms:
+    - id: attach-climate-dt-fe-options
+      type: set_metadata
+      key: polytope_mars
+      value:
+        datacube: climate-dt
+        options:
+          axis_config:
+            class_time_step_type_to_steps:
+              d1__4__an: [0]
+              d1__24__fc: [0, 6, 12, 18]
+          pre_path:
+            - climate-dt
+          use_catalogue: catalogue1
+          engine_options:
+            datacube_version: 1
+
+    - id: attach-extremes-dt-fe-options
+      type: set_metadata
+      key: polytope_mars
+      value:
+        datacube: extremes-dt
+        options:
+          axis_config:
+            class_time_step_type_to_steps:
+              d1__24__fc: [0]
+          pre_path:
+            - extremes-dt
+          use_catalogue: catalogue3
+          engine_options:
+            datacube_version: 2
+
+    - id: attach-ng-fe-options
+      type: set_metadata
+      key: polytope_mars
+      value:
+        datacube: ng
+        options:
+          axis_config:
+            class_time_step_type_to_steps:
+              ng__6__cf: [0, 6]
+          pre_path:
+            - ng
+          use_catalogue: catalogue4
+          engine_options:
+            datacube_version: 1
+
+  # Example routes: each dataset-specific route attaches its trusted metadata
+  # before forwarding to the worker pool. Client request fields like
+  # `polytope_mars`, `pre_path`, `use_catalogue` are NEVER read or merged.
+  routes:
+    - name: climate-dt-feature-extraction
+      match:
+        - check: match
+          request.dataset: [climate-dt]
+          request.class: [d1]
+        - check: has_key
+          keys: [feature, country]
+      actions:
+        # Normalize and validate request
+        - transform: metkit_expansion
+        # Attach trusted FE options for climate-dt (config-only, no request interpolation)
+        - transform: attach-climate-dt-fe-options
+        # Route to FE worker pool
+        - target: polytope_fe_pool
+
+    - name: extremes-dt-privileged-old-data
+      match:
+        - check: match
+          request.dataset: [extremes-dt]
+        - check: has_role
+          ecmwf: [polytope-admin, unrestricted-extremes]
+      actions:
+        - transform: metkit_expansion
+        # Attach trusted FE options for extremes-dt
+        - transform: attach-extremes-dt-fe-options
+        - target: polytope_fe_pool
+
+    - name: extremes-dt-recent-data-only
+      match:
+        - check: match
+          request.dataset: [extremes-dt]
+        - check: date_checker
+          allowed_values: ["< 15d"]
+      actions:
+        - transform: metkit_expansion
+        # Same trusted metadata; access is gated by date check, not by different config
+        - transform: attach-extremes-dt-fe-options
+        - target: polytope_fe_pool
+
+    - name: ng-direct-retrieval
+      match:
+        - check: match
+          request.dataset: [ng]
+          request.class: [ng]
+      actions:
+        - transform: metkit_expansion
+        # Attach trusted FE options for ng
+        - transform: attach-ng-fe-options
+        - target: polytope_fe_pool
+
+# Security note:
+# - The `value` field in each set_metadata transform is sourced ONLY from this
+#   trusted routing configuration file, never from client request JSON.
+# - Even if a client sends { "polytope_mars": {...}, "pre_path": "evil", ... },
+#   those fields remain in job.request and are NOT merged into job.metadata.
+# - The FE worker reads job.metadata["polytope_mars"] to configure the data source,
+#   ensuring that datacube selection, FDB paths, and catalogue choice are
+#   controlled by routing policy, not by user input.
