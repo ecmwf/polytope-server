@@ -15,9 +15,10 @@ class _User:
 
 
 class _Request:
-    def __init__(self, request_payload, user_payload):
+    def __init__(self, request_payload, user_payload, metadata_payload=None):
         self.coerced_request = request_payload
         self.user = _User(user_payload)
+        self.metadata = metadata_payload if metadata_payload is not None else {}
         self.id = "remote-worker"
 
 
@@ -59,7 +60,11 @@ def process(payload_json):
     datasource = _get_datasource(payload["config_path"])
     t_init = time.monotonic()
 
-    request = _Request(payload["request"], payload.get("user"))
+    request = _Request(
+        payload["request"],
+        payload.get("user"),
+        payload.get("metadata", {})
+    )
 
     try:
         timings = datasource.retrieve(request)
@@ -95,7 +100,11 @@ def main():
     from polytope import PolytopeDataSource
 
     datasource = PolytopeDataSource(config)
-    request = _Request(payload["request"], payload.get("user"))
+    request = _Request(
+        payload["request"],
+        payload.get("user"),
+        payload.get("metadata", {})
+    )
 
     try:
         datasource.retrieve(request)

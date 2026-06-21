@@ -193,7 +193,11 @@ import json
 
 def process(payload_json):
     payload = json.loads(payload_json)
-    output = json.dumps({"echo": payload["request"]}).encode("utf-8")
+    # Fail if metadata is not present
+    assert "metadata" in payload, "metadata field missing from PyO3 payload"
+    # Fail if metadata value is not passed through
+    assert payload["metadata"].get("test_key") == "test_value", "metadata content not preserved"
+    output = json.dumps({"echo": payload["request"], "metadata": payload["metadata"]}).encode("utf-8")
     return (output, '{"total_ms": 0}')
 "#,
         )
@@ -219,7 +223,8 @@ def process(payload_json):
                 job_id: "job-1".into(),
                 request: json!({"class": "od"}),
                 user: json!({}),
-                metadata: json!({}),
+                metadata: json!({"test_key": "test_value"}),
+                callback_url: None,
             })
             .await;
 
