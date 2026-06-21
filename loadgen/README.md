@@ -19,8 +19,10 @@ Optional:
 - `LOADGEN_MOCK_USER_PREFIX`: default `mock-`.
 - `LOADGEN_WARMUP_ITERS`: default `5`.
 - `LOADGEN_CONCURRENCY`: default `64`.
-- `LOADGEN_TOTAL_ITERS`: default `512`.
-- `LOADGEN_RAMP_SECONDS`: default `30`.
+- `LOADGEN_TOTAL_ITERS`: default `512`; used when `LOADGEN_DURATION_S` is unset.
+- `LOADGEN_DURATION_S`: enables wall-clock duration mode. New requests stop at the deadline and in-flight requests drain.
+- `LOADGEN_RPS`: optional with `LOADGEN_DURATION_S`; when set, uses open-model starts capped by `LOADGEN_CONCURRENCY` and counts saturated starts as `missed_starts`. When unset, duration mode keeps concurrency filled in a closed loop until the deadline.
+- `LOADGEN_RAMP_SECONDS`: default `30`; ramps iteration/closed-loop concurrency or open-model offered rate.
 - `LOADGEN_POLL_INTERVAL_MS`: default `250`.
 - `LOADGEN_POLL_TIMEOUT_S`: default `600`.
 - `LOADGEN_MAX_ERROR_RATE`: default `0.01`.
@@ -35,4 +37,6 @@ docker build -f loadgen/Dockerfile \
   -t polytope-loadgen .
 ```
 
-The binary emits one `LOADGEN_SUMMARY:{...}` JSON line for log scraping.
+The binary emits one `LOADGEN_SUMMARY:{...}` JSON line for log scraping. With `LOADGEN_PROGRESS_INTERVAL_MS` unset it also emits redaction-safe `LOADGEN_PROGRESS:{...}` snapshots every second; set it to `0` to disable progress.
+
+Summary output includes `run_limit`, target/submission/drain durations, `scheduled`, `missed_starts`, and one-minute `time_buckets` with downloaded/error counts, bytes, throughput, error rate, and ready-latency p95. Summary/progress/config serialization deliberately excludes `LOADGEN_AUTH`, `Authorization`, `POLYTOPE_EMAIL`, and `POLYTOPE_KEY` values.
