@@ -1,0 +1,56 @@
+# OTel Collector configuration for BOBS metrics
+#
+# This extends the base otel-collector-config.yaml with metric renaming
+# from bobs.* to polytope.* namespace for unified observability.
+#
+# Usage: merge this into your production collector config, or use it as
+# a reference for configuring metric transforms.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    send_batch_size: 1024
+    timeout: 5s
+
+  # Rename bobs metrics to polytope namespace for unified dashboards.
+  # Remove this processor if you prefer native bobs.* metric names.
+  transform:
+    metric_statements:
+      - context: metric
+        statements:
+          - set(name, "polytope.download.bytes.total") where name == "bobs.read.bytes.total"
+          - set(name, "polytope.download.duration.seconds") where name == "bobs.read.duration.seconds"
+          - set(name, "polytope.download.active") where name == "bobs.read.active"
+          - set(name, "polytope.upload.bytes.total") where name == "bobs.write.bytes.total"
+          - set(name, "polytope.upload.duration.seconds") where name == "bobs.write.duration.seconds"
+          - set(name, "polytope.spools.created.total") where name == "bobs.spools.created.total"
+          - set(name, "polytope.spools.completed.total") where name == "bobs.spools.completed.total"
+          - set(name, "polytope.spools.deleted.total") where name == "bobs.spools.deleted.total"
+          - set(name, "polytope.spools.active") where name == "bobs.spools.active"
+          - set(name, "polytope.spool.disk.usage.bytes") where name == "bobs.disk.usage.bytes"
+          - set(name, "polytope.spool.cache.hits.total") where name == "bobs.pages.cache.hits.total"
+          - set(name, "polytope.spool.cache.misses.total") where name == "bobs.pages.cache.misses.total"
+
+exporters:
+  prometheusremotewrite:
+    endpoint: http://prometheus:9090/api/v1/write
+    tls:
+      insecure: true
+    resource_to_telemetry_conversion:
+      enabled: true
+  debug:
+    verbosity: detailed
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [batch, transform]
+      exporters: [prometheusremotewrite, debug]
