@@ -69,10 +69,21 @@ class PolytopeDataSource:
             if isinstance(v, (int, float)) and not isinstance(v, bool):
                 r[k] = str(v)
 
-        # Start with a per-request deepcopy of the base config
+        # Start with a per-request deepcopy of the base config. The base pool
+        # config may carry no "options" at all (a single FE pool that selects the
+        # per-dataset datacube/options at routing time via job metadata), so do
+        # not assume "options" exists.
         polytope_mars_config = copy.deepcopy(self.config)
+        polytope_mars_config.setdefault("options", {})
 
-        # Merge trusted metadata options if present
+        # The pre_path axis list comes from the base pool config (self.pre_path,
+        # popped from options in __init__). A trusted metadata block may replace
+        # the whole datacube/options for this dataset, including its own pre_path
+        # axis list, so prefer the metadata-supplied list when present.
+        pre_path_axes = self.pre_path
+
+        # Merge trusted metadata options if present (written only by the broker
+        # set_metadata action; never sourced from the client request).
         metadata_polytope_mars = request.metadata.get("polytope_mars")
         if metadata_polytope_mars is not None:
             if not isinstance(metadata_polytope_mars, dict):
@@ -87,21 +98,27 @@ class PolytopeDataSource:
                     raise ValueError(
                         "request.metadata['polytope_mars']['options'] must be a dict"
                     )
-                polytope_mars_config["options"].update(metadata_polytope_mars["options"])
-        else:
-            # Backward compatibility: build pre_path from request when no metadata
-            pre_path = {}
-            for k, v in r.items():
-                v = v.split("/") if isinstance(v, str) else v
-                if k in self.pre_path:
-                    if isinstance(v, list):
-                        if self.gh70_fix_step_ranges:
-                            if k == "param":
-                                pre_path[k] = v[0]
-                        if len(v) == 1:
-                            v = v[0]
-                            pre_path[k] = v
-            polytope_mars_config["options"]["pre_path"] = pre_path
+                merged_options = copy.deepcopy(metadata_polytope_mars["options"])
+                # pre_path in an options block is a list of axis names; pop it so
+                # it is not left as a list where the per-request dict is expected.
+                if "pre_path" in merged_options:
+                    pre_path_axes = merged_options.pop("pre_path")
+                polytope_mars_config["options"].update(merged_options)
+
+        # Build the per-request pre_path dict from the selected axis list (works
+        # for both the metadata path and the backward-compatible base-config path).
+        pre_path = {}
+        for k, v in r.items():
+            v = v.split("/") if isinstance(v, str) else v
+            if k in pre_path_axes:
+                if isinstance(v, list):
+                    if self.gh70_fix_step_ranges:
+                        if k == "param":
+                            pre_path[k] = v[0]
+                    if len(v) == 1:
+                        v = v[0]
+                        pre_path[k] = v
+        polytope_mars_config["options"]["pre_path"] = pre_path
 
         if self.gh69_fix_grids:
             change_grids(r, polytope_mars_config)

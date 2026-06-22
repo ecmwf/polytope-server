@@ -438,5 +438,77 @@ def test_preserved_trusted_metadata_namespaces(base_config, mock_polytope_mars):
     assert request.metadata["admin_overrides"]["bypass_rate_limit"] is True
 
 
+@pytest.fixture
+def base_config_no_options():
+    """Single-FE-pool base config that carries NO 'options' key at all.
+
+    This mirrors the LUMI deployment, where every per-dataset datacube/options
+    block is supplied at routing time via job metadata (set_metadata action),
+    so the static pool config has only the shared gribjump/datacube scaffolding.
+    """
+    return {
+        "type": "polytope",
+        "datacube": {"type": "gribjump", "config": "/tmp/test.yaml"},
+        "gribjump_config": {
+            "gribjump_servers": [{"host": "localhost", "port": 9999}]
+        },
+    }
+
+
+def test_metadata_options_when_base_has_no_options(
+    base_config_no_options, mock_polytope_mars
+):
+    """Regression: a base config without 'options' must not KeyError, and a
+    metadata options block carrying pre_path as a LIST of axis names must be
+    converted to the per-request pre_path dict (previously raised
+    KeyError: 'options', breaking every FE request on a single-pool deployment).
+    """
+    request = FakeRequest(
+        {
+            "class": "d1",
+            "dataset": "on-demand-extremes-dt",
+            "date": "20230820",
+            "param": "146",
+            "step": "0-10",
+        },
+        metadata={
+            "polytope_mars": {
+                "datacube": {"type": "gribjump"},
+                "options": {
+                    # pre_path is a LIST of axis names, as in the per-dataset
+                    # datasource config ported into the set_metadata block.
+                    "pre_path": ["class", "dataset", "date", "param"],
+                    "use_catalogue": False,
+                    "axis_config": [
+                        {
+                            "axis_name": "step",
+                            "transformations": [{"name": "type_change", "type": "int"}],
+                        }
+                    ],
+                },
+            }
+        },
+    )
+
+    datasource = PolytopeDataSource(base_config_no_options)
+    # Must not raise KeyError: 'options'
+    datasource.retrieve(request)
+    result = json.loads(datasource.output)
+
+    # pre_path list -> per-request dict for single-valued, in-list axes
+    assert result["options"]["pre_path"] == {
+        "class": "d1",
+        "dataset": "on-demand-extremes-dt",
+        "date": "20230820",
+        "param": "146",
+    }
+    # non-pre_path axes (step) are not promoted into pre_path
+    assert "step" not in result["options"]["pre_path"]
+    # other metadata options survived the merge
+    assert result["options"]["use_catalogue"] is False
+    # base config is untouched (still no options key)
+    assert "options" not in base_config_no_options
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
