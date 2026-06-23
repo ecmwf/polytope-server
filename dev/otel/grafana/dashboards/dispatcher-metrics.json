@@ -1,0 +1,158 @@
+{
+  "title": "Polytope Broker Dispatcher",
+  "tags": ["polytope", "bits", "infrastructure"],
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "DS_PROMETHEUS",
+        "type": "datasource",
+        "query": "prometheus"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Queue Depth",
+      "description": "Current number of jobs waiting in dispatch queues across all brokers",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 0, "w": 8, "h": 7 },
+      "targets": [
+        {
+          "expr": "sum(polytope_broker_dispatcher_queue_depth)",
+          "legendFormat": "total",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }
+        },
+        {
+          "expr": "polytope_broker_dispatcher_queue_depth",
+          "legendFormat": "{{service_instance_id}}",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "fillOpacity": 20, "lineWidth": 2 },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "green" },
+              { "value": 1000, "color": "yellow" },
+              { "value": 10000, "color": "red" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Queue Wait Time (p50 / p95 / p99)",
+      "description": "Time jobs spend waiting in the dispatch queue before execution starts",
+      "type": "timeseries",
+      "gridPos": { "x": 8, "y": 0, "w": 8, "h": 7 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum(rate(polytope_broker_dispatcher_queue_wait_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p50",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(polytope_broker_dispatcher_queue_wait_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(polytope_broker_dispatcher_queue_wait_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p99",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "fillOpacity": 10, "lineWidth": 2 }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Queue Throughput (jobs/min)",
+      "description": "Rate of jobs dequeued from the dispatch queue",
+      "type": "timeseries",
+      "gridPos": { "x": 16, "y": 0, "w": 8, "h": 7 },
+      "targets": [
+        {
+          "expr": "sum(rate(polytope_broker_dispatcher_queue_wait_seconds_count[5m])) * 60",
+          "legendFormat": "dequeued/min",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "fillOpacity": 20, "lineWidth": 2 }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Avg Queue Wait (ms)",
+      "description": "Average time spent in the dispatch queue",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 7, "w": 8, "h": 5 },
+      "targets": [
+        {
+          "expr": "sum(rate(polytope_broker_dispatcher_queue_wait_seconds_sum[5m])) / sum(rate(polytope_broker_dispatcher_queue_wait_seconds_count[5m])) * 1000",
+          "legendFormat": "avg wait",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "green" },
+              { "value": 100, "color": "yellow" },
+              { "value": 1000, "color": "red" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Peak Queue Depth",
+      "description": "Maximum queue depth in the window",
+      "type": "stat",
+      "gridPos": { "x": 8, "y": 7, "w": 8, "h": 5 },
+      "targets": [
+        {
+          "expr": "max_over_time(sum(polytope_broker_dispatcher_queue_depth)[30m:])",
+          "legendFormat": "peak",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "green" },
+              { "value": 1000, "color": "yellow" },
+              { "value": 10000, "color": "red" }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
