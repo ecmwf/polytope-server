@@ -282,10 +282,22 @@ impl WorkerConfig {
     }
 
     fn callback_base_for_work(&self, work: &WorkItem) -> String {
-        work.callback_url
-            .as_deref()
-            .and_then(|callback_url| self.validated_callback_base(callback_url))
-            .unwrap_or_else(|| self.broker_url.trim_end_matches('/').to_string())
+        let advertised = work.callback_url.as_deref();
+        let validated =
+            advertised.and_then(|callback_url| self.validated_callback_base(callback_url));
+        let used_direct = validated.is_some();
+        let base = validated.unwrap_or_else(|| self.broker_url.trim_end_matches('/').to_string());
+        tracing::debug!(
+            "event.name" = "worker.callback.base.resolved",
+            "job.id" = %work.job_id,
+            outcome = if used_direct { "direct" } else { "lb_fallback" },
+            direct = used_direct,
+            advertised_callback_url = advertised.unwrap_or("<none>"),
+            resolved_callback_base = %base,
+            broker_url = %self.broker_url,
+            "resolved worker callback base url (direct=broker pod, lb_fallback=load-balanced service)"
+        );
+        base
     }
 
     fn validated_callback_base(&self, callback_url: &str) -> Option<String> {
