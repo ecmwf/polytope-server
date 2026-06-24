@@ -59,11 +59,15 @@ class GarbageCollector:
         self.metric_store = create_metric_store(config.get("metric_store"))
 
     def run(self):
-        while not time.sleep(self.interval):
-            self.remove_old_requests()
-            self.remove_old_metrics()
-            self.remove_dangling_data()
-            self.remove_by_size()
+        try:
+            while not time.sleep(self.interval):
+                self.remove_old_requests()
+                self.remove_old_metrics()
+                self.remove_dangling_data()
+                self.remove_by_size()
+        finally:
+            self.request_store.close()
+            self.metric_store.close()
 
     def remove_old_requests(self):
         """Removes requests that are FAILED or PROCESSED after the configured time"""

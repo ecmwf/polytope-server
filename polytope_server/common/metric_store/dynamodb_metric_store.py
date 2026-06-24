@@ -136,14 +136,14 @@ class DynamoDBMetricStore(MetricStore):
         table_name = config.get("table_name", "metrics")
 
         dynamodb = boto3.resource("dynamodb", region_name=region, endpoint_url=endpoint_url)
-        client = dynamodb.meta.client
+        self.client = dynamodb.meta.client
         self.table = dynamodb.Table(table_name)
 
         try:
-            response = client.describe_table(TableName=table_name)
+            response = self.client.describe_table(TableName=table_name)
             if response["Table"]["TableStatus"] != "ACTIVE":
                 raise RuntimeError(f"DynamoDB table {table_name} is not active.")
-        except client.exceptions.ResourceNotFoundException:
+        except self.client.exceptions.ResourceNotFoundException:
             _create_table(dynamodb, table_name)
 
     def get_type(self):
@@ -252,6 +252,10 @@ class DynamoDBMetricStore(MetricStore):
                 batch.delete_item(Key={"uuid": str(uuid)})
 
         return len(items_to_delete)
+
+    def close(self) -> None:
+        if self.client is not None:
+            self.client.close()
 
     def get_usage_metrics_aggregated(self, cutoff_timestamps):
         """

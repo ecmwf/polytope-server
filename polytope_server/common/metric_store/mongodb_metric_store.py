@@ -180,3 +180,7 @@ class MongoMetricStore(MetricStore):
         cutoff = cutoff.timestamp()
         result = self.store.delete_many({"timestamp": {"$lt": cutoff}})
         return result.deleted_count
+
+    def close(self) -> None:
+        if self.mongo_client is not None:
+            self.mongo_client.close()

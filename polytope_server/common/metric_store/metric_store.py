@@ -76,6 +76,10 @@ class MetricStore(ABC):
             int: Number of removed metrics.
         """
 
+    @abstractmethod
+    def close(self) -> None:
+        """Close any resources held by the metric store."""
+
 
 type_to_class_map = {"mongodb": "MongoMetricStore", "dynamodb": "DynamoDBMetricStore"}
 

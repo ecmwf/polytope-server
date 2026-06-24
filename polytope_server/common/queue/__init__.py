@@ -18,4 +18,13 @@
 # does it submit to any jurisdiction.
 #
 
-from .queue import *
+from .queue import Message, Queue  # noqa: F401
+from .rabbitmq_queue import RabbitmqQueue
+from .sqs_queue import SQSQueue
+
+queue_types = {"rabbitmq": RabbitmqQueue, "sqs": SQSQueue}
+
+
+def create_queue(queue_config) -> Queue:
+    queue_type = next(iter(queue_config.keys()), "rabbitmq")
+    return queue_types[queue_type](queue_config[queue_type])
