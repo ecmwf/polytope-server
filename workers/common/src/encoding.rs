@@ -6,9 +6,9 @@ use tokio_util::io::{ReaderStream, StreamReader};
 
 use crate::delivery_config::Codec;
 
-type BoxStream = Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static>>;
+pub(crate) type BoxStream = Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static>>;
 
-fn compress_to_stream<S>(stream: S, codec: &Codec) -> BoxStream
+pub(crate) fn compress_to_stream<S>(stream: S, codec: &Codec) -> BoxStream
 where
     S: Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin + 'static,
 {

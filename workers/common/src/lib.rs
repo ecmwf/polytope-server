@@ -1,7 +1,9 @@
-use std::time::Duration;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use futures::Stream;
+use futures::{Stream, StreamExt};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use tokio::signal::unix::{SignalKind, signal};
@@ -11,10 +13,11 @@ pub mod delivery;
 pub mod delivery_config;
 pub mod encoding;
 pub mod management;
+pub mod metrics;
 
 use crate::delivery::{DeliveryContext, ResultDelivery, make_delivery};
 use crate::delivery_config::{Codec, DeliveryConfig};
-use crate::encoding::encode_stream;
+use crate::encoding::compress_to_stream;
 
 fn codec_from_accept_encoding(accept_encoding: Option<&str>) -> Codec {
     let enc = accept_encoding.unwrap_or("");
@@ -224,6 +227,7 @@ async fn worker_task<P: Processor + 'static>(
                     Ok(response) => response,
                     Err(err) => {
                         tracing::warn!("event.name" = "worker.broker.poll.failed", outcome = "error", broker_url = %config.broker_url, error = %err, "worker poll failed");
+                        metrics::record_poll("error");
                         tokio::time::sleep(config.retry_backoff).await;
                         continue;
                     }
@@ -232,10 +236,12 @@ async fn worker_task<P: Processor + 'static>(
         };
 
         if response.status() == StatusCode::NO_CONTENT {
+            metrics::record_poll("empty");
             continue;
         }
         if !response.status().is_success() {
             tracing::warn!("event.name" = "worker.broker.poll.failed", outcome = "error", broker_url = %config.broker_url, status = %response.status(), "worker poll returned unexpected status");
+            metrics::record_poll("error");
             tokio::time::sleep(config.retry_backoff).await;
             continue;
         }
@@ -244,6 +250,7 @@ async fn worker_task<P: Processor + 'static>(
             Ok(work) => work,
             Err(err) => {
                 tracing::warn!("event.name" = "worker.broker.poll.failed", outcome = "error", error = %err, "worker failed to decode work item");
+                metrics::record_poll("error");
                 tokio::time::sleep(config.retry_backoff).await;
                 continue;
             }
@@ -255,6 +262,10 @@ async fn worker_task<P: Processor + 'static>(
         } else {
             tracing::info!("event.name" = "worker.job.started", outcome = "success", job.id = %work.job_id, "job started");
         }
+
+        metrics::record_poll("work");
+        metrics::record_job_started();
+        let job_start = Instant::now();
 
         let stop = std::sync::Arc::new(tokio::sync::Notify::new());
         let stop_heartbeat = stop.clone();
@@ -292,13 +303,26 @@ async fn worker_task<P: Processor + 'static>(
         });
 
         let process_result = processor.process(work.clone()).await;
+        let processing_duration = job_start.elapsed();
+
+        let byte_counter = Arc::new(AtomicU64::new(0));
+        let mut delivery_duration = Duration::ZERO;
 
         let completion = match process_result {
             ProcessResult::Success { content_type, body } => {
                 let codec = codec_from_accept_encoding(work.metadata["accept_encoding"].as_str());
                 let content_encoding = codec.content_encoding_header().map(str::to_string);
-                let encoded = encode_stream(body, &codec);
-                delivery
+                let compressed = compress_to_stream(body, &codec);
+                let bc = byte_counter.clone();
+                let counted = compressed.map(move |result| {
+                    if let Ok(ref bytes) = result {
+                        bc.fetch_add(bytes.len() as u64, Ordering::Relaxed);
+                    }
+                    result
+                });
+                let encoded = reqwest::Body::wrap_stream(counted);
+                let delivery_start = Instant::now();
+                let c = delivery
                     .deliver(
                         &content_type,
                         content_encoding.as_deref(),
@@ -309,7 +333,9 @@ async fn worker_task<P: Processor + 'static>(
                             user: &work.user,
                         },
                     )
-                    .await
+                    .await;
+                delivery_duration = delivery_start.elapsed();
+                c
             }
             ProcessResult::Reject { reason } => {
                 if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
@@ -379,6 +405,16 @@ async fn worker_task<P: Processor + 'static>(
                 (resp, "redirect")
             }
         };
+        let metric_outcome = if outcome == "data" { "success" } else { outcome };
+        let delivered_bytes = byte_counter.load(Ordering::Relaxed);
+        metrics::record_job_finished(
+            metric_outcome,
+            job_start.elapsed().as_secs_f64(),
+            processing_duration.as_secs_f64(),
+            delivery_duration.as_secs_f64(),
+            delivered_bytes,
+        );
+
         if matches!(outcome, "data" | "redirect") {
             if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
                 tracing::info!("event.name" = "worker.job.completed", outcome = "success", job.id = %work.job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "job completed");

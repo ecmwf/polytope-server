@@ -3797,6 +3797,7 @@ dependencies = [
  "bytes",
  "futures",
  "http-body-util",
+ "opentelemetry",
  "polytope-observability",
  "reqwest 0.12.28",
  "serde",
