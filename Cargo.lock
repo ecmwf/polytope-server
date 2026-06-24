@@ -266,11 +266,11 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 [[package]]
 name = "authotron"
 version = "0.3.6"
-source = "git+https://github.com/ecmwf/auth-o-tron.git?branch=main#025c96afe5d3edc11f51a0292c28874dc61d9264"
+source = "git+https://github.com/ecmwf/auth-o-tron.git?branch=main#8b0ce8966f5b9c4d43197b93c346a9c236098f39"
 dependencies = [
  "aide",
  "async-trait",
- "authotron-types 0.1.0 (git+https://github.com/ecmwf/auth-o-tron.git?branch=main)",
+ "authotron-types",
  "axum",
  "base64",
  "cached",
@@ -295,9 +295,9 @@ dependencies = [
 [[package]]
 name = "authotron-client"
 version = "0.1.0"
-source = "git+https://github.com/ecmwf/auth-o-tron.git?branch=fix%2Fcoalesce-auth-cache#8efcd06fe416bf0f56b8605e13904e6d7016f5c1"
+source = "git+https://github.com/ecmwf/auth-o-tron.git?branch=main#8b0ce8966f5b9c4d43197b93c346a9c236098f39"
 dependencies = [
- "authotron-types 0.1.0 (git+https://github.com/ecmwf/auth-o-tron.git?branch=fix%2Fcoalesce-auth-cache)",
+ "authotron-types",
  "chrono",
  "jsonwebtoken",
  "moka",
@@ -310,16 +310,7 @@ dependencies = [
 [[package]]
 name = "authotron-types"
 version = "0.1.0"
-source = "git+https://github.com/ecmwf/auth-o-tron.git?branch=fix%2Fcoalesce-auth-cache#8efcd06fe416bf0f56b8605e13904e6d7016f5c1"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "authotron-types"
-version = "0.1.0"
-source = "git+https://github.com/ecmwf/auth-o-tron.git?branch=main#025c96afe5d3edc11f51a0292c28874dc61d9264"
+source = "git+https://github.com/ecmwf/auth-o-tron.git?branch=main#8b0ce8966f5b9c4d43197b93c346a9c236098f39"
 dependencies = [
  "serde",
  "serde_json",
@@ -885,7 +876,7 @@ checksum = "c4512299f36f043ab09a583e57bceb5a5aab7a73db1805848e8fef3c9e8c78b3"
 [[package]]
 name = "bits"
 version = "0.1.0"
-source = "git+https://github.com/ecmwf/bits-broker.git?rev=ec18c4c7b528cf1cb9e3ce4d7e2aa04bb3e37ac3#ec18c4c7b528cf1cb9e3ce4d7e2aa04bb3e37ac3"
+source = "git+https://github.com/ecmwf/bits-broker.git?branch=main#a843c6a18e30d88088349b89f7a30172f9a21449"
 dependencies = [
  "async-nats",
  "async-trait",
@@ -2613,7 +2604,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -3823,7 +3814,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "authotron-client",
- "authotron-types 0.1.0 (git+https://github.com/ecmwf/auth-o-tron.git?branch=fix%2Fcoalesce-auth-cache)",
+ "authotron-types",
  "axum",
  "bits",
  "bytes",
@@ -4120,7 +4111,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls 0.23.40",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -4158,7 +4149,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.3",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.60.2",
 ]
