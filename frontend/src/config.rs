@@ -192,30 +192,49 @@ impl ServerConfig {
             serde_yaml::Value::String(self.polytope.env.clone()),
         );
 
-        if let Ok(pod_ip) = std::env::var("POD_IP")
-            && !pod_ip.trim().is_empty()
-        {
-            let worker_server_key = serde_yaml::Value::String("worker_server".to_string());
-            if let Some(worker_server) = inner
+        // A `worker_server` block means this broker dispatches to remote-pool
+        // workers, which must send completion/heartbeat callbacks back to THIS
+        // specific broker instance. bits derives that direct callback address
+        // from `advertised_addr`, which we populate from POD_IP. If POD_IP is
+        // missing, bits' `callback_url` is `None` and workers silently fall back
+        // to the load-balanced broker URL — completion callbacks then land on a
+        // random broker, are dropped, and the job is stranded in-progress with
+        // an un-reclaimable durable record. Fail loud rather than silently
+        // misroute (a silent fallback previously masked exactly this bug).
+        let worker_server_key = serde_yaml::Value::String("worker_server".to_string());
+        if inner.contains_key(&worker_server_key) {
+            let pod_ip = std::env::var("POD_IP").unwrap_or_default();
+            let pod_ip = pod_ip.trim();
+            if pod_ip.is_empty() {
+                return Err(<serde_yaml::Error as serde::ser::Error>::custom(
+                    "bits.worker_server is configured but POD_IP is empty or unset: cannot \
+                     advertise a direct worker-callback address. Refusing to start to avoid \
+                     load-balanced callback misrouting that strands jobs. Ensure the frontend \
+                     pod sets POD_IP from status.podIP (downward API).",
+                ));
+            }
+            let worker_server = inner
                 .get_mut(&worker_server_key)
                 .and_then(serde_yaml::Value::as_mapping_mut)
-            {
-                let port = worker_server
-                    .get(serde_yaml::Value::String("port".to_string()))
-                    .and_then(serde_yaml::Value::as_u64)
-                    .and_then(|port| u16::try_from(port).ok())
-                    .unwrap_or(9001);
-                let pod_ip = pod_ip.trim();
-                let advertised_addr = if pod_ip.contains(':') && !pod_ip.starts_with('[') {
-                    format!("[{pod_ip}]:{port}")
-                } else {
-                    format!("{pod_ip}:{port}")
-                };
-                worker_server.insert(
-                    serde_yaml::Value::String("advertised_addr".to_string()),
-                    serde_yaml::Value::String(advertised_addr),
-                );
-            }
+                .ok_or_else(|| {
+                    <serde_yaml::Error as serde::ser::Error>::custom(
+                        "bits.worker_server must be a mapping",
+                    )
+                })?;
+            let port = worker_server
+                .get(serde_yaml::Value::String("port".to_string()))
+                .and_then(serde_yaml::Value::as_u64)
+                .and_then(|port| u16::try_from(port).ok())
+                .unwrap_or(9001);
+            let advertised_addr = if pod_ip.contains(':') && !pod_ip.starts_with('[') {
+                format!("[{pod_ip}]:{port}")
+            } else {
+                format!("{pod_ip}:{port}")
+            };
+            worker_server.insert(
+                serde_yaml::Value::String("advertised_addr".to_string()),
+                serde_yaml::Value::String(advertised_addr),
+            );
         }
 
         serde_yaml::to_string(&bits)
@@ -356,6 +375,29 @@ bits: {}
                 .get("advertised_addr")
                 .and_then(|v| v.as_str()),
             Some("10.1.2.3:9001")
+        );
+    }
+
+    #[test]
+    fn bits_yaml_errors_when_worker_server_present_but_pod_ip_missing() {
+        let _guard = env_lock();
+        remove_pod_ip();
+
+        let yaml = config_with_polytope(
+            r#"bits:
+  bits:
+    worker_server:
+      host: "0.0.0.0"
+      port: 9001
+"#,
+        );
+        let cfg: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
+        let err = cfg
+            .bits_yaml()
+            .expect_err("worker_server without POD_IP must hard-fail");
+        assert!(
+            err.to_string().contains("POD_IP"),
+            "error should mention POD_IP: {err}"
         );
     }
 
