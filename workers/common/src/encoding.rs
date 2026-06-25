@@ -1,7 +1,9 @@
 use async_compression::tokio::bufread::{GzipEncoder, ZstdEncoder};
 use bytes::Bytes;
-use futures::Stream;
+use futures::{Stream, StreamExt};
 use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio_util::io::{ReaderStream, StreamReader};
 
 use crate::delivery_config::Codec;
@@ -34,7 +36,25 @@ pub fn encode_stream<S>(stream: S, codec: &Codec) -> reqwest::Body
 where
     S: Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin + 'static,
 {
-    reqwest::Body::wrap_stream(compress_to_stream(stream, codec))
+    encode_stream_counted(stream, codec).0
+}
+
+/// Like [`encode_stream`], but also returns a counter that tallies the number of
+/// post-encoding bytes (i.e. the bytes actually delivered) as the body is
+/// consumed downstream. The counter only reaches its final value once the
+/// returned body has been fully streamed, so read it after delivery completes.
+pub fn encode_stream_counted<S>(stream: S, codec: &Codec) -> (reqwest::Body, Arc<AtomicU64>)
+where
+    S: Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin + 'static,
+{
+    let counter = Arc::new(AtomicU64::new(0));
+    let counter_clone = Arc::clone(&counter);
+    let counted = compress_to_stream(stream, codec).inspect(move |item| {
+        if let Ok(chunk) = item {
+            counter_clone.fetch_add(chunk.len() as u64, Ordering::Relaxed);
+        }
+    });
+    (reqwest::Body::wrap_stream(counted), counter)
 }
 
 #[cfg(test)]
@@ -102,5 +122,33 @@ mod tests {
         let decoder = GzipDecoder::new(reader);
         let decompressed = collect_stream(ReaderStream::new(decoder)).await;
         assert_eq!(decompressed, data);
+    }
+
+    #[tokio::test]
+    async fn encode_stream_counted_tallies_identity_bytes() {
+        use http_body_util::BodyExt;
+        let data = vec![b'x'; 4096];
+        let (body, counter) = encode_stream_counted(make_stream(data.clone()), &Codec::Identity);
+        // Counter only settles once the body is fully consumed.
+        assert_eq!(counter.load(Ordering::Relaxed), 0);
+        let delivered = body.collect().await.unwrap().to_bytes();
+        assert_eq!(delivered.len(), data.len());
+        assert_eq!(counter.load(Ordering::Relaxed), data.len() as u64);
+    }
+
+    #[tokio::test]
+    async fn encode_stream_counted_counts_post_encoding_bytes() {
+        use http_body_util::BodyExt;
+        let data = vec![b'a'; 10_000];
+        let (body, counter) = encode_stream_counted(make_stream(data.clone()), &Codec::Gzip);
+        let delivered = body.collect().await.unwrap().to_bytes();
+        let counted = counter.load(Ordering::Relaxed);
+        // The counter reflects bytes actually delivered (post-compression), not input size.
+        assert_eq!(counted as usize, delivered.len());
+        assert!(
+            counted < data.len() as u64,
+            "gzip of repetitive data should be smaller than the {}-byte input, got {counted}",
+            data.len()
+        );
     }
 }

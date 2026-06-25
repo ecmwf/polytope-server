@@ -148,6 +148,8 @@ pub struct HttpConfig {
     pub host: String,
     #[serde(default = "default_port")]
     pub port: u16,
+    #[serde(default)]
+    pub internal_poll_port: Option<u16>,
 }
 
 impl Default for HttpConfig {
@@ -155,6 +157,7 @@ impl Default for HttpConfig {
         Self {
             host: default_host(),
             port: default_port(),
+            internal_poll_port: None,
         }
     }
 }
@@ -205,17 +208,83 @@ impl ServerConfig {
             serde_yaml::Value::String(self.polytope.env.clone()),
         );
 
+        // A `worker_server` block means this broker dispatches to remote-pool
+        // workers, which must send completion/heartbeat callbacks back to THIS
+        // specific broker instance. bits derives that direct callback address
+        // from `advertised_addr`, which we populate from POD_IP. If POD_IP is
+        // missing, bits' `callback_url` is `None` and workers silently fall back
+        // to the load-balanced broker URL — completion callbacks then land on a
+        // random broker, are dropped, and the job is stranded in-progress with
+        // an un-reclaimable durable record. Fail loud rather than silently
+        // misroute (a silent fallback previously masked exactly this bug).
+        let worker_server_key = serde_yaml::Value::String("worker_server".to_string());
+        if inner.contains_key(&worker_server_key) {
+            let pod_ip = std::env::var("POD_IP").unwrap_or_default();
+            let pod_ip = pod_ip.trim();
+            if pod_ip.is_empty() {
+                return Err(<serde_yaml::Error as serde::ser::Error>::custom(
+                    "bits.worker_server is configured but POD_IP is empty or unset: cannot \
+                     advertise a direct worker-callback address. Refusing to start to avoid \
+                     load-balanced callback misrouting that strands jobs. Ensure the frontend \
+                     pod sets POD_IP from status.podIP (downward API).",
+                ));
+            }
+            let worker_server = inner
+                .get_mut(&worker_server_key)
+                .and_then(serde_yaml::Value::as_mapping_mut)
+                .ok_or_else(|| {
+                    <serde_yaml::Error as serde::ser::Error>::custom(
+                        "bits.worker_server must be a mapping",
+                    )
+                })?;
+            let port = worker_server
+                .get(serde_yaml::Value::String("port".to_string()))
+                .and_then(serde_yaml::Value::as_u64)
+                .and_then(|port| u16::try_from(port).ok())
+                .unwrap_or(9001);
+            let advertised_addr = if pod_ip.contains(':') && !pod_ip.starts_with('[') {
+                format!("[{pod_ip}]:{port}")
+            } else {
+                format!("{pod_ip}:{port}")
+            };
+            worker_server.insert(
+                serde_yaml::Value::String("advertised_addr".to_string()),
+                serde_yaml::Value::String(advertised_addr),
+            );
+        }
+
         serde_yaml::to_string(&bits)
     }
 
     pub fn bind_addr(&self) -> String {
         format!("{}:{}", self.server.host, self.server.port)
     }
+
+    pub fn internal_poll_bind_addr(&self) -> Option<String> {
+        self.server
+            .internal_poll_port
+            .map(|port| format!("{}:{}", self.server.host, port))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, MutexGuard};
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn env_lock() -> MutexGuard<'static, ()> {
+        ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    fn set_pod_ip(value: &str) {
+        unsafe { std::env::set_var("POD_IP", value) };
+    }
+
+    fn remove_pod_ip() {
+        unsafe { std::env::remove_var("POD_IP") };
+    }
 
     fn config_with_polytope(body: &str) -> String {
         format!(
@@ -296,6 +365,78 @@ bits: {}
     }
 
     #[test]
+    fn bits_yaml_injects_worker_server_advertised_addr_from_pod_ip() {
+        let _guard = env_lock();
+        set_pod_ip("10.1.2.3");
+
+        let yaml = config_with_polytope(
+            r#"bits:
+  bits:
+    worker_server:
+      host: "0.0.0.0"
+      port: 9001
+"#,
+        );
+        let cfg: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
+        let bits_yaml = cfg.bits_yaml().unwrap();
+        remove_pod_ip();
+
+        let bits_cfg: serde_yaml::Value = serde_yaml::from_str(&bits_yaml).unwrap();
+        let worker_server = bits_cfg
+            .get("bits")
+            .and_then(|bits| bits.get("worker_server"))
+            .expect("inner worker_server should exist");
+        assert_eq!(
+            worker_server
+                .get("advertised_addr")
+                .and_then(|v| v.as_str()),
+            Some("10.1.2.3:9001")
+        );
+    }
+
+    #[test]
+    fn bits_yaml_errors_when_worker_server_present_but_pod_ip_missing() {
+        let _guard = env_lock();
+        remove_pod_ip();
+
+        let yaml = config_with_polytope(
+            r#"bits:
+  bits:
+    worker_server:
+      host: "0.0.0.0"
+      port: 9001
+"#,
+        );
+        let cfg: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
+        let err = cfg
+            .bits_yaml()
+            .expect_err("worker_server without POD_IP must hard-fail");
+        assert!(
+            err.to_string().contains("POD_IP"),
+            "error should mention POD_IP: {err}"
+        );
+    }
+
+    #[test]
+    fn bits_yaml_does_not_create_worker_server_for_pod_ip() {
+        let _guard = env_lock();
+        set_pod_ip("10.1.2.3");
+
+        let yaml = config_with_polytope("bits: {}\n");
+        let cfg: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
+        let bits_yaml = cfg.bits_yaml().unwrap();
+        remove_pod_ip();
+
+        let bits_cfg: serde_yaml::Value = serde_yaml::from_str(&bits_yaml).unwrap();
+        assert!(
+            bits_cfg
+                .get("bits")
+                .and_then(|bits| bits.get("worker_server"))
+                .is_none()
+        );
+    }
+
+    #[test]
     fn test_config_with_auth() {
         let yaml = config_with_polytope(
             r#"server:
@@ -313,6 +454,26 @@ authentication:
         assert_eq!(auth.secret, "testsecret");
         assert_eq!(auth.timeout_ms, 5000);
         assert!(!auth.allow_anonymous);
+    }
+
+    #[test]
+    fn internal_poll_config_parses_port_and_bind_addr() {
+        let yaml = config_with_polytope(
+            r#"server:
+  host: "127.0.0.1"
+  port: 3000
+  internal_poll_port: 9002
+bits: {}
+"#,
+        );
+        let cfg: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
+
+        assert_eq!(cfg.server.internal_poll_port, Some(9002));
+        assert_eq!(cfg.bind_addr(), "127.0.0.1:3000");
+        assert_eq!(
+            cfg.internal_poll_bind_addr().as_deref(),
+            Some("127.0.0.1:9002")
+        );
     }
 
     #[test]

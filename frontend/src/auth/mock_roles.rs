@@ -123,9 +123,98 @@ pub fn parse_mock_roles_value(
     })
 }
 
+pub const MOCK_USER_HEADER: &str = "polytope-mock-user";
+
+/// Mocked usernames must carry this prefix so an admin (via admin_bypass_roles)
+/// can only impersonate clearly-synthetic identities (e.g. load-test users),
+/// never a real account.
+pub const MOCK_USER_PREFIX: &str = "mock-";
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MockUserError {
+    MultipleValues,
+    NonUtf8,
+    ControlCharacter,
+    Empty,
+    BadPrefix,
+    TooLong,
+}
+
+impl MockUserError {
+    pub fn message(&self) -> String {
+        match self {
+            Self::MultipleValues => "Polytope-Mock-User must be supplied at most once".to_string(),
+            Self::NonUtf8 => "Polytope-Mock-User must be valid UTF-8".to_string(),
+            Self::ControlCharacter => {
+                "Polytope-Mock-User must not contain control characters".to_string()
+            }
+            Self::Empty => "Polytope-Mock-User must not be empty".to_string(),
+            Self::BadPrefix => format!("Polytope-Mock-User must start with '{MOCK_USER_PREFIX}'"),
+            Self::TooLong => "Polytope-Mock-User must be at most 64 characters".to_string(),
+        }
+    }
+}
+
+pub fn has_mock_user_header(headers: &HeaderMap) -> bool {
+    headers.contains_key(MOCK_USER_HEADER)
+}
+
+pub fn parse_mock_user_header(headers: &HeaderMap) -> Result<Option<String>, MockUserError> {
+    let name = HeaderName::from_static(MOCK_USER_HEADER);
+    let mut values = headers.get_all(&name).iter();
+    let Some(value) = values.next() else {
+        return Ok(None);
+    };
+    if values.next().is_some() {
+        return Err(MockUserError::MultipleValues);
+    }
+    let value = value.to_str().map_err(|_| MockUserError::NonUtf8)?;
+    parse_mock_user_value(value).map(Some)
+}
+
+pub fn parse_mock_user_value(value: &str) -> Result<String, MockUserError> {
+    if value.chars().any(char::is_control) {
+        return Err(MockUserError::ControlCharacter);
+    }
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(MockUserError::Empty);
+    }
+    if value.len() > 64 {
+        return Err(MockUserError::TooLong);
+    }
+    if !value.starts_with(MOCK_USER_PREFIX) {
+        return Err(MockUserError::BadPrefix);
+    }
+    Ok(value.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mock_user_accepts_mock_prefix_and_rejects_real_usernames() {
+        // Synthetic mock identities are accepted.
+        assert_eq!(parse_mock_user_value("mock-18").unwrap(), "mock-18");
+        assert_eq!(parse_mock_user_value("  mock-abc  ").unwrap(), "mock-abc");
+        // Real-looking usernames cannot be impersonated (no mock- prefix).
+        assert_eq!(parse_mock_user_value("majh"), Err(MockUserError::BadPrefix));
+        assert_eq!(
+            parse_mock_user_value("admin"),
+            Err(MockUserError::BadPrefix)
+        );
+        // Degenerate inputs are rejected.
+        assert_eq!(parse_mock_user_value(""), Err(MockUserError::Empty));
+        assert_eq!(
+            parse_mock_user_value("mock-\u{0007}x"),
+            Err(MockUserError::ControlCharacter)
+        );
+        assert_eq!(
+            parse_mock_user_value(&format!("mock-{}", "x".repeat(70))),
+            Err(MockUserError::TooLong)
+        );
+    }
     use axum::http::HeaderValue;
 
     fn bypass() -> Option<HashMap<String, Vec<String>>> {

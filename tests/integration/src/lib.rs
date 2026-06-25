@@ -645,6 +645,7 @@ async fn authenticated_retrieve_v2() {
 
 #[tokio::test]
 async fn bobs_delivery_pipeline() {
+    unsafe { std::env::set_var("POD_IP", "127.0.0.1") };
     let worker_port = free_port().await;
 
     let (bobs_url, bobs_handle, _bobs_dir) = spawn_bobs().await.expect("spawn bobs");

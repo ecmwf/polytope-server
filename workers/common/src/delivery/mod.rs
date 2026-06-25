@@ -1,13 +1,20 @@
 use async_trait::async_trait;
 use aws_config::BehaviorVersion;
 
-use crate::Completion;
 use crate::delivery_config::{DeliveryConfig, DeliveryType};
+use crate::{Completion, SourceError};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct DeliveryContext<'a> {
     pub job_id: &'a str,
     pub user: &'a serde_json::Value,
+    pub source_error: Option<SourceError>,
+}
+
+impl DeliveryContext<'_> {
+    pub fn source_error_message(&self) -> Option<String> {
+        self.source_error.as_ref().and_then(SourceError::message)
+    }
 }
 
 pub(crate) fn enduser_fields(user: &serde_json::Value) -> (Option<&str>, Option<&str>) {
@@ -50,6 +57,14 @@ pub async fn make_delivery(config: &DeliveryConfig) -> Box<dyn ResultDelivery> {
                 .trim_start_matches("http://")
                 .trim_start_matches("https://");
             let api_base = format!("http://{host}/api/v1");
+            // create_client deliberately keeps NO idle connections
+            // (pool_max_idle_per_host(0)). Each create opens a fresh connection to
+            // the BOBS *service*, so kube-proxy re-load-balances it across BOBS
+            // pods and spools spread evenly. A warm pooled h2 connection would pin
+            // ALL of a worker's creates to one BOBS pod, concentrating load and
+            // memory (and OOM risk) on that pod. The body write/complete then follow
+            // the per-pod write_url returned by create, so body_client correctly
+            // tracks whichever pod owns each spool.
             let create_client = reqwest::Client::builder()
                 .http2_prior_knowledge()
                 .pool_max_idle_per_host(0)
@@ -123,7 +138,7 @@ impl ResultDelivery for DirectDelivery {
         content_encoding: Option<&str>,
         body: reqwest::Body,
         metadata: &serde_json::Value,
-        _context: DeliveryContext<'_>,
+        context: DeliveryContext<'_>,
     ) -> Completion {
         if metadata.get("buffer_full_output").and_then(|v| v.as_bool()) == Some(true) {
             return Completion::Error {
@@ -135,6 +150,7 @@ impl ResultDelivery for DirectDelivery {
             content_encoding: content_encoding.map(str::to_string),
             content_length: None,
             body,
+            source_error: context.source_error,
         }
     }
 }

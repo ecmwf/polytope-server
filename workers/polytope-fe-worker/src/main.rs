@@ -79,7 +79,7 @@ impl Processor for PolytopeProcessor {
 struct Cli {
     #[arg(long, default_value = "http://127.0.0.1:9001")]
     broker_url: String,
-    #[arg(long, default_value_t = 30000)]
+    #[arg(long, default_value_t = polytope_worker_common::DEFAULT_POLL_TIMEOUT_MS)]
     poll_timeout_ms: u64,
     #[arg(long, default_value_t = 10.0)]
     heartbeat_secs: f64,
@@ -113,7 +113,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     polytope_observability::init_tracing("polytope-worker-polytope-fe");
     let cli = Cli::parse();
     let worker_concurrency = resolved_worker_concurrency(cli.worker_concurrency);
-    info!(worker_concurrency, "resolved worker concurrency");
+    info!(
+        worker_concurrency,
+        poll_timeout_ms = cli.poll_timeout_ms,
+        "resolved worker settings"
+    );
 
     let config = WorkerConfigFile::load(&cli.config_path).unwrap_or_else(|err| {
         tracing::error!("event.name" = "startup.config.failed", outcome = "error", config_path = %cli.config_path, error = %err, "failed to load config");
@@ -189,7 +193,11 @@ import json
 
 def process(payload_json):
     payload = json.loads(payload_json)
-    output = json.dumps({"echo": payload["request"]}).encode("utf-8")
+    # Fail if metadata is not present
+    assert "metadata" in payload, "metadata field missing from PyO3 payload"
+    # Fail if metadata value is not passed through
+    assert payload["metadata"].get("test_key") == "test_value", "metadata content not preserved"
+    output = json.dumps({"echo": payload["request"], "metadata": payload["metadata"]}).encode("utf-8")
     return (output, '{"total_ms": 0}')
 "#,
         )
@@ -215,7 +223,8 @@ def process(payload_json):
                 job_id: "job-1".into(),
                 request: json!({"class": "od"}),
                 user: json!({}),
-                metadata: json!({}),
+                metadata: json!({"test_key": "test_value"}),
+                callback_url: None,
             })
             .await;
 

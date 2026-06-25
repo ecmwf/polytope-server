@@ -8,7 +8,7 @@ use tracing::{debug, info, warn};
 struct Cli {
     #[arg(long, default_value = "http://127.0.0.1:9001")]
     broker_url: String,
-    #[arg(long, default_value_t = 30000)]
+    #[arg(long, default_value_t = polytope_worker_common::DEFAULT_POLL_TIMEOUT_MS)]
     poll_timeout_ms: u64,
     #[arg(long, default_value_t = 10.0)]
     heartbeat_secs: f64,
@@ -40,7 +40,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     polytope_observability::init_tracing("polytope-worker-test");
     let cli = Cli::parse();
     let worker_concurrency = resolved_worker_concurrency(cli.worker_concurrency);
-    info!(worker_concurrency, "resolved worker concurrency");
+    info!(
+        worker_concurrency,
+        poll_timeout_ms = cli.poll_timeout_ms,
+        "resolved worker settings"
+    );
     let config = WorkerConfigFile::load(&cli.config_path).unwrap_or_else(|err| {
         tracing::error!("event.name" = "startup.config.failed", outcome = "error", config_path = %cli.config_path, error = %err, "failed to load config");
         std::process::exit(1);
@@ -87,6 +91,7 @@ mod tests {
             request: serde_json::json!({"collection": "era5", "level": 500}),
             user: serde_json::json!({}),
             metadata: serde_json::json!({}),
+            callback_url: None,
         }
     }
 
@@ -101,6 +106,7 @@ mod tests {
             }),
             user: serde_json::json!({}),
             metadata: serde_json::json!({}),
+            callback_url: None,
         }
     }
 
@@ -116,6 +122,7 @@ mod tests {
             }),
             user: serde_json::json!({}),
             metadata: serde_json::json!({}),
+            callback_url: None,
         }
     }
 
@@ -131,7 +138,9 @@ mod tests {
     /// Collect all stream chunks into a single flat byte vec.
     async fn collect_success_body(result: ProcessResult) -> (String, Vec<u8>) {
         match result {
-            ProcessResult::Success { content_type, body } => {
+            ProcessResult::Success {
+                content_type, body, ..
+            } => {
                 let bytes = body
                     .try_fold(Vec::new(), |mut acc, chunk| async move {
                         acc.extend_from_slice(&chunk);
@@ -148,7 +157,9 @@ mod tests {
     /// Collect all stream chunks, preserving individual chunk boundaries.
     async fn collect_success_chunks(result: ProcessResult) -> (String, Vec<Vec<u8>>) {
         match result {
-            ProcessResult::Success { content_type, body } => {
+            ProcessResult::Success {
+                content_type, body, ..
+            } => {
                 let chunks = body.try_collect::<Vec<_>>().await.unwrap();
                 let chunks: Vec<Vec<u8>> = chunks.into_iter().map(|b| b.to_vec()).collect();
                 (content_type, chunks)
@@ -233,7 +244,6 @@ mod tests {
             default_response_bytes: 10,
             default_chunk_bytes: default_stress_chunk_bytes(),
             max_delay_ms: 1000,
-            max_response_bytes: 1000,
             max_chunk_bytes: default_stress_max_chunk_bytes(),
         })
         .process(stress_work(50, 123))
@@ -247,29 +257,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stress_caps_request_values() {
-        let result = processor(Behaviour::Stress {
-            default_delay_ms: 0,
-            default_response_bytes: 10,
-            default_chunk_bytes: default_stress_chunk_bytes(),
-            max_delay_ms: 0,
-            max_response_bytes: 32,
-            max_chunk_bytes: default_stress_max_chunk_bytes(),
-        })
-        .process(stress_work(500, 500))
-        .await;
-        let (_, body) = collect_success_body(result).await;
-        assert_eq!(body.len(), 32);
-    }
-
-    #[tokio::test]
     async fn stress_defaults_when_request_has_no_stress_block() {
         let result = processor(Behaviour::Stress {
             default_delay_ms: 0,
             default_response_bytes: 17,
             default_chunk_bytes: default_stress_chunk_bytes(),
             max_delay_ms: 0,
-            max_response_bytes: 100,
             max_chunk_bytes: default_stress_max_chunk_bytes(),
         })
         .process(dummy_work())
@@ -301,7 +294,6 @@ mod tests {
             default_response_bytes: 1000,
             default_chunk_bytes: default_stress_chunk_bytes(),
             max_delay_ms: 0,
-            max_response_bytes: 10_000,
             max_chunk_bytes: default_stress_max_chunk_bytes(),
         })
         .process(stress_work_with_chunk(0, 1000, 256))
@@ -331,7 +323,6 @@ mod tests {
             default_response_bytes: 2048,
             default_chunk_bytes: 1024,
             max_delay_ms: 0,
-            max_response_bytes: 10_000,
             max_chunk_bytes: 512,
         })
         .process(stress_work_with_chunk(0, 2048, 10_000))
@@ -362,7 +353,6 @@ mod tests {
             default_response_bytes: 1000,
             default_chunk_bytes: 256,
             max_delay_ms: 0,
-            max_response_bytes: 10_000,
             max_chunk_bytes: default_stress_max_chunk_bytes(),
         })
         .process(stress_work(0, 1000))

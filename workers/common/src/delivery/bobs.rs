@@ -39,13 +39,24 @@ impl ResultDelivery for BobsPush {
             },
             Err(e) => {
                 let (enduser_id, enduser_realm) = enduser_fields(context.user);
-                if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
-                    tracing::error!("event.name" = "worker.delivery.failed", outcome = "error", job.id = %context.job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, error = %e, "result delivery failed");
+                if let Some(source_error) = context.source_error_message() {
+                    if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
+                        tracing::error!("event.name" = "worker.delivery.failed", outcome = "error", job.id = %context.job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, source_error = %source_error, sink_error = %e, "result delivery failed after source stream error");
+                    } else {
+                        tracing::error!("event.name" = "worker.delivery.failed", outcome = "error", job.id = %context.job_id, source_error = %source_error, sink_error = %e, "result delivery failed after source stream error");
+                    }
+                    Completion::Error {
+                        message: source_error,
+                    }
                 } else {
-                    tracing::error!("event.name" = "worker.delivery.failed", outcome = "error", job.id = %context.job_id, error = %e, "result delivery failed");
-                }
-                Completion::Error {
-                    message: format!("delivery failed: {e}"),
+                    if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
+                        tracing::error!("event.name" = "worker.delivery.failed", outcome = "error", job.id = %context.job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, error = %e, "result delivery failed");
+                    } else {
+                        tracing::error!("event.name" = "worker.delivery.failed", outcome = "error", job.id = %context.job_id, error = %e, "result delivery failed");
+                    }
+                    Completion::Error {
+                        message: format!("delivery failed: {e}"),
+                    }
                 }
             }
         }
@@ -244,6 +255,7 @@ mod tests {
                 DeliveryContext {
                     job_id: "job-1",
                     user: &serde_json::json!({}),
+                    source_error: None,
                 },
             )
             .await;
@@ -357,6 +369,7 @@ mod tests {
                 DeliveryContext {
                     job_id: "job-1",
                     user: &serde_json::json!({}),
+                    source_error: None,
                 },
             )
             .await;
@@ -380,6 +393,79 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn bobs_push_prefers_source_error_when_stream_fails_mid_body() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let bobs_url = format!("http://{addr}");
+
+        let state = Arc::new(StreamingBobsState {
+            base_url: bobs_url.clone(),
+            created_keys: Mutex::new(vec![]),
+            writes: Mutex::new(vec![]),
+            completed: Mutex::new(false),
+        });
+        let app = Router::new()
+            .route("/create", put(streaming_create))
+            .route("/write/{key}/{offset}", post(streaming_write))
+            .route("/complete/{key}", post(streaming_complete))
+            .with_state(state.clone());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+        let h2_client = reqwest::Client::builder()
+            .http2_prior_knowledge()
+            .build()
+            .expect("build h2 client");
+        let push = BobsPush {
+            api_base: bobs_url.clone(),
+            create_client: h2_client.clone(),
+            body_client: h2_client,
+        };
+
+        let source_error = crate::SourceError::new();
+        source_error.set_once(
+            "The requested post-processing is not supported for this data. Details: mars-client error: Serious bug: Representation::croppedRepresentation() not implemented for HEALPixNested[name=H128]",
+        );
+        let stream = futures::stream::iter(vec![
+            Ok::<bytes::Bytes, std::io::Error>(bytes::Bytes::from_static(b"abc")),
+            Err(std::io::Error::other(
+                "mars-client error: Serious bug: Representation::croppedRepresentation() not implemented for HEALPixNested[name=H128]",
+            )),
+        ]);
+        let body = reqwest::Body::wrap_stream(stream);
+
+        let result = push
+            .deliver(
+                "application/octet-stream",
+                None,
+                body,
+                &serde_json::json!({}),
+                DeliveryContext {
+                    job_id: "job-1",
+                    user: &serde_json::json!({}),
+                    source_error: Some(source_error),
+                },
+            )
+            .await;
+
+        match result {
+            Completion::Error { message } => {
+                assert!(
+                    message.contains("not supported for this data"),
+                    "mapped source message should win, got: {message}"
+                );
+                assert!(message.contains("croppedRepresentation"));
+                assert!(!message.starts_with("delivery failed:"));
+            }
+            other => panic!("expected Error, got {other:?}"),
+        }
+        assert!(
+            !*state.completed.lock().unwrap(),
+            "BOBS object must not be completed after a source stream error"
+        );
+    }
+
+    #[tokio::test]
     async fn bobs_push_returns_error_when_unreachable() {
         let h2_client = reqwest::Client::builder()
             .http2_prior_knowledge()
@@ -399,6 +485,7 @@ mod tests {
                 DeliveryContext {
                     job_id: "job-1",
                     user: &serde_json::json!({}),
+                    source_error: None,
                 },
             )
             .await;
@@ -448,6 +535,7 @@ mod tests {
                 DeliveryContext {
                     job_id: "job-1",
                     user: &serde_json::json!({}),
+                    source_error: None,
                 },
             )
             .await;

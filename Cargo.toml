@@ -2,6 +2,7 @@
 members = [
     "observability",
     "frontend",
+    "loadgen",
     "client",
     "tests/integration",
     "workers/common",

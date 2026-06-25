@@ -17,7 +17,7 @@ async-trait = "0.1"
 axum = { version = "0.8", features = ["http2"] }
 tower-http = { version = "0.6", features = ["cors", "compression-full"] }
 polytope-edr = { git = "https://github.com/ecmwf/polytope-edr", branch = "master" }
-bits = { git = "https://github.com/ecmwf/bits-broker.git", rev = "7dfaec5b2b79c8c3429b9ed8d8efcbe099238996", features = ["nats"] }
+bits = { git = "https://github.com/ecmwf/bits-broker.git", branch = "main", features = ["nats"] }
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
 futures = "0.3"
@@ -40,6 +40,9 @@ roxmltree = "0.20"
 metkit = { path = "../utils/metkit", optional = true }
 
 # Auth (shared crate from auth-o-tron workspace)
+# TEMP test pin: ecmwf/auth-o-tron#72 (single-flight auth cache). Revert to
+# branch = "main" once the PR merges. client/types are byte-identical to the
+# previously-pinned rev except for the cache fix.
 authotron-client = { git = "https://github.com/ecmwf/auth-o-tron.git", branch = "main" }
 authotron-types = { git = "https://github.com/ecmwf/auth-o-tron.git", branch = "main" }
 

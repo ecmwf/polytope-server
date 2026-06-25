@@ -10,4 +10,5 @@ mod date_check;
 mod schedule;
 mod transform_coercion;
 mod transform_defaults;
+mod transform_metadata;
 mod transform_patch;
