@@ -100,6 +100,12 @@ Set `RUST_LOG` to control log verbosity:
 RUST_LOG=info cargo run -p polytope-server -- config.yaml
 ```
 
+## Metrics
+
+Build the frontend with `--features telemetry` and enable `metrics:` in the config to expose Prometheus at `/metrics`.
+
+See [docs/metrics.md](docs/metrics.md) for the raw metric reference and `dev/otel/grafana/dashboards/raw-metrics.json` for the raw Grafana dashboard.
+
 ## API
 
 The frontend exposes the legacy v1 and newer v2 HTTP APIs.
