@@ -13,7 +13,7 @@
   "panels": [
     {
       "id": 1,
-      "title": "Requests Accepted (rate/min)",
+      "title": "Accepted Requests per Minute",
       "type": "timeseries",
       "gridPos": {
         "x": 0,
@@ -36,14 +36,17 @@
           "unit": "reqpm",
           "custom": {
             "fillOpacity": 20,
-            "lineWidth": 2
+            "lineWidth": 2,
+            "stacking": {
+              "mode": "normal"
+            }
           }
         }
       }
     },
     {
       "id": 2,
-      "title": "Request Outcomes (rate/min)",
+      "title": "Finished Request Outcomes per Minute",
       "type": "timeseries",
       "gridPos": {
         "x": 8,
@@ -65,11 +68,13 @@
         "defaults": {
           "unit": "reqpm",
           "custom": {
-            "fillOpacity": 20,
-            "lineWidth": 2,
+            "fillOpacity": 45,
+            "lineWidth": 1,
             "stacking": {
-              "mode": "normal"
-            }
+              "mode": "normal",
+              "group": "A"
+            },
+            "drawStyle": "line"
           }
         },
         "overrides": [
@@ -134,57 +139,78 @@
             ]
           }
         ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "mean"
+          ]
+        }
       }
     },
     {
       "id": 3,
-      "title": "Request Duration",
       "type": "timeseries",
+      "title": "Request Latency Percentiles",
       "gridPos": {
         "x": 16,
         "y": 0,
         "w": 8,
         "h": 7
       },
-      "targets": [
-        {
-          "expr": "histogram_quantile(0.50, sum by (le)(rate(polytope_broker_request_duration_seconds_bucket[5m])))",
-          "legendFormat": "p50",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          }
-        },
-        {
-          "expr": "histogram_quantile(0.95, sum by (le)(rate(polytope_broker_request_duration_seconds_bucket[5m])))",
-          "legendFormat": "p95",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          }
-        },
-        {
-          "expr": "histogram_quantile(0.99, sum by (le)(rate(polytope_broker_request_duration_seconds_bucket[5m])))",
-          "legendFormat": "p99",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          }
-        }
-      ],
       "fieldConfig": {
         "defaults": {
           "unit": "s",
           "custom": {
-            "fillOpacity": 10,
-            "lineWidth": 2
+            "lineWidth": 2,
+            "fillOpacity": 10
           }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le)(rate(polytope_broker_request_duration_seconds_bucket[5m])))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le)(rate(polytope_broker_request_duration_seconds_bucket[5m])))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "p95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le)(rate(polytope_broker_request_duration_seconds_bucket[5m])))",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "p99"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "mean"
+          ]
         }
       }
     },
     {
       "id": 4,
-      "title": "Accepted",
+      "title": "Accepted Requests in Range",
       "type": "stat",
       "gridPos": {
         "x": 0,
@@ -213,40 +239,33 @@
     },
     {
       "id": 5,
-      "title": "Success",
       "type": "stat",
+      "title": "Successful/Redirected Requests in Range",
       "gridPos": {
         "x": 4,
         "y": 7,
         "w": 4,
         "h": 4
       },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
       "targets": [
         {
-          "expr": "sum(increase(polytope_broker_requests_finished_total_total{outcome=\"success\"}[$__range]))",
+          "expr": "sum(increase(polytope_broker_requests_finished_total_total{outcome=~\"success|redirect\"}[$__range]))",
           "datasource": {
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           }
         }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "color": {
-            "fixedColor": "green",
-            "mode": "fixed"
-          }
-        }
-      },
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area"
-      }
+      ]
     },
     {
       "id": 6,
-      "title": "Errors",
+      "title": "Error Requests in Range",
       "type": "stat",
       "gridPos": {
         "x": 8,
@@ -279,40 +298,33 @@
     },
     {
       "id": 7,
-      "title": "Failed",
       "type": "stat",
+      "title": "Failed or Error Requests in Range",
       "gridPos": {
         "x": 12,
         "y": 7,
         "w": 4,
         "h": 4
       },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
       "targets": [
         {
-          "expr": "sum(increase(polytope_broker_requests_finished_total_total{outcome=\"failed\"}[$__range]))",
+          "expr": "sum(increase(polytope_broker_requests_finished_total_total{outcome=~\"failed|error\"}[$__range]))",
           "datasource": {
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           }
         }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "color": {
-            "fixedColor": "red",
-            "mode": "fixed"
-          }
-        }
-      },
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area"
-      }
+      ]
     },
     {
       "id": 8,
-      "title": "Avg Duration (ms)",
+      "title": "Avg Request Duration in Range",
       "type": "stat",
       "gridPos": {
         "x": 16,
@@ -322,7 +334,7 @@
       },
       "targets": [
         {
-          "expr": "sum(polytope_broker_request_duration_seconds_sum) / sum(polytope_broker_request_duration_seconds_count) * 1000",
+          "expr": "sum(rate(polytope_broker_request_duration_seconds_sum[$__range])) / sum(rate(polytope_broker_request_duration_seconds_count[$__range])) * 1000",
           "datasource": {
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
@@ -341,54 +353,8 @@
       }
     },
     {
-      "id": 9,
-      "title": "Success Rate",
-      "type": "stat",
-      "gridPos": {
-        "x": 20,
-        "y": 7,
-        "w": 4,
-        "h": 4
-      },
-      "targets": [
-        {
-          "expr": "sum(rate(polytope_broker_requests_finished_total_total{outcome=\"success\"}[5m])) / sum(rate(polytope_broker_requests_finished_total_total[5m])) * 100",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          }
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percent",
-          "decimals": 1,
-          "thresholds": {
-            "steps": [
-              {
-                "value": 0,
-                "color": "red"
-              },
-              {
-                "value": 80,
-                "color": "orange"
-              },
-              {
-                "value": 95,
-                "color": "green"
-              }
-            ]
-          }
-        }
-      },
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none"
-      }
-    },
-    {
-      "id": 10,
-      "title": "Per-Collection",
+      "id": 15,
+      "title": "Broker Health",
       "type": "row",
       "gridPos": {
         "x": 0,
@@ -399,313 +365,19 @@
       "collapsed": false
     },
     {
-      "id": 11,
-      "title": "destination-earth \u2014 Outcomes (rate/min)",
-      "type": "timeseries",
-      "gridPos": {
-        "x": 0,
-        "y": 12,
-        "w": 12,
-        "h": 7
-      },
-      "targets": [
-        {
-          "expr": "sum by (outcome)(rate(polytope_broker_collection_requests_finished_total_total{route_handle=\"destination-earth\"}[5m])) * 60",
-          "legendFormat": "{{outcome}}",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          }
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "reqpm",
-          "custom": {
-            "fillOpacity": 30,
-            "lineWidth": 2,
-            "stacking": {
-              "mode": "normal"
-            }
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "success"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "green",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "error"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "orange",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "failed"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "red",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "overloaded"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "yellow",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      }
-    },
-    {
-      "id": 12,
-      "title": "destination-earth \u2014 Duration",
-      "type": "timeseries",
-      "gridPos": {
-        "x": 12,
-        "y": 12,
-        "w": 12,
-        "h": 7
-      },
-      "targets": [
-        {
-          "expr": "histogram_quantile(0.50, sum by (le)(rate(polytope_broker_collection_request_duration_seconds_bucket{route_handle=\"destination-earth\"}[5m])))",
-          "legendFormat": "p50",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          }
-        },
-        {
-          "expr": "histogram_quantile(0.95, sum by (le)(rate(polytope_broker_collection_request_duration_seconds_bucket{route_handle=\"destination-earth\"}[5m])))",
-          "legendFormat": "p95",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          }
-        },
-        {
-          "expr": "histogram_quantile(0.99, sum by (le)(rate(polytope_broker_collection_request_duration_seconds_bucket{route_handle=\"destination-earth\"}[5m])))",
-          "legendFormat": "p99",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          }
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "custom": {
-            "fillOpacity": 10,
-            "lineWidth": 2
-          }
-        }
-      }
-    },
-    {
-      "id": 13,
-      "title": "ecmwf-destination-earth \u2014 Outcomes (rate/min)",
-      "type": "timeseries",
-      "gridPos": {
-        "x": 0,
-        "y": 19,
-        "w": 12,
-        "h": 7
-      },
-      "targets": [
-        {
-          "expr": "sum by (outcome)(rate(polytope_broker_collection_requests_finished_total_total{route_handle=\"ecmwf-destination-earth\"}[5m])) * 60",
-          "legendFormat": "{{outcome}}",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          }
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "reqpm",
-          "custom": {
-            "fillOpacity": 30,
-            "lineWidth": 2,
-            "stacking": {
-              "mode": "normal"
-            }
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "success"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "green",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "error"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "orange",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "failed"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "red",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "overloaded"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "yellow",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      }
-    },
-    {
-      "id": 14,
-      "title": "ecmwf-destination-earth \u2014 Duration",
-      "type": "timeseries",
-      "gridPos": {
-        "x": 12,
-        "y": 19,
-        "w": 12,
-        "h": 7
-      },
-      "targets": [
-        {
-          "expr": "histogram_quantile(0.50, sum by (le)(rate(polytope_broker_collection_request_duration_seconds_bucket{route_handle=\"ecmwf-destination-earth\"}[5m])))",
-          "legendFormat": "p50",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          }
-        },
-        {
-          "expr": "histogram_quantile(0.95, sum by (le)(rate(polytope_broker_collection_request_duration_seconds_bucket{route_handle=\"ecmwf-destination-earth\"}[5m])))",
-          "legendFormat": "p95",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          }
-        },
-        {
-          "expr": "histogram_quantile(0.99, sum by (le)(rate(polytope_broker_collection_request_duration_seconds_bucket{route_handle=\"ecmwf-destination-earth\"}[5m])))",
-          "legendFormat": "p99",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          }
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "custom": {
-            "fillOpacity": 10,
-            "lineWidth": 2
-          }
-        }
-      }
-    },
-    {
-      "id": 15,
-      "title": "Broker Health",
-      "type": "row",
-      "gridPos": {
-        "x": 0,
-        "y": 26,
-        "w": 24,
-        "h": 1
-      },
-      "collapsed": false
-    },
-    {
       "id": 16,
-      "title": "Throughput by Broker (req/min)",
+      "title": "Accepted Requests by Broker per Minute",
       "type": "timeseries",
       "gridPos": {
         "x": 0,
-        "y": 27,
+        "y": 12,
         "w": 12,
         "h": 7
       },
       "targets": [
         {
-          "expr": "sum by (service_instance_id)(rate(polytope_broker_requests_accepted_total_total[5m])) * 60",
-          "legendFormat": "{{service_instance_id}}",
+          "expr": "sum by (instance)(rate(polytope_broker_requests_accepted_total_total[5m])) * 60",
+          "legendFormat": "{{instance}}",
           "datasource": {
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
@@ -717,56 +389,54 @@
           "unit": "reqpm",
           "custom": {
             "fillOpacity": 20,
-            "lineWidth": 2
+            "lineWidth": 2,
+            "stacking": {
+              "mode": "normal"
+            }
           }
         }
       }
     },
     {
-      "id": 17,
-      "title": "Success Rate by Broker (%)",
+      "id": 19,
       "type": "timeseries",
+      "title": "Success/Redirect Percentage by Broker",
       "gridPos": {
         "x": 12,
-        "y": 27,
+        "y": 12,
         "w": 12,
         "h": 7
       },
-      "targets": [
-        {
-          "expr": "sum by (service_instance_id)(rate(polytope_broker_requests_finished_total_total{outcome=\"success\"}[5m])) / sum by (service_instance_id)(rate(polytope_broker_requests_finished_total_total[5m])) * 100",
-          "legendFormat": "{{service_instance_id}}",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          }
-        }
-      ],
       "fieldConfig": {
         "defaults": {
           "unit": "percent",
           "min": 0,
           "max": 100,
           "custom": {
-            "fillOpacity": 10,
-            "lineWidth": 2
-          },
-          "thresholds": {
-            "steps": [
-              {
-                "value": 0,
-                "color": "red"
-              },
-              {
-                "value": 80,
-                "color": "orange"
-              },
-              {
-                "value": 95,
-                "color": "green"
-              }
-            ]
+            "lineWidth": 2,
+            "fillOpacity": 10
           }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (instance)(rate(polytope_broker_requests_finished_total_total{outcome=~\"success|redirect\"}[5m])) / sum by (instance)(rate(polytope_broker_requests_finished_total_total[5m])) * 100",
+          "legendFormat": "{{instance}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "mean"
+          ]
         }
       }
     }
@@ -781,5 +451,6 @@
         "hide": 0
       }
     ]
-  }
+  },
+  "version": 4
 }

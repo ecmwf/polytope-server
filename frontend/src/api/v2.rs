@@ -8,7 +8,7 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use bits::{Job, JobResult, PollOutcome};
+use bits::{Job, JobResult, PollOutcome, SubmitOutcome};
 use serde_json::{Value, json};
 
 use crate::auth::{AuthUser, MockRolesAudit};
@@ -83,7 +83,16 @@ pub async fn submit_collection(
         "client IP candidate headers present"
     );
     let submitted_request = job.request.clone();
-    let id = route_handle.submit(job).id;
+    let id = match route_handle.submit(job) {
+        SubmitOutcome::Accepted(handle) => handle.id,
+        SubmitOutcome::Overloaded => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({"error": "broker at capacity"})),
+            )
+                .into_response();
+        }
+    };
     if let Some(Extension(user)) = auth_user.as_ref() {
         tracing::info!("event.name" = "api.job.submitted", outcome = "success", job.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, polytope.request = %polytope_observability::request(&submitted_request), "job submitted");
     } else {
