@@ -29,13 +29,23 @@ fn instruments() -> &'static Instruments {
     INSTANCE.get_or_init(|| {
         let m = meter();
         Instruments {
-            jobs_processed: m.u64_counter("polytope.worker.jobs.processed.total").build(),
-            job_duration: m.f64_histogram("polytope.worker.job.duration.seconds").build(),
-            job_processing: m.f64_histogram("polytope.worker.job.processing.seconds").build(),
+            jobs_processed: m
+                .u64_counter("polytope.worker.jobs.processed.total")
+                .build(),
+            job_duration: m
+                .f64_histogram("polytope.worker.job.duration.seconds")
+                .build(),
+            job_processing: m
+                .f64_histogram("polytope.worker.job.processing.seconds")
+                .build(),
             jobs_active: m.i64_up_down_counter("polytope.worker.jobs.active").build(),
             polls: m.u64_counter("polytope.worker.polls.total").build(),
-            delivery_duration: m.f64_histogram("polytope.worker.delivery.duration.seconds").build(),
-            delivery_bytes: m.u64_counter("polytope.worker.delivery.bytes.total").build(),
+            delivery_duration: m
+                .f64_histogram("polytope.worker.delivery.duration.seconds")
+                .build(),
+            delivery_bytes: m
+                .u64_counter("polytope.worker.delivery.bytes.total")
+                .build(),
         }
     })
 }
@@ -65,9 +75,10 @@ fn attrs_with(extra: &[KeyValue]) -> Vec<KeyValue> {
 }
 
 pub fn record_poll(result: &str) {
-    instruments()
-        .polls
-        .add(1, &attrs_with(&[KeyValue::new("result", result.to_owned())]));
+    instruments().polls.add(
+        1,
+        &attrs_with(&[KeyValue::new("result", result.to_owned())]),
+    );
 }
 
 pub fn record_job_started() {

@@ -44,8 +44,14 @@ fn init_meter_provider(
         let renamed = name
             .replace("bits.jobs.", "polytope.broker.requests.")
             .replace("bits.job.", "polytope.broker.request.")
-            .replace("bits.route_handle.jobs.", "polytope.broker.collection.requests.")
-            .replace("bits.route_handle.job.", "polytope.broker.collection.request.")
+            .replace(
+                "bits.route_handle.jobs.",
+                "polytope.broker.collection.requests.",
+            )
+            .replace(
+                "bits.route_handle.job.",
+                "polytope.broker.collection.request.",
+            )
             .replace("bits.dispatcher.", "polytope.broker.dispatcher.");
         if renamed != name {
             Some(

@@ -683,7 +683,11 @@ async fn worker_task<P: Processor + 'static>(
             .as_ref()
             .map(|counter| counter.load(Ordering::Relaxed))
             .unwrap_or(0);
-        let metric_outcome = if outcome == "data" { "success" } else { outcome };
+        let metric_outcome = if outcome == "data" {
+            "success"
+        } else {
+            outcome
+        };
         metrics::record_job_finished(
             metric_outcome,
             job_start.elapsed().as_secs_f64(),

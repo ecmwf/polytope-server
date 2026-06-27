@@ -180,10 +180,10 @@ profiles:
           concurrency: 0
           resources:
             requests:
-              cpu: "8"
+              cpu: "4"
               memory: 12Gi
             limits:
-              cpu: "8"
+              cpu: "4"
               memory: 12Gi
 
       - op: remove
