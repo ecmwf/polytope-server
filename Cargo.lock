@@ -898,7 +898,7 @@ checksum = "b4388bee8683e3d04af747c73422af53102d2bd24d9eadb6cbc100baef4b43f8"
 [[package]]
 name = "bits"
 version = "0.1.0"
-source = "git+https://github.com/ecmwf/bits-broker.git?branch=feature%2Fprometheus-scrape-metrics#7dfaec5b2b79c8c3429b9ed8d8efcbe099238996"
+source = "git+https://github.com/ecmwf/bits-broker.git?branch=feature%2Fprometheus-scrape-metrics#e069c616ca9d36496b2361f9dcb0126181482406"
 dependencies = [
  "async-nats",
  "async-trait",
