@@ -10,6 +10,50 @@ use opentelemetry::{KeyValue, global};
 
 const METER_NAME: &str = "polytope.worker";
 
+/// Install a Prometheus-backed global meter provider for this worker process.
+///
+/// The returned provider must be kept alive for the lifetime of the process.
+pub fn init_meter_provider() -> (
+    opentelemetry_sdk::metrics::SdkMeterProvider,
+    prometheus::Registry,
+) {
+    use opentelemetry_sdk::Resource;
+    use opentelemetry_sdk::metrics::SdkMeterProvider;
+
+    let registry = prometheus::Registry::new();
+    let exporter = opentelemetry_prometheus::exporter()
+        .with_registry(registry.clone())
+        .build()
+        .expect("prometheus exporter should build");
+
+    let resource = Resource::builder()
+        .with_attributes([
+            KeyValue::new("service.name", "polytope-worker"),
+            KeyValue::new(
+                "service.instance.id",
+                std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown".into()),
+            ),
+            KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
+            KeyValue::new(
+                "deployment.environment",
+                std::env::var("POLYTOPE_ENV").unwrap_or_else(|_| "unknown".into()),
+            ),
+            KeyValue::new(
+                "worker.pool",
+                std::env::var("POLYTOPE_WORKER_POOL").unwrap_or_else(|_| "unknown".into()),
+            ),
+        ])
+        .build();
+
+    let provider = SdkMeterProvider::builder()
+        .with_resource(resource)
+        .with_reader(exporter)
+        .build();
+    opentelemetry::global::set_meter_provider(provider.clone());
+
+    (provider, registry)
+}
+
 struct Instruments {
     jobs_processed: Counter<u64>,
     job_duration: Histogram<f64>,

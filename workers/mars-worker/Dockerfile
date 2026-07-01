@@ -172,7 +172,7 @@ ENV ECKIT_BUILD_INCLUDE_DIR=/opt/mars-client/include
 ENV METKIT_INCLUDE_DIR=/opt/mars-client/include
 ENV METKIT_BUILD_INCLUDE_DIR=/opt/mars-client/include
 RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi
-RUN cd workers/mars-worker && cargo build --release -p ${PACKAGE_NAME}
+RUN find workers/common/src -type f -exec touch {} + && cd workers/mars-worker && cargo build --release -p ${PACKAGE_NAME}
 
 ###############################
 # Stage 4: Production Release Image

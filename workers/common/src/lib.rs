@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use futures::{Stream, StreamExt};
+use futures::Stream;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use tokio::signal::unix::{SignalKind, signal};
@@ -725,7 +725,8 @@ pub async fn run_worker_loop<P: Processor + 'static>(
         "worker_concurrency must be at least 1"
     );
 
-    let management_app = management::router();
+    let (meter_provider, metrics_registry) = metrics::init_meter_provider();
+    let management_app = management::router(metrics_registry);
     let management_listener = tokio::net::TcpListener::bind(("0.0.0.0", config.management_port))
         .await
         .unwrap_or_else(|err| {
@@ -796,6 +797,9 @@ pub async fn run_worker_loop<P: Processor + 'static>(
         outcome = "success",
         "graceful shutdown complete"
     );
+    if let Err(err) = meter_provider.shutdown() {
+        tracing::warn!(error = %err, "meter provider shutdown failed");
+    }
 
     Ok(())
 }

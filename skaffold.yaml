@@ -25,6 +25,7 @@ metadata:
 
 .server_build_args: &server_build_args
   BIN_NAME: polytope-server
+  FEATURES: '{{default "metkit,telemetry" .SERVER_FEATURES}}'
   GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
   PACKAGE_NAME: polytope-server
   ECKIT_VERSION: '{{default "1.33.0" .SERVER_ECKIT_VERSION}}'
