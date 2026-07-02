@@ -76,6 +76,11 @@ metadata:
   GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
   PACKAGE_NAME: test-worker
 
+.loadgen_build_args: &loadgen_build_args
+  BIN_NAME: loadgen
+  GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+  PACKAGE_NAME: loadgen
+
 .kaniko_cache: &kaniko_cache
   repo: eccr.ecmwf.int/polytope/kaniko-cache
   cacheTTL: 480h
@@ -129,6 +134,14 @@ build:
         target: release
         buildArgs:
           <<: *test_build_args
+
+    - image: eccr.ecmwf.int/polytope/polytope-loadgen
+      context: .
+      docker:
+        dockerfile: loadgen/Dockerfile
+        target: release
+        buildArgs:
+          <<: *loadgen_build_args
 
   tagPolicy:
     customTemplate:
@@ -236,3 +249,13 @@ profiles:
           <<: *kaniko_common
           buildArgs:
             <<: *test_build_args
+
+      - op: remove
+        path: /build/artifacts/5/docker
+      - op: add
+        path: /build/artifacts/5/kaniko
+        value:
+          dockerfile: loadgen/Dockerfile
+          <<: *kaniko_common
+          buildArgs:
+            <<: *loadgen_build_args
