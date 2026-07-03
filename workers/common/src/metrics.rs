@@ -73,9 +73,7 @@ fn instruments() -> &'static Instruments {
     INSTANCE.get_or_init(|| {
         let m = meter();
         Instruments {
-            jobs_processed: m
-                .u64_counter("polytope.worker.jobs.processed.total")
-                .build(),
+            jobs_processed: m.u64_counter("polytope.worker.jobs.processed").build(),
             job_duration: m
                 .f64_histogram("polytope.worker.job.duration.seconds")
                 .build(),
@@ -83,13 +81,11 @@ fn instruments() -> &'static Instruments {
                 .f64_histogram("polytope.worker.job.processing.seconds")
                 .build(),
             jobs_active: m.i64_up_down_counter("polytope.worker.jobs.active").build(),
-            polls: m.u64_counter("polytope.worker.polls.total").build(),
+            polls: m.u64_counter("polytope.worker.polls").build(),
             delivery_duration: m
                 .f64_histogram("polytope.worker.delivery.duration.seconds")
                 .build(),
-            delivery_bytes: m
-                .u64_counter("polytope.worker.delivery.bytes.total")
-                .build(),
+            delivery_bytes: m.u64_counter("polytope.worker.delivery.bytes").build(),
         }
     })
 }
@@ -161,5 +157,62 @@ mod tests {
         record_poll("error");
         record_job_started();
         record_job_finished("success", 1.0, 0.5, 0.3, 1024);
+    }
+
+    /// Verify that the Prometheus exporter produces single `_total` suffixes
+    /// for counters, not double `_total_total`. This catches the bug where
+    /// OTel instrument names ending in `.total` get an extra `_total` from
+    /// the exporter.
+    #[test]
+    fn rendered_counter_names_have_single_total_suffix() {
+        use opentelemetry::metrics::MeterProvider as _;
+        use opentelemetry_sdk::metrics::SdkMeterProvider;
+        use prometheus::Encoder as _;
+
+        let registry = prometheus::Registry::new();
+        let reader = opentelemetry_prometheus::exporter()
+            .with_registry(registry.clone())
+            .build()
+            .expect("exporter builds");
+        let provider = SdkMeterProvider::builder().with_reader(reader).build();
+        let meter = provider.meter(METER_NAME);
+
+        // Create counters with the same names used in production
+        meter
+            .u64_counter("polytope.worker.jobs.processed")
+            .build()
+            .add(1, &[]);
+        meter
+            .u64_counter("polytope.worker.polls")
+            .build()
+            .add(1, &[]);
+        meter
+            .u64_counter("polytope.worker.delivery.bytes")
+            .build()
+            .add(1, &[]);
+
+        let mut buf = Vec::new();
+        prometheus::TextEncoder::new()
+            .encode(&registry.gather(), &mut buf)
+            .expect("encode");
+        let rendered = String::from_utf8(buf).expect("utf8");
+
+        // Each counter should have exactly one _total suffix
+        assert!(
+            rendered.contains("polytope_worker_jobs_processed_total"),
+            "expected single-total counter, got:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("polytope_worker_polls_total"),
+            "expected single-total counter, got:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("polytope_worker_delivery_bytes_total"),
+            "expected single-total counter, got:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("_total_total"),
+            "counter must not be double-suffixed, got:\n{rendered}"
+        );
     }
 }
