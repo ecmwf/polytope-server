@@ -13,13 +13,15 @@ fn init_meter_provider(
     site: &str,
     env: &str,
     broker_id: &str,
+    duration_buckets: Vec<f64>,
+    queue_wait_buckets: Vec<f64>,
 ) -> (
     opentelemetry_sdk::metrics::SdkMeterProvider,
     prometheus::Registry,
 ) {
     use opentelemetry::KeyValue;
     use opentelemetry_sdk::Resource;
-    use opentelemetry_sdk::metrics::SdkMeterProvider;
+    use opentelemetry_sdk::metrics::{Aggregation, SdkMeterProvider};
 
     let registry = prometheus::Registry::new();
 
@@ -39,7 +41,12 @@ fn init_meter_provider(
         ])
         .build();
 
-    let rename_view = |i: &opentelemetry_sdk::metrics::Instrument| {
+    // Single view closure that handles both name-renaming (bits.* →
+    // polytope.broker.*) and custom histogram bucket boundaries.  The bucket
+    // boundaries are matched against the *original* instrument name before any
+    // renaming occurs so that the logic stays consistent regardless of the
+    // rename mapping.
+    let view = move |i: &opentelemetry_sdk::metrics::Instrument| {
         let name = i.name();
         let renamed = name
             .replace("bits.jobs.", "polytope.broker.requests.")
@@ -53,22 +60,38 @@ fn init_meter_provider(
                 "polytope.broker.collection.request.",
             )
             .replace("bits.dispatcher.", "polytope.broker.dispatcher.");
-        if renamed != name {
-            Some(
-                opentelemetry_sdk::metrics::Stream::builder()
-                    .with_name(renamed)
-                    .build()
-                    .expect("renamed stream should be valid"),
-            )
-        } else {
-            None
+
+        // Resolve bucket boundaries from the original (pre-rename) name.
+        let boundaries = match name.as_ref() {
+            "bits.job.duration.seconds" | "bits.route_handle.job.duration.seconds" => {
+                Some(duration_buckets.clone())
+            }
+            "bits.dispatcher.queue_wait.seconds" => Some(queue_wait_buckets.clone()),
+            _ => None,
+        };
+
+        let has_rename = renamed != name;
+        if !has_rename && boundaries.is_none() {
+            return None;
         }
+
+        let mut builder = opentelemetry_sdk::metrics::Stream::builder();
+        if has_rename {
+            builder = builder.with_name(renamed);
+        }
+        if let Some(b) = boundaries {
+            builder = builder.with_aggregation(Aggregation::ExplicitBucketHistogram {
+                boundaries: b,
+                record_min_max: false,
+            });
+        }
+        builder.build().ok()
     };
 
     let provider = SdkMeterProvider::builder()
         .with_resource(resource)
         .with_reader(exporter)
-        .with_view(rename_view)
+        .with_view(view)
         .build();
 
     opentelemetry::global::set_meter_provider(provider.clone());
@@ -140,8 +163,13 @@ async fn main() {
 
     #[cfg(feature = "telemetry")]
     let _meter_provider = if metrics_config.enabled {
-        let (provider, registry) =
-            init_meter_provider(&polytope_site, &polytope_env, state.bits.broker_id());
+        let (provider, registry) = init_meter_provider(
+            &polytope_site,
+            &polytope_env,
+            state.bits.broker_id(),
+            metrics_config.resolved_duration_buckets(),
+            metrics_config.resolved_queue_wait_buckets(),
+        );
         tokio::spawn(serve_metrics(registry, metrics_config.port));
         Some(provider)
     } else {
