@@ -75,7 +75,11 @@ ENV METKIT_INCLUDE_DIR=/opt/metkit/include
 ENV METKIT_BUILD_INCLUDE_DIR=/opt/metkit/include
 ENV ECKIT_INCLUDE_DIR=/opt/metkit/include
 ENV ECKIT_BUILD_INCLUDE_DIR=/opt/metkit/include
-RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi
+ENV GIT_TERMINAL_PROMPT=0
+RUN if [ -n "$GIT_AUTH_TOKEN" ]; then \
+      git config --global credential.helper '' && \
+      git config --global url."https://git:${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; \
+    fi
 RUN cargo build --release --locked -p ${PACKAGE_NAME} \
     $(if [ -n "$FEATURES" ]; then echo "--features $FEATURES"; fi)
 
