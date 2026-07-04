@@ -62,7 +62,7 @@ fn init_meter_provider(
             .replace("bits.dispatcher.", "polytope.broker.dispatcher.");
 
         // Resolve bucket boundaries from the original (pre-rename) name.
-        let boundaries = match name.as_ref() {
+        let boundaries = match name {
             "bits.job.duration.seconds" | "bits.route_handle.job.duration.seconds" => {
                 Some(duration_buckets.clone())
             }
@@ -110,7 +110,9 @@ async fn serve_metrics(registry: prometheus::Registry, port: u16) {
         let encoder = prometheus::TextEncoder::new();
         let families = reg.gather();
         let mut buf = Vec::new();
-        encoder.encode(&families, &mut buf).unwrap();
+        encoder
+            .encode(&families, &mut buf)
+            .expect("prometheus text encoding should not fail");
         (
             [(
                 axum::http::header::CONTENT_TYPE,
@@ -162,7 +164,7 @@ async fn main() {
     });
 
     #[cfg(feature = "telemetry")]
-    let _meter_provider = if metrics_config.enabled {
+    let meter_provider = if metrics_config.enabled {
         let (provider, registry) = init_meter_provider(
             &polytope_site,
             &polytope_env,
@@ -208,10 +210,10 @@ async fn main() {
     let result = axum::serve(listener, app).await;
 
     #[cfg(feature = "telemetry")]
-    if let Some(provider) = _meter_provider {
-        if let Err(e) = provider.shutdown() {
-            tracing::warn!(error = %e, "meter provider shutdown failed");
-        }
+    if let Some(provider) = meter_provider
+        && let Err(e) = provider.shutdown()
+    {
+        tracing::warn!(error = %e, "meter provider shutdown failed");
     }
 
     tracing::info!(

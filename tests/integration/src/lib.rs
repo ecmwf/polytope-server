@@ -645,6 +645,11 @@ async fn authenticated_retrieve_v2() {
 
 #[tokio::test]
 async fn bobs_delivery_pipeline() {
+    // SAFETY: `#[tokio::test]` defaults to the `current_thread` runtime, so this
+    // is the only thread running.  The variable is set before any server or worker
+    // tasks are spawned, so no concurrent code can observe a partially-written
+    // environment.  `std::env::set_var` is unsafe (since Rust 1.66) because it is
+    // not synchronised, but single-threaded access satisfies the safety requirement.
     unsafe { std::env::set_var("POD_IP", "127.0.0.1") };
     let worker_port = free_port().await;
 

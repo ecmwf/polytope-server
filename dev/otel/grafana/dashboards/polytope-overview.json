@@ -251,72 +251,11 @@
       }
     },
     {
-      "id": 4,
-      "title": "Avg Time to Request Availability",
-      "type": "stat",
-      "gridPos": {
-        "x": 12,
-        "y": 0,
-        "w": 4,
-        "h": 4
-      },
-      "targets": [
-        {
-          "expr": "sum(rate(polytope_broker_request_duration_seconds_sum{cluster=~\"$cluster\", namespace=~\"$namespace\"}[$__range])) / sum(rate(polytope_broker_request_duration_seconds_count{cluster=~\"$cluster\", namespace=~\"$namespace\"}[$__range])) * 1000",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          }
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "ms",
-          "decimals": 0
-        },
-        "overrides": []
-      },
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none"
-      }
-    },
-    {
-      "id": 5,
-      "title": "Bytes Delivered",
-      "type": "stat",
-      "gridPos": {
-        "x": 16,
-        "y": 0,
-        "w": 4,
-        "h": 4
-      },
-      "targets": [
-        {
-          "expr": "sum(increase(polytope_worker_delivery_bytes_total{cluster=~\"$cluster\", namespace=~\"$namespace\"}[$__range]))",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          }
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bytes"
-        },
-        "overrides": []
-      },
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area"
-      }
-    },
-    {
       "id": 6,
       "title": "Queue Depth",
       "type": "stat",
       "gridPos": {
-        "x": 20,
+        "x": 16,
         "y": 0,
         "w": 4,
         "h": 4
@@ -829,12 +768,77 @@
       }
     },
     {
+      "id": 23,
+      "title": "Bytes Written to BOBS vs Read by Clients",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 20,
+        "w": 24,
+        "h": 8
+      },
+      "description": "Bytes written to BOBS spool by workers vs bytes actually read back by clients. The gap reflects redirect-served data (bypasses BOBS reads) and data staged but not yet fully downloaded.",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(rate(polytope_worker_delivery_bytes_total{cluster=~\"$cluster\", namespace=~\"$namespace\"}[5m]))",
+          "legendFormat": "written to BOBS",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(rate(bobs_read_bytes_total{cluster=~\"$cluster\", namespace=~\"$namespace\"}[5m]))",
+          "legendFormat": "read by clients",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "written to BOBS" },
+            "properties": [{
+              "id": "color",
+              "value": { "fixedColor": "blue", "mode": "fixed" }
+            }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "read by clients" },
+            "properties": [{
+              "id": "color",
+              "value": { "fixedColor": "green", "mode": "fixed" }
+            }]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": ["lastNotNull", "mean"]
+        }
+      }
+    },
+    {
       "id": 30,
       "title": "By Collection",
       "type": "row",
       "gridPos": {
         "x": 0,
-        "y": 20,
+        "y": 28,
         "w": 24,
         "h": 1
       },
@@ -846,7 +850,7 @@
           "type": "timeseries",
           "gridPos": {
             "x": 0,
-            "y": 21,
+            "y": 29,
             "w": 6,
             "h": 8
           },
@@ -884,17 +888,17 @@
         },
         {
           "id": 32,
-          "title": "Success % by Collection",
-          "type": "bargauge",
+          "title": "Success Rate / min by Collection",
+          "type": "timeseries",
           "gridPos": {
             "x": 6,
-            "y": 21,
+            "y": 29,
             "w": 6,
             "h": 8
           },
           "targets": [
             {
-              "expr": "sum by (route_handle)(rate(polytope_broker_collection_requests_finished_total{cluster=~\"$cluster\", namespace=~\"$namespace\", outcome=~\"success|redirect\"}[5m])) / sum by (route_handle)(rate(polytope_broker_collection_requests_finished_total{cluster=~\"$cluster\", namespace=~\"$namespace\"}[5m])) * 100",
+              "expr": "sum by (route_handle)(rate(polytope_broker_collection_requests_finished_total{cluster=~\"$cluster\", namespace=~\"$namespace\", outcome=~\"success|redirect\"}[5m])) * 60",
               "legendFormat": "{{route_handle}}",
               "datasource": {
                 "type": "prometheus",
@@ -904,32 +908,24 @@
           ],
           "fieldConfig": {
             "defaults": {
-              "unit": "percent",
-              "min": 0,
-              "max": 100,
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "value": null,
-                    "color": "red"
-                  },
-                  {
-                    "value": 80,
-                    "color": "yellow"
-                  },
-                  {
-                    "value": 95,
-                    "color": "green"
-                  }
-                ]
+              "unit": "reqpm",
+              "custom": {
+                "lineWidth": 2,
+                "fillOpacity": 10,
+                "showPoints": "never"
               }
             },
             "overrides": []
           },
           "options": {
-            "orientation": "horizontal",
-            "displayMode": "gradient"
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "lastNotNull",
+                "mean"
+              ]
+            }
           }
         },
         {
@@ -938,7 +934,7 @@
           "type": "timeseries",
           "gridPos": {
             "x": 12,
-            "y": 21,
+            "y": 29,
             "w": 6,
             "h": 8
           },
@@ -988,7 +984,7 @@
           "type": "piechart",
           "gridPos": {
             "x": 18,
-            "y": 21,
+            "y": 29,
             "w": 6,
             "h": 8
           },

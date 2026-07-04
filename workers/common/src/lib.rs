@@ -643,7 +643,7 @@ async fn worker_task<P: Processor + 'static>(
                                 .await?;
                             (resp, "error")
                         } else {
-                            return Err(err.into());
+                            return Err(err);
                         }
                     }
                 }
