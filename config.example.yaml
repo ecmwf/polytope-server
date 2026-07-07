@@ -8,6 +8,13 @@ polytope:
   site: "bol"
   env: "dev"
 
+# Optional — Prometheus metrics scrape endpoint.
+# Omit the section entirely to disable (zero-cost no-op).
+# Requires the binary to be built with --features telemetry.
+# metrics:
+#   enabled: true
+#   port: 9090       # default 9090
+
 bits:
   routes:
     - default:

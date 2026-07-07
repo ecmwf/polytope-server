@@ -1,0 +1,27 @@
+server:
+  host: "0.0.0.0"
+  port: 3001
+
+polytope:
+  site: "lcl"
+  env: "dev"
+
+metrics:
+  enabled: true
+  port: 9090
+
+bits:
+  targets:
+    mock:
+      type: http
+      url: "http://localhost:9999/"
+  collections:
+    era5:
+      - era5_route:
+          - target::mock
+    oper:
+      - oper_route:
+          - target::mock
+  routes:
+    - default:
+        - target::mock

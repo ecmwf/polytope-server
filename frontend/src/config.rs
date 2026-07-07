@@ -49,6 +49,92 @@ pub struct ServerConfig {
     pub edr: Option<serde_yaml::Value>,
     pub authentication: Option<AuthConfig>,
     pub admin_bypass_roles: Option<HashMap<String, Vec<String>>>,
+    pub metrics: Option<MetricsConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct MetricsConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_metrics_port")]
+    pub port: u16,
+    /// Custom histogram bucket boundaries (in seconds) for job-duration metrics
+    /// (`polytope.broker.request.duration.seconds` and the per-collection
+    /// variant). Falls back to [`MetricsConfig::resolved_duration_buckets`]
+    /// defaults when absent.
+    #[serde(default)]
+    pub duration_buckets: Option<Vec<f64>>,
+    /// Custom histogram bucket boundaries (in seconds) for the dispatcher
+    /// queue-wait metric (`polytope.broker.dispatcher.queue_wait.seconds`).
+    /// Falls back to [`MetricsConfig::resolved_queue_wait_buckets`] defaults
+    /// when absent.
+    #[serde(default)]
+    pub queue_wait_buckets: Option<Vec<f64>>,
+}
+
+fn default_metrics_port() -> u16 {
+    9090
+}
+
+/// Validates a user-supplied histogram bucket list:
+/// - must not be empty
+/// - all values must be finite (no NaN or ±∞)
+/// - all values must be ≥ 0
+/// - values must be strictly increasing (duplicates are rejected)
+fn validate_buckets(field: &str, buckets: &[f64]) -> Result<(), String> {
+    if buckets.is_empty() {
+        return Err(format!("{field}: must not be empty"));
+    }
+    let mut prev: Option<f64> = None;
+    for &b in buckets {
+        if !b.is_finite() {
+            return Err(format!("{field}: must be finite (no NaN or infinity)"));
+        }
+        if b < 0.0 {
+            return Err(format!("{field}: must not be negative"));
+        }
+        if let Some(p) = prev
+            && b <= p
+        {
+            return Err(format!("{field}: must be strictly increasing"));
+        }
+        prev = Some(b);
+    }
+    Ok(())
+}
+
+impl MetricsConfig {
+    /// Validates any user-supplied bucket lists.  Called by
+    /// [`ServerConfig::from_file`] at startup; can also be called in tests.
+    pub fn validate(&self) -> Result<(), String> {
+        if let Some(ref b) = self.duration_buckets {
+            validate_buckets("metrics.duration_buckets", b)?;
+        }
+        if let Some(ref b) = self.queue_wait_buckets {
+            validate_buckets("metrics.queue_wait_buckets", b)?;
+        }
+        Ok(())
+    }
+
+    /// Returns the configured duration-histogram bucket boundaries, or the
+    /// built-in defaults if none were specified in config.
+    pub fn resolved_duration_buckets(&self) -> Vec<f64> {
+        self.duration_buckets.clone().unwrap_or_else(|| {
+            vec![
+                0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 25.0, 60.0, 120.0,
+            ]
+        })
+    }
+
+    /// Returns the configured queue-wait-histogram bucket boundaries, or the
+    /// built-in defaults if none were specified in config.
+    pub fn resolved_queue_wait_buckets(&self) -> Vec<f64> {
+        self.queue_wait_buckets.clone().unwrap_or_else(|| {
+            vec![
+                0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0,
+            ]
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -74,6 +160,8 @@ impl<'de> Deserialize<'de> for ServerConfig {
             authentication: Option<AuthConfig>,
             #[serde(default)]
             admin_bypass_roles: Option<HashMap<String, Vec<String>>>,
+            #[serde(default)]
+            metrics: Option<MetricsConfig>,
         }
 
         let raw = RawServerConfig::deserialize(deserializer)?;
@@ -88,6 +176,7 @@ impl<'de> Deserialize<'de> for ServerConfig {
             edr: raw.edr,
             authentication: raw.authentication,
             admin_bypass_roles: raw.admin_bypass_roles,
+            metrics: raw.metrics,
         })
     }
 }
@@ -156,7 +245,12 @@ fn default_port() -> u16 {
 
 impl ServerConfig {
     pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        Ok(serde_yaml::from_str(&std::fs::read_to_string(path)?)?)
+        let cfg: Self = serde_yaml::from_str(&std::fs::read_to_string(path)?)?;
+        if let Some(ref m) = cfg.metrics {
+            m.validate()
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        }
+        Ok(cfg)
     }
 
     pub fn bits_yaml(&self) -> Result<String, serde_yaml::Error> {
@@ -536,5 +630,136 @@ authentication:
         let auth = cfg.authentication.unwrap();
         assert_eq!(auth.cache_ttl_secs, Some(300));
         assert_eq!(auth.cache_capacity, Some(50000));
+    }
+
+    #[test]
+    fn metrics_config_parses_when_present() {
+        let yaml = config_with_polytope(
+            r#"bits: {}
+metrics:
+  enabled: true
+  port: 9090
+"#,
+        );
+        let cfg: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
+        let m = cfg.metrics.unwrap();
+        assert!(m.enabled);
+        assert_eq!(m.port, 9090);
+    }
+
+    #[test]
+    fn metrics_config_optional() {
+        let yaml = config_with_polytope("bits: {}\n");
+        let cfg: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert!(cfg.metrics.is_none());
+    }
+
+    #[test]
+    fn metrics_config_defaults() {
+        let yaml = config_with_polytope(
+            r#"bits: {}
+metrics:
+  enabled: true
+"#,
+        );
+        let cfg: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
+        let m = cfg.metrics.unwrap();
+        assert!(m.enabled);
+        assert_eq!(m.port, 9090);
+    }
+
+    #[test]
+    fn metrics_custom_buckets_parse() {
+        let yaml = config_with_polytope(
+            r#"bits: {}
+metrics:
+  enabled: true
+  duration_buckets: [0.1, 0.5, 1.0, 5.0]
+  queue_wait_buckets: [0.01, 0.1, 1.0]
+"#,
+        );
+        let cfg: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
+        let m = cfg.metrics.unwrap();
+        assert_eq!(m.resolved_duration_buckets(), vec![0.1, 0.5, 1.0, 5.0]);
+        assert_eq!(m.resolved_queue_wait_buckets(), vec![0.01, 0.1, 1.0]);
+        assert!(m.validate().is_ok());
+    }
+
+    #[test]
+    fn metrics_default_buckets_when_omitted() {
+        let yaml = config_with_polytope("bits: {}\nmetrics:\n  enabled: true\n");
+        let cfg: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
+        let m = cfg.metrics.unwrap();
+        let dur = m.resolved_duration_buckets();
+        assert!(!dur.is_empty());
+        assert!(
+            dur.windows(2).all(|w| w[0] < w[1]),
+            "default duration buckets must be strictly increasing"
+        );
+        let qw = m.resolved_queue_wait_buckets();
+        assert!(!qw.is_empty());
+        assert!(
+            qw.windows(2).all(|w| w[0] < w[1]),
+            "default queue_wait buckets must be strictly increasing"
+        );
+    }
+
+    #[test]
+    fn metrics_partial_buckets_other_uses_default() {
+        let yaml = config_with_polytope(
+            r#"bits: {}
+metrics:
+  duration_buckets: [1.0, 2.0, 5.0]
+"#,
+        );
+        let cfg: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
+        let m = cfg.metrics.unwrap();
+        assert_eq!(m.resolved_duration_buckets(), vec![1.0, 2.0, 5.0]);
+        // queue_wait not set — falls back to non-empty default
+        assert!(!m.resolved_queue_wait_buckets().is_empty());
+    }
+
+    #[test]
+    fn metrics_invalid_buckets_rejected() {
+        // empty
+        let m = MetricsConfig {
+            duration_buckets: Some(vec![]),
+            ..MetricsConfig::default()
+        };
+        assert!(m.validate().is_err(), "empty list should fail");
+
+        // not strictly increasing
+        let m = MetricsConfig {
+            duration_buckets: Some(vec![2.0, 1.0]),
+            ..MetricsConfig::default()
+        };
+        assert!(m.validate().is_err(), "decreasing values should fail");
+
+        // duplicate values
+        let m = MetricsConfig {
+            duration_buckets: Some(vec![1.0, 1.0, 2.0]),
+            ..MetricsConfig::default()
+        };
+        assert!(m.validate().is_err(), "duplicate values should fail");
+
+        // negative
+        let m = MetricsConfig {
+            queue_wait_buckets: Some(vec![-0.1, 1.0]),
+            ..MetricsConfig::default()
+        };
+        assert!(m.validate().is_err(), "negative values should fail");
+
+        // non-finite
+        let m = MetricsConfig {
+            duration_buckets: Some(vec![f64::INFINITY]),
+            ..MetricsConfig::default()
+        };
+        assert!(m.validate().is_err(), "infinity should fail");
+
+        let m = MetricsConfig {
+            duration_buckets: Some(vec![f64::NAN]),
+            ..MetricsConfig::default()
+        };
+        assert!(m.validate().is_err(), "NaN should fail");
     }
 }

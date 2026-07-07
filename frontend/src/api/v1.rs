@@ -8,7 +8,7 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use bits::{Job, JobResult, PollOutcome};
+use bits::{Job, JobResult, PollOutcome, SubmitOutcome};
 use bytes::BytesMut;
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
@@ -98,11 +98,21 @@ pub async fn submit_request(
     // v1 clients require Content-Length, so delivery must buffer the full
     // output before making it available for download.
     job.metadata_mut()["buffer_full_output"] = json!(true);
+    job.metadata_mut()["collection"] = json!(&collection);
     super::set_job_mock_time_metadata(&mut job, mock_time_extensions.mock_time.as_ref());
 
     let submitted_request = job.request.clone();
     let enqueue_started = Instant::now();
-    let handle = route_handle.submit(job);
+    let handle = match route_handle.submit(job) {
+        SubmitOutcome::Accepted(handle) => handle,
+        SubmitOutcome::Overloaded => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({"error": "broker at capacity"})),
+            )
+                .into_response();
+        }
+    };
     let enqueue_ms = enqueue_started.elapsed().as_millis() as u64;
     super::audit_mock_job_submission(
         mock_audit.as_ref().map(|Extension(audit)| audit),

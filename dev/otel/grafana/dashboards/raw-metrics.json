@@ -1,0 +1,853 @@
+{
+  "uid": "polytope-raw-metrics",
+  "title": "Polytope Raw Metrics (Debug)",
+  "tags": ["polytope", "debug"],
+  "description": "Raw counter and histogram values for debugging. Use the Overview dashboard for operational monitoring.",
+  "graphTooltip": 1,
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Broker Request Counters (raw)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 8,
+        "h": 7
+      },
+      "targets": [
+        {
+          "expr": "polytope_broker_requests_accepted_total{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "accepted {{service_instance_id}}"
+        },
+        {
+          "expr": "polytope_broker_requests_finished_total{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "finished {{outcome}} {{service_instance_id}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Collection Request Counters (raw)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 8,
+        "y": 0,
+        "w": 8,
+        "h": 7
+      },
+      "targets": [
+        {
+          "expr": "polytope_broker_collection_requests_accepted_total{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "accepted {{route_handle}}"
+        },
+        {
+          "expr": "polytope_broker_collection_requests_finished_total{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "finished {{route_handle}} {{outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Dispatcher Queue (raw)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 16,
+        "y": 0,
+        "w": 8,
+        "h": 7
+      },
+      "targets": [
+        {
+          "expr": "polytope_broker_dispatcher_queue_depth{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "depth {{service_instance_id}}"
+        },
+        {
+          "expr": "polytope_broker_dispatcher_queue_wait_seconds_bucket{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "wait bucket le={{le}} {{service_instance_id}}"
+        },
+        {
+          "expr": "polytope_broker_dispatcher_queue_wait_seconds_sum{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "wait sum {{service_instance_id}}"
+        },
+        {
+          "expr": "polytope_broker_dispatcher_queue_wait_seconds_count{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "wait count {{service_instance_id}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Broker Request Duration Histogram (raw)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 7,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "expr": "polytope_broker_request_duration_seconds_bucket{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "bucket le={{le}} {{outcome}}"
+        },
+        {
+          "expr": "polytope_broker_request_duration_seconds_sum{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "sum {{outcome}}"
+        },
+        {
+          "expr": "polytope_broker_request_duration_seconds_count{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "count {{outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Collection Request Duration Histogram (raw)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 7,
+        "w": 12,
+        "h": 7
+      },
+      "targets": [
+        {
+          "expr": "polytope_broker_collection_request_duration_seconds_bucket{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "bucket {{route_handle}} le={{le}} {{outcome}}"
+        },
+        {
+          "expr": "polytope_broker_collection_request_duration_seconds_sum{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "sum {{route_handle}} {{outcome}}"
+        },
+        {
+          "expr": "polytope_broker_collection_request_duration_seconds_count{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "count {{route_handle}} {{outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "BOBS Spool Lifecycle Counters (raw)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 14,
+        "w": 8,
+        "h": 7
+      },
+      "targets": [
+        {
+          "expr": "bobs_spools_created_total{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "created {{collection}} {{service_instance_id}}"
+        },
+        {
+          "expr": "bobs_spools_completed_total{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "completed {{collection}} {{service_instance_id}}"
+        },
+        {
+          "expr": "bobs_spools_deleted_total{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "deleted {{reason}} {{collection}} {{service_instance_id}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "BOBS Active Counts (raw)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 8,
+        "y": 14,
+        "w": 8,
+        "h": 7
+      },
+      "targets": [
+        {
+          "expr": "bobs_read_active{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "read active {{collection}} {{service_instance_id}}"
+        },
+        {
+          "expr": "bobs_spools_active{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "spools {{state}} {{service_instance_id}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 8,
+      "title": "BOBS Disk and Cache (raw)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 16,
+        "y": 14,
+        "w": 8,
+        "h": 7
+      },
+      "targets": [
+        {
+          "expr": "bobs_disk_usage_bytes{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "disk {{service_instance_id}}"
+        },
+        {
+          "expr": "bobs_pages_cache_hits_total{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "cache hits {{service_instance_id}}"
+        },
+        {
+          "expr": "bobs_pages_cache_misses_total{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "cache misses {{service_instance_id}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 9,
+      "title": "BOBS I/O Byte Counters (raw)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 21,
+        "w": 8,
+        "h": 7
+      },
+      "targets": [
+        {
+          "expr": "bobs_read_bytes_total{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "read {{mode}} {{collection}} {{service_instance_id}}"
+        },
+        {
+          "expr": "bobs_write_bytes_total{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "write {{collection}} {{service_instance_id}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 10,
+      "title": "BOBS Read Duration Histogram (raw)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 8,
+        "y": 21,
+        "w": 8,
+        "h": 7
+      },
+      "targets": [
+        {
+          "expr": "bobs_read_duration_seconds_bucket{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "bucket le={{le}} {{mode}} {{outcome}} {{collection}}"
+        },
+        {
+          "expr": "bobs_read_duration_seconds_sum{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "sum {{mode}} {{outcome}} {{collection}}"
+        },
+        {
+          "expr": "bobs_read_duration_seconds_count{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "count {{mode}} {{outcome}} {{collection}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 11,
+      "title": "BOBS Write Duration Histogram (raw)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 16,
+        "y": 21,
+        "w": 8,
+        "h": 7
+      },
+      "targets": [
+        {
+          "expr": "bobs_write_duration_seconds_bucket{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "bucket le={{le}} {{collection}}"
+        },
+        {
+          "expr": "bobs_write_duration_seconds_sum{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "sum {{collection}}"
+        },
+        {
+          "expr": "bobs_write_duration_seconds_count{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "count {{collection}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 12,
+      "title": "Worker Job Counters (raw)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 8,
+        "h": 7
+      },
+      "targets": [
+        {
+          "expr": "polytope_worker_polls_total{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "poll {{result}} {{worker_pool}} {{worker_instance}}"
+        },
+        {
+          "expr": "polytope_worker_jobs_processed_total{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "processed {{outcome}} {{worker_pool}} {{worker_instance}}"
+        },
+        {
+          "expr": "polytope_worker_jobs_active{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "active {{worker_pool}} {{worker_instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 13,
+      "title": "Worker Job Duration Histograms (raw)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 8,
+        "y": 28,
+        "w": 8,
+        "h": 7
+      },
+      "targets": [
+        {
+          "expr": "polytope_worker_job_duration_seconds_bucket{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "duration bucket le={{le}} {{outcome}} {{worker_pool}}"
+        },
+        {
+          "expr": "polytope_worker_job_duration_seconds_sum{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "duration sum {{outcome}} {{worker_pool}}"
+        },
+        {
+          "expr": "polytope_worker_job_duration_seconds_count{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "duration count {{outcome}} {{worker_pool}}"
+        },
+        {
+          "expr": "polytope_worker_job_processing_seconds_bucket{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "processing bucket le={{le}} {{outcome}} {{worker_pool}}"
+        },
+        {
+          "expr": "polytope_worker_job_processing_seconds_sum{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "processing sum {{outcome}} {{worker_pool}}"
+        },
+        {
+          "expr": "polytope_worker_job_processing_seconds_count{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "processing count {{outcome}} {{worker_pool}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 14,
+      "title": "Worker Delivery Metrics (raw)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 16,
+        "y": 28,
+        "w": 8,
+        "h": 7
+      },
+      "targets": [
+        {
+          "expr": "polytope_worker_delivery_duration_seconds_bucket{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "delivery bucket le={{le}} {{outcome}} {{worker_pool}}"
+        },
+        {
+          "expr": "polytope_worker_delivery_duration_seconds_sum{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "delivery sum {{outcome}} {{worker_pool}}"
+        },
+        {
+          "expr": "polytope_worker_delivery_duration_seconds_count{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "delivery count {{outcome}} {{worker_pool}}"
+        },
+        {
+          "expr": "polytope_worker_delivery_bytes_total{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "legendFormat": "bytes {{outcome}} {{worker_pool}} {{worker_instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "DS_PROMETHEUS",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0
+      },
+      {
+        "name": "cluster",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "query": "label_values(polytope_broker_requests_accepted_total, cluster)",
+        "label": "Cluster",
+        "hide": 0,
+        "refresh": 2,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": false,
+        "sort": 1,
+        "current": {}
+      },
+      {
+        "name": "namespace",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "query": "label_values(polytope_broker_requests_accepted_total{cluster=~\"$cluster\"}, namespace)",
+        "label": "Namespace",
+        "hide": 0,
+        "refresh": 2,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": false,
+        "sort": 1,
+        "current": {}
+      }
+    ]
+  },
+  "version": 2
+}

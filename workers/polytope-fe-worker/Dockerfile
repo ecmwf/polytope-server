@@ -49,7 +49,7 @@ RUN mkdir -p .cargo && echo '[net]' > .cargo/config.toml && echo 'git-fetch-with
 COPY --from=cacher /ecmwf/polytope-server/workers/polytope-fe-worker/target workers/polytope-fe-worker/target
 COPY --from=cacher /usr/local/cargo /usr/local/cargo
 RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi
-RUN cd workers/polytope-fe-worker && cargo build --release -p ${PACKAGE_NAME}
+RUN find workers/common/src -type f -exec touch {} + && cd workers/polytope-fe-worker && cargo build --release -p ${PACKAGE_NAME}
 
 ###############################
 # FDB Build (from source)

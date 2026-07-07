@@ -12,3 +12,4 @@ AGENTS.md
 .pytest_cache
 # Pi/Weave runtime artefacts (plans, sessions, runtime notes)
 .weave/
+METRICS_PLAN.md

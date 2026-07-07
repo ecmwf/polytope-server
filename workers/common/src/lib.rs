@@ -1,6 +1,7 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -14,6 +15,7 @@ pub mod delivery;
 pub mod delivery_config;
 pub mod encoding;
 pub mod management;
+pub mod metrics;
 
 use crate::delivery::{DeliveryContext, ResultDelivery, make_delivery};
 use crate::delivery_config::{Codec, DeliveryConfig};
@@ -447,6 +449,7 @@ async fn worker_task<P: Processor + 'static>(
                         } else {
                             tracing::debug!("event.name" = "worker.broker.poll.failed", outcome = "error", broker_url = %config.broker_url, error = %err, "worker poll failed (transient)");
                         }
+                        metrics::record_poll("error");
                         tokio::time::sleep(config.retry_backoff).await;
                         continue;
                     }
@@ -456,6 +459,7 @@ async fn worker_task<P: Processor + 'static>(
 
         if response.status() == StatusCode::NO_CONTENT {
             poll_health.record_success();
+            metrics::record_poll("empty");
             tracing::debug!(
                 "event.name" = "worker.broker.poll.empty",
                 worker_index,
@@ -472,6 +476,7 @@ async fn worker_task<P: Processor + 'static>(
             } else {
                 tracing::debug!("event.name" = "worker.broker.poll.failed", outcome = "error", broker_url = %config.broker_url, status = %response.status(), "worker poll returned unexpected status (transient)");
             }
+            metrics::record_poll("error");
             tokio::time::sleep(config.retry_backoff).await;
             continue;
         }
@@ -487,6 +492,7 @@ async fn worker_task<P: Processor + 'static>(
                 } else {
                     tracing::debug!("event.name" = "worker.broker.poll.failed", outcome = "error", error = %err, "worker failed to decode work item (transient)");
                 }
+                metrics::record_poll("error");
                 tokio::time::sleep(config.retry_backoff).await;
                 continue;
             }
@@ -500,6 +506,10 @@ async fn worker_task<P: Processor + 'static>(
         } else {
             tracing::info!("event.name" = "worker.job.started", outcome = "success", job.id = %work.job_id, poll_wait_ms, idle_ms, "job started");
         }
+
+        metrics::record_poll("work");
+        metrics::record_job_started();
+        let job_start = Instant::now();
 
         let stop = std::sync::Arc::new(tokio::sync::Notify::new());
         let stop_heartbeat = stop.clone();
@@ -540,6 +550,7 @@ async fn worker_task<P: Processor + 'static>(
         let process_started = Instant::now();
         let process_result = processor.process(work.clone()).await;
         let process_ms = process_started.elapsed().as_millis() as u64;
+        let processing_duration = process_started.elapsed();
 
         let mut deliver_ms: u64 = 0;
         // Counts post-encoding bytes as the result body streams to delivery.
@@ -632,7 +643,7 @@ async fn worker_task<P: Processor + 'static>(
                                 .await?;
                             (resp, "error")
                         } else {
-                            return Err(err.into());
+                            return Err(err);
                         }
                     }
                 }
@@ -672,6 +683,18 @@ async fn worker_task<P: Processor + 'static>(
             .as_ref()
             .map(|counter| counter.load(Ordering::Relaxed))
             .unwrap_or(0);
+        let metric_outcome = if outcome == "data" {
+            "success"
+        } else {
+            outcome
+        };
+        metrics::record_job_finished(
+            metric_outcome,
+            job_start.elapsed().as_secs_f64(),
+            processing_duration.as_secs_f64(),
+            Duration::from_millis(deliver_ms).as_secs_f64(),
+            bytes,
+        );
         if matches!(outcome, "data" | "redirect") {
             if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
                 tracing::info!("event.name" = "worker.job.completed", outcome = "success", job.id = %work.job_id, bytes, poll_wait_ms, idle_ms, process_ms, deliver_ms, complete_ms, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "job completed");
@@ -702,7 +725,8 @@ pub async fn run_worker_loop<P: Processor + 'static>(
         "worker_concurrency must be at least 1"
     );
 
-    let management_app = management::router();
+    let (meter_provider, metrics_registry) = metrics::init_meter_provider();
+    let management_app = management::router(metrics_registry);
     let management_listener = tokio::net::TcpListener::bind(("0.0.0.0", config.management_port))
         .await
         .unwrap_or_else(|err| {
@@ -773,6 +797,9 @@ pub async fn run_worker_loop<P: Processor + 'static>(
         outcome = "success",
         "graceful shutdown complete"
     );
+    if let Err(err) = meter_provider.shutdown() {
+        tracing::warn!(error = %err, "meter provider shutdown failed");
+    }
 
     Ok(())
 }

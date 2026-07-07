@@ -91,6 +91,7 @@ mod tests {
             request: serde_json::json!({"collection": "era5", "level": 500}),
             user: serde_json::json!({}),
             metadata: serde_json::json!({}),
+            callback_url: None,
         }
     }
 
@@ -105,6 +106,7 @@ mod tests {
             }),
             user: serde_json::json!({}),
             metadata: serde_json::json!({}),
+            callback_url: None,
         }
     }
 
@@ -120,6 +122,7 @@ mod tests {
             }),
             user: serde_json::json!({}),
             metadata: serde_json::json!({}),
+            callback_url: None,
         }
     }
 

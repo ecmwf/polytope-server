@@ -200,7 +200,14 @@ impl polytope_edr::RequestSubmitter for BitsSubmitter {
                         ))
                     })?
                     .clone();
-                route_handle.submit(job)
+                match route_handle.submit(job) {
+                    bits::SubmitOutcome::Accepted(handle) => handle,
+                    bits::SubmitOutcome::Overloaded => {
+                        return Err(polytope_edr::SubmitError::Upstream(
+                            "broker at capacity".to_string(),
+                        ));
+                    }
+                }
             };
             Ok(polytope_edr::SubmitResponse {
                 id: handle.id.clone(),

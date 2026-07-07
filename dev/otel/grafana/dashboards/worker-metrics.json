@@ -1,0 +1,284 @@
+{
+  "uid": "polytope-worker-metrics",
+  "title": "Polytope Worker Metrics",
+  "tags": ["polytope", "worker", "tier:drilldown"],
+  "description": "Worker job processing, delivery throughput, and polling metrics. Drill down by worker pool.",
+  "links": [
+    {
+      "title": "← Overview",
+      "type": "link",
+      "icon": "arrow-left",
+      "url": "/d/polytope-overview/polytope-overview?${__url_time_range}&var-DS_PROMETHEUS=${DS_PROMETHEUS}&var-cluster=${cluster}&var-namespace=${namespace}",
+      "targetBlank": false
+    }
+  ],
+  "graphTooltip": 1,
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": {"from": "now-1h", "to": "now"},
+  "schemaVersion": 39,
+  "version": 1,
+  "templating": {
+    "list": [
+      {
+        "name": "DS_PROMETHEUS",
+        "type": "datasource",
+        "pluginId": "prometheus",
+        "query": "prometheus",
+        "label": "Datasource",
+        "current": {"selected": true, "text": "Thanos CCI1", "value": "Thanos CCI1"},
+        "hide": 0,
+        "refresh": 1
+      },
+      {
+        "name": "cluster",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+        "query": "label_values(polytope_worker_jobs_active, cluster)",
+        "label": "Cluster",
+        "hide": 0,
+        "refresh": 2,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": false,
+        "sort": 1,
+        "current": {}
+      },
+      {
+        "name": "namespace",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+        "query": "label_values(polytope_worker_jobs_active{cluster=~\"$cluster\"}, namespace)",
+        "label": "Namespace",
+        "hide": 0,
+        "refresh": 2,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": false,
+        "sort": 1,
+        "current": {}
+      },
+      {
+        "name": "worker_pool",
+        "type": "query",
+        "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+        "query": "label_values(polytope_worker_jobs_active{cluster=~\"$cluster\",namespace=~\"$namespace\"}, worker_pool)",
+        "label": "Worker Pool",
+        "hide": 0,
+        "refresh": 2,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": true,
+        "sort": 1,
+        "current": {}
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Jobs Processed per Minute (by Outcome)",
+      "gridPos": {"x": 0, "y": 0, "w": 8, "h": 7},
+      "fieldConfig": {
+        "defaults": {"unit": "reqpm", "custom": {"fillOpacity": 45, "lineWidth": 1, "stacking": {"mode": "normal", "group": "A"}}},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "success"}, "properties": [{"id": "color", "value": {"fixedColor": "green",  "mode": "fixed"}}]},
+          {"matcher": {"id": "byName", "options": "error"},   "properties": [{"id": "color", "value": {"fixedColor": "orange", "mode": "fixed"}}]},
+          {"matcher": {"id": "byName", "options": "failed"},  "properties": [{"id": "color", "value": {"fixedColor": "red",    "mode": "fixed"}}]}
+        ]
+      },
+      "targets": [
+        {
+          "expr": "sum by (outcome)(rate(polytope_worker_jobs_processed_total{cluster=~\"$cluster\",namespace=~\"$namespace\",worker_pool=~\"$worker_pool\"}[5m])) * 60",
+          "legendFormat": "{{outcome}}",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        }
+      ],
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "mean"]}}
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Active Jobs",
+      "gridPos": {"x": 8, "y": 0, "w": 8, "h": 7},
+      "fieldConfig": {
+        "defaults": {"unit": "short", "custom": {"fillOpacity": 20, "lineWidth": 2}},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (worker_pool)(polytope_worker_jobs_active{cluster=~\"$cluster\",namespace=~\"$namespace\",worker_pool=~\"$worker_pool\"})",
+          "legendFormat": "{{worker_pool}}",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        }
+      ],
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "mean"]}}
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Poll Results per Minute",
+      "gridPos": {"x": 16, "y": 0, "w": 8, "h": 7},
+      "fieldConfig": {
+        "defaults": {"unit": "reqpm", "custom": {"fillOpacity": 20, "lineWidth": 2, "stacking": {"mode": "normal"}}},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "work"},  "properties": [{"id": "color", "value": {"fixedColor": "green",  "mode": "fixed"}}]},
+          {"matcher": {"id": "byName", "options": "empty"}, "properties": [{"id": "color", "value": {"fixedColor": "blue",   "mode": "fixed"}}]},
+          {"matcher": {"id": "byName", "options": "error"}, "properties": [{"id": "color", "value": {"fixedColor": "red",    "mode": "fixed"}}]}
+        ]
+      },
+      "targets": [
+        {
+          "expr": "sum by (result)(rate(polytope_worker_polls_total{cluster=~\"$cluster\",namespace=~\"$namespace\",worker_pool=~\"$worker_pool\"}[5m])) * 60",
+          "legendFormat": "{{result}}",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        }
+      ],
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "mean"]}}
+    },
+    {
+      "id": 10,
+      "title": "Jobs Processed in Range",
+      "type": "stat",
+      "gridPos": {"x": 0, "y": 7, "w": 4, "h": 4},
+      "fieldConfig": {"defaults": {"unit": "short"}},
+      "targets": [{"expr": "sum(increase(polytope_worker_jobs_processed_total{cluster=~\"$cluster\",namespace=~\"$namespace\",worker_pool=~\"$worker_pool\"}[$__range]))", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}}]
+    },
+    {
+      "id": 11,
+      "title": "Success Rate in Range",
+      "type": "stat",
+      "gridPos": {"x": 4, "y": 7, "w": 4, "h": 4},
+      "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100}},
+      "targets": [{"expr": "sum(increase(polytope_worker_jobs_processed_total{cluster=~\"$cluster\",namespace=~\"$namespace\",worker_pool=~\"$worker_pool\",outcome=\"success\"}[$__range])) / sum(increase(polytope_worker_jobs_processed_total{cluster=~\"$cluster\",namespace=~\"$namespace\",worker_pool=~\"$worker_pool\"}[$__range])) * 100", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}}]
+    },
+    {
+      "id": 12,
+      "title": "Bytes Delivered in Range",
+      "type": "stat",
+      "gridPos": {"x": 8, "y": 7, "w": 4, "h": 4},
+      "fieldConfig": {"defaults": {"unit": "bytes"}},
+      "targets": [{"expr": "sum(increase(polytope_worker_delivery_bytes_total{cluster=~\"$cluster\",namespace=~\"$namespace\",worker_pool=~\"$worker_pool\"}[$__range]))", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}}]
+    },
+    {
+      "id": 13,
+      "title": "Avg Job Duration in Range",
+      "type": "stat",
+      "gridPos": {"x": 12, "y": 7, "w": 4, "h": 4},
+      "fieldConfig": {"defaults": {"unit": "ms"}},
+      "targets": [{"expr": "sum(rate(polytope_worker_job_duration_seconds_sum{cluster=~\"$cluster\",namespace=~\"$namespace\",worker_pool=~\"$worker_pool\"}[$__range])) / sum(rate(polytope_worker_job_duration_seconds_count{cluster=~\"$cluster\",namespace=~\"$namespace\",worker_pool=~\"$worker_pool\"}[$__range])) * 1000", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}}]
+    },
+    {
+      "id": 14,
+      "title": "Avg Processing Time in Range",
+      "type": "stat",
+      "gridPos": {"x": 16, "y": 7, "w": 4, "h": 4},
+      "fieldConfig": {"defaults": {"unit": "ms"}},
+      "targets": [{"expr": "sum(rate(polytope_worker_job_processing_seconds_sum{cluster=~\"$cluster\",namespace=~\"$namespace\",worker_pool=~\"$worker_pool\"}[$__range])) / sum(rate(polytope_worker_job_processing_seconds_count{cluster=~\"$cluster\",namespace=~\"$namespace\",worker_pool=~\"$worker_pool\"}[$__range])) * 1000", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}}]
+    },
+    {
+      "id": 15,
+      "title": "Avg Delivery Duration in Range",
+      "type": "stat",
+      "gridPos": {"x": 20, "y": 7, "w": 4, "h": 4},
+      "fieldConfig": {"defaults": {"unit": "ms"}},
+      "targets": [{"expr": "sum(rate(polytope_worker_delivery_duration_seconds_sum{cluster=~\"$cluster\",namespace=~\"$namespace\",worker_pool=~\"$worker_pool\"}[$__range])) / sum(rate(polytope_worker_delivery_duration_seconds_count{cluster=~\"$cluster\",namespace=~\"$namespace\",worker_pool=~\"$worker_pool\"}[$__range])) * 1000", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}}]
+    },
+    {
+      "id": 20,
+      "title": "Job Timing",
+      "type": "row",
+      "gridPos": {"x": 0, "y": 11, "w": 24, "h": 1},
+      "collapsed": false
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "Job Duration Percentiles (total)",
+      "gridPos": {"x": 0, "y": 12, "w": 8, "h": 7},
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"lineWidth": 2, "fillOpacity": 10}}, "overrides": []},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, sum by (le, worker_pool)(rate(polytope_worker_job_duration_seconds_bucket{cluster=~\"$cluster\",namespace=~\"$namespace\",worker_pool=~\"$worker_pool\"}[5m])))", "legendFormat": "{{worker_pool}} p50", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}},
+        {"expr": "histogram_quantile(0.95, sum by (le, worker_pool)(rate(polytope_worker_job_duration_seconds_bucket{cluster=~\"$cluster\",namespace=~\"$namespace\",worker_pool=~\"$worker_pool\"}[5m])))", "legendFormat": "{{worker_pool}} p95", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}},
+        {"expr": "histogram_quantile(0.99, sum by (le, worker_pool)(rate(polytope_worker_job_duration_seconds_bucket{cluster=~\"$cluster\",namespace=~\"$namespace\",worker_pool=~\"$worker_pool\"}[5m])))", "legendFormat": "{{worker_pool}} p99", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}}
+      ],
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "mean"]}}
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "Job Processing Time Percentiles",
+      "gridPos": {"x": 8, "y": 12, "w": 8, "h": 7},
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"lineWidth": 2, "fillOpacity": 10}}, "overrides": []},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, sum by (le, worker_pool)(rate(polytope_worker_job_processing_seconds_bucket{cluster=~\"$cluster\",namespace=~\"$namespace\",worker_pool=~\"$worker_pool\"}[5m])))", "legendFormat": "{{worker_pool}} p50", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}},
+        {"expr": "histogram_quantile(0.95, sum by (le, worker_pool)(rate(polytope_worker_job_processing_seconds_bucket{cluster=~\"$cluster\",namespace=~\"$namespace\",worker_pool=~\"$worker_pool\"}[5m])))", "legendFormat": "{{worker_pool}} p95", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}},
+        {"expr": "histogram_quantile(0.99, sum by (le, worker_pool)(rate(polytope_worker_job_processing_seconds_bucket{cluster=~\"$cluster\",namespace=~\"$namespace\",worker_pool=~\"$worker_pool\"}[5m])))", "legendFormat": "{{worker_pool}} p99", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}}
+      ],
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "mean"]}}
+    },
+    {
+      "id": 23,
+      "type": "timeseries",
+      "title": "Delivery Duration Percentiles",
+      "gridPos": {"x": 16, "y": 12, "w": 8, "h": 7},
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"lineWidth": 2, "fillOpacity": 10}}, "overrides": []},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, sum by (le, worker_pool)(rate(polytope_worker_delivery_duration_seconds_bucket{cluster=~\"$cluster\",namespace=~\"$namespace\",worker_pool=~\"$worker_pool\"}[5m])))", "legendFormat": "{{worker_pool}} p50", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}},
+        {"expr": "histogram_quantile(0.95, sum by (le, worker_pool)(rate(polytope_worker_delivery_duration_seconds_bucket{cluster=~\"$cluster\",namespace=~\"$namespace\",worker_pool=~\"$worker_pool\"}[5m])))", "legendFormat": "{{worker_pool}} p95", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}},
+        {"expr": "histogram_quantile(0.99, sum by (le, worker_pool)(rate(polytope_worker_delivery_duration_seconds_bucket{cluster=~\"$cluster\",namespace=~\"$namespace\",worker_pool=~\"$worker_pool\"}[5m])))", "legendFormat": "{{worker_pool}} p99", "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}}
+      ],
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "mean"]}}
+    },
+    {
+      "id": 30,
+      "title": "By Worker Pool",
+      "type": "row",
+      "gridPos": {"x": 0, "y": 19, "w": 24, "h": 1},
+      "collapsed": false
+    },
+    {
+      "id": 31,
+      "type": "timeseries",
+      "title": "Jobs Processed by Pool per Minute",
+      "gridPos": {"x": 0, "y": 20, "w": 8, "h": 7},
+      "fieldConfig": {"defaults": {"unit": "reqpm", "custom": {"fillOpacity": 20, "lineWidth": 2, "stacking": {"mode": "normal"}}}, "overrides": []},
+      "targets": [
+        {
+          "expr": "sum by (worker_pool)(rate(polytope_worker_jobs_processed_total{cluster=~\"$cluster\",namespace=~\"$namespace\",worker_pool=~\"$worker_pool\"}[5m])) * 60",
+          "legendFormat": "{{worker_pool}}",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        }
+      ]
+    },
+    {
+      "id": 32,
+      "type": "timeseries",
+      "title": "Poll Work Rate by Pool per Minute",
+      "gridPos": {"x": 8, "y": 20, "w": 8, "h": 7},
+      "fieldConfig": {"defaults": {"unit": "reqpm", "custom": {"fillOpacity": 20, "lineWidth": 2, "stacking": {"mode": "normal"}}}, "overrides": []},
+      "targets": [
+        {
+          "expr": "sum by (worker_pool)(rate(polytope_worker_polls_total{cluster=~\"$cluster\",namespace=~\"$namespace\",worker_pool=~\"$worker_pool\",result=\"work\"}[5m])) * 60",
+          "legendFormat": "{{worker_pool}}",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        }
+      ]
+    },
+    {
+      "id": 33,
+      "type": "timeseries",
+      "title": "Delivery Bytes Throughput by Pool",
+      "gridPos": {"x": 16, "y": 20, "w": 8, "h": 7},
+      "fieldConfig": {"defaults": {"unit": "Bps", "custom": {"fillOpacity": 20, "lineWidth": 2, "stacking": {"mode": "normal"}}}, "overrides": []},
+      "targets": [
+        {
+          "expr": "sum by (worker_pool)(rate(polytope_worker_delivery_bytes_total{cluster=~\"$cluster\",namespace=~\"$namespace\",worker_pool=~\"$worker_pool\"}[5m]))",
+          "legendFormat": "{{worker_pool}}",
+          "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"}
+        }
+      ]
+    }
+  ]
+}
