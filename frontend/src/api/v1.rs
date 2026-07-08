@@ -381,7 +381,15 @@ pub async fn delete_request(
     auth_user: Option<Extension<AuthUser>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    let revoked = usize::from(state.bits.cancel(&id));
+    let revoked = if id.eq_ignore_ascii_case("all") {
+        active_request_records(&state, auth_user.as_ref().map(|Extension(user)| user), None)
+            .into_iter()
+            .filter_map(|record| record.get("id").and_then(Value::as_str).map(str::to_string))
+            .map(|id| usize::from(state.bits.cancel(&id)))
+            .sum::<usize>()
+    } else {
+        usize::from(state.bits.cancel(&id))
+    };
     if let Some(Extension(user)) = auth_user.as_ref() {
         tracing::info!("event.name" = "api.job.cancelled", outcome = "cancelled", request.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, "job cancelled");
     } else {

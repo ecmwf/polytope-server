@@ -154,6 +154,26 @@ async fn delete_request_body_matches_python_revoke_shape() {
 }
 
 #[tokio::test]
+async fn delete_all_keyword_matches_python_revoke_shape() {
+    let resp = app()
+        .oneshot(
+            Request::delete("/api/v1/requests/ALL")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        v,
+        serde_json::json!({"message": "Successfully revoked 0 requests"})
+    );
+}
+
+#[tokio::test]
 async fn uploads_endpoint_is_explicitly_gone() {
     let resp = app()
         .oneshot(
