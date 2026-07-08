@@ -16,8 +16,8 @@ polytope-observability = { path = "../observability" }
 async-trait = "0.1"
 axum = { version = "0.8", features = ["http2"] }
 tower-http = { version = "0.6", features = ["cors", "compression-full"] }
-polytope-edr = { git = "https://github.com/ecmwf/polytope-edr", branch = "master" }
-bits = { git = "https://github.com/ecmwf/bits-broker.git", rev = "c9cd0c1d4a751b4079a6de2a7b6763ecc9a1dfd3", features = [
+polytope-edr = { git = "https://github.com/ecmwf/polytope-edr", tag = "0.1.0" }
+bits = { git = "https://github.com/ecmwf/bits-broker.git", tag = "0.1.0", features = [
   "nats",
 ] }
 bytes = "1"
@@ -51,8 +51,8 @@ rmcp = { version = "2.2.0", features = [
 metkit = { path = "../utils/metkit", optional = true }
 
 # Auth (shared crate from auth-o-tron workspace)
-authotron-client = { git = "https://github.com/ecmwf/auth-o-tron.git", branch = "main" }
-authotron-types = { git = "https://github.com/ecmwf/auth-o-tron.git", branch = "main" }
+authotron-client = { git = "https://github.com/ecmwf/auth-o-tron.git", tag = "0.3.7" }
+authotron-types = { git = "https://github.com/ecmwf/auth-o-tron.git", tag = "0.3.7" }
 
 [features]
 default = []

@@ -6,8 +6,8 @@ edition = "2021"
 [dependencies]
 async-trait = "0.1"
 axum = "0.8"
-authotron = { git = "https://github.com/ecmwf/auth-o-tron.git", branch = "main" }
-bobs = { git = "https://github.com/ecmwf/bobs.git", rev = "3f0e6895eb5738d384e72260b7a9e38c2c591b3d" }
+authotron = { git = "https://github.com/ecmwf/auth-o-tron.git", tag = "0.3.7" }
+bobs = { git = "https://github.com/ecmwf/bobs.git", tag = "0.1.0" }
 bytes = "1"
 futures = "0.3"
 polytope_client = { path = "../../client" }

@@ -186,12 +186,15 @@ pub async fn spawn_bobs() -> Result<(String, JoinHandle<()>, tempfile::TempDir),
         ..bobs::config::Config::default()
     });
 
-    let manager = Arc::new(bobs::manager::SpoolManager::<bobs::io::TokioFileIO>::new(
-        tmp_dir.path().join("spools.redb"),
+    let metrics = Arc::new(bobs::metrics::BobsMetrics::new(false));
+    let mut manager = bobs::manager::SpoolManager::<bobs::io::TokioFileIO>::new(
         tmp_dir.path(),
         config.page_size,
         config.max_cache_bytes,
-    )?);
+        config.max_live_spools,
+    )?;
+    manager.set_metrics(Arc::clone(&metrics));
+    let manager = Arc::new(manager);
 
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
@@ -201,9 +204,12 @@ pub async fn spawn_bobs() -> Result<(String, JoinHandle<()>, tempfile::TempDir),
         hostname: "test-bobs-0".to_string(),
         ordinal: "0".to_string(),
         internal_base_url: format!("http://{addr}/api/v1"),
+        metrics,
     });
 
-    let app = bobs::http::router::<bobs::io::TokioFileIO>().with_state(state);
+    let app =
+        bobs::http::router::<bobs::io::TokioFileIO, bobs::metadata::SyncSidecarMetadataStore>()
+            .with_state(state);
     let handle = tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
     });
