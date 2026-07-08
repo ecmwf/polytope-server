@@ -10,7 +10,7 @@ fn worker_events_have_required_fields_and_redact() {
     tracing::info!(
         "event.name" = "worker.job.started",
         outcome = "success",
-        job.id = "job-1",
+        request.id = "job-1",
         "enduser.id" = "alice",
         "enduser.realm" = "ecmwf",
         "job started"
@@ -18,7 +18,7 @@ fn worker_events_have_required_fields_and_redact() {
     tracing::debug!(
         "event.name" = "worker.delivery.completed",
         outcome = "success",
-        job.id = "job-1",
+        request.id = "job-1",
         bobs.key = "key",
         read_url = "https://user:pass@example.com/result",
         "delivery completed"

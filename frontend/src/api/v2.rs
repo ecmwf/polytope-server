@@ -94,9 +94,9 @@ pub async fn submit_collection(
         }
     };
     if let Some(Extension(user)) = auth_user.as_ref() {
-        tracing::info!("event.name" = "api.job.submitted", outcome = "success", job.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, polytope.request = %polytope_observability::request(&submitted_request), "job submitted");
+        tracing::info!("event.name" = "api.job.submitted", outcome = "success", request.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, polytope.request = %polytope_observability::request(&submitted_request), "job submitted");
     } else {
-        tracing::info!("event.name" = "api.job.submitted", outcome = "success", job.id = %id, polytope.request = %polytope_observability::request(&submitted_request), "job submitted");
+        tracing::info!("event.name" = "api.job.submitted", outcome = "success", request.id = %id, polytope.request = %polytope_observability::request(&submitted_request), "job submitted");
     }
     super::audit_mock_job_submission(mock_audit.as_ref().map(|Extension(audit)| audit), &id);
     super::audit_mock_time_job_submission(mock_time_extensions.mock_time_audit.as_ref(), &id);
@@ -221,9 +221,9 @@ pub async fn cancel(
 ) -> impl IntoResponse {
     state.bits.cancel(&id);
     if let Some(Extension(user)) = auth_user.as_ref() {
-        tracing::info!("event.name" = "api.job.cancelled", outcome = "cancelled", job.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, "job cancelled");
+        tracing::info!("event.name" = "api.job.cancelled", outcome = "cancelled", request.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, "job cancelled");
     } else {
-        tracing::info!("event.name" = "api.job.cancelled", outcome = "cancelled", job.id = %id, "job cancelled");
+        tracing::info!("event.name" = "api.job.cancelled", outcome = "cancelled", request.id = %id, "job cancelled");
     }
     (
         StatusCode::OK,

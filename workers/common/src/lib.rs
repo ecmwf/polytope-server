@@ -291,7 +291,7 @@ impl WorkerConfig {
         let base = validated.unwrap_or_else(|| self.broker_url.trim_end_matches('/').to_string());
         tracing::debug!(
             "event.name" = "worker.callback.base.resolved",
-            "job.id" = %work.job_id,
+            "request.id" = %work.job_id,
             outcome = if used_direct { "direct" } else { "lb_fallback" },
             direct = used_direct,
             advertised_callback_url = advertised.unwrap_or("<none>"),
@@ -502,9 +502,9 @@ async fn worker_task<P: Processor + 'static>(
         let idle_ms = idle_anchor.elapsed().as_millis() as u64;
         let (enduser_id, enduser_realm) = enduser_fields(&work.user);
         if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
-            tracing::info!("event.name" = "worker.job.started", outcome = "success", job.id = %work.job_id, poll_wait_ms, idle_ms, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "job started");
+            tracing::info!("event.name" = "worker.job.started", outcome = "success", request.id = %work.job_id, poll_wait_ms, idle_ms, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "job started");
         } else {
-            tracing::info!("event.name" = "worker.job.started", outcome = "success", job.id = %work.job_id, poll_wait_ms, idle_ms, "job started");
+            tracing::info!("event.name" = "worker.job.started", outcome = "success", request.id = %work.job_id, poll_wait_ms, idle_ms, "job started");
         }
 
         metrics::record_poll("work");
@@ -529,16 +529,16 @@ async fn worker_task<P: Processor + 'static>(
                             Ok(resp) if resp.status() == StatusCode::NOT_FOUND => break,
                             Ok(resp) => {
                                 if let (Some(enduser_id), Some(enduser_realm)) = (heartbeat_enduser_id.as_deref(), heartbeat_enduser_realm.as_deref()) {
-                                    tracing::warn!("event.name" = "worker.heartbeat.failed", outcome = "error", status=%resp.status(), job.id=%job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "heartbeat returned unexpected status")
+                                    tracing::warn!("event.name" = "worker.heartbeat.failed", outcome = "error", status=%resp.status(), request.id=%job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "heartbeat returned unexpected status")
                                 } else {
-                                    tracing::warn!("event.name" = "worker.heartbeat.failed", outcome = "error", status=%resp.status(), job.id=%job_id, "heartbeat returned unexpected status")
+                                    tracing::warn!("event.name" = "worker.heartbeat.failed", outcome = "error", status=%resp.status(), request.id=%job_id, "heartbeat returned unexpected status")
                                 }
                             },
                             Err(err) => {
                                 if let (Some(enduser_id), Some(enduser_realm)) = (heartbeat_enduser_id.as_deref(), heartbeat_enduser_realm.as_deref()) {
-                                    tracing::warn!("event.name" = "worker.heartbeat.failed", outcome = "error", error=%err, job.id=%job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "heartbeat request failed")
+                                    tracing::warn!("event.name" = "worker.heartbeat.failed", outcome = "error", error=%err, request.id=%job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "heartbeat request failed")
                                 } else {
-                                    tracing::warn!("event.name" = "worker.heartbeat.failed", outcome = "error", error=%err, job.id=%job_id, "heartbeat request failed")
+                                    tracing::warn!("event.name" = "worker.heartbeat.failed", outcome = "error", error=%err, request.id=%job_id, "heartbeat request failed")
                                 }
                             },
                         }
@@ -585,17 +585,17 @@ async fn worker_task<P: Processor + 'static>(
             }
             ProcessResult::Reject { reason } => {
                 if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
-                    tracing::warn!("event.name" = "worker.job.rejected", outcome = "rejected", job.id = %work.job_id, reason = %reason, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "job rejected");
+                    tracing::warn!("event.name" = "worker.job.rejected", outcome = "rejected", request.id = %work.job_id, reason = %reason, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "job rejected");
                 } else {
-                    tracing::warn!("event.name" = "worker.job.rejected", outcome = "rejected", job.id = %work.job_id, reason = %reason, "job rejected");
+                    tracing::warn!("event.name" = "worker.job.rejected", outcome = "rejected", request.id = %work.job_id, reason = %reason, "job rejected");
                 }
                 Completion::Reject { reason }
             }
             ProcessResult::Error { message } => {
                 if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
-                    tracing::error!("event.name" = "worker.job.failed", outcome = "error", job.id = %work.job_id, error = %message, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "job failed");
+                    tracing::error!("event.name" = "worker.job.failed", outcome = "error", request.id = %work.job_id, error = %message, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "job failed");
                 } else {
-                    tracing::error!("event.name" = "worker.job.failed", outcome = "error", job.id = %work.job_id, error = %message, "job failed");
+                    tracing::error!("event.name" = "worker.job.failed", outcome = "error", request.id = %work.job_id, error = %message, "job failed");
                 }
                 Completion::Error { message }
             }
@@ -630,7 +630,7 @@ async fn worker_task<P: Processor + 'static>(
                             tracing::error!(
                                 "event.name" = "worker.delivery.failed",
                                 outcome = "error",
-                                job.id = %work.job_id,
+                                request.id = %work.job_id,
                                 source_error = %message,
                                 sink_error = %err,
                                 "direct result delivery failed after source stream error"
@@ -697,16 +697,16 @@ async fn worker_task<P: Processor + 'static>(
         );
         if matches!(outcome, "data" | "redirect") {
             if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
-                tracing::info!("event.name" = "worker.job.completed", outcome = "success", job.id = %work.job_id, bytes, poll_wait_ms, idle_ms, process_ms, deliver_ms, complete_ms, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "job completed");
+                tracing::info!("event.name" = "worker.job.completed", outcome = "success", request.id = %work.job_id, bytes, poll_wait_ms, idle_ms, process_ms, deliver_ms, complete_ms, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "job completed");
             } else {
-                tracing::info!("event.name" = "worker.job.completed", outcome = "success", job.id = %work.job_id, bytes, poll_wait_ms, idle_ms, process_ms, deliver_ms, complete_ms, "job completed");
+                tracing::info!("event.name" = "worker.job.completed", outcome = "success", request.id = %work.job_id, bytes, poll_wait_ms, idle_ms, process_ms, deliver_ms, complete_ms, "job completed");
             }
         }
         if response.status() != StatusCode::OK && response.status() != StatusCode::NOT_FOUND {
             if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
-                tracing::error!("event.name" = "worker.job.failed", outcome = "error", status=%response.status(), job.id=%work.job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "worker completion returned unexpected status");
+                tracing::error!("event.name" = "worker.job.failed", outcome = "error", status=%response.status(), request.id=%work.job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "worker completion returned unexpected status");
             } else {
-                tracing::error!("event.name" = "worker.job.failed", outcome = "error", status=%response.status(), job.id=%work.job_id, "worker completion returned unexpected status");
+                tracing::error!("event.name" = "worker.job.failed", outcome = "error", status=%response.status(), request.id=%work.job_id, "worker completion returned unexpected status");
             }
         }
         idle_anchor = Instant::now();

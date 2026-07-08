@@ -124,9 +124,9 @@ pub async fn submit_request(
     );
 
     if let Some(Extension(user)) = auth_user.as_ref() {
-        tracing::info!("event.name" = "api.job.submitted", outcome = "success", job.id = %handle.id, enqueue_ms, "enduser.id" = %user.username, "enduser.realm" = %user.realm, polytope.request = %polytope_observability::request(&submitted_request), "job submitted");
+        tracing::info!("event.name" = "api.job.submitted", outcome = "success", request.id = %handle.id, enqueue_ms, "enduser.id" = %user.username, "enduser.realm" = %user.realm, polytope.request = %polytope_observability::request(&submitted_request), "job submitted");
     } else {
-        tracing::info!("event.name" = "api.job.submitted", outcome = "success", job.id = %handle.id, enqueue_ms, polytope.request = %polytope_observability::request(&submitted_request), "job submitted");
+        tracing::info!("event.name" = "api.job.submitted", outcome = "success", request.id = %handle.id, enqueue_ms, polytope.request = %polytope_observability::request(&submitted_request), "job submitted");
     }
     let location = format!("/api/v1/requests/{}", handle.id);
     (
@@ -149,9 +149,9 @@ pub async fn get_request(
     match state.bits.poll(&id, Some(POLL_TIMEOUT)).await {
         PollOutcome::Pending { id } => {
             if let Some(Extension(user)) = auth_user.as_ref() {
-                tracing::debug!("event.name" = "api.job.poll.pending", outcome = "success", job.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, "job poll pending");
+                tracing::debug!("event.name" = "api.job.poll.pending", outcome = "success", request.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, "job poll pending");
             } else {
-                tracing::debug!("event.name" = "api.job.poll.pending", outcome = "success", job.id = %id, "job poll pending");
+                tracing::debug!("event.name" = "api.job.poll.pending", outcome = "success", request.id = %id, "job poll pending");
             }
             (
                 StatusCode::ACCEPTED,
@@ -165,9 +165,9 @@ pub async fn get_request(
         }
         PollOutcome::NotFound => {
             if let Some(Extension(user)) = auth_user.as_ref() {
-                tracing::debug!("event.name" = "api.job.poll.failed", outcome = "error", job.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, reason = "not_found", "job poll failed");
+                tracing::debug!("event.name" = "api.job.poll.failed", outcome = "error", request.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, reason = "not_found", "job poll failed");
             } else {
-                tracing::debug!("event.name" = "api.job.poll.failed", outcome = "error", job.id = %id, reason = "not_found", "job poll failed");
+                tracing::debug!("event.name" = "api.job.poll.failed", outcome = "error", request.id = %id, reason = "not_found", "job poll failed");
             }
             (
                 StatusCode::NOT_FOUND,
@@ -177,9 +177,9 @@ pub async fn get_request(
         }
         PollOutcome::JobLost => {
             if let Some(Extension(user)) = auth_user.as_ref() {
-                tracing::warn!("event.name" = "api.job.poll.failed", outcome = "error", job.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, reason = "job_lost", "job poll failed");
+                tracing::warn!("event.name" = "api.job.poll.failed", outcome = "error", request.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, reason = "job_lost", "job poll failed");
             } else {
-                tracing::warn!("event.name" = "api.job.poll.failed", outcome = "error", job.id = %id, reason = "job_lost", "job poll failed");
+                tracing::warn!("event.name" = "api.job.poll.failed", outcome = "error", request.id = %id, reason = "job_lost", "job poll failed");
             }
             (
                 StatusCode::GONE,
@@ -194,9 +194,9 @@ pub async fn get_request(
                 stream,
             } => {
                 if let Some(Extension(user)) = auth_user.as_ref() {
-                    tracing::info!("event.name" = "api.job.poll.completed", outcome = "success", job.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, content_length = size, "job poll completed");
+                    tracing::info!("event.name" = "api.job.poll.completed", outcome = "success", request.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, content_length = size, "job poll completed");
                 } else {
-                    tracing::info!("event.name" = "api.job.poll.completed", outcome = "success", job.id = %id, content_length = size, "job poll completed");
+                    tracing::info!("event.name" = "api.job.poll.completed", outcome = "success", request.id = %id, content_length = size, "job poll completed");
                 }
                 if size >= 0 {
                     Response::builder()
@@ -222,9 +222,9 @@ pub async fn get_request(
             }
             JobResult::Redirect { location, message } => {
                 if let Some(Extension(user)) = auth_user.as_ref() {
-                    tracing::info!("event.name" = "api.job.poll.completed", outcome = "success", job.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, "job poll completed");
+                    tracing::info!("event.name" = "api.job.poll.completed", outcome = "success", request.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, "job poll completed");
                 } else {
-                    tracing::info!("event.name" = "api.job.poll.completed", outcome = "success", job.id = %id, "job poll completed");
+                    tracing::info!("event.name" = "api.job.poll.completed", outcome = "success", request.id = %id, "job poll completed");
                 }
                 Response::builder()
                     .status(StatusCode::SEE_OTHER)
@@ -249,9 +249,9 @@ pub async fn get_request(
             })),
             JobResult::Cancelled => {
                 if let Some(Extension(user)) = auth_user.as_ref() {
-                    tracing::info!("event.name" = "api.job.poll.cancelled", outcome = "cancelled", job.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, "job poll cancelled");
+                    tracing::info!("event.name" = "api.job.poll.cancelled", outcome = "cancelled", request.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, "job poll cancelled");
                 } else {
-                    tracing::info!("event.name" = "api.job.poll.cancelled", outcome = "cancelled", job.id = %id, "job poll cancelled");
+                    tracing::info!("event.name" = "api.job.poll.cancelled", outcome = "cancelled", request.id = %id, "job poll cancelled");
                 }
                 (StatusCode::OK, Json(json!({"status": "cancelled"}))).into_response()
             }
@@ -271,9 +271,9 @@ pub async fn delete_request(
 ) -> impl IntoResponse {
     state.bits.cancel(&id);
     if let Some(Extension(user)) = auth_user.as_ref() {
-        tracing::info!("event.name" = "api.job.cancelled", outcome = "cancelled", job.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, "job cancelled");
+        tracing::info!("event.name" = "api.job.cancelled", outcome = "cancelled", request.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, "job cancelled");
     } else {
-        tracing::info!("event.name" = "api.job.cancelled", outcome = "cancelled", job.id = %id, "job cancelled");
+        tracing::info!("event.name" = "api.job.cancelled", outcome = "cancelled", request.id = %id, "job cancelled");
     }
     // The polytope-client SDK reads `messages["message"]` from the JSON
     // body of this endpoint and KeyErrors if it isn't present. The legacy

@@ -41,18 +41,18 @@ impl ResultDelivery for BobsPush {
                 let (enduser_id, enduser_realm) = enduser_fields(context.user);
                 if let Some(source_error) = context.source_error_message() {
                     if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
-                        tracing::error!("event.name" = "worker.delivery.failed", outcome = "error", job.id = %context.job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, source_error = %source_error, sink_error = %e, "result delivery failed after source stream error");
+                        tracing::error!("event.name" = "worker.delivery.failed", outcome = "error", request.id = %context.job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, source_error = %source_error, sink_error = %e, "result delivery failed after source stream error");
                     } else {
-                        tracing::error!("event.name" = "worker.delivery.failed", outcome = "error", job.id = %context.job_id, source_error = %source_error, sink_error = %e, "result delivery failed after source stream error");
+                        tracing::error!("event.name" = "worker.delivery.failed", outcome = "error", request.id = %context.job_id, source_error = %source_error, sink_error = %e, "result delivery failed after source stream error");
                     }
                     Completion::Error {
                         message: source_error,
                     }
                 } else {
                     if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
-                        tracing::error!("event.name" = "worker.delivery.failed", outcome = "error", job.id = %context.job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, error = %e, "result delivery failed");
+                        tracing::error!("event.name" = "worker.delivery.failed", outcome = "error", request.id = %context.job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, error = %e, "result delivery failed");
                     } else {
-                        tracing::error!("event.name" = "worker.delivery.failed", outcome = "error", job.id = %context.job_id, error = %e, "result delivery failed");
+                        tracing::error!("event.name" = "worker.delivery.failed", outcome = "error", request.id = %context.job_id, error = %e, "result delivery failed");
                     }
                     Completion::Error {
                         message: format!("delivery failed: {e}"),
@@ -137,9 +137,9 @@ impl BobsPush {
             .to_string();
         let (enduser_id, enduser_realm) = enduser_fields(user);
         if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
-            tracing::debug!("event.name" = "worker.delivery.completed", outcome = "success", job.id = %job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, bobs.key = %key, read_url = %read_url, "result pushed to BOBS");
+            tracing::debug!("event.name" = "worker.delivery.completed", outcome = "success", request.id = %job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, bobs.key = %key, read_url = %read_url, "result pushed to BOBS");
         } else {
-            tracing::debug!("event.name" = "worker.delivery.completed", outcome = "success", job.id = %job_id, bobs.key = %key, read_url = %read_url, "result pushed to BOBS");
+            tracing::debug!("event.name" = "worker.delivery.completed", outcome = "success", request.id = %job_id, bobs.key = %key, read_url = %read_url, "result pushed to BOBS");
         }
         Ok(read_url)
     }

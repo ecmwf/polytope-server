@@ -61,7 +61,7 @@ fn api_job_events_carry_enduser_and_bounded_request() {
     tracing::info!(
         "event.name" = "api.job.submitted",
         outcome = "success",
-        job.id = "job-1",
+        request.id = "job-1",
         "enduser.id" = "alice",
         "enduser.realm" = "ecmwf",
         polytope.request = %polytope_observability::request(&request),
@@ -70,7 +70,7 @@ fn api_job_events_carry_enduser_and_bounded_request() {
     tracing::info!(
         "event.name" = "api.job.poll.completed",
         outcome = "success",
-        job.id = "job-1",
+        request.id = "job-1",
         "enduser.id" = "alice",
         "enduser.realm" = "ecmwf",
         "job poll completed"

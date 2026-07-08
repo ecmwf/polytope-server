@@ -143,7 +143,7 @@ pub fn audit_mock_job_submission(mock_audit: Option<&MockRolesAudit>, job_id: &s
             mocked_roles = ?audit.mocked_roles,
             path = audit.path.as_str(),
             request_id = audit.request_id.as_deref(),
-            job.id = job_id,
+            request.id = job_id,
             "accepted mocked-role request submitted job"
         );
     }
@@ -159,7 +159,7 @@ pub fn audit_mock_time_job_submission(mock_audit: Option<&MockTimeAudit>, job_id
             path = audit.path.as_str(),
             request_id = audit.request_id.as_deref(),
             header = MOCK_TIME_HEADER,
-            job.id = job_id,
+            request.id = job_id,
             "accepted mocked-time request submitted job"
         );
     }

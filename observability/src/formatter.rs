@@ -290,7 +290,7 @@ mod tests {
         let _guard = tracing::subscriber::set_default(sub);
         tracing::info!(
             "event.name" = "api.collection.list",
-            job.id = "job-1",
+            request.id = "job-1",
             answer = 42_u64,
             "hello Bearer FAKETOKEN_OBSERVABILITY_PROBE"
         );
@@ -299,7 +299,7 @@ mod tests {
         assert_eq!(line["severityText"], "INFO");
         assert_eq!(line["severityNumber"], 9);
         assert_eq!(line["attributes"]["event.name"], "api.collection.list");
-        assert_eq!(line["attributes"]["job.id"], "job-1");
+        assert_eq!(line["attributes"]["request.id"], "job-1");
         assert!(
             line["attributes"]["code.target"]
                 .as_str()
