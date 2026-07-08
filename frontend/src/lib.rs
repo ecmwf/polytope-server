@@ -149,7 +149,13 @@ pub fn build_app(
         .with_state(state.clone());
 
     let app = if let Some(edr) = edr_router {
-        app.nest("/edr", edr)
+        app.nest(
+            "/edr",
+            edr.layer(middleware::from_fn_with_state(
+                state.clone(),
+                auth::middleware::auth_middleware,
+            )),
+        )
     } else {
         app
     };
@@ -261,6 +267,35 @@ bits: {{}}
         serde_yaml::from_str(&yaml).expect("test config should parse")
     }
 
+    fn edr_test_config() -> config::ServerConfig {
+        let yaml = r#"
+polytope:
+  site: bol
+  env: dev
+bits: {}
+authentication:
+  url: "http://127.0.0.1:1"
+  secret: "testsecret"
+edr:
+  collections:
+    operational-data:
+      title: "Operational Data"
+      extents:
+        spatial:
+          bbox: [-180.0, -90.0, 180.0, 90.0]
+      base_request:
+        class: "od"
+        stream: "oper"
+        type: "fc"
+        levtype: "sfc"
+        expver: "0001"
+      supported_queries:
+        - position
+      parameters: {}
+"#;
+        serde_yaml::from_str(yaml).expect("EDR test config should parse")
+    }
+
     async fn response_status(app: Router, method: axum::http::Method, path: &str) -> StatusCode {
         app.oneshot(
             Request::builder()
@@ -365,6 +400,13 @@ bits: {}
         assert_eq!(internal_status, StatusCode::NOT_FOUND);
         assert_ne!(internal_status, StatusCode::UNAUTHORIZED);
         assert_ne!(internal_status, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn edr_routes_require_authentication() {
+        let (app, _) = build_app(edr_test_config()).unwrap();
+        let status = response_status(app, axum::http::Method::GET, "/edr/").await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
 
     #[test]
