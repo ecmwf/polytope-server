@@ -41,6 +41,8 @@ impl ResultDelivery for S3Push {
             Ok(location) => Completion::Redirect {
                 location,
                 message: "result available for download".to_string(),
+                content_type: Some(content_type.to_string()),
+                content_length: None,
             },
             Err(e) => {
                 if let Some(source_error) = context.source_error_message() {

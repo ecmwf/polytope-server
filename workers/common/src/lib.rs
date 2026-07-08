@@ -129,6 +129,8 @@ pub enum Completion {
     Redirect {
         location: String,
         message: String,
+        content_type: Option<String>,
+        content_length: Option<u64>,
     },
     Reject {
         reason: String,
@@ -170,9 +172,20 @@ impl Completion {
 #[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
 enum CompletionRequest {
-    Redirect { location: String, message: String },
-    Reject { reason: String },
-    Error { message: String },
+    Redirect {
+        location: String,
+        message: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        content_type: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        content_length: Option<u64>,
+    },
+    Reject {
+        reason: String,
+    },
+    Error {
+        message: String,
+    },
 }
 
 pub const DEFAULT_POLL_TIMEOUT_MS: u64 = 3000;
@@ -666,8 +679,24 @@ async fn worker_task<P: Processor + 'static>(
                     .await?;
                 (resp, "error")
             }
-            Completion::Redirect { location, message } => {
-                let payload = CompletionRequest::Redirect { location, message };
+            Completion::Redirect {
+                location,
+                message,
+                content_type,
+                content_length,
+            } => {
+                // Fill the byte length from the delivered byte count when the
+                // delivery backend did not supply one. The result stream is
+                // fully consumed by delivery at this point, so the counter is
+                // settled (mirrors the worker.job.completed byte accounting).
+                let content_length = content_length
+                    .or_else(|| byte_counter.as_ref().map(|c| c.load(Ordering::Relaxed)));
+                let payload = CompletionRequest::Redirect {
+                    location,
+                    message,
+                    content_type,
+                    content_length,
+                };
                 let resp = client
                     .post(config.complete_redirect_url_for_work(&work))
                     .json(&payload)

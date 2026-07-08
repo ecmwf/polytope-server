@@ -129,11 +129,27 @@ pub async fn submit_collection(
                 }
                 builder.body(Body::from_stream(stream)).unwrap()
             }
-            JobResult::Redirect { location, message } => Response::builder()
-                .status(StatusCode::SEE_OTHER)
-                .header(header::LOCATION, location)
-                .body(Body::from(message))
-                .unwrap(),
+            JobResult::Redirect {
+                location,
+                message,
+                content_type,
+                content_length,
+            } => {
+                let mut builder = Response::builder()
+                    .status(StatusCode::SEE_OTHER)
+                    .header(header::LOCATION, location);
+                // Carry content metadata so a proxying broker can rebuild the v1
+                // redirect body without an extra round-trip (see
+                // bits::runtime::recovery::try_proxy_with_lease).
+                if let Some(content_type) = content_type {
+                    builder = builder.header("x-polytope-content-type", content_type);
+                }
+                if let Some(content_length) = content_length {
+                    builder =
+                        builder.header("x-polytope-content-length", content_length.to_string());
+                }
+                builder.body(Body::from(message)).unwrap()
+            }
             JobResult::Error { message } => {
                 (StatusCode::BAD_REQUEST, Json(json!({"error": message}))).into_response()
             }
@@ -186,11 +202,27 @@ pub async fn poll(State(state): State<Arc<AppState>>, Path(id): Path<String>) ->
                 }
                 builder.body(Body::from_stream(stream)).unwrap()
             }
-            JobResult::Redirect { location, message } => Response::builder()
-                .status(StatusCode::SEE_OTHER)
-                .header(header::LOCATION, location)
-                .body(Body::from(message))
-                .unwrap(),
+            JobResult::Redirect {
+                location,
+                message,
+                content_type,
+                content_length,
+            } => {
+                let mut builder = Response::builder()
+                    .status(StatusCode::SEE_OTHER)
+                    .header(header::LOCATION, location);
+                // Carry content metadata so a proxying broker can rebuild the v1
+                // redirect body without an extra round-trip (see
+                // bits::runtime::recovery::try_proxy_with_lease).
+                if let Some(content_type) = content_type {
+                    builder = builder.header("x-polytope-content-type", content_type);
+                }
+                if let Some(content_length) = content_length {
+                    builder =
+                        builder.header("x-polytope-content-length", content_length.to_string());
+                }
+                builder.body(Body::from(message)).unwrap()
+            }
             JobResult::Error { message } => {
                 (StatusCode::BAD_REQUEST, Json(json!({"error": message}))).into_response()
             }

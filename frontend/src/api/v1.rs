@@ -19,6 +19,10 @@ use crate::state::AppState;
 
 const POLL_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// `Retry-After` seconds advertised on 202 (queued/pending) responses, matching
+/// the legacy Python frontend so clients keep the same poll cadence.
+const RETRY_AFTER_SECS: &str = "5";
+
 #[derive(Deserialize)]
 pub struct SubmitBody {
     pub verb: String,
@@ -39,8 +43,8 @@ struct Queued {
     message: &'static str,
 }
 
-pub async fn test() -> &'static str {
-    "Polytope server is alive"
+pub async fn test() -> impl IntoResponse {
+    Json(json!({"message": "Polytope server is alive"}))
 }
 
 pub async fn list_collections(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -53,7 +57,7 @@ pub async fn list_collections(State(state): State<Arc<AppState>>) -> impl IntoRe
         api.version = "v1",
         "listed collections"
     );
-    (StatusCode::OK, Json(json!({"collections": collections})))
+    (StatusCode::OK, Json(json!({"message": collections})))
 }
 
 pub async fn list_requests() -> impl IntoResponse {
@@ -80,6 +84,17 @@ pub async fn submit_request(
                 .into_response();
         }
     };
+
+    // v1 only ever supported `retrieve` in practice (archive was never fleshed
+    // out). Reject anything else with the legacy wording for parity.
+    if body.verb != "retrieve" {
+        tracing::warn!("event.name" = "api.job.rejected", outcome = "rejected", collection = %collection, verb = %body.verb, reason = "unsupported_verb", "job rejected");
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": format!("Transfer type {} not supported", body.verb)})),
+        )
+            .into_response();
+    }
 
     let mut request = json!({ "request": body.request });
     if let Err(msg) = super::flatten_request(&mut request) {
@@ -131,7 +146,10 @@ pub async fn submit_request(
     let location = format!("/api/v1/requests/{}", handle.id);
     (
         StatusCode::ACCEPTED,
-        [(header::LOCATION, location)],
+        [
+            (header::LOCATION, location),
+            (header::RETRY_AFTER, RETRY_AFTER_SECS.to_string()),
+        ],
         Json(Accepted {
             status: "queued",
             id: handle.id,
@@ -155,6 +173,7 @@ pub async fn get_request(
             }
             (
                 StatusCode::ACCEPTED,
+                [(header::RETRY_AFTER, RETRY_AFTER_SECS)],
                 Json(Queued {
                     status: "queued",
                     id,
@@ -220,16 +239,35 @@ pub async fn get_request(
                         .unwrap()
                 }
             }
-            JobResult::Redirect { location, message } => {
+            JobResult::Redirect {
+                location,
+                content_type,
+                content_length,
+                ..
+            } => {
                 if let Some(Extension(user)) = auth_user.as_ref() {
                     tracing::info!("event.name" = "api.job.poll.completed", outcome = "success", request.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, "job poll completed");
                 } else {
                     tracing::info!("event.name" = "api.job.poll.completed", outcome = "success", request.id = %id, "job poll completed");
                 }
+                // Legacy v1 redirect body: `{contentLength, contentType, location}`
+                // (message/status omitted, as the Python server did). The client
+                // follows the Location header to download from BOBS/staging.
+                let mut redirect_body = serde_json::Map::new();
+                if let Some(content_length) = content_length {
+                    redirect_body.insert("contentLength".to_string(), json!(content_length));
+                }
+                if let Some(content_type) = content_type {
+                    redirect_body.insert("contentType".to_string(), json!(content_type));
+                }
+                redirect_body.insert("location".to_string(), json!(location));
                 Response::builder()
                     .status(StatusCode::SEE_OTHER)
-                    .header(header::LOCATION, location)
-                    .body(Body::from(message))
+                    .header(header::LOCATION, &location)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(
+                        serde_json::to_vec(&Value::Object(redirect_body)).unwrap_or_default(),
+                    ))
                     .unwrap()
             }
             JobResult::Error { message } => (

@@ -36,6 +36,8 @@ impl ResultDelivery for BobsPush {
             Ok(location) => Completion::Redirect {
                 location,
                 message: "result available for download".to_string(),
+                content_type: Some(content_type.to_string()),
+                content_length: None,
             },
             Err(e) => {
                 let (enduser_id, enduser_realm) = enduser_fields(context.user);
@@ -261,7 +263,9 @@ mod tests {
             .await;
 
         match result {
-            Completion::Redirect { location, message } => {
+            Completion::Redirect {
+                location, message, ..
+            } => {
                 assert_eq!(
                     location,
                     "http://public.example.com/download-0/test-key-123"

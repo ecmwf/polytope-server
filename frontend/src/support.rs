@@ -205,6 +205,24 @@ pub async fn request_context_middleware(
         resp.headers_mut()
             .insert(HeaderName::from_static(REQUEST_ID_HEADER), hv);
     }
+
+    // Security / caching headers on every response, matching the legacy Python
+    // frontend's `after_request` hook so downstream expectations are preserved.
+    let headers = resp.headers_mut();
+    headers.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("no-cache, no-store"),
+    );
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    headers.insert(
+        HeaderName::from_static("x-xss-protection"),
+        HeaderValue::from_static("1; mode=block"),
+    );
+
     resp
 }
 
