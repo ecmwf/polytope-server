@@ -8,11 +8,11 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use bits::{Job, JobResult, PollOutcome, SubmitOutcome};
+use bits::{ActiveJobSnapshot, Job, JobResult, PollOutcome, SubmitOutcome};
 use bytes::BytesMut;
 use futures::TryStreamExt;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use crate::auth::{AuthUser, MockRolesAudit};
 use crate::state::AppState;
@@ -60,8 +60,88 @@ pub async fn list_collections(State(state): State<Arc<AppState>>) -> impl IntoRe
     (StatusCode::OK, Json(json!({"message": collections})))
 }
 
-pub async fn list_requests() -> impl IntoResponse {
-    Json(json!({"message": []}))
+fn snapshot_collection(job: &ActiveJobSnapshot) -> Option<&str> {
+    job.metadata.get("collection").and_then(Value::as_str)
+}
+
+fn snapshot_matches_user(job: &ActiveJobSnapshot, auth_user: Option<&AuthUser>) -> bool {
+    let Some(auth_user) = auth_user else {
+        // Anonymous v1 listing used to be empty; do not expose the shared
+        // anonymous broker namespace through this compatibility endpoint.
+        return false;
+    };
+
+    let Some(auth) = job.user.get("auth") else {
+        return false;
+    };
+
+    auth.get("username").and_then(Value::as_str) == Some(auth_user.username.as_str())
+        && auth.get("realm").and_then(Value::as_str) == Some(auth_user.realm.as_str())
+}
+
+fn legacy_request_record(job: &ActiveJobSnapshot) -> Value {
+    let timestamp = job.created_at.timestamp_millis() as f64 / 1000.0;
+    let collection = snapshot_collection(job).unwrap_or_default();
+    let user = job.user.get("auth").cloned().unwrap_or(Value::Null);
+    let mut status_history = Map::new();
+    status_history.insert(job.status.to_string(), json!(timestamp));
+
+    json!({
+        "id": job.id,
+        "timestamp": timestamp,
+        "last_modified": timestamp,
+        "user": user,
+        "verb": "retrieve",
+        "url": job.location.clone().unwrap_or_default(),
+        "md5": Value::Null,
+        "collection": collection,
+        "status": job.status,
+        "user_message": job.user_message.clone().unwrap_or_default(),
+        "user_request": job.original_request.to_string(),
+        "coerced_request": job.request,
+        "content_length": job.content_length,
+        "content_type": job
+            .content_type
+            .clone()
+            .unwrap_or_else(|| "application/octet-stream".to_string()),
+        "status_history": Value::Object(status_history),
+        "datasource": "",
+    })
+}
+
+fn active_request_records(
+    state: &AppState,
+    auth_user: Option<&AuthUser>,
+    collection: Option<&str>,
+) -> Vec<Value> {
+    let mut jobs: Vec<_> = state
+        .bits
+        .active_jobs()
+        .into_iter()
+        .filter(|job| snapshot_matches_user(job, auth_user))
+        .filter(|job| collection.is_none_or(|name| snapshot_collection(job) == Some(name)))
+        .collect();
+
+    jobs.sort_by_key(|job| job.created_at);
+    jobs.iter().map(legacy_request_record).collect()
+}
+
+pub async fn list_requests(
+    State(state): State<Arc<AppState>>,
+    auth_user: Option<Extension<AuthUser>>,
+) -> Response {
+    let records =
+        active_request_records(&state, auth_user.as_ref().map(|Extension(user)| user), None);
+    (StatusCode::OK, Json(json!({"message": records}))).into_response()
+}
+
+pub async fn user_info(
+    State(state): State<Arc<AppState>>,
+    auth_user: Option<Extension<AuthUser>>,
+) -> impl IntoResponse {
+    let live_requests =
+        active_request_records(&state, auth_user.as_ref().map(|Extension(user)| user), None).len();
+    Json(json!({"live requests": live_requests.to_string()}))
 }
 
 pub async fn submit_request(
@@ -164,6 +244,15 @@ pub async fn get_request(
     auth_user: Option<Extension<AuthUser>>,
     Path(id): Path<String>,
 ) -> Response {
+    if state.collections.contains_key(&id) {
+        let records = active_request_records(
+            &state,
+            auth_user.as_ref().map(|Extension(user)| user),
+            Some(&id),
+        );
+        return (StatusCode::OK, Json(json!({"message": records}))).into_response();
+    }
+
     match state.bits.poll(&id, Some(POLL_TIMEOUT)).await {
         PollOutcome::Pending { id } => {
             if let Some(Extension(user)) = auth_user.as_ref() {
@@ -335,4 +424,75 @@ pub async fn downloads_deprecated() -> impl IntoResponse {
             json!({"error": "downloads endpoint is deprecated; poll /api/v1/requests/:id instead"}),
         ),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use std::collections::HashMap;
+
+    fn auth_user(username: &str, realm: &str) -> AuthUser {
+        AuthUser {
+            version: 1,
+            username: username.to_string(),
+            realm: realm.to_string(),
+            roles: Vec::new(),
+            attributes: HashMap::new(),
+            scopes: HashMap::new(),
+        }
+    }
+
+    fn snapshot() -> ActiveJobSnapshot {
+        ActiveJobSnapshot {
+            id: "req-1".to_string(),
+            created_at: Utc::now(),
+            original_request: json!({"class": "od", "param": "t"}),
+            request: json!({"class": "od", "param": "t"}),
+            user: json!({"auth": {"username": "alice", "realm": "ecmwf"}}),
+            metadata: json!({"collection": "mars"}),
+            status: "queued",
+            location: None,
+            content_type: None,
+            content_length: None,
+            user_message: None,
+        }
+    }
+
+    #[test]
+    fn active_request_filter_matches_effective_user() {
+        let job = snapshot();
+        assert!(snapshot_matches_user(
+            &job,
+            Some(&auth_user("alice", "ecmwf"))
+        ));
+        assert!(!snapshot_matches_user(
+            &job,
+            Some(&auth_user("bob", "ecmwf"))
+        ));
+        assert!(!snapshot_matches_user(
+            &job,
+            Some(&auth_user("alice", "desp"))
+        ));
+        assert!(!snapshot_matches_user(&job, None));
+    }
+
+    #[test]
+    fn legacy_request_record_uses_python_v1_shape() {
+        let mut job = snapshot();
+        job.status = "processed";
+        job.location = Some("https://example.test/result".to_string());
+        job.content_type = Some("application/x-grib".to_string());
+        job.content_length = Some(42);
+
+        let record = legacy_request_record(&job);
+        assert_eq!(record["id"], "req-1");
+        assert_eq!(record["collection"], "mars");
+        assert_eq!(record["status"], "processed");
+        assert_eq!(record["verb"], "retrieve");
+        assert_eq!(record["url"], "https://example.test/result");
+        assert_eq!(record["content_type"], "application/x-grib");
+        assert_eq!(record["content_length"], 42);
+        assert!(record["status_history"].get("processed").is_some());
+    }
 }

@@ -78,6 +78,7 @@ pub fn build_app(
     let v1_protected = Router::new()
         .route("/collections", get(api::v1::list_collections))
         .route("/requests", get(api::v1::list_requests))
+        .route("/user", get(api::v1::user_info))
         .route(
             "/requests/{id}",
             post(api::v1::submit_request)
