@@ -20,6 +20,7 @@ targets:
         collections: HashMap::new(),
         allow_anonymous: true,
         admin_bypass_roles: None,
+        support: Default::default(),
     })
 }
 

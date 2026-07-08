@@ -50,6 +50,31 @@ pub struct ServerConfig {
     pub authentication: Option<AuthConfig>,
     pub admin_bypass_roles: Option<HashMap<String, Vec<String>>>,
     pub metrics: Option<MetricsConfig>,
+    pub support: SupportConfig,
+}
+
+/// Where users are told to raise a support ticket when an error reaches them.
+/// `default_url` is the deployment-level contact (used for every error, including
+/// pre-auth ones where no realm is known). `realms` optionally overrides the
+/// contact for authenticated users of a given auth realm, since a single
+/// deployment can serve multiple communities (e.g. `ecmwf` and `desp`).
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct SupportConfig {
+    #[serde(default)]
+    pub default_url: Option<String>,
+    #[serde(default)]
+    pub realms: HashMap<String, String>,
+}
+
+impl SupportConfig {
+    /// Resolve the support URL for an error: the authenticated user's realm
+    /// override when known and mapped, otherwise the deployment default.
+    pub fn resolve(&self, realm: Option<&str>) -> Option<&str> {
+        realm
+            .and_then(|r| self.realms.get(r))
+            .map(String::as_str)
+            .or(self.default_url.as_deref())
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -162,6 +187,8 @@ impl<'de> Deserialize<'de> for ServerConfig {
             admin_bypass_roles: Option<HashMap<String, Vec<String>>>,
             #[serde(default)]
             metrics: Option<MetricsConfig>,
+            #[serde(default)]
+            support: SupportConfig,
         }
 
         let raw = RawServerConfig::deserialize(deserializer)?;
@@ -177,6 +204,7 @@ impl<'de> Deserialize<'de> for ServerConfig {
             authentication: raw.authentication,
             admin_bypass_roles: raw.admin_bypass_roles,
             metrics: raw.metrics,
+            support: raw.support,
         })
     }
 }

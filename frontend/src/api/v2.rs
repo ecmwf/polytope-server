@@ -269,6 +269,7 @@ targets:
             collections,
             allow_anonymous: false,
             admin_bypass_roles: None,
+            support: Default::default(),
         });
         Router::new()
             .route("/api/v2/collections", get(super::list_collections))

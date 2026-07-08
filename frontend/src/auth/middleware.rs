@@ -200,8 +200,14 @@ pub async fn auth_middleware(
                 user
             };
 
+            let support_realm = effective_user.realm.clone();
             req.extensions_mut().insert(effective_user);
-            let prof_response = next.run(req).await;
+            let mut prof_response = next.run(req).await;
+            if let Some(url) = state.support.resolve(Some(&support_realm)) {
+                prof_response
+                    .extensions_mut()
+                    .insert(crate::support::SupportUrl(url.to_string()));
+            }
             tracing::debug!(
                 "event.name" = "api.request.profiled",
                 method = %prof_method,
@@ -340,6 +346,7 @@ mod tests {
             collections: HashMap::new(),
             allow_anonymous,
             admin_bypass_roles,
+            support: Default::default(),
         });
 
         let v1 = Router::new()
@@ -706,6 +713,7 @@ mod tests {
             collections: HashMap::new(),
             allow_anonymous: false,
             admin_bypass_roles: None,
+            support: Default::default(),
         });
 
         async fn check_user(req: AxumRequest) -> StatusCode {
@@ -760,6 +768,7 @@ mod tests {
             collections: HashMap::new(),
             allow_anonymous: false,
             admin_bypass_roles: None,
+            support: Default::default(),
         });
 
         async fn contract_payload(req: AxumRequest) -> Json<Value> {
@@ -870,6 +879,7 @@ mod tests {
                 "alpha".to_string(),
                 vec!["admin".to_string()],
             )])),
+            support: Default::default(),
         });
 
         async fn payload(req: AxumRequest) -> Json<Value> {
@@ -960,6 +970,7 @@ mod tests {
                 "alpha".to_string(),
                 vec!["admin".to_string()],
             )])),
+            support: Default::default(),
         });
 
         async fn payload(req: AxumRequest) -> Json<Value> {
@@ -1180,6 +1191,7 @@ mod tests {
                 "alpha".to_string(),
                 vec!["admin".to_string()],
             )])),
+            support: Default::default(),
         });
 
         async fn payload(req: AxumRequest) -> Json<Value> {
@@ -1400,6 +1412,7 @@ mod tests {
             collections: HashMap::new(),
             allow_anonymous: true,
             admin_bypass_roles: None,
+            support: Default::default(),
         });
 
         async fn check_no_user(req: AxumRequest) -> StatusCode {

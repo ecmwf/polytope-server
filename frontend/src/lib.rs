@@ -5,6 +5,7 @@ pub mod config;
 #[cfg(feature = "metkit")]
 mod metkit_expansion;
 pub mod state;
+pub mod support;
 
 use std::sync::Arc;
 use std::{collections::HashMap, io};
@@ -71,6 +72,7 @@ pub fn build_app(
         collections,
         allow_anonymous,
         admin_bypass_roles: cfg.admin_bypass_roles,
+        support: cfg.support,
     });
 
     let v1_protected = Router::new()
@@ -147,7 +149,13 @@ pub fn build_app(
         app
     };
 
-    let app = app.layer(cors).layer(CompressionLayer::new());
+    let app = app
+        .layer(cors)
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            support::request_context_middleware,
+        ))
+        .layer(CompressionLayer::new());
 
     Ok((app, state))
 }
