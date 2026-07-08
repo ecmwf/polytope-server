@@ -11,7 +11,7 @@ use axum::{
 use bits::{ActiveJobSnapshot, Job, JobResult, PollOutcome, SubmitOutcome};
 use bytes::BytesMut;
 use futures::TryStreamExt;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 use crate::auth::{AuthUser, MockRolesAudit};
@@ -29,18 +29,8 @@ pub struct SubmitBody {
     pub request: Value,
 }
 
-#[derive(Serialize)]
-struct Accepted {
-    status: &'static str,
-    id: String,
-    message: &'static str,
-}
-
-#[derive(Serialize)]
-struct Queued {
-    status: &'static str,
-    id: String,
-    message: &'static str,
+fn request_queued_body() -> Value {
+    json!({"message": "Request queued", "status": "queued"})
 }
 
 pub async fn test() -> impl IntoResponse {
@@ -223,18 +213,14 @@ pub async fn submit_request(
     } else {
         tracing::info!("event.name" = "api.job.submitted", outcome = "success", request.id = %handle.id, enqueue_ms, polytope.request = %polytope_observability::request(&submitted_request), "job submitted");
     }
-    let location = format!("/api/v1/requests/{}", handle.id);
+    let location = format!("./{}", handle.id);
     (
         StatusCode::ACCEPTED,
         [
             (header::LOCATION, location),
             (header::RETRY_AFTER, RETRY_AFTER_SECS.to_string()),
         ],
-        Json(Accepted {
-            status: "queued",
-            id: handle.id,
-            message: "Request accepted",
-        }),
+        Json(request_queued_body()),
     )
         .into_response()
 }
@@ -262,12 +248,11 @@ pub async fn get_request(
             }
             (
                 StatusCode::ACCEPTED,
-                [(header::RETRY_AFTER, RETRY_AFTER_SECS)],
-                Json(Queued {
-                    status: "queued",
-                    id,
-                    message: "Request is being processed",
-                }),
+                [
+                    (header::LOCATION, format!("./{id}")),
+                    (header::RETRY_AFTER, RETRY_AFTER_SECS.to_string()),
+                ],
+                Json(request_queued_body()),
             )
                 .into_response()
         }
@@ -396,22 +381,16 @@ pub async fn delete_request(
     auth_user: Option<Extension<AuthUser>>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    state.bits.cancel(&id);
+    let revoked = usize::from(state.bits.cancel(&id));
     if let Some(Extension(user)) = auth_user.as_ref() {
         tracing::info!("event.name" = "api.job.cancelled", outcome = "cancelled", request.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, "job cancelled");
     } else {
         tracing::info!("event.name" = "api.job.cancelled", outcome = "cancelled", request.id = %id, "job cancelled");
     }
-    // The polytope-client SDK reads `messages["message"]` from the JSON
-    // body of this endpoint and KeyErrors if it isn't present. The legacy
-    // polytope-server included a `message` field, so keep one here for
-    // backwards compatibility with the published SDK.
     (
         StatusCode::OK,
         Json(json!({
-            "status": "cancelled",
-            "id": id,
-            "message": "Request revoked",
+            "message": format!("Successfully revoked {revoked} requests"),
         })),
     )
 }
@@ -423,6 +402,14 @@ pub async fn downloads_deprecated() -> impl IntoResponse {
         Json(
             json!({"error": "downloads endpoint is deprecated; poll /api/v1/requests/:id instead"}),
         ),
+    )
+}
+
+pub async fn uploads_deprecated() -> impl IntoResponse {
+    (
+        StatusCode::GONE,
+        [("Deprecation", "true")],
+        Json(json!({"error": "uploads endpoint is not supported by this deployment"})),
     )
 }
 

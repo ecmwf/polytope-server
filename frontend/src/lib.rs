@@ -85,7 +85,11 @@ pub fn build_app(
                 .get(api::v1::get_request)
                 .delete(api::v1::delete_request),
         )
-        .route("/downloads/{id}", get(api::v1::downloads_deprecated));
+        .route("/downloads/{id}", get(api::v1::downloads_deprecated))
+        .route(
+            "/uploads/{id}",
+            get(api::v1::uploads_deprecated).post(api::v1::uploads_deprecated),
+        );
 
     let v2_protected = Router::new()
         .route("/collections", get(api::v2::list_collections))

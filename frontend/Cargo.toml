@@ -17,7 +17,9 @@ async-trait = "0.1"
 axum = { version = "0.8", features = ["http2"] }
 tower-http = { version = "0.6", features = ["cors", "compression-full"] }
 polytope-edr = { git = "https://github.com/ecmwf/polytope-edr", branch = "master" }
-bits = { git = "https://github.com/ecmwf/bits-broker.git", rev = "793d08172c427ff2b9819590d06158bcbbf9f888", features = ["nats"] }
+bits = { git = "https://github.com/ecmwf/bits-broker.git", rev = "c9cd0c1d4a751b4079a6de2a7b6763ecc9a1dfd3", features = [
+  "nats",
+] }
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
 futures = "0.3"
@@ -27,11 +29,16 @@ serde_json = "1"
 serde_yaml = "0.9.33"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
-chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+chrono = { version = "0.4", default-features = false, features = [
+  "clock",
+  "std",
+] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 opentelemetry = { version = "0.32", optional = true }
-opentelemetry_sdk = { version = "0.32", features = ["metrics"], optional = true }
+opentelemetry_sdk = { version = "0.32", features = [
+  "metrics",
+], optional = true }
 opentelemetry-prometheus = { version = "0.32", optional = true }
 prometheus = { version = "0.14", optional = true, default-features = false }
 roxmltree = "0.20"
@@ -49,10 +56,17 @@ authotron-types = { git = "https://github.com/ecmwf/auth-o-tron.git", branch = "
 [features]
 default = []
 metkit = ["dep:metkit"]
-telemetry = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-prometheus", "dep:prometheus"]
+telemetry = [
+  "dep:opentelemetry",
+  "dep:opentelemetry_sdk",
+  "dep:opentelemetry-prometheus",
+  "dep:prometheus",
+]
 
 [dev-dependencies]
 mockito = "1.7"
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
-jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto"] }
+jsonwebtoken = { version = "10", default-features = false, features = [
+  "rust_crypto",
+] }
