@@ -116,6 +116,13 @@ fn compose_message(
     msg
 }
 
+fn preserves_native_error_shape(path: &str) -> bool {
+    path == "/edr"
+        || path.starts_with("/edr/")
+        || path == "/openmeteo"
+        || path.starts_with("/openmeteo/")
+}
+
 /// Pull the original technical reason out of an existing error body, tolerating
 /// both `{"error": ...}` and `{"message": ...}` shapes. Non-JSON or non-string
 /// bodies yield an empty reason (the composed message still stands on its own).
@@ -191,9 +198,10 @@ pub async fn request_context_middleware(
         req.extensions_mut().insert(RequestId(request_id.clone()));
     }
 
+    let preserve_native_error_shape = preserves_native_error_shape(req.uri().path());
     let resp = next.run(req).await;
 
-    let mut resp = if resp.status().as_u16() >= 400 {
+    let mut resp = if resp.status().as_u16() >= 400 && !preserve_native_error_shape {
         transform_error(resp, &state, &request_id).await
     } else {
         resp
@@ -293,5 +301,14 @@ mod tests {
         assert_eq!(extract_reason(br#"{"message":"m"}"#), "m");
         assert_eq!(extract_reason(br#"{"retryable":true}"#), "");
         assert_eq!(extract_reason(b"not json"), "");
+    }
+
+    #[test]
+    fn api_specific_error_contracts_are_preserved() {
+        assert!(preserves_native_error_shape("/edr"));
+        assert!(preserves_native_error_shape("/edr/collections"));
+        assert!(preserves_native_error_shape("/openmeteo"));
+        assert!(preserves_native_error_shape("/openmeteo/v1/forecast"));
+        assert!(!preserves_native_error_shape("/api/v2/collections"));
     }
 }

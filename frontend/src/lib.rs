@@ -94,9 +94,11 @@ pub fn build_app(
     let v2_protected = Router::new()
         .route("/collections", get(api::v2::list_collections))
         .route("/{collection}/requests", post(api::v2::submit_collection))
-        .route("/requests/{id}", get(api::v2::poll).delete(api::v2::cancel));
+        .route(
+            "/requests/{id}",
+            get(api::v2::public_poll).delete(api::v2::public_cancel),
+        );
 
-    let openmeteo = api::openmeteo::router();
     let mcp_config = cfg.mcp.clone();
 
     let edr_router = if let Some(edr_value) = cfg.edr {
@@ -136,8 +138,7 @@ pub fn build_app(
 
     let mut protected = Router::new()
         .nest("/api/v1", v1_protected)
-        .nest("/api/v2", v2_protected)
-        .nest("/openmeteo/v1", openmeteo);
+        .nest("/api/v2", v2_protected);
 
     if let Some(mcp_config) = mcp_config {
         protected = protected.nest_service("/mcp", api::mcp::service(state.clone(), mcp_config));
@@ -203,7 +204,33 @@ impl polytope_edr::RequestSubmitter for BitsSubmitter {
         let state = self.state.clone();
         let collection = self.collection.clone();
         Box::pin(async move {
-            let job = bits::Job::new(request);
+            let mut job = bits::Job::new(request);
+            let submission_context = auth::middleware::current_submission_context();
+
+            if let Some(context) = submission_context.as_ref() {
+                api::set_job_user_context(
+                    &mut job,
+                    &context.headers,
+                    context.auth_user.as_ref(),
+                    context.mock_roles_audit.as_ref(),
+                    &state.admin_bypass_roles,
+                );
+                if let Some(enc) = context
+                    .headers
+                    .get(axum::http::header::ACCEPT_ENCODING)
+                    .and_then(|v| v.to_str().ok())
+                {
+                    job.metadata_mut()["accept_encoding"] = serde_json::json!(enc);
+                }
+                api::set_job_mock_time_metadata(&mut job, context.mock_time.as_ref());
+            }
+
+            if !collection.is_empty() {
+                job.metadata_mut()["collection"] = serde_json::json!(&collection);
+            }
+            job.metadata_mut()["api"] = serde_json::json!("edr");
+
+            let submitted_request = job.request.clone();
             let handle = if collection.is_empty() {
                 // Backward compat: no collection specified, use default bits.submit()
                 match state.bits.submit(job) {
@@ -234,6 +261,17 @@ impl polytope_edr::RequestSubmitter for BitsSubmitter {
                     }
                 }
             };
+
+            if let Some(context) = submission_context.as_ref() {
+                api::audit_mock_job_submission(context.mock_roles_audit.as_ref(), &handle.id);
+                api::audit_mock_time_job_submission(context.mock_time_audit.as_ref(), &handle.id);
+                if let Some(user) = context.auth_user.as_ref() {
+                    tracing::info!("event.name" = "api.job.submitted", outcome = "success", request.id = %handle.id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, polytope.request = %polytope_observability::request(&submitted_request), api = "edr", "edr job submitted");
+                } else {
+                    tracing::info!("event.name" = "api.job.submitted", outcome = "success", request.id = %handle.id, polytope.request = %polytope_observability::request(&submitted_request), api = "edr", "edr job submitted");
+                }
+            }
+
             Ok(polytope_edr::SubmitResponse {
                 id: handle.id.clone(),
                 poll_url: format!("/api/v2/requests/{}", handle.id),
@@ -248,8 +286,10 @@ mod tests {
 
     use axum::{
         body::Body,
-        http::{Request, StatusCode},
+        http::{HeaderMap, HeaderValue, Request, StatusCode},
     };
+    use chrono::{TimeZone, Utc};
+    use polytope_edr::RequestSubmitter;
     use tower::ServiceExt;
 
     fn internal_poll_test_config(auth: bool) -> config::ServerConfig {
@@ -413,6 +453,80 @@ bits: {}
         let (app, _) = build_app(edr_test_config()).unwrap();
         let status = response_status(app, axum::http::Method::GET, "/edr/").await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn edr_submitter_attaches_request_context_to_jobs() {
+        let yaml = r#"bits:
+  site: tst
+  env: tst
+targets:
+  t:
+    type: http
+    url: "http://127.0.0.1:0/""#;
+        let bits = bits::Bits::from_config(yaml).unwrap();
+        let handle = bits
+            .add_route("ecmwf", &serde_json::json!([{ "r": ["target::t"] }]))
+            .unwrap();
+        let state = Arc::new(AppState {
+            bits,
+            auth_client: None,
+            collections: std::collections::HashMap::from([("ecmwf".to_string(), handle)]),
+            allow_anonymous: false,
+            admin_bypass_roles: None,
+            support: Default::default(),
+        });
+        let submitter = BitsSubmitter {
+            state: state.clone(),
+            collection: "ecmwf".to_string(),
+        };
+
+        let mut headers = HeaderMap::new();
+        headers.insert("x-real-ip", HeaderValue::from_static("192.0.2.10"));
+        headers.insert(
+            axum::http::header::ACCEPT_ENCODING,
+            HeaderValue::from_static("gzip"),
+        );
+        let auth_user = auth::AuthUser {
+            version: 1,
+            username: "alice".to_string(),
+            realm: "ecmwf".to_string(),
+            roles: vec!["data".to_string()],
+            attributes: Default::default(),
+            scopes: Default::default(),
+        };
+        let mock_time = auth::MockTime {
+            now: Utc.with_ymd_and_hms(2040, 5, 6, 7, 8, 9).unwrap(),
+        };
+        let context = auth::middleware::SubmissionContext {
+            headers,
+            auth_user: Some(auth_user),
+            mock_time: Some(mock_time),
+            ..Default::default()
+        };
+
+        let response = auth::middleware::scope_submission_context(context, async {
+            submitter.submit(serde_json::json!({ "class": "od" })).await
+        })
+        .await
+        .unwrap();
+
+        let snapshot = state
+            .bits
+            .active_jobs()
+            .into_iter()
+            .find(|job| job.id == response.id)
+            .expect("submitted EDR job should still be inspectable");
+        assert_eq!(snapshot.user["auth"]["username"], "alice");
+        assert_eq!(snapshot.user["auth"]["realm"], "ecmwf");
+        assert_eq!(snapshot.user["client_ip"], "192.0.2.10");
+        assert_eq!(snapshot.metadata["api"], "edr");
+        assert_eq!(snapshot.metadata["collection"], "ecmwf");
+        assert_eq!(snapshot.metadata["accept_encoding"], "gzip");
+        assert_eq!(
+            snapshot.metadata["admin_overrides"]["mock_now_rfc3339"],
+            "2040-05-06T07:08:09Z"
+        );
     }
 
     #[test]

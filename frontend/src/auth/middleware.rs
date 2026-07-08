@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -6,7 +7,7 @@ use axum::{
     Json,
     body::Body,
     extract::State,
-    http::{Request, StatusCode, header},
+    http::{HeaderMap, Request, StatusCode, header},
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -22,6 +23,42 @@ use super::mock_time::{
 };
 use super::{AuthError, AuthUser, is_admin_bypass_user};
 use crate::state::AppState;
+
+#[derive(Clone, Debug, Default)]
+pub struct SubmissionContext {
+    pub headers: HeaderMap,
+    pub auth_user: Option<AuthUser>,
+    pub mock_roles_audit: Option<MockRolesAudit>,
+    pub mock_time: Option<super::MockTime>,
+    pub mock_time_audit: Option<MockTimeAudit>,
+}
+
+impl SubmissionContext {
+    fn from_request(req: &Request<Body>) -> Self {
+        Self {
+            headers: req.headers().clone(),
+            auth_user: req.extensions().get::<AuthUser>().cloned(),
+            mock_roles_audit: req.extensions().get::<MockRolesAudit>().cloned(),
+            mock_time: req.extensions().get::<super::MockTime>().cloned(),
+            mock_time_audit: req.extensions().get::<MockTimeAudit>().cloned(),
+        }
+    }
+}
+
+tokio::task_local! {
+    static CURRENT_SUBMISSION_CONTEXT: SubmissionContext;
+}
+
+pub async fn scope_submission_context<F>(context: SubmissionContext, future: F) -> F::Output
+where
+    F: Future,
+{
+    CURRENT_SUBMISSION_CONTEXT.scope(context, future).await
+}
+
+pub fn current_submission_context() -> Option<SubmissionContext> {
+    CURRENT_SUBMISSION_CONTEXT.try_with(Clone::clone).ok()
+}
 
 fn log_auth_rejected(status: StatusCode, reason: &str) {
     tracing::warn!(
@@ -81,6 +118,11 @@ fn forbidden(message: &str) -> Response {
     (StatusCode::FORBIDDEN, Json(json!({"error": message}))).into_response()
 }
 
+async fn run_with_submission_context(req: Request<Body>, next: Next) -> Response {
+    let context = SubmissionContext::from_request(&req);
+    scope_submission_context(context, next.run(req)).await
+}
+
 pub async fn auth_middleware(
     State(state): State<Arc<AppState>>,
     req: Request<Body>,
@@ -95,7 +137,7 @@ pub async fn auth_middleware(
             if mock_header_present {
                 return unauthorized("Polytope mock headers require authentication");
             }
-            return next.run(req).await;
+            return run_with_submission_context(req, next).await;
         }
     };
 
@@ -113,7 +155,7 @@ pub async fn auth_middleware(
                 return unauthorized("Polytope mock headers require authentication");
             }
             if state.allow_anonymous {
-                return next.run(req).await;
+                return run_with_submission_context(req, next).await;
             }
             if prof_path.starts_with("/mcp") {
                 return unauthorized_with_auth_discovery(
@@ -237,7 +279,7 @@ pub async fn auth_middleware(
 
             let support_realm = effective_user.realm.clone();
             req.extensions_mut().insert(effective_user);
-            let mut prof_response = next.run(req).await;
+            let mut prof_response = run_with_submission_context(req, next).await;
             if let Some(url) = state.support.resolve(Some(&support_realm)) {
                 prof_response
                     .extensions_mut()

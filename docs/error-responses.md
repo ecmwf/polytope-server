@@ -25,6 +25,11 @@ uniform across the whole API.
   keeping the body to one string field is a hard requirement, enforced by
   `frontend/tests/support_errors.rs`.
 
+  API surfaces with external error contracts keep their native body shape:
+  `/edr/*` preserves OGC EDR error responses, and `/openmeteo/*` preserves the
+  Open-Meteo `{"error": true, "reason": "..."}` shape when that API is enabled.
+  They still receive the `X-Request-Id` and security headers.
+
 Clients should display `message` verbatim. The request ID is inside the text and
 also in the `X-Request-Id` header.
 

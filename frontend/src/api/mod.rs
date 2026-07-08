@@ -10,11 +10,12 @@ use axum::Json;
 use axum::extract::FromRequestParts;
 use axum::http::{HeaderMap, StatusCode, header, request::Parts};
 use axum::response::{IntoResponse, Response};
-use bits::Job;
+use bits::{ActiveJobSnapshot, Job};
 use serde_json::{Value, json};
 
 use crate::auth::mock_time::{MOCK_TIME_HEADER, normalise_mocked_now};
 use crate::auth::{MockRolesAudit, MockTime, MockTimeAudit, is_admin_bypass_user};
+use crate::state::AppState;
 
 const OVERLOADED_RETRY_AFTER_SECS: &str = "5";
 
@@ -65,6 +66,40 @@ pub fn client_ip(headers: &HeaderMap) -> Option<String> {
         .or_else(|| headers.get("x-forwarded-for"))
         .and_then(|v| v.to_str().ok())
         .map(|s| s.split(',').next().unwrap_or(s).trim().to_string())
+}
+
+pub fn active_job_allows_user(job: &ActiveJobSnapshot, auth_user: Option<&AuthUser>) -> bool {
+    let Some(owner) = job.user.get("auth") else {
+        return true;
+    };
+
+    let Some(auth_user) = auth_user else {
+        return false;
+    };
+
+    owner.get("username").and_then(Value::as_str) == Some(auth_user.username.as_str())
+        && owner.get("realm").and_then(Value::as_str) == Some(auth_user.realm.as_str())
+}
+
+pub fn known_active_job_allows_user(
+    state: &AppState,
+    id: &str,
+    auth_user: Option<&AuthUser>,
+) -> bool {
+    state
+        .bits
+        .active_jobs()
+        .into_iter()
+        .find(|job| job.id == id)
+        .is_none_or(|job| active_job_allows_user(&job, auth_user))
+}
+
+pub fn request_not_found_response() -> Response {
+    (
+        StatusCode::NOT_FOUND,
+        Json(json!({"error": "request not found"})),
+    )
+        .into_response()
 }
 
 pub fn set_job_user_context(

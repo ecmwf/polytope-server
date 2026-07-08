@@ -173,6 +173,20 @@ pub async fn submit_collection(
     }
 }
 
+pub async fn public_poll(
+    State(state): State<Arc<AppState>>,
+    auth_user: Option<Extension<AuthUser>>,
+    Path(id): Path<String>,
+) -> Response {
+    let auth_user_ref = auth_user.as_ref().map(|Extension(user)| user);
+    if !super::known_active_job_allows_user(&state, &id, auth_user_ref) {
+        tracing::warn!("event.name" = "api.job.poll.failed", outcome = "rejected", request.id = %id, reason = "wrong_user", "job poll rejected");
+        return super::request_not_found_response();
+    }
+
+    poll(State(state), Path(id)).await
+}
+
 pub async fn poll(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> Response {
     match state.bits.poll(&id, Some(POLL_TIMEOUT)).await {
         PollOutcome::Pending { id } => Response::builder()
@@ -246,12 +260,21 @@ pub async fn poll(State(state): State<Arc<AppState>>, Path(id): Path<String>) ->
     }
 }
 
-pub async fn cancel(
+pub async fn public_cancel(
     State(state): State<Arc<AppState>>,
     auth_user: Option<Extension<AuthUser>>,
     Path(id): Path<String>,
-) -> impl IntoResponse {
-    state.bits.cancel(&id);
+) -> Response {
+    let auth_user_ref = auth_user.as_ref().map(|Extension(user)| user);
+    if !super::known_active_job_allows_user(&state, &id, auth_user_ref) {
+        tracing::warn!("event.name" = "api.job.cancelled", outcome = "rejected", request.id = %id, reason = "wrong_user", "job cancellation rejected");
+        return super::request_not_found_response();
+    }
+
+    if !state.bits.cancel(&id) {
+        return super::request_not_found_response();
+    }
+
     if let Some(Extension(user)) = auth_user.as_ref() {
         tracing::info!("event.name" = "api.job.cancelled", outcome = "cancelled", request.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, "job cancelled");
     } else {
@@ -261,6 +284,7 @@ pub async fn cancel(
         StatusCode::OK,
         Json(json!({"id": id, "status": "cancelled"})),
     )
+        .into_response()
 }
 
 #[cfg(test)]
@@ -311,9 +335,32 @@ targets:
             )
             .route(
                 "/api/v2/requests/{id}",
-                get(super::poll).delete(super::cancel),
+                get(super::public_poll).delete(super::public_cancel),
             )
             .with_state(state)
+    }
+
+    fn auth_user(username: &str, realm: &str) -> crate::auth::AuthUser {
+        crate::auth::AuthUser {
+            version: 1,
+            username: username.to_string(),
+            realm: realm.to_string(),
+            roles: Vec::new(),
+            attributes: HashMap::new(),
+            scopes: HashMap::new(),
+        }
+    }
+
+    fn test_bits() -> bits::Bits {
+        bits::Bits::from_router_for_tests(
+            bits::routing::switch::Switch::new(vec![]),
+            "test".to_string(),
+            "http://localhost:0".to_string(),
+            std::time::Duration::from_secs(1),
+            None,
+            None,
+            std::time::Duration::from_secs(30),
+        )
     }
 
     #[tokio::test]
@@ -434,6 +481,40 @@ targets:
             error_msg, "unknown collection 'ecmwf'",
             "collection 'ecmwf' should be found; got status {status}"
         );
+    }
+
+    #[tokio::test]
+    async fn cancel_rejects_active_job_owned_by_another_user() {
+        let bits = test_bits();
+        let mut job = bits::Job::new(serde_json::json!({"class": "od"}));
+        job.user = serde_json::json!({"auth": auth_user("alice", "ecmwf")}).into();
+        let id = bits
+            .submit(job)
+            .expect_accepted("test broker should accept the request")
+            .id;
+        let app = build_v2_app(bits, HashMap::new());
+
+        let mut bob_request = Request::builder()
+            .method("DELETE")
+            .uri(format!("/api/v2/requests/{id}"))
+            .body(Body::empty())
+            .unwrap();
+        bob_request
+            .extensions_mut()
+            .insert(auth_user("bob", "ecmwf"));
+        let bob_resp = app.clone().oneshot(bob_request).await.unwrap();
+        assert_eq!(bob_resp.status(), StatusCode::NOT_FOUND);
+
+        let mut alice_request = Request::builder()
+            .method("DELETE")
+            .uri(format!("/api/v2/requests/{id}"))
+            .body(Body::empty())
+            .unwrap();
+        alice_request
+            .extensions_mut()
+            .insert(auth_user("alice", "ecmwf"));
+        let alice_resp = app.oneshot(alice_request).await.unwrap();
+        assert_eq!(alice_resp.status(), StatusCode::OK);
     }
 
     #[tokio::test]

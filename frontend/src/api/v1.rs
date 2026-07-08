@@ -230,13 +230,16 @@ pub async fn get_request(
     auth_user: Option<Extension<AuthUser>>,
     Path(id): Path<String>,
 ) -> Response {
+    let auth_user_ref = auth_user.as_ref().map(|Extension(user)| user);
+
     if state.collections.contains_key(&id) {
-        let records = active_request_records(
-            &state,
-            auth_user.as_ref().map(|Extension(user)| user),
-            Some(&id),
-        );
+        let records = active_request_records(&state, auth_user_ref, Some(&id));
         return (StatusCode::OK, Json(json!({"message": records}))).into_response();
+    }
+
+    if !super::known_active_job_allows_user(&state, &id, auth_user_ref) {
+        tracing::warn!("event.name" = "api.job.poll.failed", outcome = "rejected", request.id = %id, reason = "wrong_user", "job poll rejected");
+        return super::request_not_found_response();
     }
 
     match state.bits.poll(&id, Some(POLL_TIMEOUT)).await {
@@ -380,9 +383,17 @@ pub async fn delete_request(
     State(state): State<Arc<AppState>>,
     auth_user: Option<Extension<AuthUser>>,
     Path(id): Path<String>,
-) -> impl IntoResponse {
+) -> Response {
+    let auth_user_ref = auth_user.as_ref().map(|Extension(user)| user);
+    if !id.eq_ignore_ascii_case("all")
+        && !super::known_active_job_allows_user(&state, &id, auth_user_ref)
+    {
+        tracing::warn!("event.name" = "api.job.cancelled", outcome = "rejected", request.id = %id, reason = "wrong_user", "job cancellation rejected");
+        return super::request_not_found_response();
+    }
+
     let revoked = if id.eq_ignore_ascii_case("all") {
-        active_request_records(&state, auth_user.as_ref().map(|Extension(user)| user), None)
+        active_request_records(&state, auth_user_ref, None)
             .into_iter()
             .filter_map(|record| record.get("id").and_then(Value::as_str).map(str::to_string))
             .map(|id| usize::from(state.bits.cancel(&id)))
@@ -401,6 +412,7 @@ pub async fn delete_request(
             "message": format!("Successfully revoked {revoked} requests"),
         })),
     )
+        .into_response()
 }
 
 pub async fn downloads_deprecated() -> impl IntoResponse {
