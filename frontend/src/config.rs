@@ -47,10 +47,38 @@ pub struct ServerConfig {
     pub server: HttpConfig,
     pub bits: serde_yaml::Value,
     pub edr: Option<serde_yaml::Value>,
+    pub mcp: Option<McpConfig>,
     pub authentication: Option<AuthConfig>,
     pub admin_bypass_roles: Option<HashMap<String, Vec<String>>>,
     pub metrics: Option<MetricsConfig>,
     pub support: SupportConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct McpConfig {
+    #[serde(default)]
+    pub catalogue_url: Option<String>,
+    #[serde(default = "default_mcp_inline_result_max_bytes")]
+    pub inline_result_max_bytes: usize,
+    #[serde(default)]
+    pub allowed_hosts: Vec<String>,
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
+}
+
+impl Default for McpConfig {
+    fn default() -> Self {
+        Self {
+            catalogue_url: None,
+            inline_result_max_bytes: default_mcp_inline_result_max_bytes(),
+            allowed_hosts: Vec::new(),
+            allowed_origins: Vec::new(),
+        }
+    }
+}
+
+fn default_mcp_inline_result_max_bytes() -> usize {
+    65_536
 }
 
 /// Where users are told to raise a support ticket when an error reaches them.
@@ -182,6 +210,8 @@ impl<'de> Deserialize<'de> for ServerConfig {
             #[serde(default)]
             edr: Option<serde_yaml::Value>,
             #[serde(default)]
+            mcp: Option<McpConfig>,
+            #[serde(default)]
             authentication: Option<AuthConfig>,
             #[serde(default)]
             admin_bypass_roles: Option<HashMap<String, Vec<String>>>,
@@ -201,6 +231,7 @@ impl<'de> Deserialize<'de> for ServerConfig {
             server: raw.server,
             bits: raw.bits,
             edr: raw.edr,
+            mcp: raw.mcp,
             authentication: raw.authentication,
             admin_bypass_roles: raw.admin_bypass_roles,
             metrics: raw.metrics,
@@ -608,6 +639,39 @@ bits: {}
         );
         let cfg: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
         assert!(cfg.authentication.is_none());
+    }
+
+    #[test]
+    fn mcp_config_parses_when_present() {
+        let yaml = config_with_polytope(
+            r#"bits: {}
+mcp:
+  catalogue_url: "https://catalogue.example/"
+  inline_result_max_bytes: 1234
+  allowed_hosts:
+    - polytope.example
+  allowed_origins:
+    - https://client.example
+"#,
+        );
+        let cfg: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
+        let mcp = cfg.mcp.unwrap();
+        assert_eq!(
+            mcp.catalogue_url.as_deref(),
+            Some("https://catalogue.example/")
+        );
+        assert_eq!(mcp.inline_result_max_bytes, 1234);
+        assert_eq!(mcp.allowed_hosts, vec!["polytope.example"]);
+        assert_eq!(mcp.allowed_origins, vec!["https://client.example"]);
+    }
+
+    #[test]
+    fn mcp_config_defaults_inline_limit() {
+        let yaml = config_with_polytope("bits: {}\nmcp: {}\n");
+        let cfg: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
+        let mcp = cfg.mcp.unwrap();
+        assert_eq!(mcp.inline_result_max_bytes, 65_536);
+        assert!(mcp.catalogue_url.is_none());
     }
 
     #[test]

@@ -43,6 +43,34 @@ fn unauthorized(message: &str) -> Response {
         .into_response()
 }
 
+async fn unauthorized_with_auth_discovery(
+    auth_client: &crate::auth::AuthClient,
+    message: &str,
+) -> Response {
+    match auth_client.authenticate("Bearer").await {
+        Err(AuthError::Unauthorized {
+            www_authenticate, ..
+        }) => {
+            log_auth_rejected(StatusCode::UNAUTHORIZED, message);
+            (
+                StatusCode::UNAUTHORIZED,
+                [(header::WWW_AUTHENTICATE, www_authenticate.as_str())],
+                Json(json!({"error": message})),
+            )
+                .into_response()
+        }
+        Err(AuthError::ServiceUnavailable { message }) => {
+            log_auth_rejected(StatusCode::SERVICE_UNAVAILABLE, "auth service unavailable");
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({"error": message})),
+            )
+                .into_response()
+        }
+        _ => unauthorized(message),
+    }
+}
+
 fn bad_request(message: &str) -> Response {
     log_auth_rejected(StatusCode::BAD_REQUEST, message);
     (StatusCode::BAD_REQUEST, Json(json!({"error": message}))).into_response()
@@ -86,6 +114,13 @@ pub async fn auth_middleware(
             }
             if state.allow_anonymous {
                 return next.run(req).await;
+            }
+            if prof_path.starts_with("/mcp") {
+                return unauthorized_with_auth_discovery(
+                    auth_client,
+                    "missing Authorization header",
+                )
+                .await;
             }
             return unauthorized("missing Authorization header");
         }
@@ -369,6 +404,7 @@ mod tests {
             .nest("/api/v1", v1)
             .nest("/api/v2", v2_protected)
             .nest("/openmeteo/v1", openmeteo)
+            .route("/mcp", get(stub_handler).post(stub_handler))
             .layer(middleware::from_fn_with_state(
                 state.clone(),
                 super::auth_middleware,
@@ -434,9 +470,38 @@ mod tests {
             ("GET", "/api/v2/requests/abc"),
             ("DELETE", "/api/v2/requests/abc"),
             ("GET", "/openmeteo/v1/forecast"),
+            ("POST", "/mcp"),
         ] {
             assert_401(app.clone(), method, path).await;
         }
+    }
+
+    #[tokio::test]
+    async fn mcp_missing_auth_uses_authotron_discovery_challenge() {
+        let mut server = mockito::Server::new_async().await;
+        let challenge = r#"Bearer resource_metadata="https://polytope.example/.well-known/oauth-protected-resource/mcp""#;
+        let _auth = server
+            .mock("GET", "/authenticate")
+            .match_header("authorization", "Bearer")
+            .with_status(401)
+            .with_header("WWW-Authenticate", challenge)
+            .create_async()
+            .await;
+        let client = setup_auth_client(&server, "secret").await;
+        let app = build_test_app(Some(client));
+
+        let resp = app
+            .oneshot(Request::post("/mcp").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            resp.headers()
+                .get("www-authenticate")
+                .and_then(|value| value.to_str().ok()),
+            Some(challenge)
+        );
     }
 
     #[tokio::test]
@@ -463,6 +528,7 @@ mod tests {
             ("GET", "/api/v2/requests/abc"),
             ("DELETE", "/api/v2/requests/abc"),
             ("GET", "/openmeteo/v1/forecast"),
+            ("POST", "/mcp"),
         ] {
             assert_not_401(app.clone(), method, path).await;
         }

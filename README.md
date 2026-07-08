@@ -108,7 +108,9 @@ See [docs/metrics.md](docs/metrics.md) for the raw metric reference and `dev/ote
 
 ## API
 
-The frontend exposes the legacy v1 and newer v2 HTTP APIs.
+The frontend exposes the legacy v1 and newer v2 HTTP APIs. Optional frontends
+can also expose OpenMeteo, EDR, and MCP-compatible facades over the same BITS
+routing engine.
 
 ### v1 (legacy)
 
@@ -133,6 +135,14 @@ v2 routes requests through the named collection — each collection maps to a se
 Request IDs returned by these APIs are opaque strings. Clients should pass them back unchanged to status, cancel, and download routes, but must not parse broker identity, site, environment, or ordering from the ID text.
 
 Successful responses are streamed back to the client over HTTP.
+
+### MCP
+
+When `mcp:` is configured, the frontend exposes a Model Context Protocol
+endpoint at `/mcp`. The MCP frontend is asynchronous-first: agents submit
+retrievals, poll opaque request IDs, and receive download URLs or small inline
+JSON/text results. See [docs/mcp.md](docs/mcp.md) and
+[examples/mcp-config.yaml](examples/mcp-config.yaml).
 
 ## Images
 

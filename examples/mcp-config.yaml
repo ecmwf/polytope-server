@@ -1,0 +1,28 @@
+server:
+  host: "0.0.0.0"
+  port: 3000
+
+polytope:
+  site: "bol"
+  env: "dev"
+
+mcp:
+  catalogue_url: "https://catalogue.lumi.apps.dte.destination-earth.eu/"
+  inline_result_max_bytes: 65536
+  allowed_hosts:
+    - polytope.example.org
+
+bits:
+  targets:
+    worker_pool:
+      type: remote
+      dispatcher:
+        queue: cost_weighted
+        executor:
+          type: remote_pool
+          heartbeat_timeout_secs: 60
+  collections:
+    era5:
+      - target::worker_pool
+    oper:
+      - target::worker_pool

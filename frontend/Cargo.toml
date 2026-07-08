@@ -42,6 +42,10 @@ opentelemetry_sdk = { version = "0.32", features = [
 opentelemetry-prometheus = { version = "0.32", optional = true }
 prometheus = { version = "0.14", optional = true, default-features = false }
 roxmltree = "0.20"
+rmcp = { version = "2.2.0", features = [
+  "transport-streamable-http-server",
+  "schemars",
+] }
 
 # Metkit expansion (optional — requires C++ metkit libs at build+runtime)
 metkit = { path = "../utils/metkit", optional = true }

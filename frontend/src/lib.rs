@@ -97,6 +97,7 @@ pub fn build_app(
         .route("/requests/{id}", get(api::v2::poll).delete(api::v2::cancel));
 
     let openmeteo = api::openmeteo::router();
+    let mcp_config = cfg.mcp.clone();
 
     let edr_router = if let Some(edr_value) = cfg.edr {
         // Extract optional collection field from EDR config
@@ -133,14 +134,19 @@ pub fn build_app(
         .allow_methods(Any)
         .allow_headers(Any);
 
-    let protected = Router::new()
+    let mut protected = Router::new()
         .nest("/api/v1", v1_protected)
         .nest("/api/v2", v2_protected)
-        .nest("/openmeteo/v1", openmeteo)
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            auth::middleware::auth_middleware,
-        ));
+        .nest("/openmeteo/v1", openmeteo);
+
+    if let Some(mcp_config) = mcp_config {
+        protected = protected.nest_service("/mcp", api::mcp::service(state.clone(), mcp_config));
+    }
+
+    let protected = protected.layer(middleware::from_fn_with_state(
+        state.clone(),
+        auth::middleware::auth_middleware,
+    ));
 
     let app = Router::new()
         .route("/api/v1/test", get(api::v1::test))
