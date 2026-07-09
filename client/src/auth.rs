@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
+//
+// SPDX-License-Identifier: Apache-2.0
+
 use base64::{prelude::BASE64_STANDARD, Engine};
 use serde_json::Value;
 use std::{error::Error, fs};

@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Request IDs
 
 Polytope request IDs are opaque public identifiers returned by BITS. Clients and server code must store and pass them back exactly as received, without parsing structure from the string.

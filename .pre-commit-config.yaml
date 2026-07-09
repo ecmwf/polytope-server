@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+repos:
+  - repo: https://github.com/fsfe/reuse-tool
+    rev: v6.0.0
+    hooks:
+      - id: reuse
+  - repo: local
+    hooks:
+      - id: rustfmt
+        name: rustfmt (workspace)
+        entry: cargo fmt --all
+        language: system
+        pass_filenames: false

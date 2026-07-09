@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+version = 1
+
+# Human-facing LICENSE and NOTICE files (outside LICENSES/) and metadata files
+# that carry no comment syntax.
+[[annotations]]
+path = ["LICENSE", "NOTICE", "CITATION.cff"]
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 European Centre for Medium-Range Weather Forecasts (ECMWF)"
+SPDX-License-Identifier = "Apache-2.0"
+
+# Generated lockfiles and data/config files without a comment syntax.
+[[annotations]]
+path = [
+  "**/Cargo.lock",
+  "pytest.ini",
+  "**/requirements.txt",
+  "dev/otel/grafana/dashboards/**",
+]
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 European Centre for Medium-Range Weather Forecasts (ECMWF)"
+SPDX-License-Identifier = "Apache-2.0"

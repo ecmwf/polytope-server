@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Model Context Protocol frontend
 
 Polytope can expose a Model Context Protocol (MCP) endpoint at `/mcp`. The

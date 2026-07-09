@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
+//
+// SPDX-License-Identifier: Apache-2.0
+
 //! Forcibly release leaked MARS DHS callback sockets.
 //!
 //! `mars-client-cpp` (via metkit's `DHSProtocol`) opens an ephemeral TCP

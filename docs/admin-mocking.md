@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Admin mocking
 
 Admin mocking is an operational facility for configured Polytope admins. It lets an admin submit a protected request with one or both of these headers:

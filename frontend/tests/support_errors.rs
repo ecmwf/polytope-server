@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
+//
+// SPDX-License-Identifier: Apache-2.0
+
 //! End-to-end checks that user-facing errors carry support guidance + a request
 //! ID, and that the error body stays a flat string→string object (so the Python
 //! `polytope-client`, which flattens every value and crashes on non-strings,

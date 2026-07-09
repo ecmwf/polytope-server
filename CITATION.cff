@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata from this file."
+type: software
+title: "polytope-server"
+abstract: "A Polytope HTTP frontend and worker services for feature extraction and retrieval of meteorological data, built on the bits request broker and bobs data staging service."
+authors:
+  - name: "European Centre for Medium-Range Weather Forecasts (ECMWF)"
+    website: "https://www.ecmwf.int"
+version: "2.0.0"
+date-released: "2026-07-09"
+repository-code: "https://github.com/ecmwf/polytope-server"
+url: "https://github.com/ecmwf/polytope-server"
+license: Apache-2.0
+keywords:
+  - "polytope"
+  - "meteorological-data"
+  - "data-retrieval"
+  - "web-service"
+  - "rust"

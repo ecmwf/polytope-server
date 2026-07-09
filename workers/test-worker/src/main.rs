@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
+//
+// SPDX-License-Identifier: Apache-2.0
+
 use clap::Parser;
 use polytope_worker_common::config::{DEFAULT_CONFIG_PATH, WorkerConfigFile};
 use polytope_worker_common::{WorkerConfig, run_worker_loop};

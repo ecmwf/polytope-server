@@ -1,6 +1,17 @@
+<!--
+SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # polytope-server
 
-A Rust workspace containing a Polytope frontend plus separate worker crates, backed by [Bits](http://github.com/ecmwf/bits-broker) for request routing and processing, and [Bobs](http://github.com/ecmwf/bobs) for efficient data staging.
+A Rust workspace containing a Polytope frontend plus separate worker crates, backed by [Bits](https://github.com/ecmwf/bits-broker) for request routing and processing, and [Bobs](https://github.com/ecmwf/bobs) for efficient data staging.
+
+[![Static Badge](https://github.com/ecmwf/codex/raw/refs/heads/main/Project%20Maturity/incubating_badge.svg)](https://github.com/ecmwf/codex/raw/refs/heads/main/Project%20Maturity#incubating)
+
+> [!IMPORTANT]
+> This software is **Incubating** and subject to ECMWF's guidelines on [Software Maturity](https://github.com/ecmwf/codex/raw/refs/heads/main/Project%20Maturity).
 
 ## Workspace layout
 
@@ -76,7 +87,7 @@ collections:
         url: "http://ops-backend/api"
 ```
 
-See `config.example.yaml` for a starting point, [docs/request-ids.md](docs/request-ids.md) for request ID and rollout guidance, and the [bits documentation](../bits) for the full bits config schema.
+See `config.example.yaml` for a starting point, [docs/request-ids.md](docs/request-ids.md) for request ID and rollout guidance, and the [bits documentation](https://github.com/ecmwf/bits-broker) for the full bits config schema.
 
 ## Running
 
@@ -164,3 +175,7 @@ The current layout is designed so the crates can be moved later with minimal chu
 - the only in-repo worker dependency is `workers/common/`
 
 If a worker needs to move to its own repository later, it should mostly be a matter of copying that crate plus `workers/common/` (or publishing `workers/common/` as its own crate).
+
+## License
+
+[Apache License 2.0](LICENSE) In applying this licence, ECMWF does not waive the privileges and immunities granted to it by virtue of its status as an intergovernmental organisation nor does it submit to any jurisdiction.
