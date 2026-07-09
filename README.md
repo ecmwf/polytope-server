@@ -1,6 +1,6 @@
 # polytope-server
 
-A Rust workspace containing a Polytope frontend plus separate worker crates, backed by [bits](../bits) for request routing and processing.
+A Rust workspace containing a Polytope frontend plus separate worker crates, backed by [Bits](http://github.com/ecmwf/bits-broker) for request routing and processing, and [Bobs](http://github.com/ecmwf/bobs) for efficient data staging.
 
 ## Workspace layout
 
