@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
+#
+# SPDX-License-Identifier: Apache-2.0
+
 set -euo pipefail
 
 : "${POLYTOPE_URL:?Set POLYTOPE_URL to the Polytope server base URL, for example https://polytope.example.org}"

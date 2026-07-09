@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
+//
+// SPDX-License-Identifier: Apache-2.0
+
 use crate::redaction::{redact_field, redact_json, redact_string};
 use crate::resource::Resource;
 use serde_json::{Map, Number, Value};

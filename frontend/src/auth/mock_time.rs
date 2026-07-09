@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
+//
+// SPDX-License-Identifier: Apache-2.0
+
 use axum::http::{HeaderMap, HeaderName};
 use chrono::{DateTime, NaiveDate, NaiveTime, SecondsFormat, Utc};
 

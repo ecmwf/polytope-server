@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
+//
+// SPDX-License-Identifier: Apache-2.0
+
 //! Backwards-compatibility checks: the v1 API keeps parity with the legacy
 //! Python polytope-server on the response shapes that clients depend on.
 

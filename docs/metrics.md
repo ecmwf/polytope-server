@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
+
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Metrics
 
 This page lists the raw metrics emitted by Polytope Server components and related scrape targets in the local monitoring stack, and what each one means. Prometheus names assume the `opentelemetry-prometheus` exporter used by the local dev stack.

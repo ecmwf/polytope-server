@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
+//
+// SPDX-License-Identifier: Apache-2.0
+
 fn main() {
     let eckit_include = std::env::var("ECKIT_INCLUDE_DIR")
         .unwrap_or_else(|_| "../../../mars-client-bundle/eckit/src".to_string());

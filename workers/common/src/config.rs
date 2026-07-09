@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
+//
+// SPDX-License-Identifier: Apache-2.0
+
 use crate::delivery_config::DeliveryConfig;
 
 pub const DEFAULT_CONFIG_PATH: &str = "/etc/worker/config.yaml";

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
+//
+// SPDX-License-Identifier: Apache-2.0
+
 use axum::extract::State;
 use axum::response::IntoResponse;
 use axum::{Json, Router, routing::get};

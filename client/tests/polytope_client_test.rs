@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
+//
+// SPDX-License-Identifier: Apache-2.0
+
 use polytope_client::polytope_client::PolytopeClient;
 use regex::Regex;
 use serde_json::json;
