@@ -101,10 +101,10 @@ impl Config {
                 if duration_s <= 0.0 || !duration_s.is_finite() {
                     return Err("LOADGEN_DURATION_S must be a positive finite number".to_string());
                 }
-                if let Some(rps) = rps {
-                    if rps <= 0.0 || !rps.is_finite() {
-                        return Err("LOADGEN_RPS must be a positive finite number".to_string());
-                    }
+                if let Some(rps) = rps
+                    && (rps <= 0.0 || !rps.is_finite())
+                {
+                    return Err("LOADGEN_RPS must be a positive finite number".to_string());
                 }
                 RunLimit::Duration {
                     duration: Duration::from_secs_f64(duration_s),
