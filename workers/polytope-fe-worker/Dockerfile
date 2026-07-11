@@ -10,64 +10,64 @@ RUN cargo install cargo-chef --locked
 RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-dev python3-dev && rm -rf /var/lib/apt/lists/*
 
 ###############################
-# Stage 1: Prepare Cargo Chef Recipe
+# Prepare the root workspace Cargo Chef recipe
 ###############################
 FROM chef-base AS chef
 ARG GIT_AUTH_TOKEN=""
 WORKDIR /ecmwf/polytope-server
-COPY Cargo.lock Cargo.lock
-COPY observability/ observability/
-COPY workers/common/ workers/common/
-COPY workers/polytope-fe-worker/ workers/polytope-fe-worker/
-RUN mkdir -p .cargo && echo '[net]' > .cargo/config.toml && echo 'git-fetch-with-cli = true' >> .cargo/config.toml
-RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi
-RUN cd workers/polytope-fe-worker && cargo chef prepare --recipe-path recipe.json
+COPY . .
+RUN mkdir -p .cargo && printf '[net]\ngit-fetch-with-cli = true\n' > .cargo/config.toml
+RUN if [ -n "$GIT_AUTH_TOKEN" ]; then \
+      git config --global credential.helper '' && \
+      git config --global url."https://git:${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; \
+    fi
+RUN cargo chef prepare --recipe-path recipe.json
 
 ###############################
-# Stage 2: Cache Dependencies
+# Cache root workspace dependencies without application source
 ###############################
 FROM chef-base AS cacher
 ARG GIT_AUTH_TOKEN=""
+ARG PACKAGE_NAME=polytope-fe-worker
 WORKDIR /ecmwf/polytope-server
-COPY Cargo.lock Cargo.lock
-COPY --from=chef /ecmwf/polytope-server/workers/polytope-fe-worker/recipe.json workers/polytope-fe-worker/recipe.json
+COPY --from=chef /ecmwf/polytope-server/recipe.json recipe.json
 COPY --from=chef /ecmwf/polytope-server/.cargo/config.toml .cargo/config.toml
-COPY observability/ observability/
-COPY workers/common/ workers/common/
-RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi
-RUN cd workers/polytope-fe-worker && cargo chef cook --release --recipe-path recipe.json
+RUN if [ -n "$GIT_AUTH_TOKEN" ]; then \
+      git config --global credential.helper '' && \
+      git config --global url."https://git:${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; \
+    fi
+RUN cargo chef cook --release --locked --package "${PACKAGE_NAME}" --recipe-path recipe.json
 
 ###############################
-# Stage 3: Build the Project
+# Build the package from the root workspace
 ###############################
 FROM chef-base AS builder
 ARG GIT_AUTH_TOKEN=""
-WORKDIR /ecmwf/polytope-server
-COPY Cargo.lock Cargo.lock
 ARG PACKAGE_NAME=polytope-fe-worker
 ARG BIN_NAME=polytope-fe-worker
-COPY observability/ observability/
-COPY workers/common/ workers/common/
-COPY workers/polytope-fe-worker/ workers/polytope-fe-worker/
-RUN mkdir -p .cargo && echo '[net]' > .cargo/config.toml && echo 'git-fetch-with-cli = true' >> .cargo/config.toml
-COPY --from=cacher /ecmwf/polytope-server/workers/polytope-fe-worker/target workers/polytope-fe-worker/target
+WORKDIR /ecmwf/polytope-server
+COPY --from=cacher /ecmwf/polytope-server/target target
 COPY --from=cacher /usr/local/cargo /usr/local/cargo
-RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi
-RUN find workers/common/src -type f -exec touch {} + && cd workers/polytope-fe-worker && cargo build --release -p ${PACKAGE_NAME}
+COPY . .
+RUN mkdir -p .cargo && printf '[net]\ngit-fetch-with-cli = true\n' > .cargo/config.toml
+RUN if [ -n "$GIT_AUTH_TOKEN" ]; then \
+      git config --global credential.helper '' && \
+      git config --global url."https://git:${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; \
+    fi
+RUN cargo build --release --locked --package "${PACKAGE_NAME}"
 
 ###############################
 # FDB Build (from source)
 ###############################
-FROM python:3.11-bookworm AS fdb-build
+FROM docker.io/library/debian:bookworm-slim AS fdb-build
 ARG ecbuild_version=3.12.0
 ARG eccodes_version=2.46.0
 ARG eckit_version=1.33.2
 ARG metkit_version=1.18.1
 ARG fdb_version=5.21.3
 ARG gribjump_version=0.12.0
-ARG pyfdb_version=5.21.0.19
 
-RUN apt-get update && apt-get install -y cmake gnupg build-essential net-tools bison flex git libaec-dev && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends cmake build-essential bison flex git libaec-dev ca-certificates && rm -rf /var/lib/apt/lists/*
 
 RUN git clone --depth 1 --branch ${ecbuild_version} https://github.com/ecmwf/ecbuild.git /ecbuild
 ENV PATH=/ecbuild/bin:$PATH
@@ -105,8 +105,6 @@ RUN git clone --depth 1 --branch ${gribjump_version} https://github.com/ecmwf/gr
 
 RUN rm -rf /source /build
 
-RUN python -m pip install "numpy<2.0" --user \
-    && python -m pip install "pyfdb==${pyfdb_version}" --user
 
 
 
@@ -115,11 +113,10 @@ RUN python -m pip install "numpy<2.0" --user \
 ###############################
 FROM python:3.11-slim-bookworm AS python-deps
 RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev git && rm -rf /var/lib/apt/lists/*
-RUN pip install uv --user
-ENV PATH="/root/.venv/bin:/root/.local/bin:${PATH}"
-RUN uv venv /root/.venv
+RUN python -m pip install --no-cache-dir uv
+RUN uv venv /opt/venv
 COPY workers/polytope-fe-worker/requirements.txt /requirements.txt
-RUN uv pip install -r /requirements.txt
+RUN uv pip install --python /opt/venv/bin/python -r /requirements.txt
 
 ###############################
 # Stage 4: Production Release Image
@@ -134,12 +131,14 @@ RUN apt-get update && apt-get install -y ca-certificates libgomp1 libaec0 libcur
 WORKDIR /app
 
 COPY --from=fdb-build /opt/fdb/ /opt/fdb/
-COPY --from=fdb-build /root/.local /root/.local
-COPY --from=python-deps /root/.venv /root/.local
+COPY --from=python-deps /opt/venv /opt/venv
 
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH="/opt/venv/bin:${PATH}"
+ENV PYTHONPATH=/opt/venv/lib/python3.11/site-packages
 ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/opt/fdb/lib:/usr/local/lib
 
-COPY --from=builder /ecmwf/polytope-server/workers/polytope-fe-worker/target/release/${BIN_NAME} /app/polytope-fe-worker
+COPY --from=builder /ecmwf/polytope-server/target/release/${BIN_NAME} /app/polytope-fe-worker
 COPY workers/polytope-fe-worker/run_polytope_worker.py /app/
 COPY workers/polytope-fe-worker/polytope.py /app/
 ENTRYPOINT ["/app/polytope-fe-worker"]
@@ -157,12 +156,14 @@ RUN apt-get update && apt-get install -y ca-certificates libgomp1 libaec0 libcur
 WORKDIR /app
 
 COPY --from=fdb-build /opt/fdb/ /opt/fdb/
-COPY --from=fdb-build /root/.local /root/.local
-COPY --from=python-deps /root/.venv /root/.local
+COPY --from=python-deps /opt/venv /opt/venv
 
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH="/opt/venv/bin:${PATH}"
+ENV PYTHONPATH=/opt/venv/lib/python3.11/site-packages
 ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/opt/fdb/lib:/usr/local/lib
 
-COPY --from=builder /ecmwf/polytope-server/workers/polytope-fe-worker/target/release/${BIN_NAME} /app/polytope-fe-worker
+COPY --from=builder /ecmwf/polytope-server/target/release/${BIN_NAME} /app/polytope-fe-worker
 COPY workers/polytope-fe-worker/run_polytope_worker.py /app/
 COPY workers/polytope-fe-worker/polytope.py /app/
 ENTRYPOINT ["/app/polytope-fe-worker"]
