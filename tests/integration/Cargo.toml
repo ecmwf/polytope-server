@@ -10,7 +10,7 @@ edition = "2021"
 [dependencies]
 async-trait = "0.1"
 axum = "0.8"
-authotron = { git = "https://github.com/ecmwf/auth-o-tron.git", rev = "5ad7682aaf21a4de741ca4f64c49669b89032e54" }
+authotron = { git = "https://github.com/ecmwf/auth-o-tron.git", rev = "d89145401676977f30e2c6db1547ecd946ac1a14" }
 bobs = { git = "https://github.com/ecmwf/bobs.git", tag = "0.1.0" }
 bytes = "1"
 futures = "0.3"

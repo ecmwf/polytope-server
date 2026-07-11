@@ -7,9 +7,10 @@ use std::sync::Arc;
 
 use authotron::config::{
     ConfigV2, JWTConfig, LoggingConfig, MetricsConfig, ServerConfig as AuthotronServerConfig,
-    StoreConfig,
 };
-use authotron::providers::plain_provider::{PlainAuthConfig, PlainUserEntry};
+use authotron::providers::plain_provider::{
+    PlainAuthConfig, PlainCredential, PlainUserEntry, PlaintextCredential,
+};
 use authotron::providers::ProviderConfig;
 use authotron::startup;
 use axum::{
@@ -113,11 +114,6 @@ async fn counted_handler(
 
 pub async fn spawn_authotron() -> Result<(String, JoinHandle<()>), Box<dyn Error>> {
     let config = Arc::new(ConfigV2 {
-        store: StoreConfig {
-            enabled: false,
-            backend: None,
-        },
-        services: vec![],
         providers: vec![
             ProviderConfig::Plain(PlainAuthConfig {
                 name: "alpha-provider".to_string(),
@@ -125,12 +121,16 @@ pub async fn spawn_authotron() -> Result<(String, JoinHandle<()>), Box<dyn Error
                 users: vec![
                     PlainUserEntry {
                         username: ALPHA_ADMIN_USER.to_string(),
-                        password: ALPHA_ADMIN_PASS.to_string(),
+                        credential: PlainCredential::Plaintext(PlaintextCredential {
+                            password: ALPHA_ADMIN_PASS.to_string(),
+                        }),
                         roles: Some(vec!["admin".to_string()]),
                     },
                     PlainUserEntry {
                         username: ALPHA_REGULAR_USER.to_string(),
-                        password: ALPHA_REGULAR_PASS.to_string(),
+                        credential: PlainCredential::Plaintext(PlaintextCredential {
+                            password: ALPHA_REGULAR_PASS.to_string(),
+                        }),
                         roles: None,
                     },
                 ],
@@ -140,7 +140,9 @@ pub async fn spawn_authotron() -> Result<(String, JoinHandle<()>), Box<dyn Error
                 realm: "beta".to_string(),
                 users: vec![PlainUserEntry {
                     username: BETA_ADMIN_USER.to_string(),
-                    password: BETA_ADMIN_PASS.to_string(),
+                    credential: PlainCredential::Plaintext(PlaintextCredential {
+                        password: BETA_ADMIN_PASS.to_string(),
+                    }),
                     roles: Some(vec!["admin".to_string()]),
                 }],
             }),
