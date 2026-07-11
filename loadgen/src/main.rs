@@ -702,10 +702,12 @@ mod tests {
                         format!(
                             "HTTP/1.1 303 See Other\r\nLocation: {location_base}/download-0/0123abcd\r\nContent-Length: 0\r\n\r\n"
                         )
-                    } else if method == "GET" && path == "/api/v1/read/api/v1/read/0123abcd" {
-                        tokio::time::sleep(download_delay).await;
-                        "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".to_string()
-                    } else if method == "GET" && path == "/api/v1/read/0123abcd" {
+                    } else if method == "GET"
+                        && matches!(
+                            path,
+                            "/api/v1/read/api/v1/read/0123abcd" | "/api/v1/read/0123abcd"
+                        )
+                    {
                         tokio::time::sleep(download_delay).await;
                         "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok".to_string()
                     } else {
