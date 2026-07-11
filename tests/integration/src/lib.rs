@@ -28,7 +28,13 @@ use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
 const FAKE_GRIB: &[u8] = b"\x00\x01\x02\x03GRIB_FAKE_DATA\xff\xfe";
-const JWT_SECRET: &str = "integration-test-secret";
+const JWT_ISSUER: &str = "https://auth-o-tron.integration.test";
+const JWT_AUDIENCE: &str = "polytope-server";
+const JWT_KID: &str = "integration-key-1";
+const JWT_KID_2: &str = "integration-key-2";
+const JWT_PRIVATE_KEY: &str = include_str!("../../fixtures/test-rsa-private.pem");
+const JWT_PUBLIC_KEY: &str = include_str!("../../fixtures/test-rsa-public.pem");
+const JWT_PUBLIC_KEY_2: &str = include_str!("../../fixtures/test-rsa-public-2.pem");
 
 const ALPHA_ADMIN_USER: &str = "alpha_admin";
 const ALPHA_ADMIN_PASS: &str = "adminpass";
@@ -105,7 +111,7 @@ async fn counted_handler(
         .expect("valid response")
 }
 
-pub async fn spawn_authotron(jwt_secret: &str) -> Result<(String, JoinHandle<()>), Box<dyn Error>> {
+pub async fn spawn_authotron() -> Result<(String, JoinHandle<()>), Box<dyn Error>> {
     let config = Arc::new(ConfigV2 {
         store: StoreConfig {
             enabled: false,
@@ -149,10 +155,11 @@ pub async fn spawn_authotron(jwt_secret: &str) -> Result<(String, JoinHandle<()>
             port: 0,
         },
         jwt: JWTConfig {
-            iss: "integration-tests".to_string(),
-            aud: None,
+            iss: JWT_ISSUER.to_string(),
+            aud: JWT_AUDIENCE.to_string(),
+            kid: JWT_KID.to_string(),
             exp: 3600,
-            secret: jwt_secret.to_string(),
+            private_key: JWT_PRIVATE_KEY.to_string(),
         },
         include_legacy_headers: None,
         logging: LoggingConfig {
@@ -259,6 +266,8 @@ pub async fn spawn_polytope_server_with_extra_config(
     allow_anonymous: bool,
     extra_config: &str,
 ) -> Result<(String, JoinHandle<()>), Box<dyn Error>> {
+    let public_key = serde_json::to_string(JWT_PUBLIC_KEY)?;
+    let public_key_2 = serde_json::to_string(JWT_PUBLIC_KEY_2)?;
     let server_config = if let Some(auth_url) = authotron_url {
         format!(
             r#"
@@ -270,7 +279,12 @@ server:
   port: 0
 authentication:
   url: "{auth_url}"
-  secret: "{JWT_SECRET}"
+  issuer: "{JWT_ISSUER}"
+  public_keys:
+    - kid: "{JWT_KID}"
+      public_key: {public_key}
+    - kid: "{JWT_KID_2}"
+      public_key: {public_key_2}
   allow_anonymous: {allow_anonymous}
 {extra_config}bits:
 {bits_yaml}
@@ -589,7 +603,7 @@ async fn health_check_v2() {
 #[tokio::test]
 async fn authenticated_retrieve_v1() {
     let (backend_url, backend) = spawn_mock_backend().await.expect("spawn backend");
-    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (authotron_url, authotron) = spawn_authotron().await.expect("spawn authotron");
     let (server_url, server) =
         spawn_polytope_server(Some(&authotron_url), &simple_bits_yaml(&backend_url), false)
             .await
@@ -623,7 +637,7 @@ async fn authenticated_retrieve_v1() {
 #[tokio::test]
 async fn authenticated_retrieve_v2() {
     let (backend_url, backend) = spawn_mock_backend().await.expect("spawn backend");
-    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (authotron_url, authotron) = spawn_authotron().await.expect("spawn authotron");
     let (server_url, server) =
         spawn_polytope_server(Some(&authotron_url), &simple_bits_yaml(&backend_url), false)
             .await
@@ -664,7 +678,7 @@ async fn bobs_delivery_pipeline() {
     let worker_port = free_port().await;
 
     let (bobs_url, bobs_handle, _bobs_dir) = spawn_bobs().await.expect("spawn bobs");
-    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (authotron_url, authotron) = spawn_authotron().await.expect("spawn authotron");
     let (server_url, server) =
         spawn_polytope_server(Some(&authotron_url), &bobs_bits_yaml(worker_port), false)
             .await
@@ -771,7 +785,7 @@ async fn bobs_delivery_pipeline() {
 #[tokio::test]
 async fn unauthenticated_rejected() {
     let (backend_url, backend) = spawn_mock_backend().await.expect("spawn backend");
-    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (authotron_url, authotron) = spawn_authotron().await.expect("spawn authotron");
     let (server_url, server) =
         spawn_polytope_server(Some(&authotron_url), &simple_bits_yaml(&backend_url), false)
             .await
@@ -794,7 +808,7 @@ async fn unauthenticated_rejected() {
 #[tokio::test]
 async fn role_admin_correct_realm_passes() {
     let (backend_url, backend) = spawn_mock_backend().await.expect("spawn backend");
-    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (authotron_url, authotron) = spawn_authotron().await.expect("spawn authotron");
     let (server_url, server) = spawn_polytope_server(
         Some(&authotron_url),
         &fallback_bits_yaml(&backend_url),
@@ -830,7 +844,7 @@ async fn role_admin_correct_realm_passes() {
 #[tokio::test]
 async fn role_regular_user_falls_through() {
     let (backend_url, backend) = spawn_mock_backend().await.expect("spawn backend");
-    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (authotron_url, authotron) = spawn_authotron().await.expect("spawn authotron");
     let (server_url, server) = spawn_polytope_server(
         Some(&authotron_url),
         &fallback_bits_yaml(&backend_url),
@@ -866,7 +880,7 @@ async fn role_regular_user_falls_through() {
 #[tokio::test]
 async fn role_wrong_realm_falls_through() {
     let (backend_url, backend) = spawn_mock_backend().await.expect("spawn backend");
-    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (authotron_url, authotron) = spawn_authotron().await.expect("spawn authotron");
     let (server_url, server) = spawn_polytope_server(
         Some(&authotron_url),
         &fallback_bits_yaml(&backend_url),
@@ -902,7 +916,7 @@ async fn role_wrong_realm_falls_through() {
 #[tokio::test]
 async fn strict_admin_allowed() {
     let (backend_url, backend) = spawn_mock_backend().await.expect("spawn backend");
-    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (authotron_url, authotron) = spawn_authotron().await.expect("spawn authotron");
     let (server_url, server) =
         spawn_polytope_server(Some(&authotron_url), &strict_bits_yaml(&backend_url), false)
             .await
@@ -935,7 +949,7 @@ async fn strict_admin_allowed() {
 #[tokio::test]
 async fn strict_regular_rejected() {
     let (backend_url, backend) = spawn_mock_backend().await.expect("spawn backend");
-    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (authotron_url, authotron) = spawn_authotron().await.expect("spawn authotron");
     let (server_url, server) =
         spawn_polytope_server(Some(&authotron_url), &strict_bits_yaml(&backend_url), false)
             .await
@@ -965,7 +979,7 @@ async fn strict_regular_rejected() {
 #[tokio::test]
 async fn strict_no_roles_user_rejected() {
     let (backend_url, backend) = spawn_mock_backend().await.expect("spawn backend");
-    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (authotron_url, authotron) = spawn_authotron().await.expect("spawn authotron");
     let (server_url, server) =
         spawn_polytope_server(Some(&authotron_url), &strict_bits_yaml(&backend_url), false)
             .await
@@ -999,7 +1013,7 @@ async fn strict_no_roles_user_rejected() {
 #[tokio::test]
 async fn strict_wrong_realm_rejected() {
     let (backend_url, backend) = spawn_mock_backend().await.expect("spawn backend");
-    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (authotron_url, authotron) = spawn_authotron().await.expect("spawn authotron");
     let (server_url, server) =
         spawn_polytope_server(Some(&authotron_url), &strict_bits_yaml(&backend_url), false)
             .await
@@ -1026,7 +1040,7 @@ async fn strict_wrong_realm_rejected() {
 #[tokio::test]
 async fn admin_mock_roles_can_access_mocked_realm_role() {
     let (backend_url, backend) = spawn_mock_backend().await.expect("spawn backend");
-    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (authotron_url, authotron) = spawn_authotron().await.expect("spawn authotron");
     let (server_url, server) = spawn_polytope_server_with_extra_config(
         Some(&authotron_url),
         &beta_viewer_bits_yaml(&backend_url),
@@ -1058,7 +1072,7 @@ async fn admin_mock_time_before_schedule_release_rejects_before_backend() {
     let schedule = temporary_release_schedule();
     let schedule_path = schedule.path().to_str().expect("utf8 schedule path");
     let (backend_url, backend, hits) = spawn_mock_backend_counted().await.expect("spawn backend");
-    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (authotron_url, authotron) = spawn_authotron().await.expect("spawn authotron");
     let (server_url, server) = spawn_polytope_server_with_extra_config(
         Some(&authotron_url),
         &schedule_bits_yaml(&backend_url, schedule_path),
@@ -1090,7 +1104,7 @@ async fn admin_mock_time_after_schedule_release_reaches_backend() {
     let schedule = temporary_release_schedule();
     let schedule_path = schedule.path().to_str().expect("utf8 schedule path");
     let (backend_url, backend, hits) = spawn_mock_backend_counted().await.expect("spawn backend");
-    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (authotron_url, authotron) = spawn_authotron().await.expect("spawn authotron");
     let (server_url, server) = spawn_polytope_server_with_extra_config(
         Some(&authotron_url),
         &schedule_bits_yaml(&backend_url, schedule_path),
@@ -1125,7 +1139,7 @@ async fn admin_mock_time_and_roles_compose_for_scheduled_role_gated_collection()
     let schedule = temporary_release_schedule();
     let schedule_path = schedule.path().to_str().expect("utf8 schedule path");
     let (backend_url, backend, hits) = spawn_mock_backend_counted().await.expect("spawn backend");
-    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (authotron_url, authotron) = spawn_authotron().await.expect("spawn authotron");
     let (server_url, server) = spawn_polytope_server_with_extra_config(
         Some(&authotron_url),
         &beta_viewer_schedule_bits_yaml(&backend_url, schedule_path),
@@ -1161,7 +1175,7 @@ async fn admin_mock_time_trust_boundary_body_values_without_header_do_not_affect
     let schedule = temporary_release_schedule();
     let schedule_path = schedule.path().to_str().expect("utf8 schedule path");
     let (backend_url, backend, hits) = spawn_mock_backend_counted().await.expect("spawn backend");
-    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (authotron_url, authotron) = spawn_authotron().await.expect("spawn authotron");
     let static_now = format!("{}T11:59:00Z", utc_today_iso_date());
     let (server_url, server) = spawn_polytope_server_with_extra_config(
         Some(&authotron_url),
@@ -1203,7 +1217,7 @@ async fn admin_mock_time_trust_boundary_body_values_without_header_do_not_affect
 #[tokio::test]
 async fn non_admin_mock_roles_rejected_before_downstream_access() {
     let (backend_url, backend, hits) = spawn_mock_backend_counted().await.expect("spawn backend");
-    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (authotron_url, authotron) = spawn_authotron().await.expect("spawn authotron");
     let (server_url, server) = spawn_polytope_server_with_extra_config(
         Some(&authotron_url),
         &beta_viewer_bits_yaml(&backend_url),
@@ -1237,7 +1251,7 @@ async fn non_admin_mock_roles_rejected_before_downstream_access() {
 #[tokio::test]
 async fn admin_mock_roles_rejects_configured_admin_role() {
     let (backend_url, backend) = spawn_mock_backend().await.expect("spawn backend");
-    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (authotron_url, authotron) = spawn_authotron().await.expect("spawn authotron");
     let (server_url, server) = spawn_polytope_server_with_extra_config(
         Some(&authotron_url),
         &beta_viewer_bits_yaml(&backend_url),
@@ -1267,7 +1281,7 @@ async fn admin_mock_roles_rejects_configured_admin_role() {
 #[tokio::test]
 async fn mocked_request_cannot_use_admin_bypass_for_unmatched_role() {
     let (backend_url, backend, hits) = spawn_mock_backend_counted().await.expect("spawn backend");
-    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (authotron_url, authotron) = spawn_authotron().await.expect("spawn authotron");
     let (server_url, server) = spawn_polytope_server_with_extra_config(
         Some(&authotron_url),
         &beta_viewer_bits_yaml(&backend_url),
@@ -1298,7 +1312,7 @@ async fn mocked_request_cannot_use_admin_bypass_for_unmatched_role() {
 #[tokio::test]
 async fn anonymous_mode_unauthenticated_submit_succeeds() {
     let (backend_url, backend) = spawn_mock_backend().await.expect("spawn backend");
-    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (authotron_url, authotron) = spawn_authotron().await.expect("spawn authotron");
     let (server_url, server) =
         spawn_polytope_server(Some(&authotron_url), &simple_bits_yaml(&backend_url), true)
             .await
@@ -1332,7 +1346,7 @@ async fn anonymous_mode_role_split_routes_to_public() {
     let (public_backend_url, public_backend, public_hits) = spawn_mock_backend_counted()
         .await
         .expect("spawn public backend");
-    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (authotron_url, authotron) = spawn_authotron().await.expect("spawn authotron");
     let (server_url, server) = spawn_polytope_server(
         Some(&authotron_url),
         &auth_split_yaml(&auth_backend_url, &public_backend_url),
@@ -1374,7 +1388,7 @@ async fn anonymous_mode_role_split_routes_to_public() {
 #[tokio::test]
 async fn anonymous_mode_strict_route_rejects_at_routing() {
     let (backend_url, backend) = spawn_mock_backend().await.expect("spawn backend");
-    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (authotron_url, authotron) = spawn_authotron().await.expect("spawn authotron");
     let (server_url, server) =
         spawn_polytope_server(Some(&authotron_url), &strict_bits_yaml(&backend_url), true)
             .await
@@ -1400,7 +1414,7 @@ async fn anonymous_mode_strict_route_rejects_at_routing() {
 #[tokio::test]
 async fn anonymous_mode_invalid_token_still_401() {
     let (backend_url, backend) = spawn_mock_backend().await.expect("spawn backend");
-    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (authotron_url, authotron) = spawn_authotron().await.expect("spawn authotron");
     let (server_url, server) =
         spawn_polytope_server(Some(&authotron_url), &simple_bits_yaml(&backend_url), true)
             .await
@@ -1427,7 +1441,7 @@ async fn anonymous_mode_invalid_token_still_401() {
 #[tokio::test]
 async fn anonymous_mode_empty_auth_header_401() {
     let (backend_url, backend) = spawn_mock_backend().await.expect("spawn backend");
-    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (authotron_url, authotron) = spawn_authotron().await.expect("spawn authotron");
     let (server_url, server) =
         spawn_polytope_server(Some(&authotron_url), &simple_bits_yaml(&backend_url), true)
             .await
@@ -1454,7 +1468,7 @@ async fn anonymous_mode_empty_auth_header_401() {
 #[tokio::test]
 async fn default_mode_test_endpoint_accessible_without_auth() {
     let (backend_url, backend) = spawn_mock_backend().await.expect("spawn backend");
-    let (authotron_url, authotron) = spawn_authotron(JWT_SECRET).await.expect("spawn authotron");
+    let (authotron_url, authotron) = spawn_authotron().await.expect("spawn authotron");
     let (server_url, server) =
         spawn_polytope_server(Some(&authotron_url), &simple_bits_yaml(&backend_url), false)
             .await

@@ -298,8 +298,8 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
 name = "authotron"
-version = "0.3.7"
-source = "git+https://github.com/ecmwf/auth-o-tron.git?tag=0.3.7#fb955398c4076bea3f247045180d5ebc29f91b9f"
+version = "0.4.0"
+source = "git+https://github.com/ecmwf/auth-o-tron.git?rev=5ad7682aaf21a4de741ca4f64c49669b89032e54#5ad7682aaf21a4de741ca4f64c49669b89032e54"
 dependencies = [
  "aide",
  "async-trait",
@@ -316,6 +316,7 @@ dependencies = [
  "mongodb",
  "prometheus",
  "reqwest 0.13.4",
+ "rsa",
  "schemars 1.2.1",
  "serde",
  "serde_json",
@@ -327,14 +328,15 @@ dependencies = [
 
 [[package]]
 name = "authotron-client"
-version = "0.1.0"
-source = "git+https://github.com/ecmwf/auth-o-tron.git?tag=0.3.7#fb955398c4076bea3f247045180d5ebc29f91b9f"
+version = "0.2.0"
+source = "git+https://github.com/ecmwf/auth-o-tron.git?rev=5ad7682aaf21a4de741ca4f64c49669b89032e54#5ad7682aaf21a4de741ca4f64c49669b89032e54"
 dependencies = [
  "authotron-types",
  "chrono",
  "jsonwebtoken",
  "moka",
  "reqwest 0.13.4",
+ "rsa",
  "serde",
  "serde_json",
  "tracing",
@@ -342,8 +344,8 @@ dependencies = [
 
 [[package]]
 name = "authotron-types"
-version = "0.1.0"
-source = "git+https://github.com/ecmwf/auth-o-tron.git?tag=0.3.7#fb955398c4076bea3f247045180d5ebc29f91b9f"
+version = "0.2.0"
+source = "git+https://github.com/ecmwf/auth-o-tron.git?rev=5ad7682aaf21a4de741ca4f64c49669b89032e54#5ad7682aaf21a4de741ca4f64c49669b89032e54"
 dependencies = [
  "serde",
  "serde_json",
@@ -2645,7 +2647,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.4",
+ "socket2 0.5.10",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -4295,7 +4297,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls 0.23.41",
- "socket2 0.6.4",
+ "socket2 0.5.10",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -4333,7 +4335,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.4",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.59.0",
 ]

@@ -17,20 +17,27 @@ use polytope_server::config::{ServerConfig, SupportConfig};
 use tower::ServiceExt;
 
 fn app() -> axum::Router {
-    let yaml = r#"
+    let public_key =
+        serde_json::to_string(include_str!("../../tests/fixtures/test-rsa-public.pem")).unwrap();
+    let yaml = format!(
+        r#"
 polytope:
   site: bol
   env: tst
-bits: {}
+bits: {{}}
 authentication:
   url: "http://127.0.0.1:1"
-  secret: "s"
+  issuer: "https://auth-o-tron.test"
+  public_keys:
+    - kid: "test-key-1"
+      public_key: {public_key}
 support:
   default_url: "https://support.ecmwf.int/"
   realms:
     desp: "https://platform.destine.eu/contact/"
-"#;
-    let cfg: ServerConfig = serde_yaml::from_str(yaml).expect("config parses");
+"#,
+    );
+    let cfg: ServerConfig = serde_yaml::from_str(&yaml).expect("config parses");
     build_app(cfg).expect("app builds").0
 }
 

@@ -54,9 +54,9 @@ rmcp = { version = "2.2.0", features = [
 # Metkit expansion (optional — requires C++ metkit libs at build+runtime)
 metkit = { path = "../utils/metkit", optional = true }
 
-# Auth (shared crate from auth-o-tron workspace)
-authotron-client = { git = "https://github.com/ecmwf/auth-o-tron.git", tag = "0.3.7" }
-authotron-types = { git = "https://github.com/ecmwf/auth-o-tron.git", tag = "0.3.7" }
+# Auth (shared crates from auth-o-tron PR #84, pinned for the RS256 API)
+authotron-client = { git = "https://github.com/ecmwf/auth-o-tron.git", rev = "5ad7682aaf21a4de741ca4f64c49669b89032e54" }
+authotron-types = { git = "https://github.com/ecmwf/auth-o-tron.git", rev = "5ad7682aaf21a4de741ca4f64c49669b89032e54" }
 
 [features]
 default = []

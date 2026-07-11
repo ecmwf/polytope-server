@@ -323,6 +323,14 @@ pub async fn auth_middleware(
             )
                 .into_response()
         }
+        Err(AuthError::InvalidPublicKey { message }) => {
+            log_auth_rejected(StatusCode::SERVICE_UNAVAILABLE, "invalid auth public key");
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({"error": message})),
+            )
+                .into_response()
+        }
         Err(AuthError::ServiceUnavailable { message }) => {
             log_auth_rejected(StatusCode::SERVICE_UNAVAILABLE, "auth service unavailable");
             (
@@ -348,11 +356,11 @@ mod tests {
     };
 
     use http_body_util::BodyExt;
-    use jsonwebtoken::{EncodingKey, Header};
+    use jsonwebtoken::{Algorithm, EncodingKey, Header};
     use serde_json::{Value, json};
     use tower::ServiceExt;
 
-    use crate::auth::AuthClient;
+    use crate::auth::{AuthClient, JwtPublicKey};
     use crate::state::AppState;
 
     fn test_bits() -> bits::Bits {
@@ -368,19 +376,42 @@ mod tests {
         )
     }
 
-    fn make_test_jwt(secret: &str) -> String {
-        make_test_jwt_with(
-            secret,
-            "testuser",
-            "testrealm",
-            &["admin"],
-            json!({}),
-            json!({}),
-        )
+    const TEST_ISSUER: &str = "https://auth-o-tron.test";
+    const TEST_AUDIENCE: &str = "polytope-server";
+    const TEST_KID: &str = "test-key-1";
+    const TEST_KID_2: &str = "test-key-2";
+    const TEST_PRIVATE_KEY: &[u8] = include_bytes!("../../../tests/fixtures/test-rsa-private.pem");
+    const TEST_PRIVATE_KEY_2: &[u8] =
+        include_bytes!("../../../tests/fixtures/test-rsa-private-2.pem");
+    const TEST_PUBLIC_KEY: &[u8] = include_bytes!("../../../tests/fixtures/test-rsa-public.pem");
+    const TEST_PUBLIC_KEY_2: &[u8] =
+        include_bytes!("../../../tests/fixtures/test-rsa-public-2.pem");
+
+    fn make_test_jwt() -> String {
+        make_test_jwt_with("testuser", "testrealm", &["admin"], json!({}), json!({}))
     }
 
     fn make_test_jwt_with(
-        secret: &str,
+        username: &str,
+        realm: &str,
+        roles: &[&str],
+        attributes: Value,
+        scopes: Value,
+    ) -> String {
+        make_test_jwt_with_key(
+            TEST_PRIVATE_KEY,
+            TEST_KID,
+            username,
+            realm,
+            roles,
+            attributes,
+            scopes,
+        )
+    }
+
+    fn make_test_jwt_with_key(
+        private_key: &[u8],
+        kid: &str,
         username: &str,
         realm: &str,
         roles: &[&str],
@@ -394,12 +425,16 @@ mod tests {
             "roles": roles,
             "attributes": attributes,
             "scopes": scopes,
+            "iss": TEST_ISSUER,
+            "aud": TEST_AUDIENCE,
             "exp": (chrono::Utc::now().timestamp() as usize) + 3600,
         });
+        let mut header = Header::new(Algorithm::RS256);
+        header.kid = Some(kid.to_string());
         jsonwebtoken::encode(
-            &Header::default(),
+            &header,
             &claims,
-            &EncodingKey::from_secret(secret.as_bytes()),
+            &EncodingKey::from_rsa_pem(private_key).expect("test RSA private key should parse"),
         )
         .unwrap()
     }
@@ -463,14 +498,21 @@ mod tests {
             .with_state(state)
     }
 
-    async fn setup_auth_client(mock_server: &mockito::Server, secret: &str) -> AuthClient {
+    async fn setup_auth_client(mock_server: &mockito::Server) -> AuthClient {
+        let public_keys = [
+            JwtPublicKey::new(TEST_KID, TEST_PUBLIC_KEY),
+            JwtPublicKey::new(TEST_KID_2, TEST_PUBLIC_KEY_2),
+        ];
         AuthClient::new(
             &mock_server.url(),
-            secret.as_bytes(),
+            &public_keys,
+            TEST_ISSUER,
+            TEST_AUDIENCE,
             StdDuration::from_secs(5),
             None,
             None,
         )
+        .expect("test RSA public keyset should be valid")
     }
 
     // ── Public routes ─────────────────────────────────────────────────
@@ -478,7 +520,7 @@ mod tests {
     #[tokio::test]
     async fn health_accessible_without_auth() {
         let server = mockito::Server::new_async().await;
-        let client = setup_auth_client(&server, "secret").await;
+        let client = setup_auth_client(&server).await;
         let app = build_test_app(Some(client));
 
         let resp = app
@@ -505,8 +547,15 @@ mod tests {
 
     #[tokio::test]
     async fn protected_routes_require_auth() {
-        let server = mockito::Server::new_async().await;
-        let client = setup_auth_client(&server, "secret").await;
+        let mut server = mockito::Server::new_async().await;
+        let _auth = server
+            .mock("GET", "/authenticate")
+            .match_header("authorization", "Bearer")
+            .with_status(401)
+            .with_header("WWW-Authenticate", "Bearer")
+            .create_async()
+            .await;
+        let client = setup_auth_client(&server).await;
         let app = build_test_app(Some(client));
 
         for (method, path) in [
@@ -533,7 +582,7 @@ mod tests {
             .with_header("WWW-Authenticate", challenge)
             .create_async()
             .await;
-        let client = setup_auth_client(&server, "secret").await;
+        let client = setup_auth_client(&server).await;
         let app = build_test_app(Some(client));
 
         let resp = app
@@ -553,7 +602,7 @@ mod tests {
     #[tokio::test]
     async fn test_endpoint_accessible_without_auth() {
         let server = mockito::Server::new_async().await;
-        let client = setup_auth_client(&server, "secret").await;
+        let client = setup_auth_client(&server).await;
         let app = build_test_app(Some(client));
 
         assert_not_401(app, "GET", "/api/v1/test").await;
@@ -564,7 +613,7 @@ mod tests {
     #[tokio::test]
     async fn anonymous_mode_passes_unauthenticated_requests() {
         let server = mockito::Server::new_async().await;
-        let client = setup_auth_client(&server, "secret").await;
+        let client = setup_auth_client(&server).await;
         let app = build_test_app_with_anon(Some(client), true);
 
         for (method, path) in [
@@ -583,7 +632,7 @@ mod tests {
     #[tokio::test]
     async fn anonymous_mode_non_utf8_auth_header_still_401() {
         let server = mockito::Server::new_async().await;
-        let client = setup_auth_client(&server, "secret").await;
+        let client = setup_auth_client(&server).await;
         let app = build_test_app_with_anon(Some(client), true);
 
         let resp = app
@@ -602,7 +651,7 @@ mod tests {
     #[tokio::test]
     async fn anonymous_mode_empty_auth_header_still_401() {
         let server = mockito::Server::new_async().await;
-        let client = setup_auth_client(&server, "secret").await;
+        let client = setup_auth_client(&server).await;
         let app = build_test_app_with_anon(Some(client), true);
 
         let resp = app
@@ -691,7 +740,7 @@ mod tests {
     #[tokio::test]
     async fn empty_authorization_header_returns_401() {
         let server = mockito::Server::new_async().await;
-        let client = setup_auth_client(&server, "secret").await;
+        let client = setup_auth_client(&server).await;
         let app = build_test_app(Some(client));
 
         let resp = app
@@ -712,8 +761,7 @@ mod tests {
 
     #[tokio::test]
     async fn email_key_auth_passes_through() {
-        let secret = "testsecret";
-        let jwt = make_test_jwt(secret);
+        let jwt = make_test_jwt();
         let mut server = mockito::Server::new_async().await;
 
         server
@@ -724,7 +772,7 @@ mod tests {
             .create_async()
             .await;
 
-        let client = setup_auth_client(&server, secret).await;
+        let client = setup_auth_client(&server).await;
         let app = build_test_app(Some(client));
 
         let resp = app
@@ -744,8 +792,7 @@ mod tests {
 
     #[tokio::test]
     async fn valid_auth_passes_through_to_handler() {
-        let secret = "testsecret";
-        let jwt = make_test_jwt(secret);
+        let jwt = make_test_jwt();
         let mut server = mockito::Server::new_async().await;
 
         server
@@ -755,7 +802,7 @@ mod tests {
             .create_async()
             .await;
 
-        let client = setup_auth_client(&server, secret).await;
+        let client = setup_auth_client(&server).await;
         let app = build_test_app(Some(client));
 
         let resp = app
@@ -774,6 +821,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn overlapping_public_keys_accept_rotated_signer() {
+        let jwt = make_test_jwt_with_key(
+            TEST_PRIVATE_KEY_2,
+            TEST_KID_2,
+            "rotated-user",
+            "testrealm",
+            &["admin"],
+            json!({}),
+            json!({}),
+        );
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/authenticate")
+            .with_status(200)
+            .with_header("Authorization", &format!("Bearer {jwt}"))
+            .create_async()
+            .await;
+
+        let client = setup_auth_client(&server).await;
+        let app = build_test_app(Some(client));
+        let response = app
+            .oneshot(
+                Request::get("/api/v1/collections")
+                    .header("Authorization", "Bearer token-from-rotated-signer")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
     async fn invalid_token_returns_401() {
         let mut server = mockito::Server::new_async().await;
 
@@ -784,7 +865,7 @@ mod tests {
             .create_async()
             .await;
 
-        let client = setup_auth_client(&server, "secret").await;
+        let client = setup_auth_client(&server).await;
         let app = build_test_app(Some(client));
 
         let resp = app
@@ -807,8 +888,7 @@ mod tests {
     async fn user_available_in_extensions() {
         use axum::extract::Request as AxumRequest;
 
-        let secret = "testsecret";
-        let jwt = make_test_jwt(secret);
+        let jwt = make_test_jwt();
         let mut server = mockito::Server::new_async().await;
 
         server
@@ -818,7 +898,7 @@ mod tests {
             .create_async()
             .await;
 
-        let client = setup_auth_client(&server, secret).await;
+        let client = setup_auth_client(&server).await;
         let state = Arc::new(AppState {
             bits: test_bits(),
             auth_client: Some(client),
@@ -862,8 +942,7 @@ mod tests {
     async fn authenticated_job_user_auth_contract_shape_is_canonical() {
         use axum::{Json, extract::Request as AxumRequest};
 
-        let secret = "testsecret";
-        let jwt = make_test_jwt(secret);
+        let jwt = make_test_jwt();
         let mut server = mockito::Server::new_async().await;
 
         server
@@ -873,7 +952,7 @@ mod tests {
             .create_async()
             .await;
 
-        let client = setup_auth_client(&server, secret).await;
+        let client = setup_auth_client(&server).await;
         let state = Arc::new(AppState {
             bits: test_bits(),
             auth_client: Some(client),
@@ -964,9 +1043,7 @@ mod tests {
     async fn admin_mock_roles_injects_sanitized_effective_user_and_audit() {
         use axum::{Json, extract::Request as AxumRequest};
 
-        let secret = "testsecret";
         let jwt = make_test_jwt_with(
-            secret,
             "admin-user",
             "alpha",
             &["admin", "ops"],
@@ -981,7 +1058,7 @@ mod tests {
             .create_async()
             .await;
 
-        let client = setup_auth_client(&server, secret).await;
+        let client = setup_auth_client(&server).await;
         let state = Arc::new(AppState {
             bits: test_bits(),
             auth_client: Some(client),
@@ -1055,9 +1132,7 @@ mod tests {
     async fn admin_mock_time_injects_mock_time_and_audit() {
         use axum::{Json, extract::Request as AxumRequest};
 
-        let secret = "testsecret";
         let jwt = make_test_jwt_with(
-            secret,
             "admin-user",
             "alpha",
             &["admin", "ops"],
@@ -1072,7 +1147,7 @@ mod tests {
             .create_async()
             .await;
 
-        let client = setup_auth_client(&server, secret).await;
+        let client = setup_auth_client(&server).await;
         let state = Arc::new(AppState {
             bits: test_bits(),
             auth_client: Some(client),
@@ -1145,15 +1220,7 @@ mod tests {
 
     #[tokio::test]
     async fn non_admin_mock_time_is_forbidden() {
-        let secret = "testsecret";
-        let jwt = make_test_jwt_with(
-            secret,
-            "regular",
-            "alpha",
-            &["viewer"],
-            json!({}),
-            json!({}),
-        );
+        let jwt = make_test_jwt_with("regular", "alpha", &["viewer"], json!({}), json!({}));
         let mut server = mockito::Server::new_async().await;
         server
             .mock("GET", "/authenticate")
@@ -1161,7 +1228,7 @@ mod tests {
             .with_header("Authorization", &format!("Bearer {}", jwt))
             .create_async()
             .await;
-        let client = setup_auth_client(&server, secret).await;
+        let client = setup_auth_client(&server).await;
         let app = build_test_app_with_anon_and_admin(
             Some(client),
             false,
@@ -1203,7 +1270,7 @@ mod tests {
     #[tokio::test]
     async fn anonymous_mode_mock_time_is_unauthorized() {
         let server = mockito::Server::new_async().await;
-        let client = setup_auth_client(&server, "secret").await;
+        let client = setup_auth_client(&server).await;
         let app = build_test_app_with_anon(Some(client), true);
 
         let resp = app
@@ -1220,8 +1287,7 @@ mod tests {
 
     #[tokio::test]
     async fn malformed_mock_time_is_bad_request() {
-        let secret = "testsecret";
-        let jwt = make_test_jwt(secret);
+        let jwt = make_test_jwt();
         let mut server = mockito::Server::new_async().await;
         server
             .mock("GET", "/authenticate")
@@ -1229,7 +1295,7 @@ mod tests {
             .with_header("Authorization", &format!("Bearer {}", jwt))
             .create_async()
             .await;
-        let client = setup_auth_client(&server, secret).await;
+        let client = setup_auth_client(&server).await;
         let app = build_test_app_with_anon_and_admin(
             Some(client),
             false,
@@ -1276,9 +1342,7 @@ mod tests {
     async fn admin_mock_roles_and_mock_time_are_both_effective() {
         use axum::{Json, extract::Request as AxumRequest};
 
-        let secret = "testsecret";
         let jwt = make_test_jwt_with(
-            secret,
             "admin-user",
             "alpha",
             &["admin", "ops"],
@@ -1293,7 +1357,7 @@ mod tests {
             .create_async()
             .await;
 
-        let client = setup_auth_client(&server, secret).await;
+        let client = setup_auth_client(&server).await;
         let state = Arc::new(AppState {
             bits: test_bits(),
             auth_client: Some(client),
@@ -1379,8 +1443,7 @@ mod tests {
 
     #[tokio::test]
     async fn malformed_mock_roles_wins_over_malformed_mock_time() {
-        let secret = "testsecret";
-        let jwt = make_test_jwt(secret);
+        let jwt = make_test_jwt();
         let mut server = mockito::Server::new_async().await;
         server
             .mock("GET", "/authenticate")
@@ -1388,7 +1451,7 @@ mod tests {
             .with_header("Authorization", &format!("Bearer {}", jwt))
             .create_async()
             .await;
-        let client = setup_auth_client(&server, secret).await;
+        let client = setup_auth_client(&server).await;
         let app = build_test_app_with_anon_and_admin(
             Some(client),
             false,
@@ -1421,15 +1484,7 @@ mod tests {
 
     #[tokio::test]
     async fn non_admin_mock_roles_is_forbidden() {
-        let secret = "testsecret";
-        let jwt = make_test_jwt_with(
-            secret,
-            "regular",
-            "alpha",
-            &["viewer"],
-            json!({}),
-            json!({}),
-        );
+        let jwt = make_test_jwt_with("regular", "alpha", &["viewer"], json!({}), json!({}));
         let mut server = mockito::Server::new_async().await;
         server
             .mock("GET", "/authenticate")
@@ -1437,7 +1492,7 @@ mod tests {
             .with_header("Authorization", &format!("Bearer {}", jwt))
             .create_async()
             .await;
-        let client = setup_auth_client(&server, secret).await;
+        let client = setup_auth_client(&server).await;
         let app = build_test_app_with_anon_and_admin(
             Some(client),
             false,
@@ -1462,8 +1517,7 @@ mod tests {
 
     #[tokio::test]
     async fn malformed_mock_roles_is_bad_request() {
-        let secret = "testsecret";
-        let jwt = make_test_jwt(secret);
+        let jwt = make_test_jwt();
         let mut server = mockito::Server::new_async().await;
         server
             .mock("GET", "/authenticate")
@@ -1471,7 +1525,7 @@ mod tests {
             .with_header("Authorization", &format!("Bearer {}", jwt))
             .create_async()
             .await;
-        let client = setup_auth_client(&server, secret).await;
+        let client = setup_auth_client(&server).await;
         let app = build_test_app_with_anon_and_admin(
             Some(client),
             false,
@@ -1497,7 +1551,7 @@ mod tests {
     #[tokio::test]
     async fn anonymous_mode_mock_header_is_unauthorized() {
         let server = mockito::Server::new_async().await;
-        let client = setup_auth_client(&server, "secret").await;
+        let client = setup_auth_client(&server).await;
         let app = build_test_app_with_anon(Some(client), true);
 
         let resp = app
@@ -1517,7 +1571,7 @@ mod tests {
         use axum::extract::Request as AxumRequest;
 
         let server = mockito::Server::new_async().await;
-        let client = setup_auth_client(&server, "secret").await;
+        let client = setup_auth_client(&server).await;
         let state = Arc::new(AppState {
             bits: test_bits(),
             auth_client: Some(client),
