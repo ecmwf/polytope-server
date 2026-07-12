@@ -106,6 +106,8 @@ COPY --from=metkit-build /opt/metkit /opt/metkit
 COPY --from=cacher /ecmwf/polytope-server/target target
 COPY --from=cacher /usr/local/cargo /usr/local/cargo
 COPY . .
+# Replace the cached metkit skeleton with the real excluded path dependency.
+RUN touch utils/metkit/build.rs
 RUN mkdir -p .cargo && printf '[net]\ngit-fetch-with-cli = true\n' > .cargo/config.toml
 ENV METKIT_LIB_DIR=/opt/metkit/lib
 ENV METKIT_INCLUDE_DIR=/opt/metkit/include
