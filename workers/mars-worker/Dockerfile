@@ -131,7 +131,7 @@ FROM mars-libs-${MARS_BUILD_FROM_SOURCE} AS mars-libs
 FROM chef-base AS chef
 ARG GIT_AUTH_TOKEN=""
 WORKDIR /ecmwf/polytope-server
-COPY workers/mars-worker/Cargo.toml workers/mars-worker/Cargo.lock workers/mars-worker/
+COPY workers/mars-worker/ workers/mars-worker/
 COPY observability/ observability/
 COPY workers/common/ workers/common/
 RUN mkdir -p .cargo && printf '[net]\ngit-fetch-with-cli = true\n' > .cargo/config.toml
@@ -151,6 +151,11 @@ WORKDIR /ecmwf/polytope-server
 COPY --from=mars-libs /opt/mars-client /opt/mars-client
 COPY --from=chef /ecmwf/polytope-server/workers/mars-worker/recipe.json workers/mars-worker/recipe.json
 COPY --from=chef /ecmwf/polytope-server/.cargo/config.toml .cargo/config.toml
+# cargo-chef omits path dependencies outside the standalone crate root.
+COPY observability/Cargo.toml observability/Cargo.toml
+COPY workers/common/Cargo.toml workers/common/Cargo.toml
+RUN mkdir -p observability/src workers/common/src \
+    && touch observability/src/lib.rs workers/common/src/lib.rs
 ENV MARS_CLIENT_LIB_DIR=/opt/mars-client/lib
 ENV MARS_CLIENT_INCLUDE_DIR=/opt/mars-client/include
 ENV ECKIT_INCLUDE_DIR=/opt/mars-client/include
@@ -161,7 +166,9 @@ RUN if [ -n "$GIT_AUTH_TOKEN" ]; then \
       git config --global credential.helper '' && \
       git config --global url."https://git:${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; \
     fi
-RUN cd workers/mars-worker && cargo chef cook --release --locked --package "${PACKAGE_NAME}" --recipe-path recipe.json
+# cargo-chef rewrites standalone path packages, so its synthetic lock is not reusable.
+# The final build below enforces the committed standalone lockfile.
+RUN cd workers/mars-worker && cargo chef cook --release --package "${PACKAGE_NAME}" --recipe-path recipe.json
 
 ###############################
 # Build Mars with its standalone lockfile
@@ -177,6 +184,8 @@ COPY --from=cacher /usr/local/cargo /usr/local/cargo
 COPY workers/mars-worker/ workers/mars-worker/
 COPY observability/ observability/
 COPY workers/common/ workers/common/
+# Replace the cached path-dependency skeletons with their real sources.
+RUN touch observability/src/lib.rs workers/common/src/lib.rs
 RUN mkdir -p .cargo && printf '[net]\ngit-fetch-with-cli = true\n' > .cargo/config.toml
 ENV MARS_CLIENT_LIB_DIR=/opt/mars-client/lib
 ENV MARS_CLIENT_INCLUDE_DIR=/opt/mars-client/include
