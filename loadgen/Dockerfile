@@ -32,6 +32,10 @@ ARG PACKAGE_NAME=loadgen
 WORKDIR /ecmwf/polytope-server
 COPY --from=chef /ecmwf/polytope-server/recipe.json recipe.json
 COPY --from=chef /ecmwf/polytope-server/.cargo/config.toml .cargo/config.toml
+# cargo-chef omits excluded path dependencies from root workspace recipes.
+COPY utils/metkit/Cargo.toml utils/metkit/Cargo.toml
+RUN mkdir -p utils/metkit/src && touch utils/metkit/src/lib.rs \
+    && printf 'fn main() {}\n' > utils/metkit/build.rs
 RUN if [ -n "$GIT_AUTH_TOKEN" ]; then \
       git config --global credential.helper '' && \
       git config --global url."https://git:${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; \

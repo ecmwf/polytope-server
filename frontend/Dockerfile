@@ -74,6 +74,10 @@ ARG FEATURES="metkit,telemetry"
 WORKDIR /ecmwf/polytope-server
 COPY --from=chef /ecmwf/polytope-server/recipe.json recipe.json
 COPY --from=chef /ecmwf/polytope-server/.cargo/config.toml .cargo/config.toml
+# cargo-chef omits excluded path dependencies from root workspace recipes.
+COPY utils/metkit/Cargo.toml utils/metkit/Cargo.toml
+RUN mkdir -p utils/metkit/src && touch utils/metkit/src/lib.rs \
+    && printf 'fn main() {}\n' > utils/metkit/build.rs
 COPY --from=metkit-build /opt/metkit /opt/metkit
 ENV METKIT_LIB_DIR=/opt/metkit/lib
 ENV METKIT_INCLUDE_DIR=/opt/metkit/include
