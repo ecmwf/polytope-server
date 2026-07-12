@@ -49,7 +49,7 @@ jobs:
 
       - name: Prepare repository token
         env:
-          RAW_GH_TOKEN: ${{ secrets.POLYTOPE_REPO_ACCESS }}
+          RAW_GH_TOKEN: ${{ secrets.ECMWF_REPO_ACCESS }}
         run: |
           token="$(printf '%s' "$RAW_GH_TOKEN" | tr -d '[:space:]')"
           echo "::add-mask::$token"
