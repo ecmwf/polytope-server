@@ -7,7 +7,7 @@ name: CI
 on:
   push:
     branches:
-      - '**'
+      - "**"
   pull_request:
 
 permissions:
@@ -42,7 +42,12 @@ jobs:
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
 
       - name: Configure private repo access
-        run: git config --global url."https://x-access-token:${{ secrets.POLYTOPE_REPO_ACCESS }}@github.com/".insteadOf "https://github.com/"
+        env:
+          RAW_GH_TOKEN: ${{ secrets.POLYTOPE_REPO_ACCESS }}
+        run: |
+          token="$(printf '%s' "$RAW_GH_TOKEN" | tr -d '[:space:]')"
+          echo "::add-mask::$token"
+          git config --global url."https://x-access-token:${token}@github.com/".insteadOf "https://github.com/"
 
       - name: Strip local path patches
         run: sed -i '/^\[patch\./,$d' Cargo.toml
@@ -100,12 +105,19 @@ jobs:
           - polytope-loadgen
     env:
       FIXED_TAG: ci-${{ github.sha }}
-      GH_TOKEN: ${{ secrets.POLYTOPE_REPO_ACCESS }}
       RPM_REPO: https://nexus.ecmwf.int/repository
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+
+      - name: Prepare repository token
+        env:
+          RAW_GH_TOKEN: ${{ secrets.POLYTOPE_REPO_ACCESS }}
+        run: |
+          token="$(printf '%s' "$RAW_GH_TOKEN" | tr -d '[:space:]')"
+          echo "::add-mask::$token"
+          echo "GH_TOKEN=$token" >> "$GITHUB_ENV"
 
       - name: Install Skaffold
         env:

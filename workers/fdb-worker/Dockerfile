@@ -107,7 +107,7 @@ LABEL version=$VERSION
 RUN apt-get update && apt-get install -y ca-certificates libgomp1 libaec0 libcurl4 libopenjp2-7 && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=fdb-build /opt/fdb/ /opt/fdb/
-ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/opt/fdb/lib
+ENV LD_LIBRARY_PATH=/opt/fdb/lib
 COPY --from=builder /ecmwf/polytope-server/target/release/${BIN_NAME} /app/fdb-worker
 ENTRYPOINT ["/app/fdb-worker"]
 
@@ -121,6 +121,6 @@ LABEL version=$VERSION
 RUN apt-get update && apt-get install -y ca-certificates libgomp1 libaec0 libcurl4 libopenjp2-7 bash && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=fdb-build /opt/fdb/ /opt/fdb/
-ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/opt/fdb/lib
+ENV LD_LIBRARY_PATH=/opt/fdb/lib
 COPY --from=builder /ecmwf/polytope-server/target/release/${BIN_NAME} /app/fdb-worker
 ENTRYPOINT ["/app/fdb-worker"]

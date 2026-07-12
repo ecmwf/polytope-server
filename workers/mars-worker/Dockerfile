@@ -203,7 +203,7 @@ WORKDIR /app
 
 COPY --from=mars-libs /opt/mars-client /opt/mars-client
 
-ENV LD_LIBRARY_PATH="/opt/mars-client/lib:${LD_LIBRARY_PATH}"
+ENV LD_LIBRARY_PATH=/opt/mars-client/lib
 
 COPY --from=builder /ecmwf/polytope-server/workers/mars-worker/target/release/${BIN_NAME} /app/mars-worker
 ENTRYPOINT ["/app/mars-worker"]
@@ -221,7 +221,7 @@ WORKDIR /app
 
 COPY --from=mars-libs /opt/mars-client /opt/mars-client
 
-ENV LD_LIBRARY_PATH="/opt/mars-client/lib:${LD_LIBRARY_PATH}"
+ENV LD_LIBRARY_PATH=/opt/mars-client/lib
 
 COPY --from=builder /ecmwf/polytope-server/workers/mars-worker/target/release/${BIN_NAME} /app/mars-worker
 ENTRYPOINT ["/app/mars-worker"]

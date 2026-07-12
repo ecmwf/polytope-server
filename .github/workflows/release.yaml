@@ -39,7 +39,6 @@ jobs:
           - artifact: polytope-loadgen
             image: eccr.ecmwf.int/polytope/polytope-loadgen
     env:
-      GH_TOKEN: ${{ secrets.POLYTOPE_REPO_ACCESS }}
       RPM_REPO: https://nexus.ecmwf.int/repository
       SKAFFOLD_SHA256: 8f62095ba8c282c03ad7b4987fbaf4f29b289fd6cbafb0351effd49f73f0240d
       SKAFFOLD_VERSION: v2.18.0
@@ -47,6 +46,14 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+
+      - name: Prepare repository token
+        env:
+          RAW_GH_TOKEN: ${{ secrets.POLYTOPE_REPO_ACCESS }}
+        run: |
+          token="$(printf '%s' "$RAW_GH_TOKEN" | tr -d '[:space:]')"
+          echo "::add-mask::$token"
+          echo "GH_TOKEN=$token" >> "$GITHUB_ENV"
 
       - name: Validate release tag
         id: version
