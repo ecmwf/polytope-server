@@ -90,6 +90,7 @@ jobs:
 
   image-build:
     needs: skaffold-validate
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     strategy:
