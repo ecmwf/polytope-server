@@ -43,7 +43,7 @@ jobs:
 
       - name: Configure private repo access
         env:
-          RAW_GH_TOKEN: ${{ secrets.ECMWF_REPO_ACCESS }}
+          RAW_GH_TOKEN: ${{ secrets.GH_REPO_READ_TOKEN }}
         run: |
           token="$(printf '%s' "$RAW_GH_TOKEN" | tr -d '[:space:]')"
           echo "::add-mask::$token"
@@ -65,6 +65,22 @@ jobs:
         run: |
           unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy ALL_PROXY all_proxy
           cargo test --locked -p polytope-server-integration-tests
+
+  repository-access:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate private dependency access
+        env:
+          RAW_GH_TOKEN: ${{ secrets.GH_REPO_READ_TOKEN }}
+        run: |
+          token="$(printf '%s' "$RAW_GH_TOKEN" | tr -d '[:space:]')"
+          if [ -z "$token" ]; then
+            echo "GH_REPO_READ_TOKEN is not configured" >&2
+            exit 1
+          fi
+          echo "::add-mask::$token"
+          git config --global url."https://x-access-token:${token}@github.com/".insteadOf "https://github.com/"
+          git ls-remote https://github.com/ecmwf/bits-broker.git HEAD >/dev/null
 
   skaffold-validate:
     runs-on: ubuntu-latest
@@ -89,7 +105,7 @@ jobs:
         run: skaffold diagnose --yaml-only --filename skaffold.yaml >/dev/null
 
   image-build:
-    needs: skaffold-validate
+    needs: [repository-access, skaffold-validate]
     if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -114,7 +130,7 @@ jobs:
 
       - name: Prepare repository token
         env:
-          RAW_GH_TOKEN: ${{ secrets.ECMWF_REPO_ACCESS }}
+          RAW_GH_TOKEN: ${{ secrets.GH_REPO_READ_TOKEN }}
         run: |
           token="$(printf '%s' "$RAW_GH_TOKEN" | tr -d '[:space:]')"
           echo "::add-mask::$token"
