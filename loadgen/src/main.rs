@@ -446,6 +446,13 @@ async fn run_iteration(
             completed_at: Instant::now(),
         });
     }
+    // Save the Location header before consuming the body: the v1 API returns
+    // the request ID only in "Location: ./<id>" and not in the JSON body.
+    let submit_location = submit_response
+        .headers()
+        .get(LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .map(ToString::to_string);
     let submit_json: serde_json::Value = submit_response
         .json()
         .await
@@ -455,6 +462,15 @@ async fn run_iteration(
         .or_else(|| submit_json.get("request_id"))
         .and_then(|value| value.as_str())
         .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            // v1 API: Location header is "./<id>" — extract the last path segment.
+            submit_location
+                .as_deref()
+                .and_then(|loc| loc.rsplit('/').next())
+                .filter(|id| !id.is_empty())
+                .map(ToString::to_string)
+        })
     else {
         return Ok(IterationResult {
             outcome: Outcome::SubmitFailed,
@@ -697,8 +713,16 @@ mod tests {
                     let method = parts.next().unwrap_or_default();
                     let path = parts.next().unwrap_or_default();
                     let response = if method == "POST" && path == "/api/v1/requests/c" {
+                        // Body-only id (legacy / alternative clients)
                         "HTTP/1.1 202 Accepted\r\nContent-Type: application/json\r\nContent-Length: 14\r\n\r\n{\"id\":\"req-1\"}".to_string()
+                    } else if method == "POST" && path == "/api/v1/requests/c-loc" {
+                        // v1 API style: id only in Location header, no id in body
+                        "HTTP/1.1 202 Accepted\r\nLocation: ./req-2\r\nContent-Type: application/json\r\nContent-Length: 46\r\n\r\n{\"message\":\"Request queued\",\"status\":\"queued\"}".to_string()
                     } else if method == "GET" && path == "/api/v1/requests/req-1" {
+                        format!(
+                            "HTTP/1.1 303 See Other\r\nLocation: {location_base}/download-0/0123abcd\r\nContent-Length: 0\r\n\r\n"
+                        )
+                    } else if method == "GET" && path == "/api/v1/requests/req-2" {
                         format!(
                             "HTTP/1.1 303 See Other\r\nLocation: {location_base}/download-0/0123abcd\r\nContent-Length: 0\r\n\r\n"
                         )
@@ -774,5 +798,39 @@ mod tests {
         let snapshot = progress.snapshot(Instant::now());
         assert_eq!(snapshot.counts.scheduled, run.scheduled);
         assert_eq!(snapshot.counts.missed_starts, run.missed_starts);
+    }
+
+    #[tokio::test]
+    async fn submit_extracts_request_id_from_location_header_when_not_in_body() {
+        // Simulates the v1 API: 202 body is {"message":...,"status":...} with
+        // no "id" field; the request ID lives only in "Location: ./<id>".
+        let base_url = start_test_server(Duration::from_millis(50)).await;
+        let client = Arc::new(
+            Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+        );
+        let config = Arc::new(Config {
+            frontend_url: base_url.clone(),
+            collection: "c-loc".to_string(),
+            auth: "Bearer test".to_string(),
+            payload_json: serde_json::json!({"request": "test"}),
+            mock_realm: None,
+            mock_role: "default".to_string(),
+            mock_user_prefix: "mock-".to_string(),
+            warmup_iters: 0,
+            concurrency: 1,
+            total_iters: 1,
+            run_limit: RunLimit::Iterations,
+            ramp_seconds: 0,
+            poll_interval: std::time::Duration::from_millis(1),
+            poll_timeout: std::time::Duration::from_secs(5),
+            bobs_svc_template: base_url.clone(),
+            max_error_rate: 1.0,
+        });
+        let result = run_iteration(client, config, 0, None).await.unwrap();
+        assert_eq!(result.outcome, Outcome::Downloaded, "{result:?}");
+        assert!(result.bytes > 0);
     }
 }
