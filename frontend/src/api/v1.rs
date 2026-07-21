@@ -366,6 +366,11 @@ pub async fn get_request(
                 "message": reason,
                 "retryable": true,
             })),
+            JobResult::RateLimited { reason } => super::rate_limited_response(json!({
+                "status": "failed",
+                "message": reason,
+                "retryable": true,
+            })),
             JobResult::Cancelled => {
                 if let Some(Extension(user)) = auth_user.as_ref() {
                     tracing::info!("event.name" = "api.job.poll.cancelled", outcome = "cancelled", request.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, "job poll cancelled");

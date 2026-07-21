@@ -943,7 +943,7 @@ checksum = "b4388bee8683e3d04af747c73422af53102d2bd24d9eadb6cbc100baef4b43f8"
 [[package]]
 name = "bits"
 version = "0.1.0"
-source = "git+https://github.com/ecmwf/bits-broker.git?rev=cb8816d7bd7170899a32461ed95e9c5465c97cd9#cb8816d7bd7170899a32461ed95e9c5465c97cd9"
+source = "git+https://github.com/ecmwf/bits-broker.git?rev=5220bd16daf0354111c6a35407941a723562fc2d#5220bd16daf0354111c6a35407941a723562fc2d"
 dependencies = [
  "async-nats",
  "async-trait",
@@ -2645,7 +2645,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.6.4",
+ "socket2 0.5.10",
  "system-configuration",
  "tokio",
  "tower-service",
@@ -4295,7 +4295,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls 0.23.41",
- "socket2 0.6.4",
+ "socket2 0.5.10",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -4333,7 +4333,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.6.4",
+ "socket2 0.5.10",
  "tracing",
  "windows-sys 0.59.0",
 ]

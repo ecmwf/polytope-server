@@ -248,6 +248,9 @@ async fn forecast(
             PollOutcome::Ready(JobResult::Overloaded { reason }) => {
                 return super::overloaded_response(response::build_error_response(&reason));
             }
+            PollOutcome::Ready(JobResult::RateLimited { reason }) => {
+                return super::rate_limited_response(response::build_error_response(&reason));
+            }
             PollOutcome::NotFound => {
                 return error_response(StatusCode::BAD_GATEWAY, &format!("job {id} not found"));
             }

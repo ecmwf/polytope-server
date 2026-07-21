@@ -364,6 +364,13 @@ impl PolytopeMcp {
                 "retryable": true,
                 "retry_after_seconds": RETRY_AFTER_SECS,
             })),
+            JobResult::RateLimited { reason } => tool_error(json!({
+                "status": "rate_limited",
+                "request_id": request_id,
+                "message": reason,
+                "retryable": true,
+                "retry_after_seconds": RETRY_AFTER_SECS,
+            })),
             JobResult::Cancelled => CallToolResult::structured(json!({
                 "status": "cancelled",
                 "request_id": request_id,
