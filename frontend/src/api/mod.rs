@@ -32,6 +32,9 @@ pub fn overloaded_response(payload: Value) -> Response {
         .into_response()
 }
 
+/// A per-caller admission limit (per-user/per-realm/per-role route cap) was
+/// exceeded. Distinct from [`overloaded_response`]'s system-wide 529: this is
+/// scoped to the caller, so `429 Too Many Requests` is the correct signal.
 pub fn rate_limited_response(payload: Value) -> Response {
     (
         StatusCode::TOO_MANY_REQUESTS,

@@ -378,7 +378,7 @@ pub fn to_bobs_internal(
         .collect::<Result<_, _>>()?;
 
     let (route_segment, key, key_must_be_uuid_like) = match parts.as_slice() {
-        [route, key] => (route, key, true),
+        [route, key] => (route, key, false),
         [route, api, v1, key] if api == "api" && v1 == "v1" => (route, key, true),
         [route, api, v1, read, key] if api == "api" && v1 == "v1" && read == "read" => {
             (route, key, false)
@@ -1082,7 +1082,19 @@ mod tests {
             "http://rel-bobs-4:3000/api/v1/read/object-key"
         );
         assert!(to_bobs_internal("https://host/download-4/not-api/object-key", template).is_err());
-        assert!(to_bobs_internal("https://host/download-4/not_uuid", template).is_err());
+        // BOBS now keys spools by the Polytope request ID (Crockford base32),
+        // which contains non-hex characters — the 2-segment path must accept
+        // any non-empty key that does not contain a '/'.
+        assert!(to_bobs_internal("https://host/download-4/not_uuid", template).is_ok());
+        assert_eq!(
+            to_bobs_internal(
+                "https://host/download-3/01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                template
+            )
+            .unwrap()
+            .0,
+            "http://rel-bobs-3:3000/api/v1/read/01ARZ3NDEKTSV4RRFFQ69G5FAV"
+        );
     }
 
     #[test]
