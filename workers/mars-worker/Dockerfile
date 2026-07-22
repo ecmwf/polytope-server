@@ -7,7 +7,7 @@ ARG MARS_BUILD_FROM_SOURCE=true
 ###############################
 # Shared base: Rust + cargo-chef + system deps (built once)
 ###############################
-FROM docker.io/library/rust:1.93-slim-bookworm AS chef-base
+FROM docker.io/library/rust:1.94.1-slim-bookworm AS chef-base
 RUN cargo install cargo-chef --locked
 RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-dev python3-dev && rm -rf /var/lib/apt/lists/*
 
