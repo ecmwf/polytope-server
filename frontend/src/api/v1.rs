@@ -12,7 +12,7 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use bits::{ActiveJobSnapshot, Job, JobResult, PollOutcome, SubmitOutcome};
+use bits::{ActiveJobSnapshot, Job, JobResult, PendingStatus, PollOutcome, SubmitOutcome};
 use bytes::BytesMut;
 use futures::TryStreamExt;
 use serde::Deserialize;
@@ -35,6 +35,15 @@ pub struct SubmitBody {
 
 fn request_queued_body() -> Value {
     json!({"message": "Request queued", "status": "queued"})
+}
+
+fn pending_request_body(status: PendingStatus) -> Value {
+    match status {
+        PendingStatus::Queued => request_queued_body(),
+        PendingStatus::Processing => {
+            json!({"message": "Processing...", "status": "processing"})
+        }
+    }
 }
 
 pub async fn test() -> impl IntoResponse {
@@ -247,11 +256,25 @@ pub async fn get_request(
     }
 
     match state.bits.poll(&id, Some(POLL_TIMEOUT)).await {
-        PollOutcome::Pending { id } => {
+        PollOutcome::Pending { id, status } => {
             if let Some(Extension(user)) = auth_user.as_ref() {
-                tracing::debug!("event.name" = "api.job.poll.pending", outcome = "success", request.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, "job poll pending");
+                tracing::debug!(
+                    "event.name" = "api.job.poll.pending",
+                    outcome = "success",
+                    request.id = %id,
+                    job.status = status.as_str(),
+                    "enduser.id" = %user.username,
+                    "enduser.realm" = %user.realm,
+                    "job poll pending"
+                );
             } else {
-                tracing::debug!("event.name" = "api.job.poll.pending", outcome = "success", request.id = %id, "job poll pending");
+                tracing::debug!(
+                    "event.name" = "api.job.poll.pending",
+                    outcome = "success",
+                    request.id = %id,
+                    job.status = status.as_str(),
+                    "job poll pending"
+                );
             }
             (
                 StatusCode::ACCEPTED,
@@ -259,7 +282,7 @@ pub async fn get_request(
                     (header::LOCATION, format!("./{id}")),
                     (header::RETRY_AFTER, RETRY_AFTER_SECS.to_string()),
                 ],
-                Json(request_queued_body()),
+                Json(pending_request_body(status)),
             )
                 .into_response()
         }
@@ -362,6 +385,11 @@ pub async fn get_request(
             )
                 .into_response(),
             JobResult::Overloaded { reason } => super::overloaded_response(json!({
+                "status": "failed",
+                "message": reason,
+                "retryable": true,
+            })),
+            JobResult::RateLimited { reason } => super::rate_limited_response(json!({
                 "status": "failed",
                 "message": reason,
                 "retryable": true,
@@ -505,5 +533,17 @@ mod tests {
         assert_eq!(record["content_type"], "application/x-grib");
         assert_eq!(record["content_length"], 42);
         assert!(record["status_history"].get("processed").is_some());
+    }
+
+    #[test]
+    fn pending_response_distinguishes_queued_from_processing() {
+        assert_eq!(
+            pending_request_body(PendingStatus::Queued),
+            json!({"message": "Request queued", "status": "queued"})
+        );
+        assert_eq!(
+            pending_request_body(PendingStatus::Processing),
+            json!({"message": "Processing...", "status": "processing"})
+        );
     }
 }

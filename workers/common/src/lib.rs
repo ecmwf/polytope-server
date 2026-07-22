@@ -38,9 +38,15 @@ fn codec_from_accept_encoding(accept_encoding: Option<&str>) -> Codec {
 
 pub type RawStream = Box<dyn Stream<Item = Result<bytes::Bytes, std::io::Error>> + Send + Unpin>;
 
+#[derive(Debug, Default)]
+struct SourceErrorState {
+    message: Option<String>,
+    restart_worker: bool,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct SourceError {
-    message: Arc<Mutex<Option<String>>>,
+    state: Arc<Mutex<SourceErrorState>>,
 }
 
 impl SourceError {
@@ -49,17 +55,34 @@ impl SourceError {
     }
 
     pub fn set_once(&self, message: impl Into<String>) {
-        let mut slot = self.message.lock().expect("source error mutex poisoned");
-        if slot.is_none() {
-            *slot = Some(message.into());
+        self.set_with_disposition(message, false);
+    }
+
+    pub fn set_unrecoverable_once(&self, message: impl Into<String>) {
+        self.set_with_disposition(message, true);
+    }
+
+    fn set_with_disposition(&self, message: impl Into<String>, restart_worker: bool) {
+        let mut state = self.state.lock().expect("source error mutex poisoned");
+        if state.message.is_none() {
+            state.message = Some(message.into());
+            state.restart_worker = restart_worker;
         }
     }
 
     pub fn message(&self) -> Option<String> {
-        self.message
+        self.state
             .lock()
             .expect("source error mutex poisoned")
+            .message
             .clone()
+    }
+
+    pub fn requires_worker_restart(&self) -> bool {
+        self.state
+            .lock()
+            .expect("source error mutex poisoned")
+            .restart_worker
     }
 }
 
@@ -428,6 +451,7 @@ async fn worker_task<P: Processor + 'static>(
     delivery: std::sync::Arc<dyn ResultDelivery>,
     processor: std::sync::Arc<P>,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
+    restart_tx: tokio::sync::mpsc::UnboundedSender<String>,
 ) -> Result<(), reqwest::Error> {
     let mut poll_cycle: u64 = 0;
     let mut idle_anchor = Instant::now();
@@ -573,12 +597,14 @@ async fn worker_task<P: Processor + 'static>(
         // Counts post-encoding bytes as the result body streams to delivery.
         // None for non-Success outcomes (which do not emit worker.job.completed).
         let mut byte_counter: Option<Arc<AtomicU64>> = None;
+        let mut source_error_for_restart: Option<SourceError> = None;
         let completion = match process_result {
             ProcessResult::Success {
                 content_type,
                 body,
                 source_error,
             } => {
+                source_error_for_restart = source_error.clone();
                 let codec = codec_from_accept_encoding(work.metadata["accept_encoding"].as_str());
                 let content_encoding = codec.content_encoding_header().map(str::to_string);
                 let (encoded, counter) = encode_stream_counted(body, &codec);
@@ -742,6 +768,19 @@ async fn worker_task<P: Processor + 'static>(
                 tracing::error!("event.name" = "worker.job.failed", outcome = "error", status=%response.status(), request.id=%work.job_id, "worker completion returned unexpected status");
             }
         }
+        if source_error_for_restart
+            .as_ref()
+            .is_some_and(SourceError::requires_worker_restart)
+        {
+            tracing::error!(
+                "event.name" = "worker.restart.requested",
+                outcome = "error",
+                request.id = %work.job_id,
+                "source stream failed; requesting worker process restart"
+            );
+            let _ = restart_tx.send(work.job_id.clone());
+            break;
+        }
         idle_anchor = Instant::now();
     }
 
@@ -785,6 +824,7 @@ pub async fn run_worker_loop<P: Processor + 'static>(
         std::sync::Arc::from(make_delivery(&delivery_config).await);
     let processor = std::sync::Arc::new(processor);
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let (restart_tx, mut restart_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
     let mut tasks = Vec::with_capacity(config.worker_concurrency);
     for worker_index in 0..config.worker_concurrency {
@@ -792,6 +832,7 @@ pub async fn run_worker_loop<P: Processor + 'static>(
         let task_delivery = delivery.clone();
         let task_processor = processor.clone();
         let task_shutdown = shutdown_rx.clone();
+        let task_restart_tx = restart_tx.clone();
         tasks.push(tokio::spawn(async move {
             tracing::debug!(worker_index, "worker task started");
             let result = worker_task(
@@ -800,15 +841,33 @@ pub async fn run_worker_loop<P: Processor + 'static>(
                 task_delivery,
                 task_processor,
                 task_shutdown,
+                task_restart_tx,
             )
             .await;
             tracing::debug!(worker_index, "worker task stopped");
             result
         }));
     }
+    drop(restart_tx);
 
     let mut sigterm = signal(SignalKind::terminate()).expect("failed to register SIGTERM handler");
     tokio::select! {
+        request_id = restart_rx.recv() => {
+            if let Some(request_id) = request_id {
+                tracing::error!(
+                    "event.name" = "startup.shutdown.received",
+                    outcome = "error",
+                    request.id = %request_id,
+                    "shutting down after source stream failure"
+                );
+            } else {
+                tracing::error!(
+                    "event.name" = "startup.shutdown.received",
+                    outcome = "error",
+                    "all worker tasks stopped unexpectedly"
+                );
+            }
+        }
         _ = sigterm.recv() => {
             tracing::info!("event.name" = "startup.shutdown.received", outcome = "success", "received shutdown signal");
         }
@@ -1234,20 +1293,17 @@ mod tests {
         }
     }
 
-    struct SourceFailingStreamProcessor;
+    struct FatalSourceFailingStreamProcessor;
 
     #[async_trait]
-    impl Processor for SourceFailingStreamProcessor {
+    impl Processor for FatalSourceFailingStreamProcessor {
         async fn process(&self, _work: WorkItem) -> ProcessResult {
             let source_error = SourceError::new();
-            source_error.set_once(
-                "The requested post-processing is not supported for this data. Details: mars-client error: Serious bug: Representation::croppedRepresentation() not implemented for HEALPixNested[name=H128]",
-            );
+            source_error
+                .set_unrecoverable_once("The data retrieval system hit an unknown internal error.");
             let stream = futures::stream::iter(vec![
                 Ok::<bytes::Bytes, std::io::Error>(bytes::Bytes::from(vec![1u8, 2, 3])),
-                Err(std::io::Error::other(
-                    "mars-client error: Serious bug: Representation::croppedRepresentation() not implemented for HEALPixNested[name=H128]",
-                )),
+                Err(std::io::Error::other("unknown source failure")),
             ]);
             ProcessResult::success_with_source_error(
                 "application/octet-stream",
@@ -1499,7 +1555,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn worker_with_bobs_delivery_posts_source_error_completion() {
+    async fn worker_with_bobs_delivery_posts_fatal_source_error_then_stops() {
         let bobs_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let bobs_addr = bobs_listener.local_addr().unwrap();
         let bobs_url = format!("http://{bobs_addr}");
@@ -1560,7 +1616,7 @@ mod tests {
                 s3_public_url: None,
                 s3_key_prefix: String::new(),
             },
-            SourceFailingStreamProcessor,
+            FatalSourceFailingStreamProcessor,
         ));
         for _ in 0..40 {
             if !broker_state.completions.lock().unwrap().is_empty() {
@@ -1568,15 +1624,18 @@ mod tests {
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
-        run.abort();
+        tokio::time::timeout(Duration::from_secs(1), run)
+            .await
+            .expect("worker loop did not stop after source error")
+            .expect("worker task panicked")
+            .expect("worker loop returned an error");
 
         let completions = broker_state.completions.lock().unwrap();
         assert_eq!(completions.len(), 1);
         assert_eq!(completions[0].0, "error");
         let body: serde_json::Value = serde_json::from_slice(&completions[0].1).unwrap();
         let message = body["message"].as_str().unwrap();
-        assert!(message.contains("not supported for this data"));
-        assert!(message.contains("croppedRepresentation"));
+        assert!(message.contains("unknown internal error"));
         assert!(!completions.iter().any(|(kind, _)| kind == "redirect"));
         drop(completions);
 

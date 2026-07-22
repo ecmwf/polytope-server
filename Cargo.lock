@@ -942,8 +942,8 @@ checksum = "b4388bee8683e3d04af747c73422af53102d2bd24d9eadb6cbc100baef4b43f8"
 
 [[package]]
 name = "bits"
-version = "0.1.0"
-source = "git+https://github.com/ecmwf/bits-broker.git?tag=0.1.0#7749437410efe94f8d15ce35899bfc3783284506"
+version = "0.1.1"
+source = "git+https://github.com/ecmwf/bits-broker.git?rev=b84a24b#b84a24bb8e0827f800a768ea815963a6044c58db"
 dependencies = [
  "async-nats",
  "async-trait",
