@@ -16,36 +16,86 @@ use tracing::{info, warn};
 
 mod convert;
 mod k8s;
+mod mars_logs;
 mod port_cleanup;
 
-fn mars_user_message(raw: &str) -> String {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MarsErrorDisposition {
+    Recoverable,
+    RestartWorker,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ClassifiedMarsError {
+    user_message: String,
+    disposition: MarsErrorDisposition,
+}
+
+impl ClassifiedMarsError {
+    fn recoverable(user_message: String) -> Self {
+        Self {
+            user_message,
+            disposition: MarsErrorDisposition::Recoverable,
+        }
+    }
+
+    fn unrecoverable(user_message: String) -> Self {
+        Self {
+            user_message,
+            disposition: MarsErrorDisposition::RestartWorker,
+        }
+    }
+}
+
+fn classify_mars_error(raw: &str) -> ClassifiedMarsError {
     let lower = raw.to_lowercase();
     if lower.contains("data not yet available") || lower.contains("scheduled for after") {
-        if let Some(release_time) = extract_release_time(raw) {
+        let message = if let Some(release_time) = extract_release_time(raw) {
             format!("Data not released yet. Release time is {release_time}.")
         } else {
             "Data not released yet. Please try again later.".to_string()
-        }
-    } else if lower.contains("croppedrepresentation") || lower.contains("not implemented for") {
-        format!("The requested post-processing is not supported for this data. Details: {raw}")
+        };
+        ClassifiedMarsError::recoverable(message)
+    } else if lower.contains("croppedrepresentation") {
+        ClassifiedMarsError::recoverable(format!(
+            "The requested post-processing is not supported for this data. Details: {raw}"
+        ))
     } else if lower.contains("restricted_access") || lower.contains("not authorised") {
-        format!("You do not have access to some of the requested data. Details: {raw}")
+        ClassifiedMarsError::recoverable(format!(
+            "You do not have access to some of the requested data. Details: {raw}"
+        ))
     } else if lower.contains("mars_expected_fields")
-        || (lower.contains("expected") && lower.contains("got"))
+        || lower.contains("data not found")
+        || lower.contains("no data found")
     {
-        format!("Some of the requested data is not available. Details: {raw}")
-    } else if lower.contains("syntax error")
-        || lower.contains("invalid value")
-        || lower.contains("assertion failed")
-    {
-        format!("Your request is invalid. Details: {raw}")
+        ClassifiedMarsError::recoverable(format!(
+            "Some of the requested data is not available. Details: {raw}"
+        ))
+    } else if lower.contains("syntax error") || lower.contains("invalid value") {
+        ClassifiedMarsError::recoverable(format!("Your request is invalid. Details: {raw}"))
     } else if lower.contains("mars_cache_corruption")
         || lower.contains("uncatched")
+        || lower.contains("uncaught")
         || lower.contains("signal 1")
+        || lower.contains("assertion failed")
     {
-        format!("The data retrieval system hit an internal error. Details: {raw}")
+        ClassifiedMarsError::unrecoverable(format!(
+            "The data retrieval system hit an internal error. Details: {raw}"
+        ))
     } else {
-        format!("Your request could not be completed. Details: {raw}")
+        ClassifiedMarsError::unrecoverable(format!(
+            "Your request could not be completed. Details: {raw}"
+        ))
+    }
+}
+
+fn record_mars_source_error(source_error: &SourceError, raw: &str) {
+    let classified = classify_mars_error(raw);
+    match classified.disposition {
+        MarsErrorDisposition::Recoverable => source_error.set_once(classified.user_message),
+        MarsErrorDisposition::RestartWorker => {
+            source_error.set_unrecoverable_once(classified.user_message)
+        }
     }
 }
 
@@ -74,6 +124,7 @@ struct MarsProcessor {
     /// leaked listener on this port between retrieves; see `port_cleanup`.
     local_port: u16,
     env_lock: std::sync::Arc<std::sync::Mutex<()>>,
+    mars_logs: mars_logs::MarsLogBridge,
 }
 
 #[async_trait]
@@ -98,8 +149,11 @@ impl Processor for MarsProcessor {
         let source_error_for_task = source_error.clone();
         let local_port = self.local_port;
         let env_lock = self.env_lock.clone();
+        let mars_logs = self.mars_logs.clone();
+        let request_id = work.job_id.clone();
         tokio::task::spawn_blocking(move || {
             let _env_guard = env_lock.lock().expect("MARS environment lock poisoned");
+            let _log_scope = mars_logs.begin_request(request_id);
             // SAFETY: this mutex serializes all per-request mutation of process environment
             // variables used by the MARS client.
             unsafe {
@@ -111,7 +165,7 @@ impl Processor for MarsProcessor {
                 Ok(c) => c,
                 Err(e) => {
                     let raw = e.to_string();
-                    source_error_for_task.set_once(mars_user_message(&raw));
+                    record_mars_source_error(&source_error_for_task, &raw);
                     let _ = tx.blocking_send(Err(std::io::Error::other(raw)));
                     return;
                 }
@@ -120,7 +174,7 @@ impl Processor for MarsProcessor {
                 Ok(s) => s,
                 Err(e) => {
                     let raw = e.to_string();
-                    source_error_for_task.set_once(mars_user_message(&raw));
+                    record_mars_source_error(&source_error_for_task, &raw);
                     let _ = tx.blocking_send(Err(std::io::Error::other(raw)));
                     return;
                 }
@@ -142,14 +196,14 @@ impl Processor for MarsProcessor {
                     Err(MarsError::Invalidated { offset }) => {
                         warn!(offset, "mars stream invalidated — unrecoverable");
                         let raw = format!("stream invalidated at byte offset {offset}");
-                        source_error_for_task.set_once(invalidated_user_message());
+                        source_error_for_task.set_unrecoverable_once(invalidated_user_message());
                         let _ = tx.blocking_send(Err(std::io::Error::other(raw)));
                         break;
                     }
                     Err(e) => {
                         warn!("mars stream error: {e}");
                         let raw = e.to_string();
-                        source_error_for_task.set_once(mars_user_message(&raw));
+                        record_mars_source_error(&source_error_for_task, &raw);
                         let _ = tx.blocking_send(Err(std::io::Error::other(raw)));
                         break;
                     }
@@ -192,37 +246,59 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mars_user_message_matches_data_not_released() {
+    fn classifies_data_not_released_as_recoverable() {
+        let classified = classify_mars_error(
+            "mars - ERROR - Data not yet available. Scheduled for after 11:45:00, (11:45:00)",
+        );
+        assert_eq!(classified.disposition, MarsErrorDisposition::Recoverable);
         assert_eq!(
-            mars_user_message(
-                "mars - ERROR - Data not yet available. Scheduled for after 11:45:00, (11:45:00)"
-            ),
+            classified.user_message,
             "Data not released yet. Release time is 11:45:00."
         );
+
+        let classified = classify_mars_error("Data not yet available");
+        assert_eq!(classified.disposition, MarsErrorDisposition::Recoverable);
         assert_eq!(
-            mars_user_message("Data not yet available"),
+            classified.user_message,
             "Data not released yet. Please try again later."
         );
     }
 
     #[test]
-    fn mars_user_message_matches_unsupported_postprocessing() {
-        let msg = mars_user_message(
-            "mars-client error: Serious bug: Representation::croppedRepresentation() not implemented for HEALPixNested[name=H128]",
-        );
-        assert!(msg.contains("not supported for this data"));
-        assert!(msg.contains("croppedRepresentation"));
+    fn classifies_known_request_errors_as_recoverable() {
+        for raw in [
+            "mars-client error: Representation::croppedRepresentation() not implemented for HEALPixNested[name=H128]",
+            "MARS_RESTRICTED_ACCESS_TO_DATA",
+            "MARS_EXPECTED_FIELDS Expected 2, got 1",
+            "Data not found",
+            "syntax error near param",
+            "invalid value for date",
+        ] {
+            assert_eq!(
+                classify_mars_error(raw).disposition,
+                MarsErrorDisposition::Recoverable,
+                "expected recoverable classification for {raw}"
+            );
+        }
     }
 
     #[test]
-    fn mars_user_message_matches_other_known_classes() {
-        assert!(mars_user_message("MARS_RESTRICTED_ACCESS_TO_DATA").contains("do not have access"));
-        assert!(
-            mars_user_message("MARS_EXPECTED_FIELDS Expected 2, got 1").contains("not available")
-        );
-        assert!(mars_user_message("syntax error near param").contains("request is invalid"));
-        assert!(mars_user_message("MARS_CACHE_CORRUPTION").contains("internal error"));
-        assert!(mars_user_message("something else").contains("could not be completed"));
+    fn classifies_internal_and_unknown_errors_for_restart() {
+        for raw in [
+            "MARS_CACHE_CORRUPTION",
+            "uncaught exception",
+            "signal 11",
+            "assertion failed",
+            "std::future_error: Future already retrieved",
+            "Unexpected message received (Blob(300))",
+            "something else",
+        ] {
+            assert_eq!(
+                classify_mars_error(raw).disposition,
+                MarsErrorDisposition::RestartWorker,
+                "expected restart classification for {raw}"
+            );
+        }
     }
 
     #[test]
@@ -270,7 +346,7 @@ fn resolved_worker_concurrency(cli_value: usize) -> usize {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     polytope_observability::init_tracing("polytope-worker-mars");
-    mars_client::log_bridge::init();
+    let mars_logs = mars_logs::init();
 
     let cli = Cli::parse();
     let worker_concurrency = resolved_worker_concurrency(cli.worker_concurrency);
@@ -312,6 +388,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         MarsProcessor {
             local_port: manager.local_port(),
             env_lock: std::sync::Arc::new(std::sync::Mutex::new(())),
+            mars_logs,
         },
     )
     .await?;
@@ -333,6 +410,7 @@ mod processor_tests {
         let processor = MarsProcessor {
             local_port: 8100,
             env_lock: std::sync::Arc::new(std::sync::Mutex::new(())),
+            mars_logs: mars_logs::test_instance(),
         };
         let result = processor
             .process(WorkItem {
