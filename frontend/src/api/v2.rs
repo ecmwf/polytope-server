@@ -19,6 +19,17 @@ use crate::auth::{AuthUser, MockRolesAudit};
 use crate::state::AppState;
 
 const POLL_TIMEOUT: Duration = Duration::from_secs(30);
+const PENDING_STATUS_HEADER: &str = "x-bits-pending-status";
+
+fn local_pending_status(state: &AppState, id: &str) -> &'static str {
+    state
+        .bits
+        .active_jobs()
+        .into_iter()
+        .find(|job| job.id == id)
+        .map(|job| job.status)
+        .unwrap_or("queued")
+}
 
 pub async fn health() -> &'static str {
     "Polytope server is alive"
@@ -106,11 +117,15 @@ pub async fn submit_collection(
     super::audit_mock_time_job_submission(mock_time_extensions.mock_time_audit.as_ref(), &id);
 
     match state.bits.poll(&id, Some(POLL_TIMEOUT)).await {
-        PollOutcome::Pending { id } => Response::builder()
-            .status(StatusCode::SEE_OTHER)
-            .header(header::LOCATION, format!("/api/v2/requests/{}", id))
-            .body(Body::empty())
-            .unwrap(),
+        PollOutcome::Pending { id, .. } => {
+            let status = local_pending_status(&state, &id);
+            Response::builder()
+                .status(StatusCode::SEE_OTHER)
+                .header(header::LOCATION, format!("/api/v2/requests/{}", id))
+                .header(PENDING_STATUS_HEADER, status)
+                .body(Body::empty())
+                .unwrap()
+        }
         PollOutcome::NotFound => {
             (StatusCode::NOT_FOUND, Json(json!({"error": "not found"}))).into_response()
         }
@@ -164,6 +179,9 @@ pub async fn submit_collection(
                 .into_response(),
             JobResult::Overloaded { reason } => {
                 super::overloaded_response(json!({"error": reason, "retryable": true}))
+            }
+            JobResult::RateLimited { reason } => {
+                super::rate_limited_response(json!({"error": reason, "retryable": true}))
             }
             JobResult::ClientGone => (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -193,11 +211,15 @@ pub async fn public_poll(
 
 pub async fn poll(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> Response {
     match state.bits.poll(&id, Some(POLL_TIMEOUT)).await {
-        PollOutcome::Pending { id } => Response::builder()
-            .status(StatusCode::SEE_OTHER)
-            .header(header::LOCATION, format!("/api/v2/requests/{}", id))
-            .body(Body::empty())
-            .unwrap(),
+        PollOutcome::Pending { id, .. } => {
+            let status = local_pending_status(&state, &id);
+            Response::builder()
+                .status(StatusCode::SEE_OTHER)
+                .header(header::LOCATION, format!("/api/v2/requests/{}", id))
+                .header(PENDING_STATUS_HEADER, status)
+                .body(Body::empty())
+                .unwrap()
+        }
         PollOutcome::NotFound => {
             (StatusCode::NOT_FOUND, Json(json!({"error": "not found"}))).into_response()
         }
@@ -251,6 +273,9 @@ pub async fn poll(State(state): State<Arc<AppState>>, Path(id): Path<String>) ->
                 .into_response(),
             JobResult::Overloaded { reason } => {
                 super::overloaded_response(json!({"error": reason, "retryable": true}))
+            }
+            JobResult::RateLimited { reason } => {
+                super::rate_limited_response(json!({"error": reason, "retryable": true}))
             }
             JobResult::ClientGone => (
                 StatusCode::INTERNAL_SERVER_ERROR,

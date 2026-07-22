@@ -32,6 +32,15 @@ pub fn overloaded_response(payload: Value) -> Response {
         .into_response()
 }
 
+pub fn rate_limited_response(payload: Value) -> Response {
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        [(header::RETRY_AFTER, OVERLOADED_RETRY_AFTER_SECS)],
+        Json(payload),
+    )
+        .into_response()
+}
+
 /// Flatten a v1-style `{"request": "...yaml..."}` or `{"request": {...}}` wrapper
 /// into a top-level MARS field object. Passes through already-flat requests unchanged.
 pub fn flatten_request(val: &mut Value) -> Result<(), String> {

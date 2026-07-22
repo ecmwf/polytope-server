@@ -251,7 +251,7 @@ impl PolytopeMcp {
         outcome: PollOutcome,
     ) -> CallToolResult {
         match outcome {
-            PollOutcome::Pending { id } => CallToolResult::structured(json!({
+            PollOutcome::Pending { id, .. } => CallToolResult::structured(json!({
                 "status": "pending",
                 "request_id": id,
                 "poll_tool": "polytope_poll",
@@ -359,6 +359,13 @@ impl PolytopeMcp {
             })),
             JobResult::Overloaded { reason } => tool_error(json!({
                 "status": "overloaded",
+                "request_id": request_id,
+                "message": reason,
+                "retryable": true,
+                "retry_after_seconds": RETRY_AFTER_SECS,
+            })),
+            JobResult::RateLimited { reason } => tool_error(json!({
+                "status": "rate_limited",
                 "request_id": request_id,
                 "message": reason,
                 "retryable": true,
