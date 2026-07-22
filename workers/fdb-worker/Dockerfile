@@ -10,62 +10,67 @@ RUN cargo install cargo-chef --locked
 RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-dev && rm -rf /var/lib/apt/lists/*
 
 ###############################
-# Stage 1: Prepare Cargo Chef Recipe
+# Prepare the root workspace Cargo Chef recipe
 ###############################
 FROM chef-base AS chef
 ARG GIT_AUTH_TOKEN=""
 WORKDIR /ecmwf/polytope-server
-COPY Cargo.lock Cargo.lock
-COPY observability/ observability/
-COPY workers/common/ workers/common/
-COPY workers/fdb-worker/ workers/fdb-worker/
-RUN mkdir -p .cargo && echo '[net]' > .cargo/config.toml && echo 'git-fetch-with-cli = true' >> .cargo/config.toml
-RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi
-RUN cd workers/fdb-worker && cargo chef prepare --recipe-path recipe.json
+COPY . .
+RUN mkdir -p .cargo && printf '[net]\ngit-fetch-with-cli = true\n' > .cargo/config.toml
+RUN if [ -n "$GIT_AUTH_TOKEN" ]; then \
+      git config --global credential.helper '' && \
+      git config --global url."https://git:${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; \
+    fi
+RUN cargo chef prepare --recipe-path recipe.json
 
 ###############################
-# Stage 2: Cache Dependencies
+# Cache root workspace dependencies without application source
 ###############################
 FROM chef-base AS cacher
 ARG GIT_AUTH_TOKEN=""
+ARG PACKAGE_NAME=fdb-worker
 WORKDIR /ecmwf/polytope-server
-COPY Cargo.lock Cargo.lock
-COPY --from=chef /ecmwf/polytope-server/workers/fdb-worker/recipe.json workers/fdb-worker/recipe.json
+COPY --from=chef /ecmwf/polytope-server/recipe.json recipe.json
 COPY --from=chef /ecmwf/polytope-server/.cargo/config.toml .cargo/config.toml
-COPY observability/ observability/
-COPY workers/common/ workers/common/
-RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi
-RUN cd workers/fdb-worker && cargo chef cook --release --recipe-path recipe.json
+# cargo-chef omits excluded path dependencies from root workspace recipes.
+COPY utils/metkit/Cargo.toml utils/metkit/Cargo.toml
+RUN mkdir -p utils/metkit/src && touch utils/metkit/src/lib.rs \
+    && printf 'fn main() {}\n' > utils/metkit/build.rs
+RUN if [ -n "$GIT_AUTH_TOKEN" ]; then \
+      git config --global credential.helper '' && \
+      git config --global url."https://git:${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; \
+    fi
+RUN cargo chef cook --release --locked --package "${PACKAGE_NAME}" --recipe-path recipe.json
 
 ###############################
-# Stage 3: Build the Project
+# Build the package from the root workspace
 ###############################
 FROM chef-base AS builder
 ARG GIT_AUTH_TOKEN=""
-WORKDIR /ecmwf/polytope-server
-COPY Cargo.lock Cargo.lock
 ARG PACKAGE_NAME=fdb-worker
 ARG BIN_NAME=fdb-worker
-COPY observability/ observability/
-COPY workers/common/ workers/common/
-COPY workers/fdb-worker/ workers/fdb-worker/
-RUN mkdir -p .cargo && echo '[net]' > .cargo/config.toml && echo 'git-fetch-with-cli = true' >> .cargo/config.toml
-COPY --from=cacher /ecmwf/polytope-server/workers/fdb-worker/target workers/fdb-worker/target
+WORKDIR /ecmwf/polytope-server
+COPY --from=cacher /ecmwf/polytope-server/target target
 COPY --from=cacher /usr/local/cargo /usr/local/cargo
-RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi
-RUN cd workers/fdb-worker && cargo build --release -p ${PACKAGE_NAME}
+COPY . .
+RUN mkdir -p .cargo && printf '[net]\ngit-fetch-with-cli = true\n' > .cargo/config.toml
+RUN if [ -n "$GIT_AUTH_TOKEN" ]; then \
+      git config --global credential.helper '' && \
+      git config --global url."https://git:${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; \
+    fi
+RUN cargo build --release --locked --package "${PACKAGE_NAME}"
 
 ###############################
 # FDB Build (from source)
 ###############################
-FROM python:3.11-bookworm AS fdb-build
+FROM docker.io/library/debian:bookworm-slim AS fdb-build
 ARG ecbuild_version=3.12.0
 ARG eccodes_version=2.46.0
-ARG eckit_version=1.33.1
+ARG eckit_version=1.33.0
+ARG metkit_version=1.17.0
 ARG fdb_version=5.19.2
-ARG pyfdb_version=0.1.0
 
-RUN apt-get update && apt-get install -y cmake gnupg build-essential net-tools bison flex git libaec-dev && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends cmake build-essential bison flex git libaec-dev ca-certificates && rm -rf /var/lib/apt/lists/*
 
 RUN git clone --depth 1 --branch ${ecbuild_version} https://github.com/ecmwf/ecbuild.git /ecbuild
 ENV PATH=/ecbuild/bin:$PATH
@@ -80,7 +85,7 @@ RUN git clone --depth 1 --branch ${eccodes_version} https://github.com/ecmwf/ecc
     && ecbuild --prefix=/opt/fdb -- -DENABLE_FORTRAN=OFF -DENABLE_AEC=OFF -DCMAKE_PREFIX_PATH=/opt/fdb /source/eccodes \
     && make -j$(nproc) && make install
 
-RUN git clone --depth 1 --branch 1.17.0 https://github.com/ecmwf/metkit.git /source/metkit \
+RUN git clone --depth 1 --branch ${metkit_version} https://github.com/ecmwf/metkit.git /source/metkit \
     && mkdir -p /build/metkit && cd /build/metkit \
     && ecbuild --prefix=/opt/fdb -- -DCMAKE_PREFIX_PATH=/opt/fdb /source/metkit \
     && make -j$(nproc) && make install
@@ -93,11 +98,6 @@ RUN git clone --depth 1 --branch ${fdb_version} https://github.com/ecmwf/fdb.git
 RUN rm -rf /source /build
 
 ###############################
-# Switch base image
-###############################
-FROM fdb-build AS fdb-base-final
-
-###############################
 # Stage 4: Production Release Image
 ###############################
 FROM docker.io/library/debian:bookworm-slim AS release
@@ -106,9 +106,9 @@ ARG BIN_NAME=fdb-worker
 LABEL version=$VERSION
 RUN apt-get update && apt-get install -y ca-certificates libgomp1 libaec0 libcurl4 libopenjp2-7 && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY --from=fdb-base-final /opt/fdb/ /opt/fdb/
-ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/opt/fdb/lib
-COPY --from=builder /ecmwf/polytope-server/workers/fdb-worker/target/release/${BIN_NAME} /app/fdb-worker
+COPY --from=fdb-build /opt/fdb/ /opt/fdb/
+ENV LD_LIBRARY_PATH=/opt/fdb/lib
+COPY --from=builder /ecmwf/polytope-server/target/release/${BIN_NAME} /app/fdb-worker
 ENTRYPOINT ["/app/fdb-worker"]
 
 ###############################
@@ -120,7 +120,7 @@ ARG BIN_NAME=fdb-worker
 LABEL version=$VERSION
 RUN apt-get update && apt-get install -y ca-certificates libgomp1 libaec0 libcurl4 libopenjp2-7 bash && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY --from=fdb-base-final /opt/fdb/ /opt/fdb/
-ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/opt/fdb/lib
-COPY --from=builder /ecmwf/polytope-server/workers/fdb-worker/target/release/${BIN_NAME} /app/fdb-worker
+COPY --from=fdb-build /opt/fdb/ /opt/fdb/
+ENV LD_LIBRARY_PATH=/opt/fdb/lib
+COPY --from=builder /ecmwf/polytope-server/target/release/${BIN_NAME} /app/fdb-worker
 ENTRYPOINT ["/app/fdb-worker"]

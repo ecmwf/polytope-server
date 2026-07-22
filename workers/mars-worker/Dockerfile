@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-ARG MARS_BUILD_FROM_SOURCE=false
+ARG MARS_BUILD_FROM_SOURCE=true
 
 ###############################
 # Shared base: Rust + cargo-chef + system deps (built once)
@@ -17,11 +17,14 @@ RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-d
 FROM python:3.11-bookworm AS mars-base
 ARG rpm_repo
 
-RUN curl -o stable-public.gpg.key "${rpm_repo}/private-raw-repos-config/debian/bookworm/stable/public.gpg.key" \
-    && echo "deb ${rpm_repo}/private-debian-bookworm-stable/ bookworm main" >> /etc/apt/sources.list \
-    && apt-key add stable-public.gpg.key \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl gpg \
+    && mkdir -p /usr/share/keyrings \
+    && curl -fsSL "${rpm_repo}/private-raw-repos-config/debian/bookworm/stable/public.gpg.key" \
+      | gpg --dearmor -o /usr/share/keyrings/ecmwf-stable.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/ecmwf-stable.gpg] ${rpm_repo}/private-debian-bookworm-stable/ bookworm main" \
+      > /etc/apt/sources.list.d/ecmwf-stable.list \
     && apt-get update \
-    && apt-get install -y libnetcdf19 liblapack3 \
+    && apt-get install -y --no-install-recommends libnetcdf19 liblapack3 \
     && rm -rf /var/lib/apt/lists/*
 
 FROM mars-base AS mars-base-cpp
@@ -34,21 +37,22 @@ RUN mkdir -p /opt/mars-client && cp -a /opt/ecmwf/mars-client-cpp/. /opt/mars-cl
 ###############################
 # Source-built MARS client library
 ###############################
-FROM debian:bookworm AS mars-build
+FROM docker.io/library/debian:bookworm-slim AS mars-build
 ARG GIT_AUTH_TOKEN=""
-ARG MARS_CLIENT_CPP_BRANCH=""
-ARG ECKIT_VERSION=""
-ARG ECCODES_VERSION=""
-ARG ODC_VERSION=""
-ARG METKIT_VERSION=""
-ARG ATLAS_VERSION=""
-ARG ATLAS_ORCA_VERSION=""
-ARG MIR_VERSION=""
-ARG FDB_VERSION=""
+ARG MARS_CLIENT_BUNDLE_REF=5d0430a5a1793274118254bbb15a5be824a063ba
+ARG MARS_CLIENT_CPP_BRANCH=736f833
+ARG ECKIT_VERSION=1.33.0
+ARG ECCODES_VERSION=2.46.0
+ARG ODC_VERSION=1.6.2
+ARG METKIT_VERSION=1.17.0
+ARG ATLAS_VERSION=0.45.0
+ARG ATLAS_ORCA_VERSION=0.4.3
+ARG MIR_VERSION=1.23.7
+ARG FDB_VERSION=5.19.0
 
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential git bison flex net-tools \
-    libssl-dev libnetcdf-dev curl \
+    libssl-dev libnetcdf-dev curl ca-certificates \
     && curl -fsSL https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-linux-x86_64.sh -o /tmp/cmake.sh \
     && sh /tmp/cmake.sh --skip-license --prefix=/usr/local \
     && rm /tmp/cmake.sh \
@@ -67,7 +71,10 @@ RUN if [ -n "$GIT_AUTH_TOKEN" ]; then \
     fi
 RUN git clone --depth 1 --branch 3.12.0 https://github.com/ecmwf/ecbuild.git /ecbuild
 ENV PATH=/ecbuild/bin:$PATH
-RUN git clone --single-branch --branch cpp https://github.com/ecmwf/mars-client-bundle.git /source/mars-client-bundle
+RUN git init /source/mars-client-bundle \
+    && git -C /source/mars-client-bundle remote add origin https://github.com/ecmwf/mars-client-bundle.git \
+    && git -C /source/mars-client-bundle fetch --depth 1 origin "${MARS_CLIENT_BUNDLE_REF}" \
+    && git -C /source/mars-client-bundle checkout --detach FETCH_HEAD
 
 RUN if [ -n "$ECKIT_VERSION" ]; then sed -i \
     -e "s|PROJECT eckit.*UPDATE)|PROJECT eckit GIT \"https://github.com/ecmwf/eckit\" TAG ${ECKIT_VERSION} UPDATE)|" \
@@ -115,68 +122,82 @@ FROM mars-build AS mars-libs-true
 ###############################
 # Select library provider
 ###############################
-ARG MARS_BUILD_FROM_SOURCE=false
+ARG MARS_BUILD_FROM_SOURCE=true
 FROM mars-libs-${MARS_BUILD_FROM_SOURCE} AS mars-libs
 
 ###############################
-# Stage 1: Prepare Cargo Chef Recipe
+# Prepare the standalone Mars Cargo Chef recipe
 ###############################
 FROM chef-base AS chef
 ARG GIT_AUTH_TOKEN=""
 WORKDIR /ecmwf/polytope-server
-COPY Cargo.lock Cargo.lock
+COPY workers/mars-worker/ workers/mars-worker/
 COPY observability/ observability/
 COPY workers/common/ workers/common/
-COPY workers/mars-worker/ workers/mars-worker/
-RUN mkdir -p .cargo && echo "[net]" > .cargo/config.toml && echo "git-fetch-with-cli = true" >> .cargo/config.toml
-RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi
+RUN mkdir -p .cargo && printf '[net]\ngit-fetch-with-cli = true\n' > .cargo/config.toml
+RUN if [ -n "$GIT_AUTH_TOKEN" ]; then \
+      git config --global credential.helper '' && \
+      git config --global url."https://git:${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; \
+    fi
 RUN cd workers/mars-worker && cargo chef prepare --recipe-path recipe.json
 
 ###############################
-# Stage 2: Cache Dependencies
+# Cache standalone Mars dependencies without application source
 ###############################
 FROM chef-base AS cacher
 ARG GIT_AUTH_TOKEN=""
+ARG PACKAGE_NAME=mars-worker
 WORKDIR /ecmwf/polytope-server
-COPY Cargo.lock Cargo.lock
 COPY --from=mars-libs /opt/mars-client /opt/mars-client
+COPY --from=chef /ecmwf/polytope-server/workers/mars-worker/recipe.json workers/mars-worker/recipe.json
+COPY --from=chef /ecmwf/polytope-server/.cargo/config.toml .cargo/config.toml
+# cargo-chef omits path dependencies outside the standalone crate root.
+COPY observability/Cargo.toml observability/Cargo.toml
+COPY workers/common/Cargo.toml workers/common/Cargo.toml
+RUN mkdir -p observability/src workers/common/src \
+    && touch observability/src/lib.rs workers/common/src/lib.rs
 ENV MARS_CLIENT_LIB_DIR=/opt/mars-client/lib
 ENV MARS_CLIENT_INCLUDE_DIR=/opt/mars-client/include
 ENV ECKIT_INCLUDE_DIR=/opt/mars-client/include
 ENV ECKIT_BUILD_INCLUDE_DIR=/opt/mars-client/include
 ENV METKIT_INCLUDE_DIR=/opt/mars-client/include
 ENV METKIT_BUILD_INCLUDE_DIR=/opt/mars-client/include
-COPY --from=chef /ecmwf/polytope-server/workers/mars-worker/recipe.json workers/mars-worker/recipe.json
-COPY --from=chef /ecmwf/polytope-server/.cargo/config.toml .cargo/config.toml
-COPY observability/ observability/
-COPY workers/common/ workers/common/
-RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi
-RUN cd workers/mars-worker && cargo chef cook --release --recipe-path recipe.json
+RUN if [ -n "$GIT_AUTH_TOKEN" ]; then \
+      git config --global credential.helper '' && \
+      git config --global url."https://git:${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; \
+    fi
+# cargo-chef rewrites standalone path packages, so its synthetic lock is not reusable.
+# The final build below enforces the committed standalone lockfile.
+RUN cd workers/mars-worker && cargo chef cook --release --package "${PACKAGE_NAME}" --recipe-path recipe.json
 
 ###############################
-# Stage 3: Build the Project
+# Build Mars with its standalone lockfile
 ###############################
 FROM chef-base AS builder
 ARG GIT_AUTH_TOKEN=""
-WORKDIR /ecmwf/polytope-server
-COPY Cargo.lock Cargo.lock
 ARG PACKAGE_NAME=mars-worker
 ARG BIN_NAME=mars-worker
+WORKDIR /ecmwf/polytope-server
 COPY --from=mars-libs /opt/mars-client /opt/mars-client
-COPY observability/ observability/
-COPY workers/common/ workers/common/
-COPY workers/mars-worker/ workers/mars-worker/
-RUN mkdir -p .cargo && echo "[net]" > .cargo/config.toml && echo "git-fetch-with-cli = true" >> .cargo/config.toml
 COPY --from=cacher /ecmwf/polytope-server/workers/mars-worker/target workers/mars-worker/target
 COPY --from=cacher /usr/local/cargo /usr/local/cargo
+COPY workers/mars-worker/ workers/mars-worker/
+COPY observability/ observability/
+COPY workers/common/ workers/common/
+# Replace the cached path-dependency skeletons with their real sources.
+RUN touch observability/src/lib.rs workers/common/src/lib.rs
+RUN mkdir -p .cargo && printf '[net]\ngit-fetch-with-cli = true\n' > .cargo/config.toml
 ENV MARS_CLIENT_LIB_DIR=/opt/mars-client/lib
 ENV MARS_CLIENT_INCLUDE_DIR=/opt/mars-client/include
 ENV ECKIT_INCLUDE_DIR=/opt/mars-client/include
 ENV ECKIT_BUILD_INCLUDE_DIR=/opt/mars-client/include
 ENV METKIT_INCLUDE_DIR=/opt/mars-client/include
 ENV METKIT_BUILD_INCLUDE_DIR=/opt/mars-client/include
-RUN if [ -n "$GIT_AUTH_TOKEN" ]; then git config --global url."https://${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; fi
-RUN find workers/common/src -type f -exec touch {} + && cd workers/mars-worker && cargo build --release -p ${PACKAGE_NAME}
+RUN if [ -n "$GIT_AUTH_TOKEN" ]; then \
+      git config --global credential.helper '' && \
+      git config --global url."https://git:${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; \
+    fi
+RUN cd workers/mars-worker && cargo build --release --locked --package "${PACKAGE_NAME}"
 
 ###############################
 # Stage 4: Production Release Image
@@ -191,7 +212,7 @@ WORKDIR /app
 
 COPY --from=mars-libs /opt/mars-client /opt/mars-client
 
-ENV LD_LIBRARY_PATH="/opt/mars-client/lib:${LD_LIBRARY_PATH}"
+ENV LD_LIBRARY_PATH=/opt/mars-client/lib
 
 COPY --from=builder /ecmwf/polytope-server/workers/mars-worker/target/release/${BIN_NAME} /app/mars-worker
 ENTRYPOINT ["/app/mars-worker"]
@@ -209,7 +230,7 @@ WORKDIR /app
 
 COPY --from=mars-libs /opt/mars-client /opt/mars-client
 
-ENV LD_LIBRARY_PATH="/opt/mars-client/lib:${LD_LIBRARY_PATH}"
+ENV LD_LIBRARY_PATH=/opt/mars-client/lib
 
 COPY --from=builder /ecmwf/polytope-server/workers/mars-worker/target/release/${BIN_NAME} /app/mars-worker
 ENTRYPOINT ["/app/mars-worker"]

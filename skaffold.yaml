@@ -4,20 +4,12 @@
 
 # ─── Environment variables ────────────────────────────────────────────────────
 #
-# Required:
-#   GH_TOKEN                    GitHub token for private repo access
-#   RPM_REPO                    Nexus RPM repository URL (unless MARS_BUILD_FROM_SOURCE=true)
+# Required for private GitHub dependencies:
+#   GH_TOKEN                    GitHub token with repository read access
 #
-# Tagging:
-#   FIXED_TAG                   Override image tag (default: git commit hash)
-#   PREFIX                      Prepend to auto-generated tag
-#
-# Build method (mars-worker):
-#   MARS_BUILD_FROM_SOURCE      "true" = build C++ from source (default: true)
-#   MARS_CLIENT_CPP_VERSION     RPM package version when not building from source (default: 7.1.9.1)
-#
-# Example:
-#   MARS_ECKIT_VERSION=1.34.0 MARS_FDB_VERSION=5.20.0 skaffold build -b mars-worker
+# Required only for the RPM-based Mars build (`docker build --build-arg
+# MARS_BUILD_FROM_SOURCE=false`):
+#   RPM_REPO                    Nexus RPM repository URL
 # ──────────────────────────────────────────────────────────────────────────────
 
 apiVersion: skaffold/v4beta13
@@ -25,75 +17,8 @@ kind: Config
 metadata:
   name: polytope-server
 
-# ─── Build arg anchors (single source of truth for both local and kaniko) ─────
-
-.server_build_args: &server_build_args
-  BIN_NAME: polytope-server
-  FEATURES: '{{default "metkit,telemetry" .SERVER_FEATURES}}'
-  GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
-  PACKAGE_NAME: polytope-server
-  ECKIT_VERSION: '{{default "1.33.0" .SERVER_ECKIT_VERSION}}'
-  METKIT_VERSION: '{{default "1.17.0" .SERVER_METKIT_VERSION}}'
-
-.fe_build_args: &fe_build_args
-  BIN_NAME: polytope-fe-worker
-  GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
-  PACKAGE_NAME: polytope-fe-worker
-  rpm_repo: '{{ .RPM_REPO }}'
-  ecbuild_version: '{{default "3.12.0" .FE_ECBUILD_VERSION}}'
-  eckit_version: '{{default "1.33.2" .FE_ECKIT_VERSION}}'
-  eccodes_version: '{{default "2.46.0" .FE_ECCODES_VERSION}}'
-  metkit_version: '{{default "1.18.1" .FE_METKIT_VERSION}}'
-  fdb_version: '{{default "5.21.3" .FE_FDB_VERSION}}'
-  gribjump_version: '{{default "0.12.0" .FE_GRIBJUMP_VERSION}}'
-  pyfdb_version: '{{default "5.21.0.19" .FE_PYFDB_VERSION}}'
-
-.fdb_build_args: &fdb_build_args
-  BIN_NAME: fdb-worker
-  GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
-  PACKAGE_NAME: fdb-worker
-  ecbuild_version: '{{default "3.12.0" .FDB_ECBUILD_VERSION}}'
-  eckit_version: '{{default "1.33.0" .FDB_ECKIT_VERSION}}'
-  eccodes_version: '{{default "2.46.0" .FDB_ECCODES_VERSION}}'
-  fdb_version: '{{default "5.19.2" .FDB_FDB_VERSION}}'
-  pyfdb_version: '{{default "0.1.0" .FDB_PYFDB_VERSION}}'
-
-.mars_build_args: &mars_build_args
-  BIN_NAME: mars-worker
-  GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
-  PACKAGE_NAME: mars-worker
-  rpm_repo: '{{ .RPM_REPO }}'
-  MARS_BUILD_FROM_SOURCE: '{{default "true" .MARS_BUILD_FROM_SOURCE}}'
-  mars_client_cpp_version: '{{default "7.1.9.1" .MARS_CLIENT_CPP_VERSION}}'
-  MARS_CLIENT_CPP_BRANCH: '{{default "736f833" .MARS_CLIENT_CPP_BRANCH}}'
-  ECKIT_VERSION: '{{default "1.33.0" .MARS_ECKIT_VERSION}}'
-  ECCODES_VERSION: '{{default "2.46.0" .MARS_ECCODES_VERSION}}'
-  ODC_VERSION: '{{default "1.6.2" .MARS_ODC_VERSION}}'
-  METKIT_VERSION: '{{default "1.17.0" .MARS_METKIT_VERSION}}'
-  ATLAS_VERSION: '{{default "0.45.0" .MARS_ATLAS_VERSION}}'
-  ATLAS_ORCA_VERSION: '{{default "0.4.3" .MARS_ATLAS_ORCA_VERSION}}'
-  MIR_VERSION: '{{default "1.23.7" .MARS_MIR_VERSION}}'
-  FDB_VERSION: '{{default "5.19.0" .MARS_FDB_VERSION}}'
-
-.test_build_args: &test_build_args
-  BIN_NAME: test-worker
-  GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
-  PACKAGE_NAME: test-worker
-
-.loadgen_build_args: &loadgen_build_args
-  BIN_NAME: loadgen
-  GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
-  PACKAGE_NAME: loadgen
-
-.kaniko_cache: &kaniko_cache
-  repo: eccr.ecmwf.int/polytope/kaniko-cache
-  cacheTTL: 480h
-
-.kaniko_common: &kaniko_common
-  target: release
-  skipUnusedStages: true
-  useNewRun: true
-  cache: *kaniko_cache
+# Dockerfiles own build defaults. Skaffold passes only credentials and external
+# repository locations that cannot have safe image defaults.
 
 # ─── Build ────────────────────────────────────────────────────────────────────
 
@@ -105,7 +30,7 @@ build:
         dockerfile: frontend/Dockerfile
         target: release
         buildArgs:
-          <<: *server_build_args
+          GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
 
     - image: eccr.ecmwf.int/polytope/polytope-fe-worker
       context: .
@@ -113,7 +38,7 @@ build:
         dockerfile: workers/polytope-fe-worker/Dockerfile
         target: release
         buildArgs:
-          <<: *fe_build_args
+          GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
 
     - image: eccr.ecmwf.int/polytope/fdb-worker
       context: .
@@ -121,7 +46,7 @@ build:
         dockerfile: workers/fdb-worker/Dockerfile
         target: release
         buildArgs:
-          <<: *fdb_build_args
+          GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
 
     - image: eccr.ecmwf.int/polytope/mars-worker
       context: .
@@ -129,7 +54,8 @@ build:
         dockerfile: workers/mars-worker/Dockerfile
         target: release
         buildArgs:
-          <<: *mars_build_args
+          GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+          rpm_repo: '{{ .RPM_REPO }}'
 
     - image: eccr.ecmwf.int/polytope/test-worker
       context: .
@@ -137,7 +63,7 @@ build:
         dockerfile: workers/test-worker/Dockerfile
         target: release
         buildArgs:
-          <<: *test_build_args
+          GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
 
     - image: eccr.ecmwf.int/polytope/polytope-loadgen
       context: .
@@ -145,7 +71,7 @@ build:
         dockerfile: loadgen/Dockerfile
         target: release
         buildArgs:
-          <<: *loadgen_build_args
+          GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
 
   tagPolicy:
     customTemplate:
@@ -164,7 +90,7 @@ build:
     - linux/amd64
   local:
     useDockerCLI: true
-    concurrency: 0
+    concurrency: 2
 
 # ─── Profiles ─────────────────────────────────────────────────────────────────
 
@@ -210,9 +136,14 @@ profiles:
         path: /build/artifacts/0/kaniko
         value:
           dockerfile: frontend/Dockerfile
-          <<: *kaniko_common
+          target: release
+          skipUnusedStages: true
+          useNewRun: true
+          cache:
+            repo: eccr.ecmwf.int/polytope/kaniko-cache
+            cacheTTL: 480h
           buildArgs:
-            <<: *server_build_args
+            GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
 
       - op: remove
         path: /build/artifacts/1/docker
@@ -220,9 +151,14 @@ profiles:
         path: /build/artifacts/1/kaniko
         value:
           dockerfile: workers/polytope-fe-worker/Dockerfile
-          <<: *kaniko_common
+          target: release
+          skipUnusedStages: true
+          useNewRun: true
+          cache:
+            repo: eccr.ecmwf.int/polytope/kaniko-cache
+            cacheTTL: 480h
           buildArgs:
-            <<: *fe_build_args
+            GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
 
       - op: remove
         path: /build/artifacts/2/docker
@@ -230,9 +166,14 @@ profiles:
         path: /build/artifacts/2/kaniko
         value:
           dockerfile: workers/fdb-worker/Dockerfile
-          <<: *kaniko_common
+          target: release
+          skipUnusedStages: true
+          useNewRun: true
+          cache:
+            repo: eccr.ecmwf.int/polytope/kaniko-cache
+            cacheTTL: 480h
           buildArgs:
-            <<: *fdb_build_args
+            GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
 
       - op: remove
         path: /build/artifacts/3/docker
@@ -240,9 +181,15 @@ profiles:
         path: /build/artifacts/3/kaniko
         value:
           dockerfile: workers/mars-worker/Dockerfile
-          <<: *kaniko_common
+          target: release
+          skipUnusedStages: true
+          useNewRun: true
+          cache:
+            repo: eccr.ecmwf.int/polytope/kaniko-cache
+            cacheTTL: 480h
           buildArgs:
-            <<: *mars_build_args
+            GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+            rpm_repo: '{{ .RPM_REPO }}'
 
       - op: remove
         path: /build/artifacts/4/docker
@@ -250,9 +197,14 @@ profiles:
         path: /build/artifacts/4/kaniko
         value:
           dockerfile: workers/test-worker/Dockerfile
-          <<: *kaniko_common
+          target: release
+          skipUnusedStages: true
+          useNewRun: true
+          cache:
+            repo: eccr.ecmwf.int/polytope/kaniko-cache
+            cacheTTL: 480h
           buildArgs:
-            <<: *test_build_args
+            GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
 
       - op: remove
         path: /build/artifacts/5/docker
@@ -260,6 +212,11 @@ profiles:
         path: /build/artifacts/5/kaniko
         value:
           dockerfile: loadgen/Dockerfile
-          <<: *kaniko_common
+          target: release
+          skipUnusedStages: true
+          useNewRun: true
+          cache:
+            repo: eccr.ecmwf.int/polytope/kaniko-cache
+            cacheTTL: 480h
           buildArgs:
-            <<: *loadgen_build_args
+            GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'

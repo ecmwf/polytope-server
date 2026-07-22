@@ -2,15 +2,94 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-name: Release (disabled)
+name: Release images
 
 on:
-  workflow_dispatch:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-images-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
 
 jobs:
-  disabled:
+  publish:
+    name: Publish ${{ matrix.artifact }}
     runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - artifact: polytope-server
+            image: eccr.ecmwf.int/polytope/polytope-server
+          - artifact: polytope-fe-worker
+            image: eccr.ecmwf.int/polytope/polytope-fe-worker
+          - artifact: fdb-worker
+            image: eccr.ecmwf.int/polytope/fdb-worker
+          - artifact: mars-worker
+            image: eccr.ecmwf.int/polytope/mars-worker
+          - artifact: test-worker
+            image: eccr.ecmwf.int/polytope/test-worker
+          - artifact: polytope-loadgen
+            image: eccr.ecmwf.int/polytope/polytope-loadgen
+    env:
+      RPM_REPO: https://nexus.ecmwf.int/repository
+      SKAFFOLD_SHA256: 8f62095ba8c282c03ad7b4987fbaf4f29b289fd6cbafb0351effd49f73f0240d
+      SKAFFOLD_VERSION: v2.18.0
     steps:
-      - name: Release disabled during image testing
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Prepare repository token
+        env:
+          RAW_GH_TOKEN: ${{ secrets.GH_REPO_READ_TOKEN }}
         run: |
-          echo "polytope-server release publishing is temporarily disabled to avoid clashing with production images."
+          token="$(printf '%s' "$RAW_GH_TOKEN" | tr -d '[:space:]')"
+          echo "::add-mask::$token"
+          echo "GH_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Validate release tag
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version="${RELEASE_TAG#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Release tag must be a semantic version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Install Skaffold
+        run: |
+          curl -fsSL "https://storage.googleapis.com/skaffold/releases/${SKAFFOLD_VERSION}/skaffold-linux-amd64" -o skaffold
+          echo "${SKAFFOLD_SHA256}  skaffold" | sha256sum --check -
+          sudo install skaffold /usr/local/bin/skaffold
+
+      - name: Log in to ECCR
+        env:
+          ECCR_PASSWORD: ${{ secrets.ECCR_PASSWORD }}
+          ECCR_USERNAME: ${{ secrets.ECCR_USERNAME }}
+        run: printf '%s' "$ECCR_PASSWORD" | docker login eccr.ecmwf.int --username "$ECCR_USERNAME" --password-stdin
+
+      - name: Refuse to overwrite an existing image
+        env:
+          IMAGE: ${{ matrix.image }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if docker manifest inspect "${IMAGE}:${VERSION}" >/dev/null 2>&1; then
+            echo "${IMAGE}:${VERSION} already exists; release tags are immutable" >&2
+            exit 1
+          fi
+
+      - name: Build and publish ${{ matrix.artifact }}
+        env:
+          FIXED_TAG: ${{ steps.version.outputs.version }}
+        run: skaffold build --push=true --filename skaffold.yaml --build-image "${{ matrix.artifact }}"

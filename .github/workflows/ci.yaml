@@ -7,7 +7,7 @@ name: CI
 on:
   push:
     branches:
-      - '**'
+      - "**"
   pull_request:
 
 permissions:
@@ -17,9 +17,11 @@ jobs:
   fmt:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           components: rustfmt
 
@@ -31,14 +33,21 @@ jobs:
     env:
       CARGO_NET_GIT_FETCH_WITH_CLI: "true"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
 
       - name: Configure private repo access
-        run: git config --global url."https://x-access-token:${{ secrets.GH_REPO_READ_TOKEN }}@github.com/".insteadOf "https://github.com/"
+        env:
+          RAW_GH_TOKEN: ${{ secrets.GH_REPO_READ_TOKEN }}
+        run: |
+          token="$(printf '%s' "$RAW_GH_TOKEN" | tr -d '[:space:]')"
+          echo "::add-mask::$token"
+          git config --global url."https://x-access-token:${token}@github.com/".insteadOf "https://github.com/"
 
       - name: Strip local path patches
         run: sed -i '/^\[patch\./,$d' Cargo.toml
@@ -48,11 +57,93 @@ jobs:
           NO_PROXY: "127.0.0.1,localhost"
         run: |
           unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy ALL_PROXY all_proxy
-          cargo test -p polytope-server
+          cargo test --locked -p polytope-server
 
       - name: Integration tests
         env:
           NO_PROXY: "127.0.0.1,localhost"
         run: |
           unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy ALL_PROXY all_proxy
-          cargo test -p polytope-server-integration-tests
+          cargo test --locked -p polytope-server-integration-tests
+
+  repository-access:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate private dependency access
+        env:
+          RAW_GH_TOKEN: ${{ secrets.GH_REPO_READ_TOKEN }}
+        run: |
+          token="$(printf '%s' "$RAW_GH_TOKEN" | tr -d '[:space:]')"
+          if [ -z "$token" ]; then
+            echo "GH_REPO_READ_TOKEN is not configured" >&2
+            exit 1
+          fi
+          echo "::add-mask::$token"
+          git config --global url."https://x-access-token:${token}@github.com/".insteadOf "https://github.com/"
+          git ls-remote https://github.com/ecmwf/bits-broker.git HEAD >/dev/null
+
+  skaffold-validate:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: dummy
+      RPM_REPO: https://nexus.ecmwf.int/repository
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Install Skaffold
+        env:
+          SKAFFOLD_SHA256: 8f62095ba8c282c03ad7b4987fbaf4f29b289fd6cbafb0351effd49f73f0240d
+          SKAFFOLD_VERSION: v2.18.0
+        run: |
+          curl -fsSL "https://storage.googleapis.com/skaffold/releases/${SKAFFOLD_VERSION}/skaffold-linux-amd64" -o skaffold
+          echo "${SKAFFOLD_SHA256}  skaffold" | sha256sum --check -
+          sudo install skaffold /usr/local/bin/skaffold
+
+      - name: Validate Skaffold configuration
+        run: skaffold diagnose --yaml-only --filename skaffold.yaml >/dev/null
+
+  image-build:
+    needs: [repository-access, skaffold-validate]
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        artifact:
+          - polytope-server
+          - polytope-fe-worker
+          - fdb-worker
+          - mars-worker
+          - test-worker
+          - polytope-loadgen
+    env:
+      FIXED_TAG: ci-${{ github.sha }}
+      RPM_REPO: https://nexus.ecmwf.int/repository
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Prepare repository token
+        env:
+          RAW_GH_TOKEN: ${{ secrets.GH_REPO_READ_TOKEN }}
+        run: |
+          token="$(printf '%s' "$RAW_GH_TOKEN" | tr -d '[:space:]')"
+          echo "::add-mask::$token"
+          echo "GH_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Install Skaffold
+        env:
+          SKAFFOLD_SHA256: 8f62095ba8c282c03ad7b4987fbaf4f29b289fd6cbafb0351effd49f73f0240d
+          SKAFFOLD_VERSION: v2.18.0
+        run: |
+          curl -fsSL "https://storage.googleapis.com/skaffold/releases/${SKAFFOLD_VERSION}/skaffold-linux-amd64" -o skaffold
+          echo "${SKAFFOLD_SHA256}  skaffold" | sha256sum --check -
+          sudo install skaffold /usr/local/bin/skaffold
+
+      - name: Build ${{ matrix.artifact }} without pushing
+        run: skaffold build --push=false --filename skaffold.yaml --build-image "${{ matrix.artifact }}"
