@@ -286,6 +286,8 @@ pub struct HttpConfig {
     pub port: u16,
     #[serde(default)]
     pub internal_poll_port: Option<u16>,
+    #[serde(default = "default_completed_redirect_ttl_secs")]
+    pub completed_redirect_ttl_secs: u64,
 }
 
 impl Default for HttpConfig {
@@ -294,6 +296,7 @@ impl Default for HttpConfig {
             host: default_host(),
             port: default_port(),
             internal_poll_port: None,
+            completed_redirect_ttl_secs: default_completed_redirect_ttl_secs(),
         }
     }
 }
@@ -306,9 +309,20 @@ fn default_port() -> u16 {
     3000
 }
 
+const fn default_completed_redirect_ttl_secs() -> u64 {
+    600
+}
+
 impl ServerConfig {
     pub fn from_file(path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let cfg: Self = serde_yaml::from_str(&std::fs::read_to_string(path)?)?;
+        if cfg.server.completed_redirect_ttl_secs == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "server.completed_redirect_ttl_secs must be greater than 0",
+            )
+            .into());
+        }
         if let Some(ref m) = cfg.metrics {
             m.validate()
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
@@ -615,6 +629,21 @@ bits: {}
             cfg.internal_poll_bind_addr().as_deref(),
             Some("127.0.0.1:9002")
         );
+    }
+
+    #[test]
+    fn completed_redirect_ttl_defaults_to_ten_minutes() {
+        let yaml = config_with_polytope("bits: {}\n");
+        let cfg: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(cfg.server.completed_redirect_ttl_secs, 600);
+    }
+
+    #[test]
+    fn completed_redirect_ttl_parses_override() {
+        let yaml =
+            config_with_polytope("server:\n  completed_redirect_ttl_secs: 21600\nbits: {}\n");
+        let cfg: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(cfg.server.completed_redirect_ttl_secs, 21_600);
     }
 
     #[test]

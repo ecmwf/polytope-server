@@ -75,6 +75,9 @@ pub fn build_app(
         auth_client,
         collections,
         allow_anonymous,
+        completed_redirect_ttl: std::time::Duration::from_secs(
+            cfg.server.completed_redirect_ttl_secs,
+        ),
         admin_bypass_roles: cfg.admin_bypass_roles,
         support: cfg.support,
         completed_redirects: std::sync::Mutex::new(std::collections::HashMap::new()),
@@ -481,6 +484,7 @@ targets:
             admin_bypass_roles: None,
             support: Default::default(),
             completed_redirects: std::sync::Mutex::new(std::collections::HashMap::new()),
+            completed_redirect_ttl: std::time::Duration::from_secs(600),
         });
         let submitter = BitsSubmitter {
             state: state.clone(),

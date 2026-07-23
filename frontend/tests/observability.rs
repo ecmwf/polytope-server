@@ -26,6 +26,7 @@ targets:
         admin_bypass_roles: None,
         support: Default::default(),
         completed_redirects: std::sync::Mutex::new(HashMap::new()),
+        completed_redirect_ttl: std::time::Duration::from_secs(600),
     })
 }
 

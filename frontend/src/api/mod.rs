@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 
 use crate::auth::mock_time::{MOCK_TIME_HEADER, normalise_mocked_now};
 use crate::auth::{MockRolesAudit, MockTime, MockTimeAudit, is_admin_bypass_user};
-use crate::state::{AppState, COMPLETED_REDIRECT_TTL, CachedRedirect};
+use crate::state::{AppState, CachedRedirect};
 
 const OVERLOADED_RETRY_AFTER_SECS: &str = "5";
 
@@ -119,16 +119,16 @@ pub fn known_active_job_allows_user(
     // Enforce ownership there too — otherwise a consumed job would be invisible
     // to active_jobs() and the is_none_or branch would let any user through.
     // Use poison-recovering lock so a panic elsewhere never fails *open*.
-    // Only consult entries within the TTL window so this function agrees with
-    // get_request on which entries are "live".
+    // Only consult entries within the configured TTL so this function agrees
+    // with get_request on which entries are "live".
     let cache = state
         .completed_redirects
         .lock()
         .unwrap_or_else(|p| p.into_inner());
-    if let Some(entry) = cache.get(id) {
-        if entry.cached_at.elapsed() < COMPLETED_REDIRECT_TTL {
-            return cached_redirect_allows_user(entry, auth_user);
-        }
+    if let Some(entry) = cache.get(id)
+        && entry.cached_at.elapsed() < state.completed_redirect_ttl
+    {
+        return cached_redirect_allows_user(entry, auth_user);
     }
     drop(cache);
 

@@ -19,7 +19,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 use crate::auth::{AuthUser, MockRolesAudit};
-use crate::state::{AppState, COMPLETED_REDIRECT_TTL, CachedRedirect, MAX_COMPLETED_REDIRECTS};
+use crate::state::{AppState, CachedRedirect, MAX_COMPLETED_REDIRECTS};
 
 const POLL_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -273,15 +273,14 @@ pub async fn get_request(
     let auth_user_ref = auth_user.as_ref().map(|Extension(user)| user);
 
     // Re-poll from completed-redirect cache: a previously consumed job result
-    // stays here for COMPLETED_REDIRECT_TTL, matching the BOBS data lifetime.
-    // The lock is not held across any await point.
+    // stays here for the configured TTL. The lock is not held across any await point.
     {
         let mut cache = state
             .completed_redirects
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         if let Some(entry) = cache.get(&id) {
-            if entry.cached_at.elapsed() < COMPLETED_REDIRECT_TTL {
+            if entry.cached_at.elapsed() < state.completed_redirect_ttl {
                 if !super::cached_redirect_allows_user(entry, auth_user_ref) {
                     tracing::warn!("event.name" = "api.job.poll.failed", outcome = "rejected", request.id = %id, reason = "wrong_user", "job poll rejected (cached redirect)");
                     return super::request_not_found_response();
@@ -407,8 +406,8 @@ pub async fn get_request(
                 } else {
                     tracing::info!("event.name" = "api.job.poll.completed", outcome = "success", request.id = %id, "job poll completed");
                 }
-                // Cache the redirect so re-polls within COMPLETED_REDIRECT_TTL
-                // return the same 303, matching the legacy Python frontend.
+                // Cache the redirect so re-polls within the configured TTL return
+                // the same 303, matching the legacy Python frontend.
                 // Note: two simultaneous polls of the same fresh id race for
                 // the single-consumer result; the loser returns NotFound before
                 // the winner has inserted into the cache, so it cannot benefit
@@ -425,7 +424,7 @@ pub async fn get_request(
                 // unbounded growth: entries are not re-polled on the
                 // common single-poll client path, so lazy eviction at
                 // read time alone is insufficient.
-                cache.retain(|_, v| v.cached_at.elapsed() < COMPLETED_REDIRECT_TTL);
+                cache.retain(|_, v| v.cached_at.elapsed() < state.completed_redirect_ttl);
                 if cache.len() < MAX_COMPLETED_REDIRECTS {
                     cache.insert(
                         id.clone(),
@@ -682,7 +681,7 @@ mod tests {
 
     #[test]
     fn delete_all_evicts_only_requesting_users_cache_entries() {
-        use crate::state::{COMPLETED_REDIRECT_TTL, CachedRedirect};
+        use crate::state::CachedRedirect;
         use std::time::Instant;
 
         // retain closure logic extracted for unit testing

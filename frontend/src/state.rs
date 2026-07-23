@@ -9,15 +9,7 @@ use std::time::{Duration, Instant};
 use crate::auth::AuthClient;
 use crate::config::SupportConfig;
 
-/// How long a completed redirect is retained in the frontend cache.
-///
-/// Set to match the BOBS production `read_idle_ttl_secs` (600 s) as a
-/// reasonable ceiling.  Note that BOBS resets its idle timer on each read
-/// while `cached_at` is fixed at first delivery, so the two clocks do not
-/// track each other exactly: a URL served near the TTL boundary may point to
-/// data that BOBS has already expired, and BOBS may still hold data after we
-/// evict the entry.  Both cases result in a client-visible 404 on the BOBS
-/// download, which clients already tolerate.
+/// Default lifetime for completed redirects when the server setting is omitted.
 pub const COMPLETED_REDIRECT_TTL: Duration = Duration::from_secs(600);
 
 /// Maximum number of completed-redirect entries retained at any time.
@@ -45,9 +37,9 @@ pub struct AppState {
     pub allow_anonymous: bool,
     pub admin_bypass_roles: Option<HashMap<String, Vec<String>>>,
     pub support: SupportConfig,
-    /// Short-lived cache of completed redirect results keyed by job ID.
-    /// Populated by `v1::get_request` on first delivery; entries expire after
-    /// `COMPLETED_REDIRECT_TTL` (set to match BOBS `read_idle_ttl_secs`).
-    /// The `Mutex` is never held across an `.await` point.
+    /// Completed redirect results keyed by job ID. The mutex is never held
+    /// across an `.await` point.
     pub completed_redirects: Mutex<HashMap<String, CachedRedirect>>,
+    /// Configured lifetime for entries in `completed_redirects`.
+    pub completed_redirect_ttl: Duration,
 }
