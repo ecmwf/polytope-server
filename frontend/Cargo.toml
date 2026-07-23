@@ -19,6 +19,7 @@ path = "src/main.rs"
 polytope-observability = { path = "../observability" }
 async-trait = "0.1"
 axum = { version = "0.8", features = ["http2"] }
+hyper-util = { version = "0.1", features = ["server-auto", "service", "tokio"] }
 tower-http = { version = "0.6", features = ["cors", "compression-full"] }
 polytope-edr = { git = "https://github.com/ecmwf/polytope-edr", tag = "0.1.0" }
 bits = { git = "https://github.com/ecmwf/bits-broker.git", rev = "b84a24b", features = [

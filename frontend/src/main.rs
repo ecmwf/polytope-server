@@ -3,6 +3,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use clap::Parser;
+use hyper_util::{
+    rt::{TokioExecutor, TokioIo},
+    server::conn::auto,
+    service::TowerToHyperService,
+};
 
 use polytope_server::config::ServerConfig;
 
@@ -10,6 +15,26 @@ use polytope_server::config::ServerConfig;
 #[command(name = "polytope-server", about = "Polytope data retrieval server")]
 struct Cli {
     config: String,
+}
+
+async fn serve_public_http(
+    listener: tokio::net::TcpListener,
+    app: axum::Router,
+) -> std::io::Result<()> {
+    loop {
+        let (socket, peer_addr) = listener.accept().await?;
+        let service = TowerToHyperService::new(app.clone());
+
+        tokio::spawn(async move {
+            let io = TokioIo::new(socket);
+            let mut builder = auto::Builder::new(TokioExecutor::new()).title_case_headers(true);
+            builder.http2().enable_connect_protocol();
+
+            if let Err(error) = builder.serve_connection_with_upgrades(io, service).await {
+                tracing::debug!(%peer_addr, %error, "failed to serve connection");
+            }
+        });
+    }
 }
 
 #[cfg(feature = "telemetry")]
@@ -211,7 +236,7 @@ async fn main() {
         });
     }
 
-    let result = axum::serve(listener, app).await;
+    let result = serve_public_http(listener, app).await;
 
     #[cfg(feature = "telemetry")]
     if let Some(provider) = meter_provider
@@ -226,4 +251,36 @@ async fn main() {
         "server shutdown complete"
     );
     result.unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::{Router, http::StatusCode, http::header, routing::get};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    use super::serve_public_http;
+
+    #[tokio::test]
+    async fn title_cases_location_header_for_http1() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = Router::new().route(
+            "/",
+            get(|| async { (StatusCode::ACCEPTED, [(header::LOCATION, "./request-id")]) }),
+        );
+        let server = tokio::spawn(serve_public_http(listener, app));
+
+        let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+        stream
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).await.unwrap();
+        server.abort();
+
+        let response = String::from_utf8(response).unwrap();
+        assert!(response.contains("\r\nLocation: ./request-id\r\n"));
+        assert!(!response.contains("\r\nlocation:"));
+    }
 }
