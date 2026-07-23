@@ -514,5 +514,13 @@ def test_metadata_options_when_base_has_no_options(
     assert "options" not in base_config_no_options
 
 
+def test_destroy_preserves_process_scoped_config_files(base_config):
+    datasource = PolytopeDataSource(base_config)
+
+    assert Path(datasource.config_file).is_file()
+    datasource.destroy(FakeRequest({}))
+    assert Path(datasource.config_file).is_file()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

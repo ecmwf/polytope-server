@@ -144,11 +144,8 @@ class PolytopeDataSource:
         yield self.output
 
     def destroy(self, request) -> None:
-        # delete temp files
-        if os.path.exists(self.config_file):
-            os.remove(self.config_file)
-        if os.path.exists(self.fdb_config_file):
-            os.remove(self.fdb_config_file)
+        # These files are created once with this process-scoped datasource and
+        # reused by every job. Removing them here breaks all subsequent jobs.
         pass
 
     def mime_type(self) -> str:
