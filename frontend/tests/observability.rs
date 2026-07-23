@@ -25,6 +25,7 @@ targets:
         allow_anonymous: true,
         admin_bypass_roles: None,
         support: Default::default(),
+        completed_redirects: std::sync::Mutex::new(HashMap::new()),
     })
 }
 

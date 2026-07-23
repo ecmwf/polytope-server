@@ -77,6 +77,7 @@ pub fn build_app(
         allow_anonymous,
         admin_bypass_roles: cfg.admin_bypass_roles,
         support: cfg.support,
+        completed_redirects: std::sync::Mutex::new(std::collections::HashMap::new()),
     });
 
     let v1_protected = Router::new()
@@ -479,6 +480,7 @@ targets:
             allow_anonymous: false,
             admin_bypass_roles: None,
             support: Default::default(),
+            completed_redirects: std::sync::Mutex::new(std::collections::HashMap::new()),
         });
         let submitter = BitsSubmitter {
             state: state.clone(),

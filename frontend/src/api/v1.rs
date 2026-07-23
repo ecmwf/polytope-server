@@ -19,7 +19,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 use crate::auth::{AuthUser, MockRolesAudit};
-use crate::state::AppState;
+use crate::state::{AppState, COMPLETED_REDIRECT_TTL, CachedRedirect, MAX_COMPLETED_REDIRECTS};
 
 const POLL_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -44,6 +44,33 @@ fn pending_request_body(status: PendingStatus) -> Value {
             json!({"message": "Processing...", "status": "processing"})
         }
     }
+}
+
+/// Build the legacy v1 redirect response body and 303 status.
+///
+/// Body shape: `{contentLength?, contentType?, location}` — matching the
+/// Python frontend (no `message` / `status` keys on redirect).
+fn build_redirect_response(
+    location: &str,
+    content_type: Option<&str>,
+    content_length: Option<u64>,
+) -> Response {
+    let mut body = serde_json::Map::new();
+    if let Some(n) = content_length {
+        body.insert("contentLength".to_string(), json!(n));
+    }
+    if let Some(ct) = content_type {
+        body.insert("contentType".to_string(), json!(ct));
+    }
+    body.insert("location".to_string(), json!(location));
+    Response::builder()
+        .status(StatusCode::SEE_OTHER)
+        .header(header::LOCATION, location)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&Value::Object(body)).unwrap_or_default(),
+        ))
+        .unwrap()
 }
 
 pub async fn test() -> impl IntoResponse {
@@ -245,6 +272,32 @@ pub async fn get_request(
 ) -> Response {
     let auth_user_ref = auth_user.as_ref().map(|Extension(user)| user);
 
+    // Re-poll from completed-redirect cache: a previously consumed job result
+    // stays here for COMPLETED_REDIRECT_TTL, matching the BOBS data lifetime.
+    // The lock is not held across any await point.
+    {
+        let mut cache = state
+            .completed_redirects
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if let Some(entry) = cache.get(&id) {
+            if entry.cached_at.elapsed() < COMPLETED_REDIRECT_TTL {
+                if !super::cached_redirect_allows_user(entry, auth_user_ref) {
+                    tracing::warn!("event.name" = "api.job.poll.failed", outcome = "rejected", request.id = %id, reason = "wrong_user", "job poll rejected (cached redirect)");
+                    return super::request_not_found_response();
+                }
+                tracing::debug!("event.name" = "api.job.poll.completed", outcome = "success", request.id = %id, source = "cache", "serving cached redirect");
+                return build_redirect_response(
+                    &entry.location,
+                    entry.content_type.as_deref(),
+                    entry.content_length,
+                );
+            } else {
+                cache.remove(&id);
+            }
+        }
+    }
+
     if state.collections.contains_key(&id) {
         let records = active_request_records(&state, auth_user_ref, Some(&id));
         return (StatusCode::OK, Json(json!({"message": records}))).into_response();
@@ -354,25 +407,51 @@ pub async fn get_request(
                 } else {
                     tracing::info!("event.name" = "api.job.poll.completed", outcome = "success", request.id = %id, "job poll completed");
                 }
+                // Cache the redirect so re-polls within COMPLETED_REDIRECT_TTL
+                // return the same 303, matching the legacy Python frontend.
+                // Note: two simultaneous polls of the same fresh id race for
+                // the single-consumer result; the loser returns NotFound before
+                // the winner has inserted into the cache, so it cannot benefit
+                // from the cache on that particular concurrent request.
+                let (owner_username, owner_realm) = auth_user
+                    .as_ref()
+                    .map(|Extension(u)| (u.username.clone(), u.realm.clone()))
+                    .unwrap_or_default();
+                let mut cache = state
+                    .completed_redirects
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner());
+                // Evict expired entries on every insert to prevent
+                // unbounded growth: entries are not re-polled on the
+                // common single-poll client path, so lazy eviction at
+                // read time alone is insufficient.
+                cache.retain(|_, v| v.cached_at.elapsed() < COMPLETED_REDIRECT_TTL);
+                if cache.len() < MAX_COMPLETED_REDIRECTS {
+                    cache.insert(
+                        id.clone(),
+                        CachedRedirect {
+                            username: owner_username,
+                            realm: owner_realm,
+                            location: location.clone(),
+                            content_type: content_type.clone(),
+                            content_length,
+                            cached_at: Instant::now(),
+                        },
+                    );
+                } else {
+                    tracing::warn!(
+                        "event.name" = "api.job.cache.full",
+                        outcome = "dropped",
+                        request.id = %id,
+                        capacity = MAX_COMPLETED_REDIRECTS,
+                        "completed-redirect cache at capacity; re-poll for this request will return 404"
+                    );
+                }
+                drop(cache);
                 // Legacy v1 redirect body: `{contentLength, contentType, location}`
                 // (message/status omitted, as the Python server did). The client
                 // follows the Location header to download from BOBS/staging.
-                let mut redirect_body = serde_json::Map::new();
-                if let Some(content_length) = content_length {
-                    redirect_body.insert("contentLength".to_string(), json!(content_length));
-                }
-                if let Some(content_type) = content_type {
-                    redirect_body.insert("contentType".to_string(), json!(content_type));
-                }
-                redirect_body.insert("location".to_string(), json!(location));
-                Response::builder()
-                    .status(StatusCode::SEE_OTHER)
-                    .header(header::LOCATION, &location)
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .body(Body::from(
-                        serde_json::to_vec(&Value::Object(redirect_body)).unwrap_or_default(),
-                    ))
-                    .unwrap()
+                build_redirect_response(&location, content_type.as_deref(), content_length)
             }
             JobResult::Error { message } => (
                 StatusCode::BAD_REQUEST,
@@ -433,6 +512,29 @@ pub async fn delete_request(
     } else {
         usize::from(state.bits.cancel(&id))
     };
+
+    // Evict from the completed-redirect cache so re-polls after a cancel
+    // don't serve a stale 303 for a job that has been explicitly deleted.
+    // Use poison-recovering lock consistent with the read paths.
+    let mut cache = state
+        .completed_redirects
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    if id.eq_ignore_ascii_case("all") {
+        // Remove only entries owned by the cancelling user, mirroring the
+        // scope of active_request_records above:
+        //   - anonymous entries (empty username) are not "owned" by any named user
+        //   - anonymous callers cannot prove ownership, so nothing is removed
+        cache.retain(|_, v| {
+            !matches!(auth_user_ref, Some(u)
+                if !v.username.is_empty()
+                    && v.username == u.username
+                    && v.realm == u.realm)
+        });
+    } else {
+        cache.remove(&id);
+    }
+    drop(cache);
     if let Some(Extension(user)) = auth_user.as_ref() {
         tracing::info!("event.name" = "api.job.cancelled", outcome = "cancelled", request.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, "job cancelled");
     } else {
@@ -496,6 +598,142 @@ mod tests {
             content_length: None,
             user_message: None,
         }
+    }
+
+    fn cached_redirect(username: &str, realm: &str, location: &str) -> CachedRedirect {
+        CachedRedirect {
+            username: username.to_string(),
+            realm: realm.to_string(),
+            location: location.to_string(),
+            content_type: None,
+            content_length: None,
+            cached_at: Instant::now(),
+        }
+    }
+
+    #[test]
+    fn cached_redirect_allows_matching_user() {
+        let entry = cached_redirect("alice", "ecmwf", "https://bobs/data");
+        assert!(super::super::cached_redirect_allows_user(
+            &entry,
+            Some(&auth_user("alice", "ecmwf"))
+        ));
+        // Wrong username
+        assert!(!super::super::cached_redirect_allows_user(
+            &entry,
+            Some(&auth_user("bob", "ecmwf"))
+        ));
+        // Wrong realm
+        assert!(!super::super::cached_redirect_allows_user(
+            &entry,
+            Some(&auth_user("alice", "desp"))
+        ));
+        // Anonymous request against owned entry
+        assert!(!super::super::cached_redirect_allows_user(&entry, None));
+    }
+
+    #[test]
+    fn cached_redirect_allows_anonymous_owner_for_any_user() {
+        let entry = cached_redirect("", "", "https://bobs/data");
+        assert!(super::super::cached_redirect_allows_user(&entry, None));
+        assert!(super::super::cached_redirect_allows_user(
+            &entry,
+            Some(&auth_user("alice", "ecmwf"))
+        ));
+    }
+
+    #[tokio::test]
+    async fn build_redirect_response_shape_with_all_fields() {
+        use http_body_util::BodyExt;
+        let resp = build_redirect_response(
+            "https://bobs.example/data",
+            Some("application/x-grib"),
+            Some(12345),
+        );
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+        assert_eq!(
+            resp.headers().get(header::LOCATION).unwrap(),
+            "https://bobs.example/data"
+        );
+        assert_eq!(
+            resp.headers().get(header::CONTENT_TYPE).unwrap(),
+            "application/json"
+        );
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v["location"], "https://bobs.example/data");
+        assert_eq!(v["contentType"], "application/x-grib");
+        assert_eq!(v["contentLength"], 12345);
+        // No `message` or `status` keys (Python parity)
+        assert!(v.get("message").is_none());
+        assert!(v.get("status").is_none());
+    }
+
+    #[tokio::test]
+    async fn build_redirect_response_omits_absent_optional_fields() {
+        use http_body_util::BodyExt;
+        let resp = build_redirect_response("https://bobs.example/data", None, None);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v["location"], "https://bobs.example/data");
+        assert!(v.get("contentType").is_none());
+        assert!(v.get("contentLength").is_none());
+    }
+
+    #[test]
+    fn delete_all_evicts_only_requesting_users_cache_entries() {
+        use crate::state::{COMPLETED_REDIRECT_TTL, CachedRedirect};
+        use std::time::Instant;
+
+        // retain closure logic extracted for unit testing
+        fn should_retain(entry: &CachedRedirect, auth_user: Option<&AuthUser>) -> bool {
+            !matches!(auth_user, Some(u)
+                if !entry.username.is_empty()
+                    && entry.username == u.username
+                    && entry.realm == u.realm)
+        }
+
+        let alice = auth_user("alice", "ecmwf");
+        let bob_entry = CachedRedirect {
+            username: "bob".to_string(),
+            realm: "ecmwf".to_string(),
+            location: "https://bobs/bob-data".to_string(),
+            content_type: None,
+            content_length: None,
+            cached_at: Instant::now(),
+        };
+        let alice_entry = CachedRedirect {
+            username: "alice".to_string(),
+            realm: "ecmwf".to_string(),
+            location: "https://bobs/alice-data".to_string(),
+            content_type: None,
+            content_length: None,
+            cached_at: Instant::now(),
+        };
+        let anon_entry = CachedRedirect {
+            username: "".to_string(),
+            realm: "".to_string(),
+            location: "https://bobs/anon-data".to_string(),
+            content_type: None,
+            content_length: None,
+            cached_at: Instant::now(),
+        };
+
+        // Alice's DELETE /all: keeps bob and anon, evicts alice
+        assert!(should_retain(&bob_entry, Some(&alice)), "bob kept");
+        assert!(!should_retain(&alice_entry, Some(&alice)), "alice evicted");
+        assert!(should_retain(&anon_entry, Some(&alice)), "anon kept");
+
+        // Anonymous DELETE /all: keeps everything (can't prove ownership)
+        assert!(should_retain(&bob_entry, None), "bob kept for anon caller");
+        assert!(
+            should_retain(&alice_entry, None),
+            "alice kept for anon caller"
+        );
+        assert!(
+            should_retain(&anon_entry, None),
+            "anon kept for anon caller"
+        );
     }
 
     #[test]
