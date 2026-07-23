@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 
 use crate::auth::mock_time::{MOCK_TIME_HEADER, normalise_mocked_now};
 use crate::auth::{MockRolesAudit, MockTime, MockTimeAudit, is_admin_bypass_user};
-use crate::state::AppState;
+use crate::state::{AppState, COMPLETED_REDIRECT_TTL, CachedRedirect};
 
 const OVERLOADED_RETRY_AFTER_SECS: &str = "5";
 
@@ -97,11 +97,41 @@ pub fn active_job_allows_user(job: &ActiveJobSnapshot, auth_user: Option<&AuthUs
         && owner.get("realm").and_then(Value::as_str) == Some(auth_user.realm.as_str())
 }
 
+/// Check whether a cached redirect result is accessible by the given user.
+/// Mirrors the ownership semantics of [`active_job_allows_user`]: anonymous
+/// (empty owner) jobs are visible to everyone.
+pub fn cached_redirect_allows_user(entry: &CachedRedirect, auth_user: Option<&AuthUser>) -> bool {
+    if entry.username.is_empty() {
+        return true; // Unowned / anonymous job
+    }
+    let Some(user) = auth_user else {
+        return false;
+    };
+    user.username == entry.username && user.realm == entry.realm
+}
+
 pub fn known_active_job_allows_user(
     state: &AppState,
     id: &str,
     auth_user: Option<&AuthUser>,
 ) -> bool {
+    // Jobs consumed by a previous poll live in the completed-redirect cache.
+    // Enforce ownership there too — otherwise a consumed job would be invisible
+    // to active_jobs() and the is_none_or branch would let any user through.
+    // Use poison-recovering lock so a panic elsewhere never fails *open*.
+    // Only consult entries within the TTL window so this function agrees with
+    // get_request on which entries are "live".
+    let cache = state
+        .completed_redirects
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    if let Some(entry) = cache.get(id) {
+        if entry.cached_at.elapsed() < COMPLETED_REDIRECT_TTL {
+            return cached_redirect_allows_user(entry, auth_user);
+        }
+    }
+    drop(cache);
+
     state
         .bits
         .active_jobs()

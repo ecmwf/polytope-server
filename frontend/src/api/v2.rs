@@ -362,6 +362,7 @@ targets:
             allow_anonymous: false,
             admin_bypass_roles: None,
             support: Default::default(),
+            completed_redirects: std::sync::Mutex::new(std::collections::HashMap::new()),
         });
         Router::new()
             .route("/api/v2/collections", get(super::list_collections))

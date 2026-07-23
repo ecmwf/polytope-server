@@ -428,6 +428,7 @@ mod tests {
             allow_anonymous,
             admin_bypass_roles,
             support: Default::default(),
+            completed_redirects: std::sync::Mutex::new(std::collections::HashMap::new()),
         });
 
         let v1 = Router::new()
@@ -826,6 +827,7 @@ mod tests {
             allow_anonymous: false,
             admin_bypass_roles: None,
             support: Default::default(),
+            completed_redirects: std::sync::Mutex::new(std::collections::HashMap::new()),
         });
 
         async fn check_user(req: AxumRequest) -> StatusCode {
@@ -881,6 +883,7 @@ mod tests {
             allow_anonymous: false,
             admin_bypass_roles: None,
             support: Default::default(),
+            completed_redirects: std::sync::Mutex::new(std::collections::HashMap::new()),
         });
 
         async fn contract_payload(req: AxumRequest) -> Json<Value> {
@@ -992,6 +995,7 @@ mod tests {
                 vec!["admin".to_string()],
             )])),
             support: Default::default(),
+            completed_redirects: std::sync::Mutex::new(std::collections::HashMap::new()),
         });
 
         async fn payload(req: AxumRequest) -> Json<Value> {
@@ -1083,6 +1087,7 @@ mod tests {
                 vec!["admin".to_string()],
             )])),
             support: Default::default(),
+            completed_redirects: std::sync::Mutex::new(std::collections::HashMap::new()),
         });
 
         async fn payload(req: AxumRequest) -> Json<Value> {
@@ -1304,6 +1309,7 @@ mod tests {
                 vec!["admin".to_string()],
             )])),
             support: Default::default(),
+            completed_redirects: std::sync::Mutex::new(std::collections::HashMap::new()),
         });
 
         async fn payload(req: AxumRequest) -> Json<Value> {
@@ -1525,6 +1531,7 @@ mod tests {
             allow_anonymous: true,
             admin_bypass_roles: None,
             support: Default::default(),
+            completed_redirects: std::sync::Mutex::new(std::collections::HashMap::new()),
         });
 
         async fn check_no_user(req: AxumRequest) -> StatusCode {
