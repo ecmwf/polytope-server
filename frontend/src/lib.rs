@@ -60,15 +60,26 @@ pub fn build_app(
         .as_ref()
         .is_some_and(|a| a.allow_anonymous);
 
-    let auth_client = cfg.authentication.as_ref().map(|auth_cfg| {
-        auth::AuthClient::new(
-            &auth_cfg.url,
-            auth_cfg.resolved_secret().as_bytes(),
-            std::time::Duration::from_millis(auth_cfg.timeout_ms),
-            auth_cfg.cache_ttl_secs.map(std::time::Duration::from_secs),
-            auth_cfg.cache_capacity,
-        )
-    });
+    let auth_client = cfg
+        .authentication
+        .as_ref()
+        .map(|auth_cfg| {
+            let public_keys: Vec<_> = auth_cfg
+                .public_keys
+                .iter()
+                .map(|key| auth::JwtPublicKey::new(&key.kid, key.public_key.as_bytes()))
+                .collect();
+            auth::AuthClient::new(
+                &auth_cfg.url,
+                &public_keys,
+                &auth_cfg.issuer,
+                &auth_cfg.audience,
+                std::time::Duration::from_millis(auth_cfg.timeout_ms),
+                auth_cfg.cache_ttl_secs.map(std::time::Duration::from_secs),
+                auth_cfg.cache_capacity,
+            )
+        })
+        .transpose()?;
 
     let state = Arc::new(AppState {
         bits,
@@ -300,15 +311,26 @@ mod tests {
     use polytope_edr::RequestSubmitter;
     use tower::ServiceExt;
 
+    fn auth_config_yaml() -> String {
+        let public_key =
+            serde_json::to_string(include_str!("../../tests/fixtures/test-rsa-public.pem"))
+                .unwrap();
+        format!(
+            r#"authentication:
+  url: "http://127.0.0.1:1"
+  issuer: "https://auth-o-tron.test"
+  public_keys:
+    - kid: "test-key-1"
+      public_key: {public_key}
+"#,
+        )
+    }
+
     fn internal_poll_test_config(auth: bool) -> config::ServerConfig {
         let authentication = if auth {
-            r#"
-authentication:
-  url: "http://127.0.0.1:1"
-  secret: "testsecret"
-"#
+            auth_config_yaml()
         } else {
-            ""
+            String::new()
         };
         let yaml = format!(
             r#"
@@ -322,15 +344,14 @@ bits: {{}}
     }
 
     fn edr_test_config() -> config::ServerConfig {
-        let yaml = r#"
+        let authentication = auth_config_yaml();
+        let yaml = format!(
+            r#"
 polytope:
   site: bol
   env: dev
-bits: {}
-authentication:
-  url: "http://127.0.0.1:1"
-  secret: "testsecret"
-edr:
+bits: {{}}
+{authentication}edr:
   collections:
     operational-data:
       title: "Operational Data"
@@ -345,9 +366,32 @@ edr:
         expver: "0001"
       supported_queries:
         - position
-      parameters: {}
+      parameters: {{}}
+"#,
+        );
+        serde_yaml::from_str(&yaml).expect("EDR test config should parse")
+    }
+
+    #[test]
+    fn invalid_auth_public_key_fails_app_startup() {
+        let yaml = r#"
+polytope:
+  site: bol
+  env: dev
+bits: {}
+authentication:
+  url: "http://127.0.0.1:1"
+  issuer: "https://auth-o-tron.test"
+  public_keys:
+    - kid: "broken"
+      public_key: "not a PEM"
 "#;
-        serde_yaml::from_str(yaml).expect("EDR test config should parse")
+        let cfg = serde_yaml::from_str(yaml).expect("config shape should parse");
+        let error = match build_app(cfg) {
+            Ok(_) => panic!("invalid RSA key should fail startup"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("invalid JWT public key"));
     }
 
     async fn response_status(app: Router, method: axum::http::Method, path: &str) -> StatusCode {

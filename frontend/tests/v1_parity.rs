@@ -21,10 +21,6 @@ polytope:
   site: bol
   env: tst
 bits: {}
-authentication:
-  url: "http://127.0.0.1:1"
-  secret: "s"
-  allow_anonymous: true
 support:
   default_url: "https://support.ecmwf.int/"
 "#,
@@ -46,10 +42,6 @@ bits:
     ecmwf:
       - my_route:
           - target::my_target
-authentication:
-  url: "http://127.0.0.1:1"
-  secret: "s"
-  allow_anonymous: true
 support:
   default_url: "https://support.ecmwf.int/"
 "#,
@@ -57,7 +49,20 @@ support:
 }
 
 fn app_from_yaml(yaml: &str) -> axum::Router {
-    let cfg: ServerConfig = serde_yaml::from_str(yaml).expect("config parses");
+    let public_key =
+        serde_json::to_string(include_str!("../../tests/fixtures/test-rsa-public.pem")).unwrap();
+    let yaml = format!(
+        r#"{yaml}
+authentication:
+  url: "http://127.0.0.1:1"
+  issuer: "https://auth-o-tron.test"
+  public_keys:
+    - kid: "test-key-1"
+      public_key: {public_key}
+  allow_anonymous: true
+"#,
+    );
+    let cfg: ServerConfig = serde_yaml::from_str(&yaml).expect("config parses");
     build_app(cfg).expect("app builds").0
 }
 

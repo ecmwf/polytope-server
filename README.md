@@ -87,7 +87,12 @@ collections:
         url: "http://ops-backend/api"
 ```
 
-See `config.example.yaml` for a starting point, [docs/request-ids.md](docs/request-ids.md) for request ID and rollout guidance, and the [bits documentation](https://github.com/ecmwf/bits-broker) for the full bits config schema.
+See `config.example.yaml` for a starting point,
+[docs/authentication.md](docs/authentication.md) for the RS256 auth-o-tron
+contract and key rotation, [docs/request-ids.md](docs/request-ids.md) for
+request ID and rollout guidance, and the
+[bits documentation](https://github.com/ecmwf/bits-broker) for the full bits
+config schema.
 
 ## Running
 

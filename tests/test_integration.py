@@ -76,7 +76,7 @@ class GribHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(FAKE_GRIB)
 
-    def log_message(self, *_):
+    def log_message(self, format, *args):
         pass  # silence default stdout logging
 
 
@@ -141,7 +141,7 @@ def client(polytope_server):
     sys.path.insert(
         0, str(REPO_ROOT / ".venv" / "lib" / "python3.12" / "site-packages")
     )
-    from polytope.api import Client
+    from polytope.api import Client  # pyright: ignore[reportMissingImports]
 
     return Client(
         address=polytope_server,
@@ -268,7 +268,11 @@ def test_v2_cancel(polytope_server):
 # Auth-o-tron integration
 # ---------------------------------------------------------------------------
 
-JWT_SECRET = "integration-test-secret"
+JWT_ISSUER = "https://auth-o-tron.python-integration.test"
+JWT_AUDIENCE = "polytope-server"
+JWT_KID = "python-integration-key-1"
+JWT_PRIVATE_KEY = (REPO_ROOT / "tests/fixtures/test-rsa-private.pem").read_text()
+JWT_PUBLIC_KEY = (REPO_ROOT / "tests/fixtures/test-rsa-public.pem").read_text()
 VALID_USER = "testuser"
 VALID_PASSWORD = "testpass"
 VALID_REALM = "testrealm"
@@ -283,7 +287,7 @@ class AuthOTronHandler(BaseHTTPRequestHandler):
             return
 
         import base64
-        from jose import jwt
+        from jose import jwt  # pyright: ignore[reportMissingModuleSource]
 
         auth = self.headers.get("Authorization", "")
         if not auth.startswith("Basic "):
@@ -312,10 +316,13 @@ class AuthOTronHandler(BaseHTTPRequestHandler):
                 "username": user,
                 "realm": VALID_REALM,
                 "roles": ["default"],
+                "iss": JWT_ISSUER,
+                "aud": JWT_AUDIENCE,
                 "exp": int(time.time()) + 3600,
             },
-            JWT_SECRET,
-            algorithm="HS256",
+            JWT_PRIVATE_KEY,
+            algorithm="RS256",
+            headers={"kid": JWT_KID},
         )
 
         self.send_response(200)
@@ -323,7 +330,7 @@ class AuthOTronHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"Authenticated successfully")
 
-    def log_message(self, *_):
+    def log_message(self, format, *args):
         pass
 
 
@@ -348,13 +355,21 @@ def authed_polytope_server(mock_backend, mock_authotron):
     server_port = free_port()
 
     config = textwrap.dedent(f"""\
+        polytope:
+          site: tst
+          env: tst
+
         server:
           host: "127.0.0.1"
           port: {server_port}
 
         authentication:
           url: "http://127.0.0.1:{mock_authotron}"
-          secret: "{JWT_SECRET}"
+          issuer: "{JWT_ISSUER}"
+          public_keys:
+            - kid: "{JWT_KID}"
+              public_key: |
+{textwrap.indent(JWT_PUBLIC_KEY.rstrip(), " " * 16)}
 
         bits:
           routes:

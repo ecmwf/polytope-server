@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 server:
-  host: "0.0.0.0"   # optional, default 0.0.0.0
-  port: 3000         # optional, default 3000
+  host: "0.0.0.0" # optional, default 0.0.0.0
+  port: 3000 # optional, default 3000
 
 # Deployment identity used for opaque BITS request IDs.
 # Tags must be 1-3 lower-case alphanumeric characters.
@@ -19,8 +19,26 @@ polytope:
 #   enabled: true
 #   port: 9090       # default 9090
 
+# Optional — authenticate through auth-o-tron and verify its RS256 JWTs.
+# `issuer` is exact; `audience` defaults to `polytope-server`. Configure only
+# public keys here. See docs/authentication.md for staged key rotation.
+# authentication:
+#   url: "https://auth-o-tron.example.com"
+#   issuer: "https://auth-o-tron.example.com"
+#   audience: "polytope-server"
+#   public_keys:
+#     - kid: "key-2026-01"
+#       public_key: |
+#         -----BEGIN PUBLIC KEY-----
+#         ...
+#         -----END PUBLIC KEY-----
+#   timeout_ms: 5000
+#   cache_ttl_secs: 60
+#   cache_capacity: 10000
+#   allow_anonymous: false
+
 bits:
   routes:
     - default:
         - target::http:
-            url: "http://your-backend/"   # replace with real target
+            url: "http://your-backend/" # replace with real target

@@ -6,11 +6,24 @@ use serde::de;
 use serde::{Deserialize, Deserializer};
 use std::collections::HashMap;
 
+pub const DEFAULT_AUTH_AUDIENCE: &str = "polytope-server";
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct JwtPublicKeyConfig {
+    pub kid: String,
+    pub public_key: String,
+}
+
 #[derive(Deserialize, Clone)]
 pub struct AuthConfig {
     pub url: String,
-    #[serde(default)]
-    pub secret: String,
+    /// Exact JWT issuer expected from auth-o-tron.
+    pub issuer: String,
+    /// Exact JWT audience expected from auth-o-tron.
+    #[serde(default = "default_auth_audience")]
+    pub audience: String,
+    /// Overlapping public keys accepted by `kid` during signing-key rotation.
+    pub public_keys: Vec<JwtPublicKeyConfig>,
     #[serde(default = "default_timeout_ms")]
     pub timeout_ms: u64,
     pub cache_ttl_secs: Option<u64>,
@@ -19,26 +32,28 @@ pub struct AuthConfig {
     pub allow_anonymous: bool,
 }
 
-impl AuthConfig {
-    pub fn resolved_secret(&self) -> String {
-        std::env::var("AUTH_SECRET")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| self.secret.clone())
-    }
-}
-
 impl std::fmt::Debug for AuthConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let public_key_ids: Vec<&str> = self
+            .public_keys
+            .iter()
+            .map(|key| key.kid.as_str())
+            .collect();
         f.debug_struct("AuthConfig")
             .field("url", &self.url)
-            .field("secret", &"[REDACTED]")
+            .field("issuer", &self.issuer)
+            .field("audience", &self.audience)
+            .field("public_key_ids", &public_key_ids)
             .field("timeout_ms", &self.timeout_ms)
             .field("cache_ttl_secs", &self.cache_ttl_secs)
             .field("cache_capacity", &self.cache_capacity)
             .field("allow_anonymous", &self.allow_anonymous)
             .finish()
     }
+}
+
+fn default_auth_audience() -> String {
+    DEFAULT_AUTH_AUDIENCE.to_string()
 }
 
 fn default_timeout_ms() -> u64 {
@@ -592,7 +607,7 @@ bits: {}
     }
 
     #[test]
-    fn test_config_with_auth() {
+    fn test_config_with_auth_keyset_and_default_audience() {
         let yaml = config_with_polytope(
             r#"server:
   host: "0.0.0.0"
@@ -600,13 +615,22 @@ bits: {}
 bits: {}
 authentication:
   url: "http://auth-o-tron:8080"
-  secret: "testsecret"
+  issuer: "https://auth-o-tron.example.com"
+  public_keys:
+    - kid: "key-2026-01"
+      public_key: "first-public-key"
+    - kid: "key-2026-02"
+      public_key: "second-public-key"
 "#,
         );
         let cfg: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
         let auth = cfg.authentication.unwrap();
         assert_eq!(auth.url, "http://auth-o-tron:8080");
-        assert_eq!(auth.secret, "testsecret");
+        assert_eq!(auth.issuer, "https://auth-o-tron.example.com");
+        assert_eq!(auth.audience, DEFAULT_AUTH_AUDIENCE);
+        assert_eq!(auth.public_keys.len(), 2);
+        assert_eq!(auth.public_keys[0].kid, "key-2026-01");
+        assert_eq!(auth.public_keys[1].kid, "key-2026-02");
         assert_eq!(auth.timeout_ms, 5000);
         assert!(!auth.allow_anonymous);
     }
@@ -652,7 +676,10 @@ bits: {}
             r#"bits: {}
 authentication:
   url: "http://auth:8080"
-  secret: "s"
+  issuer: "https://auth.example"
+  public_keys:
+    - kid: "test"
+      public_key: "not-used"
   allow_anonymous: true
 "#,
         );
@@ -716,7 +743,10 @@ mcp:
 bits: {}
 authentication:
   url: "http://auth:8080"
-  secret: "s"
+  issuer: "https://auth.example"
+  public_keys:
+    - kid: "test"
+      public_key: "not-used"
   timeout_ms: 10000
 "#,
         );
@@ -731,7 +761,10 @@ authentication:
             r#"bits: {}
 authentication:
   url: "http://auth:8080"
-  secret: "s"
+  issuer: "https://auth.example"
+  public_keys:
+    - kid: "test"
+      public_key: "not-used"
 "#,
         );
         let cfg: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
@@ -746,7 +779,11 @@ authentication:
             r#"bits: {}
 authentication:
   url: "http://auth:8080"
-  secret: "s"
+  issuer: "https://auth.example"
+  audience: "custom-audience"
+  public_keys:
+    - kid: "test"
+      public_key: "not-used"
   cache_ttl_secs: 300
   cache_capacity: 50000
 "#,
@@ -755,6 +792,23 @@ authentication:
         let auth = cfg.authentication.unwrap();
         assert_eq!(auth.cache_ttl_secs, Some(300));
         assert_eq!(auth.cache_capacity, Some(50000));
+    }
+
+    #[test]
+    fn legacy_shared_secret_config_is_rejected() {
+        let yaml = config_with_polytope(
+            r#"bits: {}
+authentication:
+  url: "http://auth:8080"
+  secret: "legacy-shared-secret"
+"#,
+        );
+        let error = serde_yaml::from_str::<ServerConfig>(&yaml)
+            .expect_err("RS256 issuer and public keyset must be required");
+        assert!(
+            error.to_string().contains("issuer") || error.to_string().contains("public_keys"),
+            "error should identify the missing RS256 contract: {error}"
+        );
     }
 
     #[test]
