@@ -40,7 +40,7 @@ RUN mkdir -p /opt/mars-client && cp -a /opt/ecmwf/mars-client-cpp/. /opt/mars-cl
 FROM docker.io/library/debian:bookworm-slim AS mars-build
 ARG GIT_AUTH_TOKEN=""
 ARG MARS_CLIENT_BUNDLE_REF=5d0430a5a1793274118254bbb15a5be824a063ba
-ARG MARS_CLIENT_CPP_BRANCH=736f833
+ARG MARS_CLIENT_CPP_BRANCH=4e667f9c90db56ae7d0c81d5a01119f578fcd156
 ARG ECKIT_VERSION=1.33.0
 ARG ECCODES_VERSION=2.46.0
 ARG ODC_VERSION=1.6.2
