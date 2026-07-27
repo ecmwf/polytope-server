@@ -501,6 +501,68 @@ targets:
     }
 
     #[tokio::test]
+    async fn post_that_fails_after_id_assignment_reports_the_id() {
+        // A POST that BITS accepts (so an ID is assigned) but that then fails
+        // downstream must surface that ID to the user, even though the client
+        // sent no `X-Request-Id`. This exercises the real `submit_collection`
+        // handler behind the support middleware end to end.
+        let (bits, handle) = make_bits_with_route("ecmwf");
+        let mut collections = HashMap::new();
+        collections.insert("ecmwf".to_string(), handle);
+        let state = Arc::new(AppState {
+            bits,
+            auth_client: None,
+            collections,
+            allow_anonymous: false,
+            admin_bypass_roles: None,
+            support: Default::default(),
+            completed_redirects: std::sync::Mutex::new(std::collections::HashMap::new()),
+            completed_redirect_ttl: std::time::Duration::from_secs(600),
+        });
+        let app = Router::new()
+            .route(
+                "/api/v2/{collection}/requests",
+                post(super::submit_collection),
+            )
+            .with_state(state.clone())
+            .layer(axum::middleware::from_fn_with_state(
+                state,
+                crate::support::request_context_middleware,
+            ));
+
+        let resp = app
+            .oneshot(
+                Request::post("/api/v2/ecmwf/requests")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        // BITS accepted the job and assigned an ID; the request then failed.
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        // The assigned ID survives the error rewrite on the response extension...
+        let id = resp
+            .extensions()
+            .get::<crate::support::RequestId>()
+            .expect("assigned request ID present on the response")
+            .0
+            .clone();
+        assert!(!id.is_empty());
+
+        // ...and is quoted back to the user in the rewritten error message.
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        let msg = json["message"].as_str().expect("error body has a message");
+        assert!(
+            msg.contains(&format!("quote your request ID {id}")),
+            "error message should quote the assigned ID; got: {msg}"
+        );
+    }
+
+    #[tokio::test]
     async fn submit_known_collection_routes_to_handle() {
         let (bits, handle) = make_bits_with_route("ecmwf");
         let mut collections = HashMap::new();
