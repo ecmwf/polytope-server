@@ -18,8 +18,8 @@ use axum::{
 use serde_json::json;
 
 use super::mock_roles::{
-    MockRolesAudit, REQUEST_ID_HEADER, has_mock_roles_header, has_mock_user_header,
-    parse_mock_roles_header, parse_mock_user_header,
+    MockRolesAudit, has_mock_roles_header, has_mock_user_header, parse_mock_roles_header,
+    parse_mock_user_header,
 };
 use super::mock_time::{
     MOCK_TIME_HEADER, MockTimeAudit, has_mock_time_header, normalise_mocked_now,
@@ -212,10 +212,9 @@ pub async fn auth_middleware(
 
             let mut req = req;
             let request_id = req
-                .headers()
-                .get(REQUEST_ID_HEADER)
-                .and_then(|value| value.to_str().ok())
-                .map(str::to_string);
+                .extensions()
+                .get::<crate::support::RequestId>()
+                .map(|rid| rid.0.clone());
             let path = req.uri().path().to_string();
 
             if let Some(mock_time) = mock_time {
@@ -1038,7 +1037,7 @@ mod tests {
                 Request::get("/check")
                     .header("Authorization", "Bearer token")
                     .header("Polytope-Mock-Roles", "beta:viewer,data")
-                    .header("X-Request-Id", "request-123")
+                    .extension(crate::support::RequestId("request-123".to_string()))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1131,7 +1130,7 @@ mod tests {
                 Request::get("/check")
                     .header("Authorization", "Bearer token")
                     .header("Polytope-Mock-Time", "2040-05-06T08:08:09+01:00")
-                    .header("X-Request-Id", "request-456")
+                    .extension(crate::support::RequestId("request-456".to_string()))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1370,7 +1369,7 @@ mod tests {
                     .header("Authorization", "Bearer token")
                     .header("Polytope-Mock-Roles", "beta:viewer,data")
                     .header("Polytope-Mock-Time", "2040-05-06T08:08:09+01:00")
-                    .header("X-Request-Id", "request-789")
+                    .extension(crate::support::RequestId("request-789".to_string()))
                     .body(Body::empty())
                     .unwrap(),
             )
