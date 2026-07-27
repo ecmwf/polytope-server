@@ -16,7 +16,7 @@ use polytope_server::build_app;
 use polytope_server::config::{ServerConfig, SupportConfig};
 use tower::ServiceExt;
 
-fn app() -> axum::Router {
+fn config() -> ServerConfig {
     let yaml = r#"
 polytope:
   site: bol
@@ -30,8 +30,11 @@ support:
   realms:
     desp: "https://platform.destine.eu/contact/"
 "#;
-    let cfg: ServerConfig = serde_yaml::from_str(yaml).expect("config parses");
-    build_app(cfg).expect("app builds").0
+    serde_yaml::from_str(yaml).expect("config parses")
+}
+
+fn app() -> axum::Router {
+    build_app(config()).expect("app builds").0
 }
 
 // A plausible opaque request ID (26-char Crockford base32; see docs/request-ids.md).
@@ -84,6 +87,45 @@ async fn error_on_a_request_path_quotes_the_url_derived_request_id() {
 
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let msg = v["message"].as_str().unwrap();
+    assert!(msg.contains(&format!("quote your request ID {RID}")));
+}
+
+#[tokio::test]
+async fn error_quotes_the_bits_generated_id_surfaced_by_the_handler() {
+    // A client that sends no `X-Request-Id` (e.g. the Python polytope-client)
+    // submitting a request that BITS accepts but then fails: the handler surfaces
+    // the BITS-generated ID via a response extension exactly like
+    // `submit_collection`, and the middleware must quote that ID in the error.
+    async fn boom() -> axum::response::Response {
+        use axum::response::IntoResponse;
+        let mut resp = (
+            StatusCode::BAD_REQUEST,
+            axum::Json(serde_json::json!({ "error": "boom" })),
+        )
+            .into_response();
+        resp.extensions_mut()
+            .insert(polytope_server::support::RequestId(RID.to_string()));
+        resp
+    }
+
+    let (_full_app, state) = build_app(config()).expect("app builds");
+    let router = axum::Router::new()
+        .route("/boom", axum::routing::get(boom))
+        .layer(axum::middleware::from_fn_with_state(
+            state,
+            polytope_server::support::request_context_middleware,
+        ));
+
+    // No X-Request-Id header from the client.
+    let resp = router
+        .oneshot(Request::get("/boom").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let msg = v["message"].as_str().unwrap();
