@@ -23,7 +23,7 @@ If both headers are present, they are parsed and authorized independently but un
 
 ## Shared audit model
 
-Accepted mock requests emit structured audit events. The audit data records the real authenticated identity, the mock value accepted by Polytope, the request path, and `request_id` from `X-Request-Id` when present.
+Accepted mock requests emit structured audit events. The audit data records the real authenticated identity, the mock value accepted by Polytope, the request path, and the `request_id` derived from the request URL when present.
 
 The accepted-request events are:
 

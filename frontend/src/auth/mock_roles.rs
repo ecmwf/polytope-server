@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use axum::http::{HeaderMap, HeaderName};
 
 pub const MOCK_ROLES_HEADER: &str = "polytope-mock-roles";
-pub const REQUEST_ID_HEADER: &str = "x-request-id";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MockRoles {

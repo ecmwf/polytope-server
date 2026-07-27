@@ -6,9 +6,9 @@ SPDX-License-Identifier: Apache-2.0
 
 # Error responses
 
-Every response that reaches a user carries a request ID, and every error body is
-a single, self-contained, human-readable message that says what happened, what to
-do, and where to raise a support ticket — quoting the request ID.
+Every error body is a single, self-contained, human-readable message that says
+what happened, what to do, and where to raise a support ticket — quoting the
+request ID when one is available.
 
 This is produced centrally by one outer middleware
 (`frontend/src/support.rs`), so no handler can forget it and the shape is
@@ -16,10 +16,14 @@ uniform across the whole API.
 
 ## The contract
 
-- **Success and error responses** carry an `X-Request-Id` header. It is reused
-  from an inbound `X-Request-Id` when the caller (or an ingress) supplied one,
-  otherwise minted in the BITS request-ID format. Treat it as an opaque string
-  (see [request-ids.md](./request-ids.md)).
+- **The request ID** identifies a request for support and log correlation. It
+  comes from the URL path for endpoints that act on an existing request (e.g.
+  `GET /api/v2/requests/{id}`), or is the ID that BITS generated when it accepted
+  a new job on a submit (also returned in the `Location` header). The frontend
+  never reads it from an inbound header and never mints one just to report it, so
+  requests with no associated ID (e.g. listing collections) have none. It is an
+  opaque string (see [request-ids.md](./request-ids.md)) and, when available, is
+  quoted inside the error `message` below.
 - **Error responses** (HTTP status `>= 400`) have a JSON body of exactly:
 
   ```json
@@ -34,10 +38,10 @@ uniform across the whole API.
   API surfaces with external error contracts keep their native body shape:
   `/edr/*` preserves OGC EDR error responses, and `/openmeteo/*` preserves the
   Open-Meteo `{"error": true, "reason": "..."}` shape when that API is enabled.
-  They still receive the `X-Request-Id` and security headers.
+  They still receive the security headers.
 
-Clients should display `message` verbatim. The request ID is inside the text and
-also in the `X-Request-Id` header.
+Clients should display `message` verbatim; the request ID, when available, is
+inside the text.
 
 ## Wording by error class
 

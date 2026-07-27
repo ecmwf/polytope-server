@@ -133,7 +133,7 @@ pub async fn submit_collection(
     super::audit_mock_job_submission(mock_audit.as_ref().map(|Extension(audit)| audit), &id);
     super::audit_mock_time_job_submission(mock_time_extensions.mock_time_audit.as_ref(), &id);
 
-    match state.bits.poll(&id, Some(POLL_TIMEOUT)).await {
+    let mut response = match state.bits.poll(&id, Some(POLL_TIMEOUT)).await {
         PollOutcome::Pending { id, .. } => {
             let status = local_pending_status(&state, &id);
             pending_redirect(&id, status)
@@ -204,7 +204,13 @@ pub async fn submit_collection(
                 (StatusCode::OK, Json(json!({"status": "cancelled"}))).into_response()
             }
         },
-    }
+    };
+    // Surface the BITS-generated request ID so the outer middleware can quote it
+    // in error responses (helps correlate with logs).
+    response
+        .extensions_mut()
+        .insert(crate::support::RequestId(id));
+    response
 }
 
 pub async fn public_poll(
