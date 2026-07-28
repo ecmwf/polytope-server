@@ -152,9 +152,11 @@ pub async fn submit_collection(
                 size,
                 stream,
             } => {
+                let disposition = super::download::content_disposition_for(&id, &content_type);
                 let mut builder = Response::builder()
                     .status(StatusCode::OK)
-                    .header(header::CONTENT_TYPE, content_type);
+                    .header(header::CONTENT_TYPE, content_type)
+                    .header(header::CONTENT_DISPOSITION, disposition);
                 if size >= 0 {
                     builder = builder.header(header::CONTENT_LENGTH, size);
                 }
@@ -247,9 +249,11 @@ pub async fn poll(State(state): State<Arc<AppState>>, Path(id): Path<String>) ->
                 size,
                 stream,
             } => {
+                let disposition = super::download::content_disposition_for(&id, &content_type);
                 let mut builder = Response::builder()
                     .status(StatusCode::OK)
-                    .header(header::CONTENT_TYPE, content_type);
+                    .header(header::CONTENT_TYPE, content_type)
+                    .header(header::CONTENT_DISPOSITION, disposition);
                 if size >= 0 {
                     builder = builder.header(header::CONTENT_LENGTH, size);
                 }

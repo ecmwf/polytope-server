@@ -376,7 +376,11 @@ pub async fn get_request(
                 if size >= 0 {
                     Response::builder()
                         .status(StatusCode::OK)
-                        .header(header::CONTENT_TYPE, content_type)
+                        .header(header::CONTENT_TYPE, content_type.clone())
+                        .header(
+                            header::CONTENT_DISPOSITION,
+                            super::download::content_disposition_for(&id, &content_type),
+                        )
                         .header(header::CONTENT_LENGTH, size)
                         .body(Body::from_stream(stream))
                         .unwrap()
@@ -389,7 +393,11 @@ pub async fn get_request(
                     let body = buf.freeze();
                     Response::builder()
                         .status(StatusCode::OK)
-                        .header(header::CONTENT_TYPE, content_type)
+                        .header(header::CONTENT_TYPE, content_type.clone())
+                        .header(
+                            header::CONTENT_DISPOSITION,
+                            super::download::content_disposition_for(&id, &content_type),
+                        )
                         .header(header::CONTENT_LENGTH, body.len())
                         .body(Body::from(body))
                         .unwrap()

@@ -15,6 +15,40 @@ use crate::Completion;
 
 const S3_PART_SIZE_BYTES: usize = 5 * 1024 * 1024;
 
+/// Map a content type to a download file extension (without the dot). Mirrored
+/// in the frontend (`frontend/src/api/download.rs`) and in `bobs`
+/// (`src/http/mod.rs`); keep the three in sync.
+fn extension_for(content_type: &str) -> &'static str {
+    let base = content_type.split(';').next().unwrap_or_default().trim();
+    match base {
+        "application/x-grib" => "grib",
+        "application/prs.coverage+json" => "covjson",
+        _ => "bin",
+    }
+}
+
+/// Restrict the filename stem to a safe character set, falling back to `data`.
+fn sanitise_stem(id: &str) -> String {
+    let stem: String = id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .collect();
+    if stem.is_empty() {
+        "data".to_string()
+    } else {
+        stem
+    }
+}
+
+/// `attachment; filename="<request-id>.<ext>"`.
+fn content_disposition_for(id: &str, content_type: &str) -> String {
+    format!(
+        "attachment; filename=\"{}.{}\"",
+        sanitise_stem(id),
+        extension_for(content_type)
+    )
+}
+
 pub(super) struct S3Push {
     pub(super) bucket: String,
     pub(super) key_prefix: String,
@@ -38,6 +72,7 @@ impl ResultDelivery for S3Push {
                 content_type,
                 content_encoding,
                 body,
+                context.job_id,
                 context.source_error.clone(),
             )
             .await
@@ -69,6 +104,7 @@ impl S3Push {
         content_type: &str,
         content_encoding: Option<&str>,
         body: reqwest::Body,
+        job_id: &str,
         source_error: Option<crate::SourceError>,
     ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
         let s3_key = self.next_key();
@@ -78,7 +114,8 @@ impl S3Push {
             .create_multipart_upload()
             .bucket(&self.bucket)
             .key(&s3_key)
-            .content_type(content_type);
+            .content_type(content_type)
+            .content_disposition(content_disposition_for(job_id, content_type));
         if let Some(encoding) = content_encoding {
             create_req = create_req.content_encoding(encoding);
         }
@@ -274,6 +311,22 @@ impl S3Push {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn download_filename_maps_known_content_types() {
+        assert_eq!(extension_for("application/x-grib"), "grib");
+        assert_eq!(extension_for("application/prs.coverage+json"), "covjson");
+        assert_eq!(extension_for("application/octet-stream"), "bin");
+        assert_eq!(
+            content_disposition_for("req-42", "application/x-grib"),
+            "attachment; filename=\"req-42.grib\""
+        );
+        // unsafe ids are sanitised
+        assert_eq!(
+            content_disposition_for("a\"b/c", "application/prs.coverage+json"),
+            "attachment; filename=\"abc.covjson\""
+        );
+    }
 
     #[tokio::test]
     async fn s3_push_returns_error_when_unreachable() {
