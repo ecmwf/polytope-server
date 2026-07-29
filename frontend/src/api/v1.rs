@@ -453,7 +453,7 @@ pub async fn get_request(
                 build_redirect_response(&location, content_type.as_deref(), content_length)
             }
             JobResult::Error { message } => (
-                StatusCode::BAD_REQUEST,
+                StatusCode::ACCEPTED,
                 Json(json!({"status": "failed", "message": message})),
             )
                 .into_response(),

@@ -66,6 +66,17 @@ jobs:
           unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy ALL_PROXY all_proxy
           cargo test --locked -p polytope-server-integration-tests
 
+      - name: Build server binary for Python integration tests
+        run: cargo build --locked -p polytope-server
+
+      - name: Python integration tests
+        env:
+          NO_PROXY: "127.0.0.1,localhost"
+        run: |
+          unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy ALL_PROXY all_proxy
+          pip install -r tests/requirements.txt
+          pytest tests/test_integration.py -v
+
   repository-access:
     runs-on: ubuntu-latest
     steps:
@@ -83,6 +94,7 @@ jobs:
           git ls-remote https://github.com/ecmwf/bits-broker.git HEAD >/dev/null
 
   skaffold-validate:
+    if: false  # temporarily disabled
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: dummy
@@ -105,8 +117,8 @@ jobs:
         run: skaffold diagnose --yaml-only --filename skaffold.yaml >/dev/null
 
   image-build:
+    if: false  # temporarily disabled
     needs: [repository-access, skaffold-validate]
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     strategy:

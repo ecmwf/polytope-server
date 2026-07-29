@@ -1,2 +1,3 @@
 pytest
 python-jose[cryptography]
+polytope-client
