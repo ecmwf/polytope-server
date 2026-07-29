@@ -2,6 +2,10 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+# Pre-built C++ eckit + metkit stack pulled from ECCR.
+# Built and published from docker/cpp-libs/metkit by the cpp-libs workflow.
+ARG METKIT_LIBS_IMAGE=eccr.ecmwf.int/polytope/cpp-metkit-libs:metkit1.17.0-r1
+
 ###############################
 # Shared base: Rust + cargo-chef + system deps
 ###############################
@@ -10,54 +14,45 @@ RUN cargo install cargo-chef --locked
 RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-dev && rm -rf /var/lib/apt/lists/*
 
 ###############################
-# Build eckit + metkit from public GitHub repos
+# eckit + metkit libraries (pre-built image, /opt/metkit)
 ###############################
-FROM docker.io/library/debian:bookworm-slim AS metkit-build
-ARG ECBUILD_VERSION=3.12.0
-ARG ECKIT_VERSION=1.33.0
-ARG METKIT_VERSION=1.17.0
-
-RUN apt-get update && apt-get install -y \
-    cmake build-essential git libaec-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN git clone --depth 1 --branch ${ECBUILD_VERSION} https://github.com/ecmwf/ecbuild.git /ecbuild
-ENV PATH=/ecbuild/bin:$PATH
-
-RUN git clone --depth 1 --branch ${ECKIT_VERSION} https://github.com/ecmwf/eckit.git /src/eckit \
-    && mkdir -p /build/eckit && cd /build/eckit \
-    && ecbuild --prefix=/opt/metkit \
-        -DENABLE_FORTRAN=OFF \
-        -DENABLE_BUILD_TOOLS=OFF \
-        -DENABLE_TESTS=OFF \
-        -DENABLE_GEO=OFF \
-        /src/eckit \
-    && make -j$(nproc) \
-    && make install
-
-RUN git clone --depth 1 --branch ${METKIT_VERSION} https://github.com/ecmwf/metkit.git /src/metkit \
-    && mkdir -p /build/metkit && cd /build/metkit \
-    && ecbuild --prefix=/opt/metkit \
-        -DENABLE_FORTRAN=OFF \
-        -DENABLE_BUILD_TOOLS=OFF \
-        -DENABLE_TESTS=OFF \
-        -DENABLE_GEO=OFF \
-        -DENABLE_ECCODES=OFF \
-        -DENABLE_MARS2GRIB=OFF \
-        -Deckit_DIR=/opt/metkit/lib/cmake/eckit \
-        /src/metkit \
-    && make -j$(nproc) metkit metkit.pc-pkg-config \
-    && : > /build/metkit/src/tools/cmake_install.cmake \
-    && cmake --install /build/metkit
+FROM ${METKIT_LIBS_IMAGE} AS metkit-build
 
 ###############################
-# Prepare the root workspace Cargo Chef recipe
+# Workspace manifest skeleton — manifests plus stub sources for every member.
+# Keep this stage identical across all Dockerfiles so the shared build cache
+# reuses it between images. Adding a workspace member requires updating it.
 ###############################
-FROM chef-base AS chef
-ARG GIT_AUTH_TOKEN=""
+FROM chef-base AS manifests
 WORKDIR /ecmwf/polytope-server
-COPY . .
-RUN mkdir -p .cargo && printf '[net]\ngit-fetch-with-cli = true\n' > .cargo/config.toml
+COPY Cargo.toml Cargo.lock ./
+COPY observability/Cargo.toml observability/Cargo.toml
+COPY frontend/Cargo.toml frontend/Cargo.toml
+COPY loadgen/Cargo.toml loadgen/Cargo.toml
+COPY client/Cargo.toml client/Cargo.toml
+COPY tests/integration/Cargo.toml tests/integration/Cargo.toml
+COPY workers/common/Cargo.toml workers/common/Cargo.toml
+COPY workers/polytope-fe-worker/Cargo.toml workers/polytope-fe-worker/Cargo.toml
+COPY workers/fdb-worker/Cargo.toml workers/fdb-worker/Cargo.toml
+COPY workers/test-worker/Cargo.toml workers/test-worker/Cargo.toml
+# excluded path dependency of the frontend — needed for workspace resolution
+COPY utils/metkit/Cargo.toml utils/metkit/Cargo.toml
+RUN mkdir -p observability/src frontend/src loadgen/src client/src \
+      tests/integration/src workers/common/src workers/polytope-fe-worker/src \
+      workers/fdb-worker/src workers/test-worker/src utils/metkit/src \
+    && touch observability/src/lib.rs frontend/src/lib.rs loadgen/src/lib.rs \
+      client/src/lib.rs tests/integration/src/lib.rs workers/common/src/lib.rs \
+      workers/test-worker/src/lib.rs utils/metkit/src/lib.rs \
+    && for crate in frontend loadgen workers/polytope-fe-worker workers/fdb-worker workers/test-worker; do \
+      printf 'fn main() {}\n' > "$crate/src/main.rs"; done \
+    && printf 'fn main() {}\n' > utils/metkit/build.rs \
+    && mkdir -p .cargo && printf '[net]\ngit-fetch-with-cli = true\n' > .cargo/config.toml
+
+###############################
+# Prepare the root workspace Cargo Chef recipe (manifests only)
+###############################
+FROM manifests AS chef
+ARG GIT_AUTH_TOKEN=""
 RUN if [ -n "$GIT_AUTH_TOKEN" ]; then \
       git config --global credential.helper '' && \
       git config --global url."https://git:${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; \
@@ -105,10 +100,15 @@ WORKDIR /ecmwf/polytope-server
 COPY --from=metkit-build /opt/metkit /opt/metkit
 COPY --from=cacher /ecmwf/polytope-server/target target
 COPY --from=cacher /usr/local/cargo /usr/local/cargo
-COPY . .
-# Replace the cached metkit skeleton with the real excluded path dependency.
-RUN touch utils/metkit/build.rs
-RUN mkdir -p .cargo && printf '[net]\ngit-fetch-with-cli = true\n' > .cargo/config.toml
+COPY --from=manifests /ecmwf/polytope-server/ /ecmwf/polytope-server/
+# real sources only for this package's dependency graph (overwrite the stubs)
+COPY observability/ observability/
+COPY frontend/ frontend/
+COPY utils/metkit/ utils/metkit/
+# Replace the cached metkit skeleton with the real excluded path dependency and
+# bust the cargo-chef skeleton fingerprints of the real-source crates.
+RUN touch utils/metkit/build.rs utils/metkit/src/lib.rs \
+    observability/src/lib.rs frontend/src/lib.rs frontend/src/main.rs
 ENV METKIT_LIB_DIR=/opt/metkit/lib
 ENV METKIT_INCLUDE_DIR=/opt/metkit/include
 ENV METKIT_BUILD_INCLUDE_DIR=/opt/metkit/include

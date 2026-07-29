@@ -166,6 +166,13 @@ JSON/text results. See [docs/mcp.md](docs/mcp.md) and
 
 That mapping is what keeps the images separate even though they live in one workspace.
 
+Each Dockerfile copies only its own crate's sources (not the whole workspace), so
+a change to the frontend does not rebuild the workers and vice versa.
+
+The heavy C++ dependency stacks (eckit, metkit, fdb, gribjump, MARS) are **not**
+built inside these images. They are pre-built, published to ECCR, and pulled by
+tag — see [docker/cpp-libs/README.md](docker/cpp-libs/README.md).
+
 ## Future extraction
 
 The current layout is designed so the crates can be moved later with minimal churn:

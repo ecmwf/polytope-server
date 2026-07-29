@@ -7,9 +7,9 @@
 # Required for private GitHub dependencies:
 #   GH_TOKEN                    GitHub token with repository read access
 #
-# Required only for the RPM-based Mars build (`docker build --build-arg
-# MARS_BUILD_FROM_SOURCE=false`):
-#   RPM_REPO                    Nexus RPM repository URL
+# C++ library stacks (metkit, fdb, fdb-gribjump, mars) are NOT built here: the
+# app Dockerfiles pull pre-built library images from ECCR (pinned via their
+# *_LIBS_IMAGE build args). See docker/cpp-libs/ and the cpp-libs workflow.
 # ──────────────────────────────────────────────────────────────────────────────
 
 apiVersion: skaffold/v4beta13
@@ -55,7 +55,6 @@ build:
         target: release
         buildArgs:
           GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
-          rpm_repo: '{{ .RPM_REPO }}'
 
     - image: eccr.ecmwf.int/polytope/test-worker
       context: .
@@ -189,7 +188,6 @@ profiles:
             cacheTTL: 480h
           buildArgs:
             GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
-            rpm_repo: '{{ .RPM_REPO }}'
 
       - op: remove
         path: /build/artifacts/4/docker

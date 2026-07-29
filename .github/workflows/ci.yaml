@@ -86,7 +86,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: dummy
-      RPM_REPO: https://nexus.ecmwf.int/repository
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -122,7 +121,6 @@ jobs:
           - polytope-loadgen
     env:
       FIXED_TAG: ci-${{ github.sha }}
-      RPM_REPO: https://nexus.ecmwf.int/repository
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -135,6 +133,13 @@ jobs:
           token="$(printf '%s' "$RAW_GH_TOKEN" | tr -d '[:space:]')"
           echo "::add-mask::$token"
           echo "GH_TOKEN=$token" >> "$GITHUB_ENV"
+
+      # App images pull the pre-built C++ library base images from ECCR.
+      - name: Log in to ECCR
+        env:
+          ECCR_PASSWORD: ${{ secrets.ECCR_PASSWORD }}
+          ECCR_USERNAME: ${{ secrets.ECCR_USERNAME }}
+        run: printf '%s' "$ECCR_PASSWORD" | docker login eccr.ecmwf.int --username "$ECCR_USERNAME" --password-stdin
 
       - name: Install Skaffold
         env:

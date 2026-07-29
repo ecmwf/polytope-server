@@ -39,7 +39,6 @@ jobs:
           - artifact: polytope-loadgen
             image: eccr.ecmwf.int/polytope/polytope-loadgen
     env:
-      RPM_REPO: https://nexus.ecmwf.int/repository
       SKAFFOLD_SHA256: 8f62095ba8c282c03ad7b4987fbaf4f29b289fd6cbafb0351effd49f73f0240d
       SKAFFOLD_VERSION: v2.18.0
     steps:

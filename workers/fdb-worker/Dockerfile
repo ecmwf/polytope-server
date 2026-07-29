@@ -2,6 +2,10 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+# Pre-built C++ FDB stack (eckit, eccodes, metkit, fdb) pulled from ECCR.
+# Built and published from docker/cpp-libs/fdb by the cpp-libs workflow.
+ARG FDB_LIBS_IMAGE=eccr.ecmwf.int/polytope/cpp-fdb-libs:fdb5.19.2-r1
+
 ###############################
 # Shared base: Rust + cargo-chef + system deps (built once)
 ###############################
@@ -10,13 +14,45 @@ RUN cargo install cargo-chef --locked
 RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-dev && rm -rf /var/lib/apt/lists/*
 
 ###############################
-# Prepare the root workspace Cargo Chef recipe
+# FDB libraries (pre-built image, /opt/fdb)
 ###############################
-FROM chef-base AS chef
-ARG GIT_AUTH_TOKEN=""
+FROM ${FDB_LIBS_IMAGE} AS fdb-build
+
+###############################
+# Workspace manifest skeleton — manifests plus stub sources for every member.
+# Keep this stage identical across all Dockerfiles so the shared build cache
+# reuses it between images. Adding a workspace member requires updating it.
+###############################
+FROM chef-base AS manifests
 WORKDIR /ecmwf/polytope-server
-COPY . .
-RUN mkdir -p .cargo && printf '[net]\ngit-fetch-with-cli = true\n' > .cargo/config.toml
+COPY Cargo.toml Cargo.lock ./
+COPY observability/Cargo.toml observability/Cargo.toml
+COPY frontend/Cargo.toml frontend/Cargo.toml
+COPY loadgen/Cargo.toml loadgen/Cargo.toml
+COPY client/Cargo.toml client/Cargo.toml
+COPY tests/integration/Cargo.toml tests/integration/Cargo.toml
+COPY workers/common/Cargo.toml workers/common/Cargo.toml
+COPY workers/polytope-fe-worker/Cargo.toml workers/polytope-fe-worker/Cargo.toml
+COPY workers/fdb-worker/Cargo.toml workers/fdb-worker/Cargo.toml
+COPY workers/test-worker/Cargo.toml workers/test-worker/Cargo.toml
+# excluded path dependency of the frontend — needed for workspace resolution
+COPY utils/metkit/Cargo.toml utils/metkit/Cargo.toml
+RUN mkdir -p observability/src frontend/src loadgen/src client/src \
+      tests/integration/src workers/common/src workers/polytope-fe-worker/src \
+      workers/fdb-worker/src workers/test-worker/src utils/metkit/src \
+    && touch observability/src/lib.rs frontend/src/lib.rs loadgen/src/lib.rs \
+      client/src/lib.rs tests/integration/src/lib.rs workers/common/src/lib.rs \
+      workers/test-worker/src/lib.rs utils/metkit/src/lib.rs \
+    && for crate in frontend loadgen workers/polytope-fe-worker workers/fdb-worker workers/test-worker; do \
+      printf 'fn main() {}\n' > "$crate/src/main.rs"; done \
+    && printf 'fn main() {}\n' > utils/metkit/build.rs \
+    && mkdir -p .cargo && printf '[net]\ngit-fetch-with-cli = true\n' > .cargo/config.toml
+
+###############################
+# Prepare the root workspace Cargo Chef recipe (manifests only)
+###############################
+FROM manifests AS chef
+ARG GIT_AUTH_TOKEN=""
 RUN if [ -n "$GIT_AUTH_TOKEN" ]; then \
       git config --global credential.helper '' && \
       git config --global url."https://git:${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; \
@@ -52,50 +88,18 @@ ARG BIN_NAME=fdb-worker
 WORKDIR /ecmwf/polytope-server
 COPY --from=cacher /ecmwf/polytope-server/target target
 COPY --from=cacher /usr/local/cargo /usr/local/cargo
-COPY . .
-RUN mkdir -p .cargo && printf '[net]\ngit-fetch-with-cli = true\n' > .cargo/config.toml
+COPY --from=manifests /ecmwf/polytope-server/ /ecmwf/polytope-server/
+# real sources only for this package's dependency graph (overwrite the stubs)
+COPY observability/ observability/
+COPY workers/common/ workers/common/
+COPY workers/fdb-worker/ workers/fdb-worker/
+# bust the cargo-chef skeleton fingerprints of the real-source crates
+RUN touch observability/src/lib.rs workers/common/src/lib.rs workers/fdb-worker/src/main.rs
 RUN if [ -n "$GIT_AUTH_TOKEN" ]; then \
       git config --global credential.helper '' && \
       git config --global url."https://git:${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; \
     fi
 RUN cargo build --release --locked --package "${PACKAGE_NAME}"
-
-###############################
-# FDB Build (from source)
-###############################
-FROM docker.io/library/debian:bookworm-slim AS fdb-build
-ARG ecbuild_version=3.12.0
-ARG eccodes_version=2.46.0
-ARG eckit_version=1.33.0
-ARG metkit_version=1.17.0
-ARG fdb_version=5.19.2
-
-RUN apt-get update && apt-get install -y --no-install-recommends cmake build-essential bison flex git libaec-dev ca-certificates && rm -rf /var/lib/apt/lists/*
-
-RUN git clone --depth 1 --branch ${ecbuild_version} https://github.com/ecmwf/ecbuild.git /ecbuild
-ENV PATH=/ecbuild/bin:$PATH
-
-RUN git clone --depth 1 --branch ${eckit_version} https://github.com/ecmwf/eckit.git /source/eckit \
-    && mkdir -p /build/eckit && cd /build/eckit \
-    && ecbuild --prefix=/opt/fdb -- -DCMAKE_PREFIX_PATH=/opt/fdb /source/eckit \
-    && make -j$(nproc) && make install
-
-RUN git clone --depth 1 --branch ${eccodes_version} https://github.com/ecmwf/eccodes.git /source/eccodes \
-    && mkdir -p /build/eccodes && cd /build/eccodes \
-    && ecbuild --prefix=/opt/fdb -- -DENABLE_FORTRAN=OFF -DENABLE_AEC=OFF -DCMAKE_PREFIX_PATH=/opt/fdb /source/eccodes \
-    && make -j$(nproc) && make install
-
-RUN git clone --depth 1 --branch ${metkit_version} https://github.com/ecmwf/metkit.git /source/metkit \
-    && mkdir -p /build/metkit && cd /build/metkit \
-    && ecbuild --prefix=/opt/fdb -- -DCMAKE_PREFIX_PATH=/opt/fdb /source/metkit \
-    && make -j$(nproc) && make install
-
-RUN git clone --depth 1 --branch ${fdb_version} https://github.com/ecmwf/fdb.git /source/fdb \
-    && mkdir -p /build/fdb && cd /build/fdb \
-    && ecbuild --prefix=/opt/fdb -- -DCMAKE_PREFIX_PATH="/opt/fdb;/opt/fdb/eckit;/opt/fdb/metkit" /source/fdb \
-    && make -j$(nproc) && make install
-
-RUN rm -rf /source /build
 
 ###############################
 # Stage 4: Production Release Image

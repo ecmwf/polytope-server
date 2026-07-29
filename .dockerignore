@@ -4,6 +4,7 @@
 
 /target
 **/target
+node_modules/
 /.git
 /.github
 /.pytest_cache

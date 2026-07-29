@@ -1,0 +1,135 @@
+# SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Builds and publishes the C++ library base images under docker/cpp-libs/ to
+# ECCR. App images pull these by pinned tag instead of compiling C++.
+#
+# To bump a library stack:
+#   1. Update the version ARGs in docker/cpp-libs/<name>/Dockerfile
+#   2. Set a new tag in docker/cpp-libs/<name>/TAG (tags are immutable)
+#   3. Run this workflow (workflow_dispatch) to publish the image
+#   4. Update the *_LIBS_IMAGE ARG default in the consuming Dockerfile
+
+name: C++ library images
+
+# Triggers are disabled for now: this workflow does NOT run in CI (no push or
+# pull_request trigger). Publish the library images by running it manually:
+#   gh workflow run cpp-libs.yaml -f image=all
+# To re-enable PR validation later, uncomment the pull_request block below.
+on:
+  # pull_request:
+  #   paths:
+  #     - "docker/cpp-libs/**"
+  #     - ".github/workflows/cpp-libs.yaml"
+  workflow_dispatch:
+    inputs:
+      image:
+        description: Library image to build and push
+        type: choice
+        default: all
+        options:
+          - all
+          - metkit
+          - fdb
+          - fdb-gribjump
+          - mars
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [metkit, fdb, fdb-gribjump, mars]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Validate Dockerfile
+        run: docker buildx build --check "docker/cpp-libs/${{ matrix.name }}"
+
+  publish:
+    # Builds and pushes via skaffold (docker/cpp-libs/skaffold.yaml), matching
+    # how the application images are built.
+    if: github.event_name == 'workflow_dispatch'
+    name: Publish ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - name: metkit
+            image: eccr.ecmwf.int/polytope/cpp-metkit-libs
+          - name: fdb
+            image: eccr.ecmwf.int/polytope/cpp-fdb-libs
+          - name: fdb-gribjump
+            image: eccr.ecmwf.int/polytope/cpp-fdb-gribjump-libs
+          - name: mars
+            image: eccr.ecmwf.int/polytope/cpp-mars-libs
+            needs_token: "true"
+    env:
+      RPM_REPO: https://nexus.ecmwf.int/repository
+      SKAFFOLD_SHA256: 8f62095ba8c282c03ad7b4987fbaf4f29b289fd6cbafb0351effd49f73f0240d
+      SKAFFOLD_VERSION: v2.18.0
+      SELECTED: ${{ inputs.image == 'all' || inputs.image == matrix.name }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        if: env.SELECTED == 'true'
+        with:
+          persist-credentials: false
+
+      - name: Read image tag
+        if: env.SELECTED == 'true'
+        id: tag
+        run: echo "tag=$(cat "docker/cpp-libs/${{ matrix.name }}/TAG")" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare repository token
+        if: env.SELECTED == 'true' && matrix.needs_token == 'true'
+        env:
+          RAW_GH_TOKEN: ${{ secrets.GH_REPO_READ_TOKEN }}
+        run: |
+          token="$(printf '%s' "$RAW_GH_TOKEN" | tr -d '[:space:]')"
+          echo "::add-mask::$token"
+          echo "GH_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Install Skaffold
+        if: env.SELECTED == 'true'
+        run: |
+          curl -fsSL "https://storage.googleapis.com/skaffold/releases/${SKAFFOLD_VERSION}/skaffold-linux-amd64" -o skaffold
+          echo "${SKAFFOLD_SHA256}  skaffold" | sha256sum --check -
+          sudo install skaffold /usr/local/bin/skaffold
+
+      - name: Log in to ECCR
+        if: env.SELECTED == 'true'
+        env:
+          ECCR_PASSWORD: ${{ secrets.ECCR_PASSWORD }}
+          ECCR_USERNAME: ${{ secrets.ECCR_USERNAME }}
+        run: printf '%s' "$ECCR_PASSWORD" | docker login eccr.ecmwf.int --username "$ECCR_USERNAME" --password-stdin
+
+      - name: Refuse to overwrite an existing image
+        if: env.SELECTED == 'true'
+        env:
+          IMAGE: ${{ matrix.image }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          if docker manifest inspect "${IMAGE}:${TAG}" >/dev/null 2>&1; then
+            echo "${IMAGE}:${TAG} already exists; library image tags are immutable" >&2
+            exit 1
+          fi
+
+      - name: Build and publish ${{ matrix.name }}
+        if: env.SELECTED == 'true'
+        env:
+          FIXED_TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          skaffold build --push=true \
+            --filename docker/cpp-libs/skaffold.yaml \
+            --build-image "${{ matrix.image }}"
