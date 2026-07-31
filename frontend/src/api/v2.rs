@@ -238,10 +238,7 @@ async fn poll_job_v2(state: &Arc<AppState>, id: String, timeout: Duration) -> Re
     }
 }
 
-pub async fn poll(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> Response {
+pub async fn poll(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> Response {
     let timeout = state.v2_poll_timeout;
     poll_job_v2(&state, id, timeout).await
 }
