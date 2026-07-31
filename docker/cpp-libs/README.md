@@ -83,20 +83,26 @@ gh workflow run cpp-libs.yaml -f image=all      # or: metkit | fdb | fdb-gribjum
 
 Requires `docker login eccr.ecmwf.int`. Build one image at a time, passing its
 tag via `FIXED_TAG` (skaffold applies it as the image tag). Image names are the
-`--build-image` targets:
+`--build-image` targets.
+
+Run these **from this directory** (`docker/cpp-libs/`). Skaffold resolves each
+artifact's `context:` (e.g. `metkit`) relative to the current working directory,
+not to the location of `skaffold.yaml`, so invoking it from the repo root fails
+with `context "metkit" does not exist`.
 
 ```bash
-# from the repo root
-FIXED_TAG=$(cat docker/cpp-libs/fdb/TAG) \
+cd docker/cpp-libs
+
+FIXED_TAG=$(cat fdb/TAG) \
   skaffold build --push \
-    --filename docker/cpp-libs/skaffold.yaml \
+    --filename skaffold.yaml \
     --build-image eccr.ecmwf.int/polytope/cpp-fdb-libs
 
 # mars needs a GitHub token for private clones (source build); set RPM_REPO too
 # if you build the RPM variant (MARS_BUILD_FROM_SOURCE=false, set in the Dockerfile):
-FIXED_TAG=$(cat docker/cpp-libs/mars/TAG) GH_TOKEN="$GH_TOKEN" \
+FIXED_TAG=$(cat mars/TAG) GH_TOKEN="$GH_TOKEN" \
   skaffold build --push \
-    --filename docker/cpp-libs/skaffold.yaml \
+    --filename skaffold.yaml \
     --build-image eccr.ecmwf.int/polytope/cpp-mars-libs
 ```
 
@@ -111,10 +117,12 @@ library with skaffold (or plain `docker build`) and point the consuming build ar
 at your local tag:
 
 ```bash
-FIXED_TAG=dev skaffold build --push=false \
-  --filename docker/cpp-libs/skaffold.yaml \
-  --build-image eccr.ecmwf.int/polytope/cpp-fdb-libs
+# build the library image from docker/cpp-libs/ (see note above on context resolution)
+( cd docker/cpp-libs && FIXED_TAG=dev skaffold build --push=false \
+    --filename skaffold.yaml \
+    --build-image eccr.ecmwf.int/polytope/cpp-fdb-libs )
 
+# then build the consuming app image from the repo root
 docker build -f workers/fdb-worker/Dockerfile \
   --build-arg FDB_LIBS_IMAGE=eccr.ecmwf.int/polytope/cpp-fdb-libs:dev \
   --build-arg GIT_AUTH_TOKEN="$GH_TOKEN" -t fdb-worker:dev .

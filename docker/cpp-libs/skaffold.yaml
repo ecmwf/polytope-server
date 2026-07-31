@@ -7,10 +7,13 @@
 # Standalone skaffold config for the pre-built C++ dependency images. These are
 # NOT part of the application build (../../skaffold.yaml): app images pull them
 # from ECCR by pinned tag. Build/publish them explicitly, one image at a time,
-# with the tag taken from that image's TAG file:
+# with the tag taken from that image's TAG file. Run from THIS directory
+# (docker/cpp-libs/) — skaffold resolves each artifact's context (e.g. `metkit`)
+# relative to the current working directory, not to this file:
 #
-#   FIXED_TAG=$(cat docker/cpp-libs/fdb/TAG) \
-#     skaffold build -f docker/cpp-libs/skaffold.yaml \
+#   cd docker/cpp-libs
+#   FIXED_TAG=$(cat fdb/TAG) \
+#     skaffold build -f skaffold.yaml \
 #       -b eccr.ecmwf.int/polytope/cpp-fdb-libs --push
 #
 # Environment variables:
