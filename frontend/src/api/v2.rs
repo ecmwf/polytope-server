@@ -18,13 +18,6 @@ use serde_json::{Value, json};
 use crate::auth::{AuthUser, MockRolesAudit};
 use crate::state::AppState;
 
-pub const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Axum `Extension` carrying the per-request poll timeout for v2 handlers.
-/// Injected at router-build time; not stored in `AppState`.
-#[derive(Clone, Copy)]
-pub struct V2PollTimeout(pub Duration);
-
 const PENDING_STATUS_HEADER: &str = "x-bits-pending-status";
 
 fn local_pending_status(state: &AppState, id: &str) -> &'static str {
@@ -73,7 +66,6 @@ pub async fn list_collections(State(state): State<Arc<AppState>>) -> impl IntoRe
 
 pub async fn submit_collection(
     State(state): State<Arc<AppState>>,
-    Extension(V2PollTimeout(timeout)): Extension<V2PollTimeout>,
     headers: HeaderMap,
     auth_user: Option<Extension<AuthUser>>,
     mock_audit: Option<Extension<MockRolesAudit>>,
@@ -140,6 +132,7 @@ pub async fn submit_collection(
     super::audit_mock_job_submission(mock_audit.as_ref().map(|Extension(audit)| audit), &id);
     super::audit_mock_time_job_submission(mock_time_extensions.mock_time_audit.as_ref(), &id);
 
+    let timeout = state.v2_poll_timeout;
     let mut response = poll_job_v2(&state, id.clone(), timeout).await;
     // Surface the BITS-generated request ID so the outer middleware can quote it
     // in error responses (helps correlate with logs).
@@ -151,7 +144,6 @@ pub async fn submit_collection(
 
 pub async fn public_poll(
     State(state): State<Arc<AppState>>,
-    Extension(V2PollTimeout(timeout)): Extension<V2PollTimeout>,
     auth_user: Option<Extension<AuthUser>>,
     Path(id): Path<String>,
 ) -> Response {
@@ -161,6 +153,7 @@ pub async fn public_poll(
         return super::request_not_found_response();
     }
 
+    let timeout = state.v2_poll_timeout;
     poll_job_v2(&state, id, timeout).await
 }
 
@@ -247,9 +240,9 @@ async fn poll_job_v2(state: &Arc<AppState>, id: String, timeout: Duration) -> Re
 
 pub async fn poll(
     State(state): State<Arc<AppState>>,
-    Extension(V2PollTimeout(timeout)): Extension<V2PollTimeout>,
     Path(id): Path<String>,
 ) -> Response {
+    let timeout = state.v2_poll_timeout;
     poll_job_v2(&state, id, timeout).await
 }
 
@@ -322,6 +315,8 @@ targets:
             support: Default::default(),
             completed_redirects: std::sync::Mutex::new(std::collections::HashMap::new()),
             completed_redirect_ttl: std::time::Duration::from_secs(600),
+            v1_poll_timeout: Duration::from_secs(30),
+            v2_poll_timeout: Duration::from_secs(30),
         });
         Router::new()
             .route("/api/v2/collections", get(super::list_collections))
@@ -333,9 +328,6 @@ targets:
                 "/api/v2/requests/{id}",
                 get(super::public_poll).delete(super::public_cancel),
             )
-            .layer(axum::Extension(super::V2PollTimeout(
-                Duration::from_secs(30),
-            )))
             .with_state(state)
     }
 
@@ -473,13 +465,14 @@ targets:
             support: Default::default(),
             completed_redirects: std::sync::Mutex::new(std::collections::HashMap::new()),
             completed_redirect_ttl: std::time::Duration::from_secs(600),
+            v1_poll_timeout: Duration::from_secs(30),
+            v2_poll_timeout: Duration::from_secs(30),
         });
         let app = Router::new()
             .route(
                 "/api/v2/{collection}/requests",
                 post(super::submit_collection),
             )
-            .layer(axum::Extension(super::V2PollTimeout(Duration::from_secs(30))))
             .with_state(state.clone())
             .layer(axum::middleware::from_fn_with_state(
                 state,

@@ -21,14 +21,6 @@ use serde_json::{Map, Value, json};
 use crate::auth::{AuthUser, MockRolesAudit};
 use crate::state::{AppState, CachedRedirect, MAX_COMPLETED_REDIRECTS};
 
-/// Default poll timeout injected by `build_app`; overridable via config for testing.
-pub const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Axum `Extension` carrying the per-request poll timeout for v1 handlers.
-/// Injected at router-build time; not stored in `AppState`.
-#[derive(Clone, Copy)]
-pub struct V1PollTimeout(pub Duration);
-
 /// `Retry-After` seconds advertised on 202 (queued/pending) responses, matching
 /// the legacy Python frontend so clients keep the same poll cadence.
 const RETRY_AFTER_SECS: &str = "5";
@@ -370,7 +362,6 @@ pub async fn user_info(
 
 pub async fn submit_request(
     State(state): State<Arc<AppState>>,
-    Extension(V1PollTimeout(timeout)): Extension<V1PollTimeout>,
     headers: HeaderMap,
     auth_user: Option<Extension<AuthUser>>,
     mock_audit: Option<Extension<MockRolesAudit>>,
@@ -448,6 +439,7 @@ pub async fn submit_request(
     } else {
         tracing::info!("event.name" = "api.job.submitted", outcome = "success", request.id = %handle.id, enqueue_ms, polytope.request = %polytope_observability::request(&submitted_request), "job submitted");
     }
+    let timeout = state.v1_poll_timeout;
     poll_job_v1(
         &state,
         auth_user.as_ref().map(|Extension(user)| user),
@@ -459,10 +451,10 @@ pub async fn submit_request(
 
 pub async fn get_request(
     State(state): State<Arc<AppState>>,
-    Extension(V1PollTimeout(timeout)): Extension<V1PollTimeout>,
     auth_user: Option<Extension<AuthUser>>,
     Path(id): Path<String>,
 ) -> Response {
+    let timeout = state.v1_poll_timeout;
     let auth_user_ref = auth_user.as_ref().map(|Extension(user)| user);
 
     // Re-poll from completed-redirect cache: a previously consumed job result

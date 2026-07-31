@@ -429,6 +429,8 @@ mod tests {
             support: Default::default(),
             completed_redirects: std::sync::Mutex::new(std::collections::HashMap::new()),
             completed_redirect_ttl: std::time::Duration::from_secs(600),
+            v1_poll_timeout: std::time::Duration::from_secs(30),
+            v2_poll_timeout: std::time::Duration::from_secs(30),
         });
 
         let v1 = Router::new()
@@ -829,6 +831,8 @@ mod tests {
             support: Default::default(),
             completed_redirects: std::sync::Mutex::new(std::collections::HashMap::new()),
             completed_redirect_ttl: std::time::Duration::from_secs(600),
+            v1_poll_timeout: std::time::Duration::from_secs(30),
+            v2_poll_timeout: std::time::Duration::from_secs(30),
         });
 
         async fn check_user(req: AxumRequest) -> StatusCode {
@@ -886,6 +890,8 @@ mod tests {
             support: Default::default(),
             completed_redirects: std::sync::Mutex::new(std::collections::HashMap::new()),
             completed_redirect_ttl: std::time::Duration::from_secs(600),
+            v1_poll_timeout: std::time::Duration::from_secs(30),
+            v2_poll_timeout: std::time::Duration::from_secs(30),
         });
 
         async fn contract_payload(req: AxumRequest) -> Json<Value> {
@@ -999,6 +1005,8 @@ mod tests {
             support: Default::default(),
             completed_redirects: std::sync::Mutex::new(std::collections::HashMap::new()),
             completed_redirect_ttl: std::time::Duration::from_secs(600),
+            v1_poll_timeout: std::time::Duration::from_secs(30),
+            v2_poll_timeout: std::time::Duration::from_secs(30),
         });
 
         async fn payload(req: AxumRequest) -> Json<Value> {
@@ -1092,6 +1100,8 @@ mod tests {
             support: Default::default(),
             completed_redirects: std::sync::Mutex::new(std::collections::HashMap::new()),
             completed_redirect_ttl: std::time::Duration::from_secs(600),
+            v1_poll_timeout: std::time::Duration::from_secs(30),
+            v2_poll_timeout: std::time::Duration::from_secs(30),
         });
 
         async fn payload(req: AxumRequest) -> Json<Value> {
@@ -1315,6 +1325,8 @@ mod tests {
             support: Default::default(),
             completed_redirects: std::sync::Mutex::new(std::collections::HashMap::new()),
             completed_redirect_ttl: std::time::Duration::from_secs(600),
+            v1_poll_timeout: std::time::Duration::from_secs(30),
+            v2_poll_timeout: std::time::Duration::from_secs(30),
         });
 
         async fn payload(req: AxumRequest) -> Json<Value> {
@@ -1538,6 +1550,8 @@ mod tests {
             support: Default::default(),
             completed_redirects: std::sync::Mutex::new(std::collections::HashMap::new()),
             completed_redirect_ttl: std::time::Duration::from_secs(600),
+            v1_poll_timeout: std::time::Duration::from_secs(30),
+            v2_poll_timeout: std::time::Duration::from_secs(30),
         });
 
         async fn check_no_user(req: AxumRequest) -> StatusCode {

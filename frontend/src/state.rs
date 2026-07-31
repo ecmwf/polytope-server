@@ -42,4 +42,8 @@ pub struct AppState {
     pub completed_redirects: Mutex<HashMap<String, CachedRedirect>>,
     /// Configured lifetime for entries in `completed_redirects`.
     pub completed_redirect_ttl: Duration,
+    /// Inline-poll timeout for the v1 API (submit + long-poll).
+    pub v1_poll_timeout: Duration,
+    /// Inline-poll timeout for the v2 API (submit + long-poll, internal poll).
+    pub v2_poll_timeout: Duration,
 }

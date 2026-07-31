@@ -660,6 +660,31 @@ bits: {}
     }
 
     #[test]
+    fn omitted_poll_timeouts_default_to_30s() {
+        // No `server:` block at all: both v1 and v2 fall back to 30 000 ms.
+        let yaml = config_with_polytope("bits: {}\n");
+        let cfg: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(cfg.server.v1_poll_timeout_ms, 30_000);
+        assert_eq!(cfg.server.v2_poll_timeout_ms, 30_000);
+
+        // `server:` present but the timeout keys omitted: same 30 s default.
+        let yaml = config_with_polytope("server:\n  port: 3000\nbits: {}\n");
+        let cfg: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(cfg.server.v1_poll_timeout_ms, 30_000);
+        assert_eq!(cfg.server.v2_poll_timeout_ms, 30_000);
+    }
+
+    #[test]
+    fn poll_timeouts_parse_overrides_independently() {
+        let yaml = config_with_polytope(
+            "server:\n  v1_poll_timeout_ms: 50\n  v2_poll_timeout_ms: 12000\nbits: {}\n",
+        );
+        let cfg: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(cfg.server.v1_poll_timeout_ms, 50);
+        assert_eq!(cfg.server.v2_poll_timeout_ms, 12_000);
+    }
+
+    #[test]
     fn test_config_allow_anonymous() {
         let yaml = config_with_polytope(
             r#"bits: {}
