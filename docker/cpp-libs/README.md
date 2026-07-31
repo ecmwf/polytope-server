@@ -22,6 +22,27 @@ builds compile only Rust and never touch a C++ compiler.
 fe-worker pin different upstream versions (e.g. fdb 5.19.2 vs 5.21.3), so they
 cannot share one image.
 
+## Stripped (default) vs `-debug` images
+
+The library `.so`/`.a`/binaries are built `RelWithDebInfo` (ecbuild's default),
+so they ship with DWARF debug symbols — the bulk of the image size. Each
+Dockerfile therefore has two final targets:
+
+| Target | Image | Symbols | Size (fdb-gribjump) |
+|--------|-------|---------|---------------------|
+| `libs` (default) | `cpp-<name>-libs` | stripped | **147 MB** |
+| `libs-debug` | `cpp-<name>-libs-debug` | full | 419 MB |
+
+`strip --strip-unneeded` on the shared libraries keeps the exported dynamic
+symbols (so consumers still link and load them) while dropping ~260 MB of debug
+info. Runtime behaviour is identical; you only lose symbol names in gdb
+backtraces — which is exactly what the `-debug` companion is for. The `-debug`
+image shares the same tag under a `-debug` repo suffix (e.g.
+`cpp-fdb-gribjump-libs-debug:fdb5.21.3-gribjump0.12.0-r1`).
+
+The consuming app Dockerfiles pull the stripped default; grab the `-debug`
+image only when you need to symbolicate a crash in a C++ library.
+
 ## The `TAG` file
 
 Each image directory has a `TAG` file containing a single line — the tag the

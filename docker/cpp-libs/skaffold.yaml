@@ -63,6 +63,45 @@ build:
           GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
           rpm_repo: '{{ default "" .RPM_REPO }}'
 
+    # ─── Debug companions ──────────────────────────────────────────────────
+    # Same build, same tag, unstripped (full debug symbols) — for gdb/backtrace
+    # diagnostics. Published under a `-debug` repo suffix (the global tagPolicy
+    # applies the same FIXED_TAG to every artifact, so the suffix goes in the
+    # image name, not the tag). Build one at a time with --build-image.
+    - image: eccr.ecmwf.int/polytope/cpp-metkit-libs-debug
+      context: metkit
+      docker:
+        dockerfile: Dockerfile
+        target: libs-debug
+        buildArgs:
+          VERSION: '{{ default "latest" .FIXED_TAG }}'
+
+    - image: eccr.ecmwf.int/polytope/cpp-fdb-libs-debug
+      context: fdb
+      docker:
+        dockerfile: Dockerfile
+        target: libs-debug
+        buildArgs:
+          VERSION: '{{ default "latest" .FIXED_TAG }}'
+
+    - image: eccr.ecmwf.int/polytope/cpp-fdb-gribjump-libs-debug
+      context: fdb-gribjump
+      docker:
+        dockerfile: Dockerfile
+        target: libs-debug
+        buildArgs:
+          VERSION: '{{ default "latest" .FIXED_TAG }}'
+
+    - image: eccr.ecmwf.int/polytope/cpp-mars-libs-debug
+      context: mars
+      docker:
+        dockerfile: Dockerfile
+        target: libs-debug
+        buildArgs:
+          VERSION: '{{ default "latest" .FIXED_TAG }}'
+          GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+          rpm_repo: '{{ default "" .RPM_REPO }}'
+
   tagPolicy:
     customTemplate:
       template: '{{.TAG}}'

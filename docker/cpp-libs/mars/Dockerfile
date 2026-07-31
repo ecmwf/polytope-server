@@ -128,9 +128,28 @@ ARG MARS_BUILD_FROM_SOURCE=true
 FROM mars-libs-${MARS_BUILD_FROM_SOURCE} AS mars-libs
 
 ###############################
-# Library image: installed prefix only
+# Strip debug symbols (binutils is only needed in this throwaway stage)
+###############################
+FROM docker.io/library/debian:bookworm-slim AS strip-libs
+RUN apt-get update && apt-get install -y --no-install-recommends binutils && rm -rf /var/lib/apt/lists/*
+COPY --from=mars-libs /opt/mars-client /opt/mars-client
+RUN find /opt/mars-client -type f -name '*.so*' -exec strip --strip-unneeded {} + 2>/dev/null || true; \
+    find /opt/mars-client -type f -name '*.a'  -exec strip --strip-debug   {} + 2>/dev/null || true; \
+    find /opt/mars-client/bin -type f          -exec strip --strip-all     {} + 2>/dev/null || true
+
+###############################
+# Debug image: unstripped prefix (full symbols). Built by the `libs-debug`
+# target and published as the `-debug` companion tag.
+###############################
+FROM docker.io/library/debian:bookworm-slim AS libs-debug
+ARG VERSION
+LABEL version=$VERSION
+COPY --from=mars-libs /opt/mars-client /opt/mars-client
+
+###############################
+# Library image (default): stripped prefix
 ###############################
 FROM docker.io/library/debian:bookworm-slim AS libs
 ARG VERSION
 LABEL version=$VERSION
-COPY --from=mars-libs /opt/mars-client /opt/mars-client
+COPY --from=strip-libs /opt/mars-client /opt/mars-client

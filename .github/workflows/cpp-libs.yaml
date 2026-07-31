@@ -120,16 +120,23 @@ jobs:
           IMAGE: ${{ matrix.image }}
           TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          if docker manifest inspect "${IMAGE}:${TAG}" >/dev/null 2>&1; then
-            echo "${IMAGE}:${TAG} already exists; library image tags are immutable" >&2
-            exit 1
-          fi
+          for img in "${IMAGE}" "${IMAGE}-debug"; do
+            if docker manifest inspect "${img}:${TAG}" >/dev/null 2>&1; then
+              echo "${img}:${TAG} already exists; library image tags are immutable" >&2
+              exit 1
+            fi
+          done
 
+      # Skaffold resolves each artifact's context (e.g. `metkit`) relative to the
+      # current working directory, not to skaffold.yaml, so run from docker/cpp-libs.
+      # Builds both the stripped default image and its `-debug` (full-symbol) companion.
       - name: Build and publish ${{ matrix.name }}
         if: env.SELECTED == 'true'
         env:
           FIXED_TAG: ${{ steps.tag.outputs.tag }}
+        working-directory: docker/cpp-libs
         run: |
           skaffold build --push=true \
-            --filename docker/cpp-libs/skaffold.yaml \
-            --build-image "${{ matrix.image }}"
+            --filename skaffold.yaml \
+            --build-image "${{ matrix.image }}" \
+            --build-image "${{ matrix.image }}-debug"

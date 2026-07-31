@@ -48,9 +48,28 @@ RUN git clone --depth 1 --branch ${METKIT_VERSION} https://github.com/ecmwf/metk
     && cmake --install /build/metkit
 
 ###############################
-# Library image: installed prefix only
+# Strip debug symbols (binutils is only needed in this throwaway stage)
+###############################
+FROM docker.io/library/debian:bookworm-slim AS strip-libs
+RUN apt-get update && apt-get install -y --no-install-recommends binutils && rm -rf /var/lib/apt/lists/*
+COPY --from=metkit-build /opt/metkit /opt/metkit
+RUN find /opt/metkit -type f -name '*.so*' -exec strip --strip-unneeded {} + 2>/dev/null || true; \
+    find /opt/metkit -type f -name '*.a'  -exec strip --strip-debug   {} + 2>/dev/null || true; \
+    find /opt/metkit/bin -type f          -exec strip --strip-all     {} + 2>/dev/null || true
+
+###############################
+# Debug image: unstripped prefix (full symbols). Built by the `libs-debug`
+# target and published as the `-debug` companion tag.
+###############################
+FROM docker.io/library/debian:bookworm-slim AS libs-debug
+ARG VERSION
+LABEL version=$VERSION
+COPY --from=metkit-build /opt/metkit /opt/metkit
+
+###############################
+# Library image (default): stripped prefix
 ###############################
 FROM docker.io/library/debian:bookworm-slim AS libs
 ARG VERSION
 LABEL version=$VERSION
-COPY --from=metkit-build /opt/metkit /opt/metkit
+COPY --from=strip-libs /opt/metkit /opt/metkit

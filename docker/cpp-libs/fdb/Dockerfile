@@ -42,9 +42,28 @@ RUN git clone --depth 1 --branch ${fdb_version} https://github.com/ecmwf/fdb.git
     && make -j$(nproc) && make install
 
 ###############################
-# Library image: installed prefix only
+# Strip debug symbols (binutils is only needed in this throwaway stage)
+###############################
+FROM docker.io/library/debian:bookworm-slim AS strip-libs
+RUN apt-get update && apt-get install -y --no-install-recommends binutils && rm -rf /var/lib/apt/lists/*
+COPY --from=fdb-build /opt/fdb /opt/fdb
+RUN find /opt/fdb -type f -name '*.so*' -exec strip --strip-unneeded {} + 2>/dev/null || true; \
+    find /opt/fdb -type f -name '*.a'  -exec strip --strip-debug   {} + 2>/dev/null || true; \
+    find /opt/fdb/bin -type f          -exec strip --strip-all     {} + 2>/dev/null || true
+
+###############################
+# Debug image: unstripped prefix (full symbols, ~3x larger). Built by the
+# `libs-debug` target and published as the `-debug` companion tag.
+###############################
+FROM docker.io/library/debian:bookworm-slim AS libs-debug
+ARG VERSION
+LABEL version=$VERSION
+COPY --from=fdb-build /opt/fdb /opt/fdb
+
+###############################
+# Library image (default): stripped prefix
 ###############################
 FROM docker.io/library/debian:bookworm-slim AS libs
 ARG VERSION
 LABEL version=$VERSION
-COPY --from=fdb-build /opt/fdb /opt/fdb
+COPY --from=strip-libs /opt/fdb /opt/fdb
