@@ -83,6 +83,11 @@ pub fn build_app(
         completed_redirects: std::sync::Mutex::new(std::collections::HashMap::new()),
     });
 
+    let v1_poll_timeout =
+        std::time::Duration::from_millis(cfg.server.v1_poll_timeout_ms);
+    let v2_poll_timeout =
+        std::time::Duration::from_millis(cfg.server.v2_poll_timeout_ms);
+
     let v1_protected = Router::new()
         .route("/collections", get(api::v1::list_collections))
         .route("/requests", get(api::v1::list_requests))
@@ -97,7 +102,8 @@ pub fn build_app(
         .route(
             "/uploads/{id}",
             get(api::v1::uploads_deprecated).post(api::v1::uploads_deprecated),
-        );
+        )
+        .layer(axum::Extension(api::v1::V1PollTimeout(v1_poll_timeout)));
 
     let v2_protected = Router::new()
         .route("/collections", get(api::v2::list_collections))
@@ -105,7 +111,8 @@ pub fn build_app(
         .route(
             "/requests/{id}",
             get(api::v2::public_poll).delete(api::v2::public_cancel),
-        );
+        )
+        .layer(axum::Extension(api::v2::V2PollTimeout(v2_poll_timeout)));
 
     let mcp_config = cfg.mcp.clone();
 
@@ -186,9 +193,13 @@ pub fn build_app(
     Ok((app, state))
 }
 
-pub fn build_internal_poll_app(state: Arc<AppState>) -> Router {
+pub fn build_internal_poll_app(
+    state: Arc<AppState>,
+    v2_poll_timeout: std::time::Duration,
+) -> Router {
     Router::new()
         .route("/internal/poll/{id}", get(api::v2::poll))
+        .layer(axum::Extension(api::v2::V2PollTimeout(v2_poll_timeout)))
         .with_state(state)
 }
 
@@ -389,7 +400,7 @@ bits: {}
     #[tokio::test]
     async fn internal_poll_router_exposes_only_internal_poll_get() {
         let (_, state) = build_app(internal_poll_test_config(false)).unwrap();
-        let app = build_internal_poll_app(state);
+        let app = build_internal_poll_app(state, api::v2::DEFAULT_POLL_TIMEOUT);
 
         let poll_status = response_status(
             app.clone(),
@@ -435,7 +446,7 @@ bits: {}
     #[tokio::test]
     async fn internal_poll_is_auth_exempt_while_public_poll_remains_protected() {
         let (public_app, state) = build_app(internal_poll_test_config(true)).unwrap();
-        let internal_app = build_internal_poll_app(state);
+        let internal_app = build_internal_poll_app(state, api::v2::DEFAULT_POLL_TIMEOUT);
 
         let public_status = response_status(
             public_app,

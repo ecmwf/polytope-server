@@ -18,7 +18,13 @@ use serde_json::{Value, json};
 use crate::auth::{AuthUser, MockRolesAudit};
 use crate::state::AppState;
 
-const POLL_TIMEOUT: Duration = Duration::from_secs(30);
+pub const DEFAULT_POLL_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Axum `Extension` carrying the per-request poll timeout for v2 handlers.
+/// Injected at router-build time; not stored in `AppState`.
+#[derive(Clone, Copy)]
+pub struct V2PollTimeout(pub Duration);
+
 const PENDING_STATUS_HEADER: &str = "x-bits-pending-status";
 
 fn local_pending_status(state: &AppState, id: &str) -> &'static str {
@@ -67,6 +73,7 @@ pub async fn list_collections(State(state): State<Arc<AppState>>) -> impl IntoRe
 
 pub async fn submit_collection(
     State(state): State<Arc<AppState>>,
+    Extension(V2PollTimeout(timeout)): Extension<V2PollTimeout>,
     headers: HeaderMap,
     auth_user: Option<Extension<AuthUser>>,
     mock_audit: Option<Extension<MockRolesAudit>>,
@@ -133,80 +140,7 @@ pub async fn submit_collection(
     super::audit_mock_job_submission(mock_audit.as_ref().map(|Extension(audit)| audit), &id);
     super::audit_mock_time_job_submission(mock_time_extensions.mock_time_audit.as_ref(), &id);
 
-    let mut response = match state.bits.poll(&id, Some(POLL_TIMEOUT)).await {
-        PollOutcome::Pending { id, .. } => {
-            let status = local_pending_status(&state, &id);
-            pending_redirect(&id, status)
-        }
-        PollOutcome::NotFound => {
-            (StatusCode::NOT_FOUND, Json(json!({"error": "not found"}))).into_response()
-        }
-        PollOutcome::JobLost => (
-            StatusCode::GONE,
-            Json(json!({"error": "request state expired or was lost"})),
-        )
-            .into_response(),
-        PollOutcome::Ready(result) => match result {
-            JobResult::Success {
-                content_type,
-                size,
-                stream,
-            } => {
-                let disposition = super::download::content_disposition_for(&id, &content_type);
-                let mut builder = Response::builder()
-                    .status(StatusCode::OK)
-                    .header(header::CONTENT_TYPE, content_type)
-                    .header(header::CONTENT_DISPOSITION, disposition);
-                if size >= 0 {
-                    builder = builder.header(header::CONTENT_LENGTH, size);
-                }
-                builder.body(Body::from_stream(stream)).unwrap()
-            }
-            JobResult::Redirect {
-                location,
-                message,
-                content_type,
-                content_length,
-            } => {
-                let mut builder = Response::builder()
-                    .status(StatusCode::SEE_OTHER)
-                    .header(header::LOCATION, location);
-                // Carry content metadata so a proxying broker can rebuild the v1
-                // redirect body without an extra round-trip (see
-                // bits::runtime::recovery::try_proxy_with_lease).
-                if let Some(content_type) = content_type {
-                    builder = builder.header("x-polytope-content-type", content_type);
-                }
-                if let Some(content_length) = content_length {
-                    builder =
-                        builder.header("x-polytope-content-length", content_length.to_string());
-                }
-                builder.body(Body::from(message)).unwrap()
-            }
-            JobResult::Error { message } => {
-                (StatusCode::BAD_REQUEST, Json(json!({"error": message}))).into_response()
-            }
-            JobResult::Failed { reason } => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": reason})),
-            )
-                .into_response(),
-            JobResult::Overloaded { reason } => {
-                super::overloaded_response(json!({"error": reason, "retryable": true}))
-            }
-            JobResult::RateLimited { reason } => {
-                super::rate_limited_response(json!({"error": reason, "retryable": true}))
-            }
-            JobResult::ClientGone => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "client disconnected before data could be delivered"})),
-            )
-                .into_response(),
-            JobResult::Cancelled => {
-                (StatusCode::OK, Json(json!({"status": "cancelled"}))).into_response()
-            }
-        },
-    };
+    let mut response = poll_job_v2(&state, id.clone(), timeout).await;
     // Surface the BITS-generated request ID so the outer middleware can quote it
     // in error responses (helps correlate with logs).
     response
@@ -217,6 +151,7 @@ pub async fn submit_collection(
 
 pub async fn public_poll(
     State(state): State<Arc<AppState>>,
+    Extension(V2PollTimeout(timeout)): Extension<V2PollTimeout>,
     auth_user: Option<Extension<AuthUser>>,
     Path(id): Path<String>,
 ) -> Response {
@@ -226,13 +161,17 @@ pub async fn public_poll(
         return super::request_not_found_response();
     }
 
-    poll(State(state), Path(id)).await
+    poll_job_v2(&state, id, timeout).await
 }
 
-pub async fn poll(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> Response {
-    match state.bits.poll(&id, Some(POLL_TIMEOUT)).await {
+/// Poll a job and convert the outcome to a v2 HTTP response.
+///
+/// Shared by `submit_collection` (inline poll on submit), `poll` (internal
+/// long-poll endpoint), and `public_poll` (user-facing long-poll endpoint).
+async fn poll_job_v2(state: &Arc<AppState>, id: String, timeout: Duration) -> Response {
+    match state.bits.poll(&id, Some(timeout)).await {
         PollOutcome::Pending { id, .. } => {
-            let status = local_pending_status(&state, &id);
+            let status = local_pending_status(state, &id);
             pending_redirect(&id, status)
         }
         PollOutcome::NotFound => {
@@ -304,6 +243,14 @@ pub async fn poll(State(state): State<Arc<AppState>>, Path(id): Path<String>) ->
             }
         },
     }
+}
+
+pub async fn poll(
+    State(state): State<Arc<AppState>>,
+    Extension(V2PollTimeout(timeout)): Extension<V2PollTimeout>,
+    Path(id): Path<String>,
+) -> Response {
+    poll_job_v2(&state, id, timeout).await
 }
 
 pub async fn public_cancel(
@@ -349,6 +296,7 @@ mod tests {
     use tower::ServiceExt;
 
     use crate::state::AppState;
+    use std::time::Duration;
 
     fn make_bits_with_route(route_name: &str) -> (bits::Bits, bits::RouteHandle) {
         let yaml = r#"bits:
@@ -385,6 +333,9 @@ targets:
                 "/api/v2/requests/{id}",
                 get(super::public_poll).delete(super::public_cancel),
             )
+            .layer(axum::Extension(super::V2PollTimeout(
+                Duration::from_secs(30),
+            )))
             .with_state(state)
     }
 
@@ -528,6 +479,7 @@ targets:
                 "/api/v2/{collection}/requests",
                 post(super::submit_collection),
             )
+            .layer(axum::Extension(super::V2PollTimeout(Duration::from_secs(30))))
             .with_state(state.clone())
             .layer(axum::middleware::from_fn_with_state(
                 state,

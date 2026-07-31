@@ -288,6 +288,13 @@ pub struct HttpConfig {
     pub internal_poll_port: Option<u16>,
     #[serde(default = "default_completed_redirect_ttl_secs")]
     pub completed_redirect_ttl_secs: u64,
+    /// How long (ms) the v1 submit/poll handlers wait before returning 202.
+    #[serde(default = "default_poll_timeout_ms")]
+    pub v1_poll_timeout_ms: u64,
+    /// How long (ms) the v2 submit/poll handlers wait before returning a
+    /// pending redirect.
+    #[serde(default = "default_poll_timeout_ms")]
+    pub v2_poll_timeout_ms: u64,
 }
 
 impl Default for HttpConfig {
@@ -297,6 +304,8 @@ impl Default for HttpConfig {
             port: default_port(),
             internal_poll_port: None,
             completed_redirect_ttl_secs: default_completed_redirect_ttl_secs(),
+            v1_poll_timeout_ms: default_poll_timeout_ms(),
+            v2_poll_timeout_ms: default_poll_timeout_ms(),
         }
     }
 }
@@ -311,6 +320,10 @@ fn default_port() -> u16 {
 
 const fn default_completed_redirect_ttl_secs() -> u64 {
     600
+}
+
+const fn default_poll_timeout_ms() -> u64 {
+    30_000
 }
 
 impl ServerConfig {

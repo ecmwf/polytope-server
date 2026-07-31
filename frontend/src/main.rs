@@ -179,6 +179,7 @@ async fn main() {
 
     let bind_addr = cfg.bind_addr();
     let internal_poll_bind_addr = cfg.internal_poll_bind_addr();
+    let cfg_v2_poll_timeout_ms = cfg.server.v2_poll_timeout_ms;
 
     #[cfg(feature = "telemetry")]
     let metrics_config = cfg.metrics.clone().unwrap_or_default();
@@ -227,7 +228,10 @@ async fn main() {
                 std::process::exit(1);
             });
         tracing::info!("event.name" = "startup.internal_poll.listening", outcome = "success", addr = %internal_poll_listener.local_addr().unwrap(), "internal poll listener listening");
-        let internal_poll_app = polytope_server::build_internal_poll_app(state.clone());
+        let internal_poll_app = polytope_server::build_internal_poll_app(
+            state.clone(),
+            std::time::Duration::from_millis(cfg_v2_poll_timeout_ms),
+        );
         tokio::spawn(async move {
             if let Err(error) = axum::serve(internal_poll_listener, internal_poll_app).await {
                 tracing::error!("event.name" = "startup.internal_poll.failed", outcome = "error", error = %error, "internal poll listener failed");
