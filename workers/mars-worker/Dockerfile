@@ -6,7 +6,9 @@
 # Built and published from docker/cpp-libs/mars by the cpp-libs workflow
 # (source-built bundle by default; RPM variant via MARS_BUILD_FROM_SOURCE=false
 # when publishing the library image).
+# The stripped image feeds `release`; the -debug (full-symbol) image feeds `debug`.
 ARG MARS_LIBS_IMAGE=eccr.ecmwf.int/polytope/cpp-mars-libs:7.1.9-r1
+ARG MARS_LIBS_DEBUG_IMAGE=eccr.ecmwf.int/polytope/cpp-mars-libs-debug:7.1.9-r1
 
 ###############################
 # Shared base: Rust + cargo-chef + system deps (built once)
@@ -19,6 +21,9 @@ RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-d
 # MARS client libraries (pre-built image, /opt/mars-client)
 ###############################
 FROM ${MARS_LIBS_IMAGE} AS mars-libs
+
+# Full-symbol variant, used only by the `debug` target.
+FROM ${MARS_LIBS_DEBUG_IMAGE} AS mars-libs-debug
 
 ###############################
 # Prepare the standalone Mars Cargo Chef recipe
@@ -99,8 +104,13 @@ RUN cd workers/mars-worker && cargo build --release --locked --package "${PACKAG
 ###############################
 FROM docker.io/library/debian:bookworm-slim AS release
 ARG VERSION
+ARG REVISION
+ARG MARS_LIBS_IMAGE
 ARG BIN_NAME=mars-worker
-LABEL version=$VERSION
+LABEL org.opencontainers.image.version="$VERSION" \
+      org.opencontainers.image.revision="$REVISION" \
+      org.opencontainers.image.source="https://github.com/ecmwf/polytope-server" \
+      int.ecmwf.polytope.libs-image="$MARS_LIBS_IMAGE"
 
 RUN apt-get update && apt-get install -y ca-certificates libgomp1 libnetcdf19 liblapack3 libaec0 && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
@@ -117,13 +127,18 @@ ENTRYPOINT ["/app/mars-worker"]
 ###############################
 FROM docker.io/library/debian:bookworm-slim AS debug
 ARG VERSION
+ARG REVISION
+ARG MARS_LIBS_IMAGE
 ARG BIN_NAME=mars-worker
-LABEL version=$VERSION
+LABEL org.opencontainers.image.version="$VERSION" \
+      org.opencontainers.image.revision="$REVISION" \
+      org.opencontainers.image.source="https://github.com/ecmwf/polytope-server" \
+      int.ecmwf.polytope.libs-image="$MARS_LIBS_IMAGE"
 
 RUN apt-get update && apt-get install -y ca-certificates libgomp1 libnetcdf19 liblapack3 libaec0 bash && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
-COPY --from=mars-libs /opt/mars-client /opt/mars-client
+COPY --from=mars-libs-debug /opt/mars-client /opt/mars-client
 
 ENV LD_LIBRARY_PATH=/opt/mars-client/lib
 

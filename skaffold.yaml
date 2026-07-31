@@ -31,6 +31,8 @@ build:
         target: release
         buildArgs:
           GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+          VERSION: '{{ default "" .VERSION }}'
+          REVISION: '{{ default "" .REVISION }}'
 
     - image: eccr.ecmwf.int/polytope/polytope-fe-worker
       context: .
@@ -39,6 +41,8 @@ build:
         target: release
         buildArgs:
           GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+          VERSION: '{{ default "" .VERSION }}'
+          REVISION: '{{ default "" .REVISION }}'
 
     - image: eccr.ecmwf.int/polytope/fdb-worker
       context: .
@@ -47,6 +51,8 @@ build:
         target: release
         buildArgs:
           GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+          VERSION: '{{ default "" .VERSION }}'
+          REVISION: '{{ default "" .REVISION }}'
 
     - image: eccr.ecmwf.int/polytope/mars-worker
       context: .
@@ -55,6 +61,8 @@ build:
         target: release
         buildArgs:
           GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+          VERSION: '{{ default "" .VERSION }}'
+          REVISION: '{{ default "" .REVISION }}'
 
     - image: eccr.ecmwf.int/polytope/test-worker
       context: .
@@ -63,6 +71,8 @@ build:
         target: release
         buildArgs:
           GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+          VERSION: '{{ default "" .VERSION }}'
+          REVISION: '{{ default "" .REVISION }}'
 
     - image: eccr.ecmwf.int/polytope/polytope-loadgen
       context: .
@@ -71,6 +81,8 @@ build:
         target: release
         buildArgs:
           GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+          VERSION: '{{ default "" .VERSION }}'
+          REVISION: '{{ default "" .REVISION }}'
 
   tagPolicy:
     customTemplate:
@@ -143,6 +155,8 @@ profiles:
             cacheTTL: 480h
           buildArgs:
             GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+            VERSION: '{{ default "" .VERSION }}'
+            REVISION: '{{ default "" .REVISION }}'
 
       - op: remove
         path: /build/artifacts/1/docker
@@ -158,6 +172,8 @@ profiles:
             cacheTTL: 480h
           buildArgs:
             GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+            VERSION: '{{ default "" .VERSION }}'
+            REVISION: '{{ default "" .REVISION }}'
 
       - op: remove
         path: /build/artifacts/2/docker
@@ -173,6 +189,8 @@ profiles:
             cacheTTL: 480h
           buildArgs:
             GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+            VERSION: '{{ default "" .VERSION }}'
+            REVISION: '{{ default "" .REVISION }}'
 
       - op: remove
         path: /build/artifacts/3/docker
@@ -188,6 +206,8 @@ profiles:
             cacheTTL: 480h
           buildArgs:
             GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+            VERSION: '{{ default "" .VERSION }}'
+            REVISION: '{{ default "" .REVISION }}'
 
       - op: remove
         path: /build/artifacts/4/docker
@@ -203,6 +223,8 @@ profiles:
             cacheTTL: 480h
           buildArgs:
             GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+            VERSION: '{{ default "" .VERSION }}'
+            REVISION: '{{ default "" .REVISION }}'
 
       - op: remove
         path: /build/artifacts/5/docker
@@ -218,3 +240,5 @@ profiles:
             cacheTTL: 480h
           buildArgs:
             GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+            VERSION: '{{ default "" .VERSION }}'
+            REVISION: '{{ default "" .REVISION }}'

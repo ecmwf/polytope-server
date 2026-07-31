@@ -5,19 +5,24 @@
 # Pre-built C++ FDB + gribjump stack (eckit, libaec, eccodes, metkit, fdb,
 # gribjump) pulled from ECCR.
 # Built and published from docker/cpp-libs/fdb-gribjump by the cpp-libs workflow.
-ARG FDB_LIBS_IMAGE=eccr.ecmwf.int/polytope/cpp-fdb-gribjump-libs:fdb5.21.3-gribjump0.12.0-r1
+# The stripped image feeds `release`; the -debug (full-symbol) image feeds `debug`.
+ARG GJ_LIBS_IMAGE=eccr.ecmwf.int/polytope/cpp-fdb-gribjump-libs:fdb5.21.3-gribjump0.12.0-r1
+ARG GJ_LIBS_DEBUG_IMAGE=eccr.ecmwf.int/polytope/cpp-fdb-gribjump-libs-debug:fdb5.21.3-gribjump0.12.0-r1
 
 ###############################
 # Shared base: Rust + cargo-chef + system deps (built once)
 ###############################
-FROM docker.io/library/rust:1.93-slim-bookworm AS chef-base
+FROM docker.io/library/rust:1.94.1-slim-bookworm AS chef-base
 RUN cargo install cargo-chef --locked
 RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-dev python3-dev && rm -rf /var/lib/apt/lists/*
 
 ###############################
 # FDB + gribjump libraries (pre-built image, /opt/fdb)
 ###############################
-FROM ${FDB_LIBS_IMAGE} AS fdb-build
+FROM ${GJ_LIBS_IMAGE} AS gj-build
+
+# Full-symbol variant, used only by the `debug` target.
+FROM ${GJ_LIBS_DEBUG_IMAGE} AS gj-build-debug
 
 ###############################
 # Workspace manifest skeleton — manifests plus stub sources for every member.
@@ -117,14 +122,19 @@ RUN uv pip install --python /opt/venv/bin/python -r /requirements.txt
 ###############################
 FROM python:3.11-slim-bookworm AS release
 ARG VERSION
+ARG REVISION
+ARG GJ_LIBS_IMAGE
 ARG PACKAGE_NAME=polytope-fe-worker
 ARG BIN_NAME=polytope-fe-worker
-LABEL version=$VERSION
+LABEL org.opencontainers.image.version="$VERSION" \
+      org.opencontainers.image.revision="$REVISION" \
+      org.opencontainers.image.source="https://github.com/ecmwf/polytope-server" \
+      int.ecmwf.polytope.libs-image="$GJ_LIBS_IMAGE"
 
 RUN apt-get update && apt-get install -y ca-certificates libgomp1 libaec0 libcurl4 libopenjp2-7 && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
-COPY --from=fdb-build /opt/fdb/ /opt/fdb/
+COPY --from=gj-build /opt/fdb/ /opt/fdb/
 COPY --from=python-deps /opt/venv /opt/venv
 
 ENV VIRTUAL_ENV=/opt/venv
@@ -142,14 +152,19 @@ ENTRYPOINT ["/app/polytope-fe-worker"]
 ###############################
 FROM python:3.11-slim-bookworm AS debug
 ARG VERSION
+ARG REVISION
+ARG GJ_LIBS_IMAGE
 ARG PACKAGE_NAME=polytope-fe-worker
 ARG BIN_NAME=polytope-fe-worker
-LABEL version=$VERSION
+LABEL org.opencontainers.image.version="$VERSION" \
+      org.opencontainers.image.revision="$REVISION" \
+      org.opencontainers.image.source="https://github.com/ecmwf/polytope-server" \
+      int.ecmwf.polytope.libs-image="$GJ_LIBS_IMAGE"
 
 RUN apt-get update && apt-get install -y ca-certificates libgomp1 libaec0 libcurl4 libopenjp2-7 bash && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
-COPY --from=fdb-build /opt/fdb/ /opt/fdb/
+COPY --from=gj-build-debug /opt/fdb/ /opt/fdb/
 COPY --from=python-deps /opt/venv /opt/venv
 
 ENV VIRTUAL_ENV=/opt/venv

@@ -5,7 +5,7 @@
 ###############################
 # Shared base: Rust + cargo-chef + system deps
 ###############################
-FROM docker.io/library/rust:1.93-slim-bookworm AS chef-base
+FROM docker.io/library/rust:1.94.1-slim-bookworm AS chef-base
 RUN cargo install cargo-chef --locked
 RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-dev && rm -rf /var/lib/apt/lists/*
 
@@ -95,8 +95,11 @@ RUN cargo build --release --locked --package "${PACKAGE_NAME}"
 ###############################
 FROM docker.io/library/debian:bookworm-slim AS release
 ARG VERSION
+ARG REVISION
 ARG BIN_NAME=loadgen
-LABEL version=$VERSION
+LABEL org.opencontainers.image.version="$VERSION" \
+      org.opencontainers.image.revision="$REVISION" \
+      org.opencontainers.image.source="https://github.com/ecmwf/polytope-server"
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=builder /ecmwf/polytope-server/target/release/${BIN_NAME} /app/loadgen
