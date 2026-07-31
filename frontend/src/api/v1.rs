@@ -12,7 +12,9 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use bits::{ActiveJobSnapshot, Job, JobResult, PendingStatus, PollOutcome, SubmitOutcome};
+use bits::{
+    ActiveJobSnapshot, Job, JobResult, PendingStatus, PollOutcome, SubmitOutcome, SubmitPeek,
+};
 use bytes::BytesMut;
 use futures::TryStreamExt;
 use serde::Deserialize;
@@ -33,6 +35,23 @@ pub struct SubmitBody {
 
 fn request_queued_body() -> Value {
     json!({"message": "Request queued", "status": "queued"})
+}
+
+/// The legacy v1 submit acknowledgement: `202 Accepted` with a `Location`
+/// pointing at the poll URL.  Matches the Python frontend, which always returned
+/// a queued 202 on submit and delivered the payload on a subsequent poll — so a
+/// job that has already succeeded is left in place for the client to fetch,
+/// while failures are surfaced synchronously (see `submit_request`).
+fn submit_accepted_response(id: &str) -> Response {
+    (
+        StatusCode::ACCEPTED,
+        [
+            (header::LOCATION, format!("./{id}")),
+            (header::RETRY_AFTER, RETRY_AFTER_SECS.to_string()),
+        ],
+        Json(request_queued_body()),
+    )
+        .into_response()
 }
 
 fn pending_request_body(status: PendingStatus) -> Value {
@@ -138,124 +157,139 @@ async fn poll_job_v1(
             )
                 .into_response()
         }
-        PollOutcome::Ready(result) => match result {
-            JobResult::Success {
-                content_type,
-                size,
-                stream,
-            } => {
-                if let Some(user) = auth_user {
-                    tracing::info!("event.name" = "api.job.poll.completed", outcome = "success", request.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, content_length = size, "job poll completed");
-                } else {
-                    tracing::info!("event.name" = "api.job.poll.completed", outcome = "success", request.id = %id, content_length = size, "job poll completed");
-                }
-                if size >= 0 {
-                    Response::builder()
-                        .status(StatusCode::OK)
-                        .header(header::CONTENT_TYPE, content_type.clone())
-                        .header(
-                            header::CONTENT_DISPOSITION,
-                            super::download::content_disposition_for(&id, &content_type),
-                        )
-                        .header(header::CONTENT_LENGTH, size)
-                        .body(Body::from_stream(stream))
-                        .unwrap()
-                } else {
-                    let mut buf = BytesMut::new();
-                    tokio::pin!(stream);
-                    while let Some(chunk) = stream.try_next().await.unwrap_or(None) {
-                        buf.extend_from_slice(&chunk);
-                    }
-                    let body = buf.freeze();
-                    Response::builder()
-                        .status(StatusCode::OK)
-                        .header(header::CONTENT_TYPE, content_type.clone())
-                        .header(
-                            header::CONTENT_DISPOSITION,
-                            super::download::content_disposition_for(&id, &content_type),
-                        )
-                        .header(header::CONTENT_LENGTH, body.len())
-                        .body(Body::from(body))
-                        .unwrap()
-                }
+        PollOutcome::Ready(result) => render_v1_result(state, auth_user, &id, result).await,
+    }
+}
+
+/// Convert a terminal [`JobResult`] into a v1 HTTP response.
+///
+/// Shared by `poll_job_v1` (the consuming poll on the GET path) and the inline
+/// submit path, which surfaces *failure* results synchronously.  Redirect
+/// results are inserted into the completed-redirect cache so re-polls within the
+/// TTL return the same 303.
+async fn render_v1_result(
+    state: &Arc<AppState>,
+    auth_user: Option<&AuthUser>,
+    id: &str,
+    result: JobResult,
+) -> Response {
+    match result {
+        JobResult::Success {
+            content_type,
+            size,
+            stream,
+        } => {
+            if let Some(user) = auth_user {
+                tracing::info!("event.name" = "api.job.poll.completed", outcome = "success", request.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, content_length = size, "job poll completed");
+            } else {
+                tracing::info!("event.name" = "api.job.poll.completed", outcome = "success", request.id = %id, content_length = size, "job poll completed");
             }
-            JobResult::Redirect {
-                location,
-                content_type,
-                content_length,
-                ..
-            } => {
-                if let Some(user) = auth_user {
-                    tracing::info!("event.name" = "api.job.poll.completed", outcome = "success", request.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, "job poll completed");
-                } else {
-                    tracing::info!("event.name" = "api.job.poll.completed", outcome = "success", request.id = %id, "job poll completed");
+            if size >= 0 {
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, content_type.clone())
+                    .header(
+                        header::CONTENT_DISPOSITION,
+                        super::download::content_disposition_for(id, &content_type),
+                    )
+                    .header(header::CONTENT_LENGTH, size)
+                    .body(Body::from_stream(stream))
+                    .unwrap()
+            } else {
+                let mut buf = BytesMut::new();
+                tokio::pin!(stream);
+                while let Some(chunk) = stream.try_next().await.unwrap_or(None) {
+                    buf.extend_from_slice(&chunk);
                 }
-                let (owner_username, owner_realm) = auth_user
-                    .map(|u| (u.username.clone(), u.realm.clone()))
-                    .unwrap_or_default();
-                let mut cache = state
-                    .completed_redirects
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner());
-                cache.retain(|_, v| v.cached_at.elapsed() < state.completed_redirect_ttl);
-                if cache.len() < MAX_COMPLETED_REDIRECTS {
-                    cache.insert(
-                        id.clone(),
-                        CachedRedirect {
-                            username: owner_username,
-                            realm: owner_realm,
-                            location: location.clone(),
-                            content_type: content_type.clone(),
-                            content_length,
-                            cached_at: Instant::now(),
-                        },
-                    );
-                } else {
-                    tracing::warn!(
-                        "event.name" = "api.job.cache.full",
-                        outcome = "dropped",
-                        request.id = %id,
-                        capacity = MAX_COMPLETED_REDIRECTS,
-                        "completed-redirect cache at capacity; re-poll for this request will return 404"
-                    );
-                }
-                drop(cache);
-                build_redirect_response(&location, content_type.as_deref(), content_length)
+                let body = buf.freeze();
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, content_type.clone())
+                    .header(
+                        header::CONTENT_DISPOSITION,
+                        super::download::content_disposition_for(id, &content_type),
+                    )
+                    .header(header::CONTENT_LENGTH, body.len())
+                    .body(Body::from(body))
+                    .unwrap()
             }
-            JobResult::Error { message } => (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"status": "failed", "message": message})),
-            )
-                .into_response(),
-            JobResult::Failed { reason } => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"status": "failed", "message": reason})),
-            )
-                .into_response(),
-            JobResult::Overloaded { reason } => super::overloaded_response(json!({
-                "status": "failed",
-                "message": reason,
-                "retryable": true,
-            })),
-            JobResult::RateLimited { reason } => super::rate_limited_response(json!({
-                "status": "failed",
-                "message": reason,
-                "retryable": true,
-            })),
-            JobResult::Cancelled => {
-                if let Some(user) = auth_user {
-                    tracing::info!("event.name" = "api.job.poll.cancelled", outcome = "cancelled", request.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, "job poll cancelled");
-                } else {
-                    tracing::info!("event.name" = "api.job.poll.cancelled", outcome = "cancelled", request.id = %id, "job poll cancelled");
-                }
-                (StatusCode::OK, Json(json!({"status": "cancelled"}))).into_response()
+        }
+        JobResult::Redirect {
+            location,
+            content_type,
+            content_length,
+            ..
+        } => {
+            if let Some(user) = auth_user {
+                tracing::info!("event.name" = "api.job.poll.completed", outcome = "success", request.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, "job poll completed");
+            } else {
+                tracing::info!("event.name" = "api.job.poll.completed", outcome = "success", request.id = %id, "job poll completed");
             }
-            JobResult::ClientGone => (
-                StatusCode::GONE,
-                Json(json!({"error": "request abandoned: client disconnected"})),
-            )
-                .into_response(),
-        },
+            let (owner_username, owner_realm) = auth_user
+                .map(|u| (u.username.clone(), u.realm.clone()))
+                .unwrap_or_default();
+            let mut cache = state
+                .completed_redirects
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            cache.retain(|_, v| v.cached_at.elapsed() < state.completed_redirect_ttl);
+            if cache.len() < MAX_COMPLETED_REDIRECTS {
+                cache.insert(
+                    id.to_string(),
+                    CachedRedirect {
+                        username: owner_username,
+                        realm: owner_realm,
+                        location: location.clone(),
+                        content_type: content_type.clone(),
+                        content_length,
+                        cached_at: Instant::now(),
+                    },
+                );
+            } else {
+                tracing::warn!(
+                    "event.name" = "api.job.cache.full",
+                    outcome = "dropped",
+                    request.id = %id,
+                    capacity = MAX_COMPLETED_REDIRECTS,
+                    "completed-redirect cache at capacity; re-poll for this request will return 404"
+                );
+            }
+            drop(cache);
+            build_redirect_response(&location, content_type.as_deref(), content_length)
+        }
+        JobResult::Error { message } => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"status": "failed", "message": message})),
+        )
+            .into_response(),
+        JobResult::Failed { reason } => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"status": "failed", "message": reason})),
+        )
+            .into_response(),
+        JobResult::Overloaded { reason } => super::overloaded_response(json!({
+            "status": "failed",
+            "message": reason,
+            "retryable": true,
+        })),
+        JobResult::RateLimited { reason } => super::rate_limited_response(json!({
+            "status": "failed",
+            "message": reason,
+            "retryable": true,
+        })),
+        JobResult::Cancelled => {
+            if let Some(user) = auth_user {
+                tracing::info!("event.name" = "api.job.poll.cancelled", outcome = "cancelled", request.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, "job poll cancelled");
+            } else {
+                tracing::info!("event.name" = "api.job.poll.cancelled", outcome = "cancelled", request.id = %id, "job poll cancelled");
+            }
+            (StatusCode::OK, Json(json!({"status": "cancelled"}))).into_response()
+        }
+        JobResult::ClientGone => (
+            StatusCode::GONE,
+            Json(json!({"error": "request abandoned: client disconnected"})),
+        )
+            .into_response(),
     }
 }
 
@@ -439,14 +473,26 @@ pub async fn submit_request(
     } else {
         tracing::info!("event.name" = "api.job.submitted", outcome = "success", request.id = %handle.id, enqueue_ms, polytope.request = %polytope_observability::request(&submitted_request), "job submitted");
     }
-    let timeout = state.v1_poll_timeout;
-    poll_job_v1(
-        &state,
-        auth_user.as_ref().map(|Extension(user)| user),
-        handle.id,
-        timeout,
-    )
-    .await
+    // Inline-poll the freshly submitted job just long enough to catch a fast
+    // failure, without consuming a successful payload.  This preserves the
+    // legacy v1 contract — POST returns 202 and the client fetches the result
+    // with a follow-up poll — while surfacing failures immediately.
+    let auth_user_ref = auth_user.as_ref().map(|Extension(user)| user);
+    match state
+        .bits
+        .wait_terminal_peek(&handle.id, state.v1_poll_timeout)
+        .await
+    {
+        SubmitPeek::Failed(result) => {
+            render_v1_result(&state, auth_user_ref, &handle.id, result).await
+        }
+        SubmitPeek::Deliverable | SubmitPeek::Pending { .. } => {
+            submit_accepted_response(&handle.id)
+        }
+        // Should not occur immediately after a successful submit, but degrade to
+        // the standard not-found response rather than fabricate a result.
+        SubmitPeek::NotFound => super::request_not_found_response(),
+    }
 }
 
 pub async fn get_request(
