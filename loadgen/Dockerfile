@@ -10,40 +10,13 @@ RUN cargo install cargo-chef --locked
 RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-dev && rm -rf /var/lib/apt/lists/*
 
 ###############################
-# Workspace manifest skeleton — manifests plus stub sources for every member.
-# Keep this stage identical across all Dockerfiles so the shared build cache
-# reuses it between images. Adding a workspace member requires updating it.
+# Prepare the root workspace Cargo Chef recipe
 ###############################
-FROM chef-base AS manifests
-WORKDIR /ecmwf/polytope-server
-COPY Cargo.toml Cargo.lock ./
-COPY observability/Cargo.toml observability/Cargo.toml
-COPY frontend/Cargo.toml frontend/Cargo.toml
-COPY loadgen/Cargo.toml loadgen/Cargo.toml
-COPY client/Cargo.toml client/Cargo.toml
-COPY tests/integration/Cargo.toml tests/integration/Cargo.toml
-COPY workers/common/Cargo.toml workers/common/Cargo.toml
-COPY workers/polytope-fe-worker/Cargo.toml workers/polytope-fe-worker/Cargo.toml
-COPY workers/fdb-worker/Cargo.toml workers/fdb-worker/Cargo.toml
-COPY workers/test-worker/Cargo.toml workers/test-worker/Cargo.toml
-# excluded path dependency of the frontend — needed for workspace resolution
-COPY utils/metkit/Cargo.toml utils/metkit/Cargo.toml
-RUN mkdir -p observability/src frontend/src loadgen/src client/src \
-      tests/integration/src workers/common/src workers/polytope-fe-worker/src \
-      workers/fdb-worker/src workers/test-worker/src utils/metkit/src \
-    && touch observability/src/lib.rs frontend/src/lib.rs loadgen/src/lib.rs \
-      client/src/lib.rs tests/integration/src/lib.rs workers/common/src/lib.rs \
-      workers/test-worker/src/lib.rs utils/metkit/src/lib.rs \
-    && for crate in frontend loadgen workers/polytope-fe-worker workers/fdb-worker workers/test-worker; do \
-      printf 'fn main() {}\n' > "$crate/src/main.rs"; done \
-    && printf 'fn main() {}\n' > utils/metkit/build.rs \
-    && mkdir -p .cargo && printf '[net]\ngit-fetch-with-cli = true\n' > .cargo/config.toml
-
-###############################
-# Prepare the root workspace Cargo Chef recipe (manifests only)
-###############################
-FROM manifests AS chef
+FROM chef-base AS chef
 ARG GIT_AUTH_TOKEN=""
+WORKDIR /ecmwf/polytope-server
+COPY . .
+RUN mkdir -p .cargo && printf '[net]\ngit-fetch-with-cli = true\n' > .cargo/config.toml
 RUN if [ -n "$GIT_AUTH_TOKEN" ]; then \
       git config --global credential.helper '' && \
       git config --global url."https://git:${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; \
@@ -79,11 +52,8 @@ ARG BIN_NAME=loadgen
 WORKDIR /ecmwf/polytope-server
 COPY --from=cacher /ecmwf/polytope-server/target target
 COPY --from=cacher /usr/local/cargo /usr/local/cargo
-COPY --from=manifests /ecmwf/polytope-server/ /ecmwf/polytope-server/
-# real sources only for this package's dependency graph (overwrite the stubs)
-COPY loadgen/ loadgen/
-# bust the cargo-chef skeleton fingerprints of the real-source crates
-RUN touch loadgen/src/lib.rs loadgen/src/main.rs
+COPY . .
+RUN mkdir -p .cargo && printf '[net]\ngit-fetch-with-cli = true\n' > .cargo/config.toml
 RUN if [ -n "$GIT_AUTH_TOKEN" ]; then \
       git config --global credential.helper '' && \
       git config --global url."https://git:${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; \
