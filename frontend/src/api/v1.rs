@@ -12,9 +12,7 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use bits::{
-    ActiveJobSnapshot, Job, JobResult, PendingStatus, PollOutcome, SubmitOutcome, SubmitPeek,
-};
+use bits::{ActiveJobSnapshot, Job, JobResult, PendingStatus, PollOutcome, SubmitOutcome};
 use bytes::BytesMut;
 use futures::TryStreamExt;
 use serde::Deserialize;
@@ -478,20 +476,20 @@ pub async fn submit_request(
     // legacy v1 contract — POST returns 202 and the client fetches the result
     // with a follow-up poll — while surfacing failures immediately.
     let auth_user_ref = auth_user.as_ref().map(|Extension(user)| user);
+    // Inline-poll the freshly submitted job just long enough to catch a fast
+    // failure (bad request, auth, rate limit) before returning. On the first
+    // notify we return immediately: a failure is surfaced on the submit
+    // response; a deliverable or processing transition returns 202 so the
+    // client fetches the result with a normal follow-up poll.
     match state
         .bits
-        .wait_terminal_peek(&handle.id, state.v1_poll_timeout)
+        .poll_submit(&handle.id, state.v1_poll_timeout)
         .await
     {
-        SubmitPeek::Failed(result) => {
+        PollOutcome::Ready(result) => {
             render_v1_result(&state, auth_user_ref, &handle.id, result).await
         }
-        SubmitPeek::Deliverable | SubmitPeek::Pending { .. } => {
-            submit_accepted_response(&handle.id)
-        }
-        // Should not occur immediately after a successful submit, but degrade to
-        // the standard not-found response rather than fabricate a result.
-        SubmitPeek::NotFound => super::request_not_found_response(),
+        _ => submit_accepted_response(&handle.id),
     }
 }
 

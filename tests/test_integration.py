@@ -109,11 +109,20 @@ def polytope_server(mock_backend):
           host: "127.0.0.1"
           port: {server_port}
 
+        polytope:
+          site: tst
+          env: dev
+
         bits:
-          routes:
-            - default:
-                - target::http:
-                    url: "http://127.0.0.1:{mock_backend}/"
+          collections:
+            all:
+              - route:
+                  - target::http:
+                      url: "http://127.0.0.1:{mock_backend}/"
+            broken:
+              - route:
+                  - target::http:
+                      url: "http://127.0.0.1:1/"
     """)
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
@@ -137,10 +146,6 @@ def polytope_server(mock_backend):
 
 @pytest.fixture()
 def client(polytope_server):
-    # Import here so the venv is active when this runs
-    sys.path.insert(
-        0, str(REPO_ROOT / ".venv" / "lib" / "python3.12" / "site-packages")
-    )
     from polytope.api import Client
 
     return Client(
@@ -158,10 +163,11 @@ def client(polytope_server):
 
 
 def test_health(polytope_server):
-    import urllib.request
+    import json, urllib.request
 
     with urllib.request.urlopen(f"{polytope_server}/api/v1/test") as r:
-        assert r.read().decode() == "Polytope server is alive"
+        body = json.loads(r.read())
+    assert body["message"] == "Polytope server is alive"
 
 
 def test_collections(polytope_server):
@@ -169,7 +175,7 @@ def test_collections(polytope_server):
 
     with urllib.request.urlopen(f"{polytope_server}/api/v1/collections") as r:
         body = json.loads(r.read())
-    assert body == {"message": ["all"]}
+    assert "all" in body["message"]
 
 
 def test_retrieve(client):
@@ -178,7 +184,7 @@ def test_retrieve(client):
 
     try:
         client.retrieve(
-            "test-collection",
+            "all",
             {"class": "od", "stream": "oper"},
             output_file=output,
         )
@@ -188,20 +194,75 @@ def test_retrieve(client):
         os.unlink(output)
 
 
-def test_retrieve_unknown_collection_still_works(client):
-    """Collection name is ignored by the server; any name should route fine."""
-    with tempfile.NamedTemporaryFile(suffix=".grib", delete=False) as f:
-        output = f.name
-
+def test_retrieve_unknown_collection_returns_404(client):
+    """Requesting an unconfigured collection name returns 404 on submit."""
+    import polytope.api.helpers as polytope_helpers
     try:
-        client.retrieve(
-            "totally-made-up-collection",
-            {"class": "rd"},
-            output_file=output,
-        )
-        assert Path(output).read_bytes() == FAKE_GRIB
-    finally:
-        os.unlink(output)
+        client.retrieve("totally-made-up-collection", {"class": "rd"})
+        assert False, "expected an error for unknown collection"
+    except polytope_helpers.HTTPResponseError as e:
+        assert e.response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# v2 tests (direct HTTP — no polytope-client wrapper needed)
+# ---------------------------------------------------------------------------
+# v1 submit-path contract
+# ---------------------------------------------------------------------------
+
+
+def test_v1_submit_success_returns_202_not_result(polytope_server):
+    """A successful request returns 202 Accepted on POST — the result is left
+    in the broker for the client to fetch with a follow-up poll.  It must NOT
+    be consumed on the submit response (that would break the v1 polling loop)."""
+    import json, urllib.request
+
+    req = urllib.request.Request(
+        f"{polytope_server}/api/v1/requests/all",
+        data=json.dumps({"verb": "retrieve", "request": {"class": "od"}}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req) as r:
+        assert r.status == 202, "v1 submit must always return 202, never the payload"
+        assert "Location" in r.headers, "202 must include a Location header"
+        job_id = r.headers["Location"].split("/")[-1]
+
+    # Result must still be fetchable — poll until ready.
+    poll_url = f"{polytope_server}/api/v1/requests/{job_id}"
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(poll_url) as r:
+                if r.status == 200:
+                    assert r.read() == FAKE_GRIB
+                    return
+        except urllib.error.HTTPError as e:
+            if e.code == 202:
+                time.sleep(0.05)
+                continue
+            raise
+    pytest.fail("timed out waiting for job result after 202 submit")
+
+
+def test_v1_fast_failure_surfaces_directly_on_post(polytope_server):
+    """A request that fails immediately (unreachable target at 127.0.0.1:1)
+    must surface the error on the POST response — not 202 — so the client
+    gets the failure synchronously without needing a polling round-trip."""
+    import json, urllib.error, urllib.request
+
+    req = urllib.request.Request(
+        f"{polytope_server}/api/v1/requests/broken",
+        data=json.dumps({"verb": "retrieve", "request": {"class": "od"}}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        urllib.request.urlopen(req)
+        pytest.fail("expected an error response, not 202")
+    except urllib.error.HTTPError as e:
+        assert e.code != 202
+        assert e.code >= 400, f"expected 4xx/5xx error, got {e.code}"
 
 
 # ---------------------------------------------------------------------------
@@ -216,14 +277,13 @@ def test_v2_health(polytope_server):
         assert r.read().decode() == "Polytope server is alive"
 
 
-def test_v2_no_collections_endpoint(polytope_server):
-    import urllib.error, urllib.request
+def test_v2_collections_endpoint(polytope_server):
+    import json, urllib.request
 
-    try:
-        urllib.request.urlopen(f"{polytope_server}/api/v2/collections")
-        assert False, "expected 404"
-    except urllib.error.HTTPError as e:
-        assert e.code == 404
+    with urllib.request.urlopen(f"{polytope_server}/api/v2/collections") as r:
+        assert r.status == 200
+        body = json.loads(r.read())
+    assert "all" in body.get("collections", body)
 
 
 def test_v2_submit_and_retrieve(polytope_server):
@@ -231,7 +291,7 @@ def test_v2_submit_and_retrieve(polytope_server):
 
     # POST → 303 → poll loop → 200 with data, all followed automatically.
     req = urllib.request.Request(
-        f"{polytope_server}/api/v2/requests",
+        f"{polytope_server}/api/v2/all/requests",
         data=json.dumps({"class": "od", "stream": "oper"}).encode(),
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -253,7 +313,8 @@ def test_v2_cancel(polytope_server):
     )
     with urllib.request.urlopen(req) as r:
         assert r.status == 202
-        job_id = json.loads(r.read())["id"]
+        # The job ID is in the Location header (e.g. "./bol-tst-0-xxxx"), not the body.
+        job_id = r.headers["Location"].split("/")[-1]
 
     cancel_req = urllib.request.Request(
         f"{polytope_server}/api/v2/requests/{job_id}",
@@ -352,15 +413,20 @@ def authed_polytope_server(mock_backend, mock_authotron):
           host: "127.0.0.1"
           port: {server_port}
 
+        polytope:
+          site: tst
+          env: dev
+
         authentication:
           url: "http://127.0.0.1:{mock_authotron}"
           secret: "{JWT_SECRET}"
 
         bits:
-          routes:
-            - default:
-                - target::http:
-                    url: "http://127.0.0.1:{mock_backend}/"
+          collections:
+            all:
+              - route:
+                  - target::http:
+                      url: "http://127.0.0.1:{mock_backend}/"
     """)
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
@@ -438,7 +504,7 @@ def test_auth_v2_submit_with_valid_credentials(authed_polytope_server):
 
     creds = base64.b64encode(f"{VALID_USER}:{VALID_PASSWORD}".encode()).decode()
     req = urllib.request.Request(
-        f"{authed_polytope_server}/api/v2/requests",
+        f"{authed_polytope_server}/api/v2/all/requests",
         data=json.dumps({"class": "od", "stream": "oper"}).encode(),
         headers={
             "Content-Type": "application/json",
@@ -454,7 +520,7 @@ def test_auth_v2_submit_with_valid_credentials(authed_polytope_server):
 def test_auth_v1_requires_auth(authed_polytope_server):
     import urllib.error, urllib.request
 
-    for path in ["/api/v1/test", "/api/v1/collections", "/api/v1/requests"]:
+    for path in ["/api/v1/collections", "/api/v1/requests", "/api/v1/user"]:
         try:
             urllib.request.urlopen(f"{authed_polytope_server}{path}")
             assert False, f"expected 401 for {path}"
