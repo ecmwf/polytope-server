@@ -17,7 +17,27 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Skip publish for .devN tags — those are created automatically by CI.
+  # A human promotes to the real tag (e.g. 2.2.0) to trigger image publishing.
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      is_dev: ${{ steps.check.outputs.is_dev }}
+    steps:
+      - name: Check for dev tag
+        id: check
+        run: |
+          tag="${{ github.event.release.tag_name }}"
+          if [[ "$tag" =~ \.dev[0-9]+$ ]]; then
+            echo "Dev release tag ($tag); skipping image publish."
+            echo "is_dev=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_dev=false" >> "$GITHUB_OUTPUT"
+          fi
+
   publish:
+    needs: [check]
+    if: needs.check.outputs.is_dev == 'false'
     name: Publish ${{ matrix.artifact }}
     runs-on: ubuntu-latest
     timeout-minutes: 120

@@ -150,82 +150,12 @@ jobs:
           FIXED_TAG: ${{ steps.check.outputs.tag }}
         run: skaffold build --push=false --filename skaffold.yaml --build-image "${{ matrix.image }}"
 
-  # Publishes images to ECCR on push to main. Skips any image whose tag already
-  # exists — idempotent, safe to re-run.
-  publish:
-    name: Publish / ${{ matrix.image }}
+  # On push to main: create a {VERSION}.dev0 git tag if it doesn't exist yet.
+  # A human promotes to the real tag (e.g. 2.2.0) to trigger release.yaml.
+  tag:
+    name: Tag
     needs: [fmt, test, skaffold-validate]
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    strategy:
-      fail-fast: false
-      max-parallel: 2
-      matrix:
-        include:
-          - image: eccr.ecmwf.int/polytope/frontend
-            tag_file: frontend/TAG
-          - image: eccr.ecmwf.int/polytope/polytope-fe-worker
-            tag_file: workers/polytope-fe-worker/TAG
-          - image: eccr.ecmwf.int/polytope/fdb-worker
-            tag_file: workers/fdb-worker/TAG
-          - image: eccr.ecmwf.int/polytope/mars-worker
-            tag_file: workers/mars-worker/TAG
-          - image: eccr.ecmwf.int/polytope/test-worker
-            tag_file: workers/test-worker/TAG
-          - image: eccr.ecmwf.int/polytope/polytope-loadgen
-            tag_file: loadgen/TAG
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          persist-credentials: false
-
-      - name: Log in to ECCR
-        env:
-          ECCR_PASSWORD: ${{ secrets.ECCR_PASSWORD }}
-          ECCR_USERNAME: ${{ secrets.ECCR_USERNAME }}
-        run: printf '%s' "$ECCR_PASSWORD" | docker login eccr.ecmwf.int --username "$ECCR_USERNAME" --password-stdin
-
-      - name: Check if image tag already exists
-        id: check
-        run: |
-          tag=$(cat "${{ matrix.tag_file }}")
-          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
-          if docker manifest inspect "${{ matrix.image }}:${tag}" >/dev/null 2>&1; then
-            echo "${{ matrix.image }}:${tag} already published; skipping."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Prepare repository token
-        if: steps.check.outputs.skip == 'false'
-        env:
-          RAW_GH_TOKEN: ${{ secrets.GH_REPO_READ_TOKEN }}
-        run: |
-          token="$(printf '%s' "$RAW_GH_TOKEN" | tr -d '[:space:]')"
-          echo "::add-mask::$token"
-          echo "GH_TOKEN=$token" >> "$GITHUB_ENV"
-
-      - name: Install Skaffold
-        if: steps.check.outputs.skip == 'false'
-        run: |
-          curl -fsSL "https://storage.googleapis.com/skaffold/releases/${SKAFFOLD_VERSION}/skaffold-linux-amd64" -o skaffold
-          echo "${SKAFFOLD_SHA256}  skaffold" | sha256sum --check -
-          sudo install skaffold /usr/local/bin/skaffold
-
-      - name: Build and publish ${{ matrix.image }}
-        if: steps.check.outputs.skip == 'false'
-        env:
-          FIXED_TAG: ${{ steps.check.outputs.tag }}
-        run: skaffold build --push=true --filename skaffold.yaml --build-image "${{ matrix.image }}"
-
-  # Creates a GitHub release when the VERSION file changes on main.
-  # Runs after publish so images are available before the release is announced.
-  create-release:
-    name: Create release
-    needs: [publish]
-    if: github.event_name == 'push' && needs.publish.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -233,35 +163,33 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
-          fetch-depth: 0
 
-      - name: Check whether VERSION changed
-        id: version
+      - name: Check if dev tag already exists
+        id: check
         env:
-          BEFORE_SHA: ${{ github.event.before }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          current=$(cat VERSION 2>/dev/null || echo "")
-          if [[ "$BEFORE_SHA" == "0000000000000000000000000000000000000000" ]]; then
-            previous=""
-          else
-            previous=$(git show "${BEFORE_SHA}:VERSION" 2>/dev/null || echo "")
+          version=$(cat VERSION 2>/dev/null | tr -d '[:space:]')
+          if [[ -z "$version" ]]; then
+            echo "No VERSION file; skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
-          echo "current=$current  previous=$previous"
-          if [[ -z "$current" || "$current" == "$previous" ]]; then
-            echo "VERSION unchanged; skipping release."
+          dev_tag="${version}.dev0"
+          echo "dev_tag=${dev_tag}" >> "$GITHUB_OUTPUT"
+          if gh api /repos/${{ github.repository }}/git/ref/tags/${dev_tag} >/dev/null 2>&1; then
+            echo "${dev_tag} already exists; skipping."
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "tag=v${current}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Create GitHub release
-        if: steps.version.outputs.skip == 'false'
+      - name: Create tag
+        if: steps.check.outputs.skip == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ steps.version.outputs.tag }}
         run: |
-          gh release create "${RELEASE_TAG}" \
-            --title "${RELEASE_TAG}" \
-            --target "${{ github.sha }}" \
-            --generate-notes
+          gh api /repos/${{ github.repository }}/git/refs \
+            --method POST \
+            --field ref="refs/tags/${{ steps.check.outputs.dev_tag }}" \
+            --field sha="${{ github.sha }}"
