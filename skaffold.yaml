@@ -24,7 +24,7 @@ metadata:
 
 build:
   artifacts:
-    - image: eccr.ecmwf.int/polytope/polytope-server
+    - image: eccr.ecmwf.int/polytope/frontend
       context: .
       docker:
         dockerfile: frontend/Dockerfile
