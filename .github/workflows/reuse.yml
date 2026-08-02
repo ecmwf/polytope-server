@@ -2,20 +2,18 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# REUSE compliance check has been merged into ci.yaml (the `reuse` job there).
-# This file is kept as a tombstone and can be deleted once ci.yaml is confirmed
-# working. Setting trigger to workflow_dispatch prevents double-runs on PRs.
-
-name: REUSE Compliance (superseded)
+name: REUSE Compliance
 on:
-  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main]
 permissions:
   contents: read
 jobs:
   reuse:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5   # v4
         with:
           persist-credentials: false
-      - uses: fsfe/reuse-action@676e2d560c9a403aa252096d99fcab3e1132b0f5 # v6.0.0
+      - uses: fsfe/reuse-action@676e2d560c9a403aa252096d99fcab3e1132b0f5  # v6.0.0

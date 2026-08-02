@@ -71,15 +71,6 @@ jobs:
           unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy ALL_PROXY all_proxy
           cargo test --locked -p polytope-server-integration-tests
 
-  reuse:
-    name: REUSE compliance
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          persist-credentials: false
-      - uses: fsfe/reuse-action@676e2d560c9a403aa252096d99fcab3e1132b0f5 # v6.0.0
-
   skaffold-validate:
     name: Validate Skaffold config
     runs-on: ubuntu-latest
@@ -134,7 +125,7 @@ jobs:
   # Depends on all gating jobs passing.
   image-build:
     name: Build image / ${{ matrix.artifact }}
-    needs: [fmt, test, reuse, skaffold-validate, version-changed]
+    needs: [fmt, test, skaffold-validate, version-changed]
     if: needs.version-changed.outputs.changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -185,7 +176,7 @@ jobs:
   # Requires all gating jobs to pass first.
   publish:
     name: Publish ${{ matrix.artifact }}
-    needs: [fmt, test, reuse, skaffold-validate]
+    needs: [fmt, test, skaffold-validate]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -228,6 +219,16 @@ jobs:
           ECCR_PASSWORD: ${{ secrets.ECCR_PASSWORD }}
           ECCR_USERNAME: ${{ secrets.ECCR_USERNAME }}
         run: printf '%s' "$ECCR_PASSWORD" | docker login eccr.ecmwf.int --username "$ECCR_USERNAME" --password-stdin
+
+      - name: Refuse to overwrite an existing image
+        env:
+          IMAGE: eccr.ecmwf.int/polytope/${{ matrix.artifact }}
+          VERSION: ${{ steps.version.outputs.tag }}
+        run: |
+          if docker manifest inspect "${IMAGE}:${VERSION}" >/dev/null 2>&1; then
+            echo "${IMAGE}:${VERSION} already exists — publish tags are immutable" >&2
+            exit 1
+          fi
 
       - name: Install Skaffold
         run: |
