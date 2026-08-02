@@ -80,57 +80,56 @@ jobs:
       - name: Validate Skaffold configuration
         run: skaffold diagnose --yaml-only --filename skaffold.yaml >/dev/null
 
-  # Builds images (no push) on PRs where a TAG file or Dockerfile changed.
-  # All images build sequentially on one runner so the cargo-chef cacher layer
-  # (dep compilation — the expensive part) is shared via the local Docker cache.
+  # Builds images (no push) on PRs. Skips any image whose tag already exists
+  # in ECCR — if the tag is there it was already built and published successfully.
   image-build:
-    name: Build changed images
+    name: Build / ${{ matrix.image }}
     needs: [fmt, test, skaffold-validate]
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - image: eccr.ecmwf.int/polytope/frontend
+            tag_file: frontend/TAG
+          - image: eccr.ecmwf.int/polytope/polytope-fe-worker
+            tag_file: workers/polytope-fe-worker/TAG
+          - image: eccr.ecmwf.int/polytope/fdb-worker
+            tag_file: workers/fdb-worker/TAG
+          - image: eccr.ecmwf.int/polytope/mars-worker
+            tag_file: workers/mars-worker/TAG
+          - image: eccr.ecmwf.int/polytope/test-worker
+            tag_file: workers/test-worker/TAG
+          - image: eccr.ecmwf.int/polytope/polytope-loadgen
+            tag_file: loadgen/TAG
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
-          fetch-depth: 0
 
-      - name: Detect changed images
-        id: changes
+      - name: Log in to ECCR
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          ECCR_PASSWORD: ${{ secrets.ECCR_PASSWORD }}
+          ECCR_USERNAME: ${{ secrets.ECCR_USERNAME }}
+        run: printf '%s' "$ECCR_PASSWORD" | docker login eccr.ecmwf.int --username "$ECCR_USERNAME" --password-stdin
+
+      - name: Check if image tag already exists
+        id: check
         run: |
-          changed=$(git diff --name-only "${BASE_SHA}" HEAD)
-          echo "Changed files:"
-          echo "$changed"
-
-          declare -A IMAGES=(
-            ["frontend"]="eccr.ecmwf.int/polytope/frontend"
-            ["workers/polytope-fe-worker"]="eccr.ecmwf.int/polytope/polytope-fe-worker"
-            ["workers/fdb-worker"]="eccr.ecmwf.int/polytope/fdb-worker"
-            ["workers/mars-worker"]="eccr.ecmwf.int/polytope/mars-worker"
-            ["workers/test-worker"]="eccr.ecmwf.int/polytope/test-worker"
-            ["loadgen"]="eccr.ecmwf.int/polytope/polytope-loadgen"
-          )
-
-          > /tmp/images-to-build.txt
-          for dir in "${!IMAGES[@]}"; do
-            if echo "$changed" | grep -qE "^${dir}/(TAG|Dockerfile)$"; then
-              echo "${IMAGES[$dir]}" >> /tmp/images-to-build.txt
-            fi
-          done
-
-          if [[ ! -s /tmp/images-to-build.txt ]]; then
-            echo "No image-related files changed; skipping build."
+          tag=$(cat "${{ matrix.tag_file }}")
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          if docker manifest inspect "${{ matrix.image }}:${tag}" >/dev/null 2>&1; then
+            echo "${{ matrix.image }}:${tag} already published; skipping build."
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
-            echo "Images to build:"
-            cat /tmp/images-to-build.txt
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Prepare repository token
-        if: steps.changes.outputs.skip == 'false'
+        if: steps.check.outputs.skip == 'false'
         env:
           RAW_GH_TOKEN: ${{ secrets.GH_REPO_READ_TOKEN }}
         run: |
@@ -138,89 +137,69 @@ jobs:
           echo "::add-mask::$token"
           echo "GH_TOKEN=$token" >> "$GITHUB_ENV"
 
-      - name: Log in to ECCR
-        if: steps.changes.outputs.skip == 'false'
-        env:
-          ECCR_PASSWORD: ${{ secrets.ECCR_PASSWORD }}
-          ECCR_USERNAME: ${{ secrets.ECCR_USERNAME }}
-        run: printf '%s' "$ECCR_PASSWORD" | docker login eccr.ecmwf.int --username "$ECCR_USERNAME" --password-stdin
-
       - name: Install Skaffold
-        if: steps.changes.outputs.skip == 'false'
+        if: steps.check.outputs.skip == 'false'
         run: |
           curl -fsSL "https://storage.googleapis.com/skaffold/releases/${SKAFFOLD_VERSION}/skaffold-linux-amd64" -o skaffold
           echo "${SKAFFOLD_SHA256}  skaffold" | sha256sum --check -
           sudo install skaffold /usr/local/bin/skaffold
 
-      # Sequential: each image reuses the cacher layer from the previous build.
-      - name: Build changed images (no push)
-        if: steps.changes.outputs.skip == 'false'
+      - name: Build ${{ matrix.image }} (no push)
+        if: steps.check.outputs.skip == 'false'
         env:
-          FIXED_TAG: ci-${{ github.sha }}
-        run: |
-          while IFS= read -r image; do
-            echo "::group::Building ${image}"
-            skaffold build --push=false --filename skaffold.yaml --build-image "${image}"
-            echo "::endgroup::"
-          done < /tmp/images-to-build.txt
+          FIXED_TAG: ${{ steps.check.outputs.tag }}
+        run: skaffold build --push=false --filename skaffold.yaml --build-image "${{ matrix.image }}"
 
-  # Publishes images to ECCR on push to main, for any image whose TAG file changed.
-  # Sequential builds share the cargo-chef cacher layer via local Docker cache.
-  # Each image is tagged with the version in its own TAG file.
+  # Publishes images to ECCR on push to main. Skips any image whose tag already
+  # exists — idempotent, safe to re-run.
   publish:
-    name: Publish changed images
+    name: Publish / ${{ matrix.image }}
     needs: [fmt, test, skaffold-validate]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - image: eccr.ecmwf.int/polytope/frontend
+            tag_file: frontend/TAG
+          - image: eccr.ecmwf.int/polytope/polytope-fe-worker
+            tag_file: workers/polytope-fe-worker/TAG
+          - image: eccr.ecmwf.int/polytope/fdb-worker
+            tag_file: workers/fdb-worker/TAG
+          - image: eccr.ecmwf.int/polytope/mars-worker
+            tag_file: workers/mars-worker/TAG
+          - image: eccr.ecmwf.int/polytope/test-worker
+            tag_file: workers/test-worker/TAG
+          - image: eccr.ecmwf.int/polytope/polytope-loadgen
+            tag_file: loadgen/TAG
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
-          fetch-depth: 0
 
-      - name: Detect changed image TAGs
-        id: changes
+      - name: Log in to ECCR
         env:
-          BEFORE_SHA: ${{ github.event.before }}
+          ECCR_PASSWORD: ${{ secrets.ECCR_PASSWORD }}
+          ECCR_USERNAME: ${{ secrets.ECCR_USERNAME }}
+        run: printf '%s' "$ECCR_PASSWORD" | docker login eccr.ecmwf.int --username "$ECCR_USERNAME" --password-stdin
+
+      - name: Check if image tag already exists
+        id: check
         run: |
-          if [[ "$BEFORE_SHA" == "0000000000000000000000000000000000000000" ]]; then
-            echo "Initial push to branch; treating all TAG files as changed."
-            BUILD_ALL=true
-          else
-            BUILD_ALL=false
-          fi
-
-          declare -A IMAGES=(
-            ["frontend"]="eccr.ecmwf.int/polytope/frontend"
-            ["workers/polytope-fe-worker"]="eccr.ecmwf.int/polytope/polytope-fe-worker"
-            ["workers/fdb-worker"]="eccr.ecmwf.int/polytope/fdb-worker"
-            ["workers/mars-worker"]="eccr.ecmwf.int/polytope/mars-worker"
-            ["workers/test-worker"]="eccr.ecmwf.int/polytope/test-worker"
-            ["loadgen"]="eccr.ecmwf.int/polytope/polytope-loadgen"
-          )
-
-          changed=$(git diff --name-only "${BEFORE_SHA}" HEAD 2>/dev/null || echo "")
-
-          > /tmp/images-to-publish.txt
-          for dir in "${!IMAGES[@]}"; do
-            if [[ "$BUILD_ALL" == "true" ]] || echo "$changed" | grep -qE "^${dir}/TAG$"; then
-              # Format: image=tag_dir so the build loop can read the TAG file
-              echo "${IMAGES[$dir]}=${dir}" >> /tmp/images-to-publish.txt
-            fi
-          done
-
-          if [[ ! -s /tmp/images-to-publish.txt ]]; then
-            echo "No TAG files changed; nothing to publish."
+          tag=$(cat "${{ matrix.tag_file }}")
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          if docker manifest inspect "${{ matrix.image }}:${tag}" >/dev/null 2>&1; then
+            echo "${{ matrix.image }}:${tag} already published; skipping."
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
-            echo "Images to publish:"
-            cat /tmp/images-to-publish.txt
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Prepare repository token
-        if: steps.changes.outputs.skip == 'false'
+        if: steps.check.outputs.skip == 'false'
         env:
           RAW_GH_TOKEN: ${{ secrets.GH_REPO_READ_TOKEN }}
         run: |
@@ -228,38 +207,21 @@ jobs:
           echo "::add-mask::$token"
           echo "GH_TOKEN=$token" >> "$GITHUB_ENV"
 
-      - name: Log in to ECCR
-        if: steps.changes.outputs.skip == 'false'
-        env:
-          ECCR_PASSWORD: ${{ secrets.ECCR_PASSWORD }}
-          ECCR_USERNAME: ${{ secrets.ECCR_USERNAME }}
-        run: printf '%s' "$ECCR_PASSWORD" | docker login eccr.ecmwf.int --username "$ECCR_USERNAME" --password-stdin
-
       - name: Install Skaffold
-        if: steps.changes.outputs.skip == 'false'
+        if: steps.check.outputs.skip == 'false'
         run: |
           curl -fsSL "https://storage.googleapis.com/skaffold/releases/${SKAFFOLD_VERSION}/skaffold-linux-amd64" -o skaffold
           echo "${SKAFFOLD_SHA256}  skaffold" | sha256sum --check -
           sudo install skaffold /usr/local/bin/skaffold
 
-      # Sequential: each image reuses the cacher layer from the previous build.
-      # Immutability guard: refuses to overwrite an existing tag in ECCR.
-      - name: Build and publish changed images
-        if: steps.changes.outputs.skip == 'false'
-        run: |
-          while IFS='=' read -r image tag_dir; do
-            tag=$(cat "${tag_dir}/TAG")
-            echo "::group::Publishing ${image}:${tag}"
-            if docker manifest inspect "${image}:${tag}" >/dev/null 2>&1; then
-              echo "${image}:${tag} already exists — publish tags are immutable" >&2
-              exit 1
-            fi
-            FIXED_TAG="${tag}" skaffold build --push=true --filename skaffold.yaml --build-image "${image}"
-            echo "::endgroup::"
-          done < /tmp/images-to-publish.txt
+      - name: Build and publish ${{ matrix.image }}
+        if: steps.check.outputs.skip == 'false'
+        env:
+          FIXED_TAG: ${{ steps.check.outputs.tag }}
+        run: skaffold build --push=true --filename skaffold.yaml --build-image "${{ matrix.image }}"
 
-  # Creates a GitHub release (and git tag) when the VERSION file changes.
-  # Only runs after publish succeeds to ensure images are available first.
+  # Creates a GitHub release when the VERSION file changes on main.
+  # Runs after publish so images are available before the release is announced.
   create-release:
     name: Create release
     needs: [publish]
