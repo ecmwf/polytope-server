@@ -5,16 +5,20 @@
 name: CI
 
 on:
-  push:
-    branches:
-      - "**"
   pull_request:
+  push:
+    branches: [main]
 
 permissions:
   contents: read
 
+env:
+  SKAFFOLD_SHA256: 8f62095ba8c282c03ad7b4987fbaf4f29b289fd6cbafb0351effd49f73f0240d
+  SKAFFOLD_VERSION: v2.18.0
+
 jobs:
   fmt:
+    name: Format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -29,6 +33,7 @@ jobs:
         run: cargo fmt --all -- --check
 
   test:
+    name: Test
     runs-on: ubuntu-latest
     env:
       CARGO_NET_GIT_FETCH_WITH_CLI: "true"
@@ -66,23 +71,17 @@ jobs:
           unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy ALL_PROXY all_proxy
           cargo test --locked -p polytope-server-integration-tests
 
-  repository-access:
+  reuse:
+    name: REUSE compliance
     runs-on: ubuntu-latest
     steps:
-      - name: Validate private dependency access
-        env:
-          RAW_GH_TOKEN: ${{ secrets.GH_REPO_READ_TOKEN }}
-        run: |
-          token="$(printf '%s' "$RAW_GH_TOKEN" | tr -d '[:space:]')"
-          if [ -z "$token" ]; then
-            echo "GH_REPO_READ_TOKEN is not configured" >&2
-            exit 1
-          fi
-          echo "::add-mask::$token"
-          git config --global url."https://x-access-token:${token}@github.com/".insteadOf "https://github.com/"
-          git ls-remote https://github.com/ecmwf/bits-broker.git HEAD >/dev/null
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: fsfe/reuse-action@676e2d560c9a403aa252096d99fcab3e1132b0f5 # v6.0.0
 
   skaffold-validate:
+    name: Validate Skaffold config
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: dummy
@@ -92,9 +91,6 @@ jobs:
           persist-credentials: false
 
       - name: Install Skaffold
-        env:
-          SKAFFOLD_SHA256: 8f62095ba8c282c03ad7b4987fbaf4f29b289fd6cbafb0351effd49f73f0240d
-          SKAFFOLD_VERSION: v2.18.0
         run: |
           curl -fsSL "https://storage.googleapis.com/skaffold/releases/${SKAFFOLD_VERSION}/skaffold-linux-amd64" -o skaffold
           echo "${SKAFFOLD_SHA256}  skaffold" | sha256sum --check -
@@ -103,9 +99,43 @@ jobs:
       - name: Validate Skaffold configuration
         run: skaffold diagnose --yaml-only --filename skaffold.yaml >/dev/null
 
+  # Detects whether the Cargo.toml workspace version changed relative to the
+  # PR base branch. Only runs on PRs; gates the image-build job.
+  # See PROGRESS-ci-triggers.md for open questions on this detection approach.
+  version-changed:
+    name: Version changed?
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.check.outputs.changed }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Compare version to base branch
+        id: check
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          head_ver=$(grep -m1 '^version' Cargo.toml | grep -oP '"\K[^"]+' || echo "")
+          base_ver=$(git show "${BASE_SHA}:Cargo.toml" 2>/dev/null \
+            | grep -m1 '^version' | grep -oP '"\K[^"]+' || echo "")
+          echo "head=$head_ver  base=$base_ver"
+          if [[ "$head_ver" != "$base_ver" && -n "$head_ver" ]]; then
+            echo "changed=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Builds all images (no push) on PRs where the workspace version was bumped.
+  # Validates that images still build cleanly before merge.
+  # Depends on all gating jobs passing.
   image-build:
-    needs: [repository-access, skaffold-validate]
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    name: Build image / ${{ matrix.artifact }}
+    needs: [fmt, test, reuse, skaffold-validate, version-changed]
+    if: needs.version-changed.outputs.changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     strategy:
@@ -119,8 +149,6 @@ jobs:
           - mars-worker
           - test-worker
           - polytope-loadgen
-    env:
-      FIXED_TAG: ci-${{ github.sha }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -134,7 +162,7 @@ jobs:
           echo "::add-mask::$token"
           echo "GH_TOKEN=$token" >> "$GITHUB_ENV"
 
-      # App images pull the pre-built C++ library base images from ECCR.
+      # App images pull pre-built C++ library base images from ECCR.
       - name: Log in to ECCR
         env:
           ECCR_PASSWORD: ${{ secrets.ECCR_PASSWORD }}
@@ -142,13 +170,72 @@ jobs:
         run: printf '%s' "$ECCR_PASSWORD" | docker login eccr.ecmwf.int --username "$ECCR_USERNAME" --password-stdin
 
       - name: Install Skaffold
-        env:
-          SKAFFOLD_SHA256: 8f62095ba8c282c03ad7b4987fbaf4f29b289fd6cbafb0351effd49f73f0240d
-          SKAFFOLD_VERSION: v2.18.0
         run: |
           curl -fsSL "https://storage.googleapis.com/skaffold/releases/${SKAFFOLD_VERSION}/skaffold-linux-amd64" -o skaffold
           echo "${SKAFFOLD_SHA256}  skaffold" | sha256sum --check -
           sudo install skaffold /usr/local/bin/skaffold
 
-      - name: Build ${{ matrix.artifact }} without pushing
+      - name: Build ${{ matrix.artifact }} (no push)
+        env:
+          FIXED_TAG: ci-${{ github.sha }}
         run: skaffold build --push=false --filename skaffold.yaml --build-image "${{ matrix.artifact }}"
+
+  # Publishes all images to ECCR on every push to main.
+  # Tag is taken from the workspace version in Cargo.toml.
+  # Requires all gating jobs to pass first.
+  publish:
+    name: Publish ${{ matrix.artifact }}
+    needs: [fmt, test, reuse, skaffold-validate]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        artifact:
+          - polytope-server
+          - polytope-fe-worker
+          - fdb-worker
+          - mars-worker
+          - test-worker
+          - polytope-loadgen
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Prepare repository token
+        env:
+          RAW_GH_TOKEN: ${{ secrets.GH_REPO_READ_TOKEN }}
+        run: |
+          token="$(printf '%s' "$RAW_GH_TOKEN" | tr -d '[:space:]')"
+          echo "::add-mask::$token"
+          echo "GH_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Determine version tag
+        id: version
+        run: |
+          ver=$(grep -m1 '^version' Cargo.toml | grep -oP '"\K[^"]+' || echo "")
+          if [[ -z "$ver" ]]; then
+            echo "Could not parse workspace version from Cargo.toml" >&2
+            exit 1
+          fi
+          echo "tag=$ver" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to ECCR
+        env:
+          ECCR_PASSWORD: ${{ secrets.ECCR_PASSWORD }}
+          ECCR_USERNAME: ${{ secrets.ECCR_USERNAME }}
+        run: printf '%s' "$ECCR_PASSWORD" | docker login eccr.ecmwf.int --username "$ECCR_USERNAME" --password-stdin
+
+      - name: Install Skaffold
+        run: |
+          curl -fsSL "https://storage.googleapis.com/skaffold/releases/${SKAFFOLD_VERSION}/skaffold-linux-amd64" -o skaffold
+          echo "${SKAFFOLD_SHA256}  skaffold" | sha256sum --check -
+          sudo install skaffold /usr/local/bin/skaffold
+
+      - name: Build and publish ${{ matrix.artifact }}
+        env:
+          FIXED_TAG: ${{ steps.version.outputs.tag }}
+        run: skaffold build --push=true --filename skaffold.yaml --build-image "${{ matrix.artifact }}"
