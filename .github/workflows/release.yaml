@@ -26,8 +26,8 @@ jobs:
       max-parallel: 2
       matrix:
         include:
-          - artifact: polytope-server
-            image: eccr.ecmwf.int/polytope/polytope-server
+          - artifact: frontend
+            image: eccr.ecmwf.int/polytope/frontend
           - artifact: polytope-fe-worker
             image: eccr.ecmwf.int/polytope/polytope-fe-worker
           - artifact: fdb-worker
