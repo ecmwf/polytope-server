@@ -24,11 +24,9 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
-
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           components: rustfmt
-
       - name: Check formatting
         run: cargo fmt --all -- --check
 
@@ -41,11 +39,8 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
-
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
-
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
-
       - name: Configure private repo access
         env:
           RAW_GH_TOKEN: ${{ secrets.GH_REPO_READ_TOKEN }}
@@ -53,17 +48,14 @@ jobs:
           token="$(printf '%s' "$RAW_GH_TOKEN" | tr -d '[:space:]')"
           echo "::add-mask::$token"
           git config --global url."https://x-access-token:${token}@github.com/".insteadOf "https://github.com/"
-
       - name: Strip local path patches
         run: sed -i '/^\[patch\./,$d' Cargo.toml
-
       - name: Frontend unit tests
         env:
           NO_PROXY: "127.0.0.1,localhost"
         run: |
           unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy ALL_PROXY all_proxy
           cargo test --locked -p polytope-server
-
       - name: Integration tests
         env:
           NO_PROXY: "127.0.0.1,localhost"
@@ -80,72 +72,65 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
-
       - name: Install Skaffold
         run: |
           curl -fsSL "https://storage.googleapis.com/skaffold/releases/${SKAFFOLD_VERSION}/skaffold-linux-amd64" -o skaffold
           echo "${SKAFFOLD_SHA256}  skaffold" | sha256sum --check -
           sudo install skaffold /usr/local/bin/skaffold
-
       - name: Validate Skaffold configuration
         run: skaffold diagnose --yaml-only --filename skaffold.yaml >/dev/null
 
-  # Detects whether the Cargo.toml workspace version changed relative to the
-  # PR base branch. Only runs on PRs; gates the image-build job.
-  # See PROGRESS-ci-triggers.md for open questions on this detection approach.
-  version-changed:
-    name: Version changed?
+  # Builds images (no push) on PRs where a TAG file or Dockerfile changed.
+  # All images build sequentially on one runner so the cargo-chef cacher layer
+  # (dep compilation — the expensive part) is shared via the local Docker cache.
+  image-build:
+    name: Build changed images
+    needs: [fmt, test, skaffold-validate]
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    outputs:
-      changed: ${{ steps.check.outputs.changed }}
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
           fetch-depth: 0
 
-      - name: Compare version to base branch
-        id: check
+      - name: Detect changed images
+        id: changes
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          head_ver=$(grep -m1 '^version' Cargo.toml | grep -oP '"\K[^"]+' || echo "")
-          base_ver=$(git show "${BASE_SHA}:Cargo.toml" 2>/dev/null \
-            | grep -m1 '^version' | grep -oP '"\K[^"]+' || echo "")
-          echo "head=$head_ver  base=$base_ver"
-          if [[ "$head_ver" != "$base_ver" && -n "$head_ver" ]]; then
-            echo "changed=true"  >> "$GITHUB_OUTPUT"
+          changed=$(git diff --name-only "${BASE_SHA}" HEAD)
+          echo "Changed files:"
+          echo "$changed"
+
+          declare -A IMAGES=(
+            ["frontend"]="eccr.ecmwf.int/polytope/frontend"
+            ["workers/polytope-fe-worker"]="eccr.ecmwf.int/polytope/polytope-fe-worker"
+            ["workers/fdb-worker"]="eccr.ecmwf.int/polytope/fdb-worker"
+            ["workers/mars-worker"]="eccr.ecmwf.int/polytope/mars-worker"
+            ["workers/test-worker"]="eccr.ecmwf.int/polytope/test-worker"
+            ["loadgen"]="eccr.ecmwf.int/polytope/polytope-loadgen"
+          )
+
+          > /tmp/images-to-build.txt
+          for dir in "${!IMAGES[@]}"; do
+            if echo "$changed" | grep -qE "^${dir}/(TAG|Dockerfile)$"; then
+              echo "${IMAGES[$dir]}" >> /tmp/images-to-build.txt
+            fi
+          done
+
+          if [[ ! -s /tmp/images-to-build.txt ]]; then
+            echo "No image-related files changed; skipping build."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
           else
-            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Images to build:"
+            cat /tmp/images-to-build.txt
+            echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
-  # Builds all images (no push) on PRs where the workspace version was bumped.
-  # Validates that images still build cleanly before merge.
-  # Depends on all gating jobs passing.
-  image-build:
-    name: Build image / ${{ matrix.artifact }}
-    needs: [fmt, test, skaffold-validate, version-changed]
-    if: needs.version-changed.outputs.changed == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    strategy:
-      fail-fast: false
-      max-parallel: 2
-      matrix:
-        artifact:
-          - polytope-server
-          - polytope-fe-worker
-          - fdb-worker
-          - mars-worker
-          - test-worker
-          - polytope-loadgen
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          persist-credentials: false
-
       - name: Prepare repository token
+        if: steps.changes.outputs.skip == 'false'
         env:
           RAW_GH_TOKEN: ${{ secrets.GH_REPO_READ_TOKEN }}
         run: |
@@ -153,50 +138,89 @@ jobs:
           echo "::add-mask::$token"
           echo "GH_TOKEN=$token" >> "$GITHUB_ENV"
 
-      # App images pull pre-built C++ library base images from ECCR.
       - name: Log in to ECCR
+        if: steps.changes.outputs.skip == 'false'
         env:
           ECCR_PASSWORD: ${{ secrets.ECCR_PASSWORD }}
           ECCR_USERNAME: ${{ secrets.ECCR_USERNAME }}
         run: printf '%s' "$ECCR_PASSWORD" | docker login eccr.ecmwf.int --username "$ECCR_USERNAME" --password-stdin
 
       - name: Install Skaffold
+        if: steps.changes.outputs.skip == 'false'
         run: |
           curl -fsSL "https://storage.googleapis.com/skaffold/releases/${SKAFFOLD_VERSION}/skaffold-linux-amd64" -o skaffold
           echo "${SKAFFOLD_SHA256}  skaffold" | sha256sum --check -
           sudo install skaffold /usr/local/bin/skaffold
 
-      - name: Build ${{ matrix.artifact }} (no push)
+      # Sequential: each image reuses the cacher layer from the previous build.
+      - name: Build changed images (no push)
+        if: steps.changes.outputs.skip == 'false'
         env:
           FIXED_TAG: ci-${{ github.sha }}
-        run: skaffold build --push=false --filename skaffold.yaml --build-image "${{ matrix.artifact }}"
+        run: |
+          while IFS= read -r image; do
+            echo "::group::Building ${image}"
+            skaffold build --push=false --filename skaffold.yaml --build-image "${image}"
+            echo "::endgroup::"
+          done < /tmp/images-to-build.txt
 
-  # Publishes all images to ECCR on every push to main.
-  # Tag is taken from the workspace version in Cargo.toml.
-  # Requires all gating jobs to pass first.
+  # Publishes images to ECCR on push to main, for any image whose TAG file changed.
+  # Sequential builds share the cargo-chef cacher layer via local Docker cache.
+  # Each image is tagged with the version in its own TAG file.
   publish:
-    name: Publish ${{ matrix.artifact }}
+    name: Publish changed images
     needs: [fmt, test, skaffold-validate]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    strategy:
-      fail-fast: false
-      max-parallel: 2
-      matrix:
-        artifact:
-          - polytope-server
-          - polytope-fe-worker
-          - fdb-worker
-          - mars-worker
-          - test-worker
-          - polytope-loadgen
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           persist-credentials: false
+          fetch-depth: 0
+
+      - name: Detect changed image TAGs
+        id: changes
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          if [[ "$BEFORE_SHA" == "0000000000000000000000000000000000000000" ]]; then
+            echo "Initial push to branch; treating all TAG files as changed."
+            BUILD_ALL=true
+          else
+            BUILD_ALL=false
+          fi
+
+          declare -A IMAGES=(
+            ["frontend"]="eccr.ecmwf.int/polytope/frontend"
+            ["workers/polytope-fe-worker"]="eccr.ecmwf.int/polytope/polytope-fe-worker"
+            ["workers/fdb-worker"]="eccr.ecmwf.int/polytope/fdb-worker"
+            ["workers/mars-worker"]="eccr.ecmwf.int/polytope/mars-worker"
+            ["workers/test-worker"]="eccr.ecmwf.int/polytope/test-worker"
+            ["loadgen"]="eccr.ecmwf.int/polytope/polytope-loadgen"
+          )
+
+          changed=$(git diff --name-only "${BEFORE_SHA}" HEAD 2>/dev/null || echo "")
+
+          > /tmp/images-to-publish.txt
+          for dir in "${!IMAGES[@]}"; do
+            if [[ "$BUILD_ALL" == "true" ]] || echo "$changed" | grep -qE "^${dir}/TAG$"; then
+              # Format: image=tag_dir so the build loop can read the TAG file
+              echo "${IMAGES[$dir]}=${dir}" >> /tmp/images-to-publish.txt
+            fi
+          done
+
+          if [[ ! -s /tmp/images-to-publish.txt ]]; then
+            echo "No TAG files changed; nothing to publish."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Images to publish:"
+            cat /tmp/images-to-publish.txt
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Prepare repository token
+        if: steps.changes.outputs.skip == 'false'
         env:
           RAW_GH_TOKEN: ${{ secrets.GH_REPO_READ_TOKEN }}
         run: |
@@ -204,39 +228,78 @@ jobs:
           echo "::add-mask::$token"
           echo "GH_TOKEN=$token" >> "$GITHUB_ENV"
 
-      - name: Determine version tag
-        id: version
-        run: |
-          ver=$(grep -m1 '^version' Cargo.toml | grep -oP '"\K[^"]+' || echo "")
-          if [[ -z "$ver" ]]; then
-            echo "Could not parse workspace version from Cargo.toml" >&2
-            exit 1
-          fi
-          echo "tag=$ver" >> "$GITHUB_OUTPUT"
-
       - name: Log in to ECCR
+        if: steps.changes.outputs.skip == 'false'
         env:
           ECCR_PASSWORD: ${{ secrets.ECCR_PASSWORD }}
           ECCR_USERNAME: ${{ secrets.ECCR_USERNAME }}
         run: printf '%s' "$ECCR_PASSWORD" | docker login eccr.ecmwf.int --username "$ECCR_USERNAME" --password-stdin
 
-      - name: Refuse to overwrite an existing image
-        env:
-          IMAGE: eccr.ecmwf.int/polytope/${{ matrix.artifact }}
-          VERSION: ${{ steps.version.outputs.tag }}
-        run: |
-          if docker manifest inspect "${IMAGE}:${VERSION}" >/dev/null 2>&1; then
-            echo "${IMAGE}:${VERSION} already exists — publish tags are immutable" >&2
-            exit 1
-          fi
-
       - name: Install Skaffold
+        if: steps.changes.outputs.skip == 'false'
         run: |
           curl -fsSL "https://storage.googleapis.com/skaffold/releases/${SKAFFOLD_VERSION}/skaffold-linux-amd64" -o skaffold
           echo "${SKAFFOLD_SHA256}  skaffold" | sha256sum --check -
           sudo install skaffold /usr/local/bin/skaffold
 
-      - name: Build and publish ${{ matrix.artifact }}
+      # Sequential: each image reuses the cacher layer from the previous build.
+      # Immutability guard: refuses to overwrite an existing tag in ECCR.
+      - name: Build and publish changed images
+        if: steps.changes.outputs.skip == 'false'
+        run: |
+          while IFS='=' read -r image tag_dir; do
+            tag=$(cat "${tag_dir}/TAG")
+            echo "::group::Publishing ${image}:${tag}"
+            if docker manifest inspect "${image}:${tag}" >/dev/null 2>&1; then
+              echo "${image}:${tag} already exists — publish tags are immutable" >&2
+              exit 1
+            fi
+            FIXED_TAG="${tag}" skaffold build --push=true --filename skaffold.yaml --build-image "${image}"
+            echo "::endgroup::"
+          done < /tmp/images-to-publish.txt
+
+  # Creates a GitHub release (and git tag) when the VERSION file changes.
+  # Only runs after publish succeeds to ensure images are available first.
+  create-release:
+    name: Create release
+    needs: [publish]
+    if: github.event_name == 'push' && needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Check whether VERSION changed
+        id: version
         env:
-          FIXED_TAG: ${{ steps.version.outputs.tag }}
-        run: skaffold build --push=true --filename skaffold.yaml --build-image "${{ matrix.artifact }}"
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          current=$(cat VERSION 2>/dev/null || echo "")
+          if [[ "$BEFORE_SHA" == "0000000000000000000000000000000000000000" ]]; then
+            previous=""
+          else
+            previous=$(git show "${BEFORE_SHA}:VERSION" 2>/dev/null || echo "")
+          fi
+          echo "current=$current  previous=$previous"
+          if [[ -z "$current" || "$current" == "$previous" ]]; then
+            echo "VERSION unchanged; skipping release."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "tag=v${current}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub release
+        if: steps.version.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          gh release create "${RELEASE_TAG}" \
+            --title "${RELEASE_TAG}" \
+            --target "${{ github.sha }}" \
+            --generate-notes
