@@ -60,7 +60,7 @@ build:
         target: libs
         buildArgs:
           VERSION: '{{ default "latest" .FIXED_TAG }}'
-          GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+          GIT_AUTH_TOKEN: '{{ default "" .GH_TOKEN }}'
           rpm_repo: '{{ default "" .RPM_REPO }}'
 
     # ─── Debug companions ──────────────────────────────────────────────────
@@ -99,7 +99,7 @@ build:
         target: libs-debug
         buildArgs:
           VERSION: '{{ default "latest" .FIXED_TAG }}'
-          GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+          GIT_AUTH_TOKEN: '{{ default "" .GH_TOKEN }}'
           rpm_repo: '{{ default "" .RPM_REPO }}'
 
   tagPolicy:

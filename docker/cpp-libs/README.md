@@ -93,8 +93,9 @@ directory (separate from the app config at the repo root, so app builds never
 rebuild the libraries).
 
 The workflow [`.github/workflows/cpp-libs.yaml`](../../.github/workflows/cpp-libs.yaml)
-runs skaffold to build and push. **Its automatic (CI) triggers are currently
-disabled** — it only runs on manual dispatch:
+runs skaffold to build and push. PRs touching `docker/cpp-libs/` only run a
+Dockerfile lint (`docker buildx build --check`) — the images are never built in
+PR CI (hours of C++ compilation). **Publishing is manual dispatch only**:
 
 ```bash
 gh workflow run cpp-libs.yaml -f image=all      # or: metkit | fdb | fdb-gribjump | mars

@@ -13,15 +13,15 @@
 
 name: C++ library images
 
-# Triggers are disabled for now: this workflow does NOT run in CI (no push or
-# pull_request trigger). Publish the library images by running it manually:
+# PRs touching docker/cpp-libs/ run the lint job only (Dockerfile validation,
+# no build — the C++ stacks take too long for PR CI). Publishing is always
+# manual:
 #   gh workflow run cpp-libs.yaml -f image=all
-# To re-enable PR validation later, uncomment the pull_request block below.
 on:
-  # pull_request:
-  #   paths:
-  #     - "docker/cpp-libs/**"
-  #     - ".github/workflows/cpp-libs.yaml"
+  pull_request:
+    paths:
+      - "docker/cpp-libs/**"
+      - ".github/workflows/cpp-libs.yaml"
   workflow_dispatch:
     inputs:
       image:
@@ -39,6 +39,8 @@ permissions:
   contents: read
 
 jobs:
+  # Static Dockerfile validation only — building the images is deliberately not
+  # part of PR CI (hours of C++ compilation).
   lint:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest

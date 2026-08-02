@@ -82,10 +82,11 @@ jobs:
 
   # Builds images (no push) on PRs. Skips any image whose tag already exists
   # in ECCR — if the tag is there it was already built and published successfully.
+  # Fork PRs are skipped: they have no access to the ECCR/GH secrets this job needs.
   image-build:
     name: Build / ${{ matrix.image }}
     needs: [fmt, test, skaffold-validate]
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork
     runs-on: ubuntu-latest
     timeout-minutes: 120
     strategy:

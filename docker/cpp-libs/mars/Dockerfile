@@ -1,3 +1,8 @@
+# check=skip=SecretsUsedInArgOrEnv
+# ^ GIT_AUTH_TOKEN arrives as a build arg because skaffold passes it via
+#   buildArgs (same pattern as the app Dockerfiles); it only exists in the
+#   discarded mars-build stage, never in a published image.
+
 # SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
 #
 # SPDX-License-Identifier: Apache-2.0
@@ -131,11 +136,14 @@ FROM mars-libs-${MARS_BUILD_FROM_SOURCE} AS mars-libs
 # Strip debug symbols (binutils is only needed in this throwaway stage)
 ###############################
 FROM docker.io/library/debian:bookworm-slim AS strip-libs
-RUN apt-get update && apt-get install -y --no-install-recommends binutils && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends binutils file && rm -rf /var/lib/apt/lists/*
 COPY --from=mars-libs /opt/mars-client /opt/mars-client
-RUN find /opt/mars-client -type f -name '*.so*' -exec strip --strip-unneeded {} + 2>/dev/null || true; \
-    find /opt/mars-client -type f -name '*.a'  -exec strip --strip-debug   {} + 2>/dev/null || true; \
-    find /opt/mars-client/bin -type f          -exec strip --strip-all     {} + 2>/dev/null || true
+# Strip failures are real errors; only a missing bin/ or non-ELF files there
+# (e.g. the mars wrapper scripts) are tolerated.
+RUN find /opt/mars-client -type f -name '*.so*' -exec strip --strip-unneeded {} + \
+    && find /opt/mars-client -type f -name '*.a' -exec strip --strip-debug {} + \
+    && { [ ! -d /opt/mars-client/bin ] || find /opt/mars-client/bin -type f -exec file {} + \
+         | awk -F': ' '/ELF/{print $1}' | xargs -r strip --strip-all; }
 
 ###############################
 # Debug image: unstripped prefix (full symbols). Built by the `libs-debug`

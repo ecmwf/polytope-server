@@ -5,7 +5,7 @@
 # FDB + gribjump library stack (eckit, libaec, eccodes, metkit, fdb, gribjump)
 # for the polytope-fe-worker.
 # Published as eccr.ecmwf.int/polytope/cpp-fdb-gribjump-libs:<tag> by the
-# cpp-libs workflow; consumed via `FROM ${FDB_LIBS_IMAGE}`.
+# cpp-libs workflow; consumed via `FROM ${GJ_LIBS_IMAGE}`.
 
 ###############################
 # FDB Build (from source)
@@ -58,11 +58,13 @@ RUN git clone --depth 1 --branch ${gribjump_version} https://github.com/ecmwf/gr
 # Strip debug symbols (binutils is only needed in this throwaway stage)
 ###############################
 FROM docker.io/library/debian:bookworm-slim AS strip-libs
-RUN apt-get update && apt-get install -y --no-install-recommends binutils && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends binutils file && rm -rf /var/lib/apt/lists/*
 COPY --from=fdb-build /opt/fdb /opt/fdb
-RUN find /opt/fdb -type f -name '*.so*' -exec strip --strip-unneeded {} + 2>/dev/null || true; \
-    find /opt/fdb -type f -name '*.a'  -exec strip --strip-debug   {} + 2>/dev/null || true; \
-    find /opt/fdb/bin -type f          -exec strip --strip-all     {} + 2>/dev/null || true
+# Strip failures are real errors; only a missing bin/ or non-ELF files there are tolerated.
+RUN find /opt/fdb -type f -name '*.so*' -exec strip --strip-unneeded {} + \
+    && find /opt/fdb -type f -name '*.a' -exec strip --strip-debug {} + \
+    && { [ ! -d /opt/fdb/bin ] || find /opt/fdb/bin -type f -exec file {} + \
+         | awk -F': ' '/ELF/{print $1}' | xargs -r strip --strip-all; }
 
 ###############################
 # Debug image: unstripped prefix (full symbols, ~3x larger). Built by the
