@@ -117,7 +117,9 @@ fn compose_message(
         }
         (None, true) => msg.push_str(" contact Polytope support."),
     }
-    msg.push_str(" Please also include the original request, client logs and script/notebook if possible.");
+    msg.push_str(
+        " Please also include the original request, client logs and script/notebook if possible.",
+    );
     msg
 }
 
@@ -258,7 +260,8 @@ mod tests {
         );
         assert!(m.starts_with("Your request could not be processed: unknown collection 'x'."));
         assert!(m.contains(ECMWF));
-        assert!(m.ends_with(&format!("quote your request ID {RID}.")));
+        assert!(m.contains(&format!("quote your request ID {RID}.")));
+        assert!(m.ends_with("script/notebook if possible."));
     }
 
     #[test]
