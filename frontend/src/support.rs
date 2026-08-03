@@ -117,6 +117,7 @@ fn compose_message(
         }
         (None, true) => msg.push_str(" contact Polytope support."),
     }
+    msg.push_str(" Please also include the original request, client logs and script/notebook if possible.");
     msg
 }
 
