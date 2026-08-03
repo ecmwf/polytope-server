@@ -7,8 +7,8 @@
 # (source-built bundle by default; RPM variant via MARS_BUILD_FROM_SOURCE=false
 # when publishing the library image).
 # The stripped image feeds `release`; the -debug (full-symbol) image feeds `debug`.
-ARG MARS_LIBS_IMAGE=eccr.ecmwf.int/polytope/cpp-mars-libs:7.1.9-r1
-ARG MARS_LIBS_DEBUG_IMAGE=eccr.ecmwf.int/polytope/cpp-mars-libs-debug:7.1.9-r1
+ARG MARS_LIBS_IMAGE=eccr.ecmwf.int/polytope/cpp-mars-libs:7.1.9-r2
+ARG MARS_LIBS_DEBUG_IMAGE=eccr.ecmwf.int/polytope/cpp-mars-libs-debug:7.1.9-r2
 
 ###############################
 # Shared base: Rust + cargo-chef + system deps (built once)
