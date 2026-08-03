@@ -15,8 +15,9 @@ This file tracks the phased work started on branch `agent/build-cache-versioning
 - [x] **1 — PR selection correctness:** dynamically select affected image(s),
   including conservative shared-dependency fan-out; do not skip a PR image build
   because a release image tag already exists.
-- [ ] **2 — Cold-build tooling:** replace in-Dockerfile `cargo install
-  cargo-chef` with a digest-pinned cargo-chef Rust base image.
+- [x] **2 — Cold-build tooling:** replaced in-Dockerfile `cargo install
+  cargo-chef` with the digest-pinned cargo-chef Rust base image
+  `0.1.77-rust-1.94.1-slim-bookworm`.
 - [ ] **3 — Secret safety:** replace GitHub-token build arguments and persistent
   Git configuration with BuildKit secrets.
 - [ ] **4 — Shared BuildKit cache:** add Skaffold read-only local and read/write

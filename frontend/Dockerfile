@@ -11,8 +11,7 @@ ARG METKIT_LIBS_DEBUG_IMAGE=eccr.ecmwf.int/polytope/cpp-metkit-libs-debug:metkit
 ###############################
 # Shared base: Rust + cargo-chef + system deps
 ###############################
-FROM docker.io/library/rust:1.94.1-slim-bookworm AS chef-base
-RUN cargo install cargo-chef --locked
+FROM docker.io/lukemathwalker/cargo-chef:0.1.77-rust-1.94.1-slim-bookworm@sha256:4787c365155bfff657a58c89e6ce05b99e60d343ee57fd4a0fdcbb2547a8e017 AS chef-base
 RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-dev && rm -rf /var/lib/apt/lists/*
 
 ###############################
