@@ -25,7 +25,8 @@ This file tracks the phased work started on branch `agent/build-cache-versioning
   is deferred for removal while BuildKit becomes the supported path.
 - [x] **4 — Shared BuildKit cache:** added the Skaffold `buildx-cache` profile.
   It imports the per-image ECCR cache by default and exports it only when
-  `BUILDKIT_CACHE_MODE=read-write`; PR CI uses that write mode. The ordinary
+  `BUILDKIT_CACHE_MODE=read-write`; PR CI is deliberately read-only while
+  trusted pushes to `main` and releases refresh the affected cache. The ordinary
   Docker driver was probed and cannot export registry caches, so the profile
   deliberately uses a custom Buildx wrapper.
 - [x] **5 — Release integration:** release builds use the same Skaffold Buildx

@@ -204,10 +204,11 @@ docker login eccr.ecmwf.int
 skaffold build -p buildx-cache -b eccr.ecmwf.int/polytope/frontend
 ```
 
-The profile is read-only by default. `BUILDKIT_CACHE_MODE=read-write` exports a
-new cache manifest and is reserved for trusted CI and release jobs; do not use
-it for ordinary local builds. Cache entries are per image and platform, for
-example `eccr.ecmwf.int/polytope/build-cache:frontend-linux-amd64-v1`.
+The profile is read-only by default. CI for pull requests also imports only;
+trusted pushes to `main` and release jobs set `BUILDKIT_CACHE_MODE=read-write`
+to refresh the affected cache. Do not enable write mode for ordinary local
+builds. Cache entries are per image and platform, for example
+`eccr.ecmwf.int/polytope/build-cache:frontend-linux-amd64-v1`.
 
 The legacy `kaniko` profile does not support the BuildKit secret mounts used by
 application Dockerfiles and should not be used for these images.
