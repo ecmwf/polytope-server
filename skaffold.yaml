@@ -29,8 +29,10 @@ build:
       docker:
         dockerfile: frontend/Dockerfile
         target: release
+        secrets:
+          - id: GIT_AUTH_TOKEN
+            env: GH_TOKEN
         buildArgs:
-          GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
           VERSION: '{{ default "" .VERSION }}'
           REVISION: '{{ default "" .REVISION }}'
 
@@ -39,8 +41,10 @@ build:
       docker:
         dockerfile: workers/polytope-fe-worker/Dockerfile
         target: release
+        secrets:
+          - id: GIT_AUTH_TOKEN
+            env: GH_TOKEN
         buildArgs:
-          GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
           VERSION: '{{ default "" .VERSION }}'
           REVISION: '{{ default "" .REVISION }}'
 
@@ -49,8 +53,10 @@ build:
       docker:
         dockerfile: workers/fdb-worker/Dockerfile
         target: release
+        secrets:
+          - id: GIT_AUTH_TOKEN
+            env: GH_TOKEN
         buildArgs:
-          GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
           VERSION: '{{ default "" .VERSION }}'
           REVISION: '{{ default "" .REVISION }}'
 
@@ -59,8 +65,10 @@ build:
       docker:
         dockerfile: workers/mars-worker/Dockerfile
         target: release
+        secrets:
+          - id: GIT_AUTH_TOKEN
+            env: GH_TOKEN
         buildArgs:
-          GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
           VERSION: '{{ default "" .VERSION }}'
           REVISION: '{{ default "" .REVISION }}'
 
@@ -69,8 +77,10 @@ build:
       docker:
         dockerfile: workers/test-worker/Dockerfile
         target: release
+        secrets:
+          - id: GIT_AUTH_TOKEN
+            env: GH_TOKEN
         buildArgs:
-          GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
           VERSION: '{{ default "" .VERSION }}'
           REVISION: '{{ default "" .REVISION }}'
 
@@ -79,8 +89,10 @@ build:
       docker:
         dockerfile: loadgen/Dockerfile
         target: release
+        secrets:
+          - id: GIT_AUTH_TOKEN
+            env: GH_TOKEN
         buildArgs:
-          GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
           VERSION: '{{ default "" .VERSION }}'
           REVISION: '{{ default "" .REVISION }}'
 
@@ -101,6 +113,7 @@ build:
     - linux/amd64
   local:
     useDockerCLI: true
+    useBuildkit: true
     concurrency: 2
 
 # ─── Profiles ─────────────────────────────────────────────────────────────────

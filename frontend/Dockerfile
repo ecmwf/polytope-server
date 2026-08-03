@@ -26,21 +26,15 @@ FROM ${METKIT_LIBS_DEBUG_IMAGE} AS metkit-build-debug
 # Prepare the root workspace Cargo Chef recipe
 ###############################
 FROM chef-base AS chef
-ARG GIT_AUTH_TOKEN=""
 WORKDIR /ecmwf/polytope-server
 COPY . .
 RUN mkdir -p .cargo && printf '[net]\ngit-fetch-with-cli = true\n' > .cargo/config.toml
-RUN if [ -n "$GIT_AUTH_TOKEN" ]; then \
-      git config --global credential.helper '' && \
-      git config --global url."https://git:${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; \
-    fi
 RUN cargo chef prepare --recipe-path recipe.json
 
 ###############################
 # Cache root workspace dependencies without application source
 ###############################
 FROM chef-base AS cacher
-ARG GIT_AUTH_TOKEN=""
 ARG PACKAGE_NAME=polytope-server
 ARG FEATURES="metkit,telemetry"
 WORKDIR /ecmwf/polytope-server
@@ -57,19 +51,19 @@ ENV METKIT_BUILD_INCLUDE_DIR=/opt/metkit/include
 ENV ECKIT_INCLUDE_DIR=/opt/metkit/include
 ENV ECKIT_BUILD_INCLUDE_DIR=/opt/metkit/include
 ENV GIT_TERMINAL_PROMPT=0
-RUN if [ -n "$GIT_AUTH_TOKEN" ]; then \
-      git config --global credential.helper '' && \
-      git config --global url."https://git:${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; \
-    fi
-RUN cargo chef cook --release --locked --package "${PACKAGE_NAME}" \
-    $(if [ -n "$FEATURES" ]; then echo "--features $FEATURES"; fi) \
-    --recipe-path recipe.json
+RUN --mount=type=secret,id=GIT_AUTH_TOKEN,required=true \
+    export GIT_CONFIG_GLOBAL="$(mktemp)" \
+    && trap 'rm -f "$GIT_CONFIG_GLOBAL"' EXIT \
+    && git config --global credential.helper '' \
+    && git config --global url."https://x-access-token:$(cat /run/secrets/GIT_AUTH_TOKEN)@github.com/".insteadOf "https://github.com/" \
+    && cargo chef cook --release --locked --package "${PACKAGE_NAME}" \
+       $(if [ -n "$FEATURES" ]; then echo "--features $FEATURES"; fi) \
+       --recipe-path recipe.json
 
 ###############################
 # Build the frontend from the root workspace
 ###############################
 FROM chef-base AS builder
-ARG GIT_AUTH_TOKEN=""
 ARG PACKAGE_NAME=polytope-server
 ARG BIN_NAME=polytope-server
 ARG FEATURES="metkit,telemetry"
@@ -87,12 +81,13 @@ ENV METKIT_BUILD_INCLUDE_DIR=/opt/metkit/include
 ENV ECKIT_INCLUDE_DIR=/opt/metkit/include
 ENV ECKIT_BUILD_INCLUDE_DIR=/opt/metkit/include
 ENV GIT_TERMINAL_PROMPT=0
-RUN if [ -n "$GIT_AUTH_TOKEN" ]; then \
-      git config --global credential.helper '' && \
-      git config --global url."https://git:${GIT_AUTH_TOKEN}@github.com/".insteadOf "https://github.com/"; \
-    fi
-RUN cargo build --release --locked --package "${PACKAGE_NAME}" \
-    $(if [ -n "$FEATURES" ]; then echo "--features $FEATURES"; fi)
+RUN --mount=type=secret,id=GIT_AUTH_TOKEN,required=true \
+    export GIT_CONFIG_GLOBAL="$(mktemp)" \
+    && trap 'rm -f "$GIT_CONFIG_GLOBAL"' EXIT \
+    && git config --global credential.helper '' \
+    && git config --global url."https://x-access-token:$(cat /run/secrets/GIT_AUTH_TOKEN)@github.com/".insteadOf "https://github.com/" \
+    && cargo build --release --locked --package "${PACKAGE_NAME}" \
+       $(if [ -n "$FEATURES" ]; then echo "--features $FEATURES"; fi)
 
 ###############################
 # Production Release Image

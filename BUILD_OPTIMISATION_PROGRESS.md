@@ -18,8 +18,11 @@ This file tracks the phased work started on branch `agent/build-cache-versioning
 - [x] **2 — Cold-build tooling:** replaced in-Dockerfile `cargo install
   cargo-chef` with the digest-pinned cargo-chef Rust base image
   `0.1.77-rust-1.94.1-slim-bookworm`.
-- [ ] **3 — Secret safety:** replace GitHub-token build arguments and persistent
-  Git configuration with BuildKit secrets.
+- [x] **3 — Secret safety:** replaced GitHub-token build arguments and persistent
+  Git configuration with BuildKit secrets. Cargo's temporary Git configuration
+  exists only inside each secret-mounted `RUN` instruction.
+  The legacy Kaniko profile is not compatible with BuildKit secret mounts and
+  is deferred for removal while BuildKit becomes the supported path.
 - [ ] **4 — Shared BuildKit cache:** add Skaffold read-only local and read/write
   CI/release ECCR registry-cache profiles, after validating the Docker builder
   supports registry exporters.
