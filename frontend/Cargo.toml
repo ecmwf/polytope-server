@@ -22,7 +22,7 @@ axum = { version = "0.8", features = ["http2"] }
 hyper-util = { version = "0.1", features = ["server-auto", "service", "tokio"] }
 tower-http = { version = "0.6", features = ["cors", "compression-full"] }
 polytope-edr = { git = "https://github.com/ecmwf/polytope-edr", tag = "0.1.0" }
-bits = { git = "https://github.com/ecmwf/bits-broker.git", branch = "feat/return_processing", features = [
+bits = { git = "https://github.com/ecmwf/bits-broker.git", rev = "864c4637e8cbb9af5ef385c2ef7c40be3a8b5279", features = [
   "nats",
 ] }
 bytes = "1"
