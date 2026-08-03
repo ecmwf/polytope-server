@@ -175,6 +175,8 @@ JSON/text results. See [docs/mcp.md](docs/mcp.md) and
 
 Each image is versioned **independently** via its own `TAG` file. On a GitHub release each image is published under the version in its `TAG` file — **not** the git release tag — so image versions can drift independently of each other and of the top-level `VERSION` file. Image tags are immutable: if an image's `TAG` already exists in ECCR it was published by an earlier release and is skipped rather than overwritten.
 
+**When making a change that should produce a new image, bump the relevant `TAG` file.** The `version` field in each crate's `Cargo.toml` is ignored for this purpose — these crates are not published to crates.io and `Cargo.toml` versions carry no meaning for image releases.
+
 The top-level `VERSION` file is the app-wide version. On every push to `main`, CI creates a `{VERSION}.dev0` git tag if it doesn't already exist; a human promotes that to the real release tag (e.g. `2.2.0`) to trigger the release workflow.
 
 For dev builds, skaffold tags images with the current git commit SHA by default (`tagPolicy.gitCommit`). Set `FIXED_TAG` to override, or `PREFIX` to prepend to the SHA.
