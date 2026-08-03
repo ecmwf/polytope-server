@@ -144,6 +144,9 @@ jobs:
           echo "::add-mask::$token"
           echo "GH_TOKEN=$token" >> "$GITHUB_ENV"
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@b5730b3a7abbb2db4f3748cd938e16f0bbb0ee73 # v3.10.0
+
       - name: Install Skaffold
         run: |
           tool_dir="$RUNNER_TEMP/skaffold"
@@ -154,7 +157,9 @@ jobs:
           echo "$tool_dir" >> "$GITHUB_PATH"
 
       - name: Build ${{ matrix.name }} (no push)
-        run: skaffold build --push=false --filename skaffold.yaml --build-image "${{ matrix.image }}"
+        env:
+          BUILDKIT_CACHE_MODE: read-write
+        run: skaffold build --cache-artifacts=false --push=false --filename skaffold.yaml --profile buildx-cache --build-image "${{ matrix.image }}"
 
   # On push to main: create a {VERSION}.dev0 git tag if it doesn't exist yet.
   # A human promotes to the real tag (e.g. 2.2.0) to trigger release.yaml.

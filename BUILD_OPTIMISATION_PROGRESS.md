@@ -23,9 +23,11 @@ This file tracks the phased work started on branch `agent/build-cache-versioning
   exists only inside each secret-mounted `RUN` instruction.
   The legacy Kaniko profile is not compatible with BuildKit secret mounts and
   is deferred for removal while BuildKit becomes the supported path.
-- [ ] **4 — Shared BuildKit cache:** add Skaffold read-only local and read/write
-  CI/release ECCR registry-cache profiles, after validating the Docker builder
-  supports registry exporters.
+- [x] **4 — Shared BuildKit cache:** added the Skaffold `buildx-cache` profile.
+  It imports the per-image ECCR cache by default and exports it only when
+  `BUILDKIT_CACHE_MODE=read-write`; PR CI uses that write mode. The ordinary
+  Docker driver was probed and cannot export registry caches, so the profile
+  deliberately uses a custom Buildx wrapper.
 - [ ] **5 — Release integration:** make release builds use the same Skaffold
   cache and publish image digest metadata.
 - [ ] **6 — Versioning migration:** design/implement a product bundle manifest
