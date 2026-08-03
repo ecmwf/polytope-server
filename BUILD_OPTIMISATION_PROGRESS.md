@@ -28,8 +28,9 @@ This file tracks the phased work started on branch `agent/build-cache-versioning
   `BUILDKIT_CACHE_MODE=read-write`; PR CI uses that write mode. The ordinary
   Docker driver was probed and cannot export registry caches, so the profile
   deliberately uses a custom Buildx wrapper.
-- [ ] **5 — Release integration:** make release builds use the same Skaffold
-  cache and publish image digest metadata.
+- [x] **5 — Release integration:** release builds use the same Skaffold Buildx
+  cache and record each published image's digest and source revision in the job
+  summary. A durable cross-image release bundle remains Phase 6 work.
 - [ ] **6 — Versioning migration:** design/implement a product bundle manifest
   and digest-pinned deployment handoff across `polytope-server`,
   `polytope-chart`, and `polytope-config`. This requires coordinated changes in

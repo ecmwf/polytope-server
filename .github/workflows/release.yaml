@@ -92,12 +92,19 @@ jobs:
           echo "::add-mask::$token"
           echo "GH_TOKEN=$token" >> "$GITHUB_ENV"
 
+      - name: Set up Docker Buildx
+        if: steps.check.outputs.skip == 'false'
+        uses: docker/setup-buildx-action@b5730b3a7abbb2db4f3748cd938e16f0bbb0ee73 # v3.10.0
+
       - name: Install Skaffold
         if: steps.check.outputs.skip == 'false'
         run: |
-          curl -fsSL "https://storage.googleapis.com/skaffold/releases/${SKAFFOLD_VERSION}/skaffold-linux-amd64" -o skaffold
-          echo "${SKAFFOLD_SHA256}  skaffold" | sha256sum --check -
-          sudo install skaffold /usr/local/bin/skaffold
+          tool_dir="$RUNNER_TEMP/skaffold"
+          mkdir -p "$tool_dir"
+          curl -fsSL "https://storage.googleapis.com/skaffold/releases/${SKAFFOLD_VERSION}/skaffold-linux-amd64" -o "$tool_dir/skaffold"
+          echo "${SKAFFOLD_SHA256}  $tool_dir/skaffold" | sha256sum --check -
+          chmod +x "$tool_dir/skaffold"
+          echo "$tool_dir" >> "$GITHUB_PATH"
 
       - name: Build and publish ${{ matrix.artifact }}
         if: steps.check.outputs.skip == 'false'
@@ -105,4 +112,21 @@ jobs:
           FIXED_TAG: ${{ steps.check.outputs.tag }}
           VERSION: ${{ steps.check.outputs.tag }}
           REVISION: ${{ github.sha }}
-        run: skaffold build --push=true --filename skaffold.yaml --build-image "${{ matrix.image }}"
+          BUILDKIT_CACHE_MODE: read-write
+        run: skaffold build --cache-artifacts=false --push=true --filename skaffold.yaml --profile buildx-cache --build-image "${{ matrix.image }}"
+
+      - name: Record published image digest
+        if: steps.check.outputs.skip == 'false'
+        id: digest
+        run: |
+          digest="$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "${{ matrix.image }}:${{ steps.check.outputs.tag }}")"
+          test -n "$digest"
+          image="${{ matrix.image }}@$digest"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Published ${{ matrix.artifact }}"
+            echo
+            echo "- Image: \`$image\`"
+            echo "- Source revision: \`${{ github.sha }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
