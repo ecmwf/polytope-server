@@ -140,8 +140,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends binutils file &
 COPY --from=mars-libs /opt/mars-client /opt/mars-client
 # Strip failures are real errors; only a missing bin/ or non-ELF files there
 # (e.g. the mars wrapper scripts) are tolerated.
-RUN find /opt/mars-client -type f -name '*.so*' -exec strip --strip-unneeded {} + \
-    && find /opt/mars-client -type f -name '*.a' -exec strip --strip-debug {} + \
+RUN find /opt/mars-client -type f -name '*.so*' -exec file {} + \
+         | awk -F': ' '/ELF/{print $1}' | xargs -r strip --strip-unneeded \
+    && find /opt/mars-client -type f -name '*.a' -exec file {} + \
+         | awk -F': ' '/ELF/{print $1}' | xargs -r strip --strip-debug \
     && { [ ! -d /opt/mars-client/bin ] || find /opt/mars-client/bin -type f -exec file {} + \
          | awk -F': ' '/ELF/{print $1}' | xargs -r strip --strip-all; }
 
