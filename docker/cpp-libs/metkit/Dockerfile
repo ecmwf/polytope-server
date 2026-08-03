@@ -54,8 +54,10 @@ FROM docker.io/library/debian:bookworm-slim AS strip-libs
 RUN apt-get update && apt-get install -y --no-install-recommends binutils file && rm -rf /var/lib/apt/lists/*
 COPY --from=metkit-build /opt/metkit /opt/metkit
 # Strip failures are real errors; only a missing bin/ or non-ELF files there are tolerated.
-RUN find /opt/metkit -type f -name '*.so*' -exec strip --strip-unneeded {} + \
-    && find /opt/metkit -type f -name '*.a' -exec strip --strip-debug {} + \
+RUN find /opt/metkit -type f -name '*.so*' -exec file {} + \
+         | awk -F': ' '/ELF/{print $1}' | xargs -r strip --strip-unneeded \
+    && find /opt/metkit -type f -name '*.a' -exec file {} + \
+         | awk -F': ' '/ELF/{print $1}' | xargs -r strip --strip-debug \
     && { [ ! -d /opt/metkit/bin ] || find /opt/metkit/bin -type f -exec file {} + \
          | awk -F': ' '/ELF/{print $1}' | xargs -r strip --strip-all; }
 
