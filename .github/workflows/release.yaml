@@ -94,7 +94,7 @@ jobs:
 
       - name: Set up Docker Buildx
         if: steps.check.outputs.skip == 'false'
-        uses: docker/setup-buildx-action@b5730b3a7abbb2db4f3748cd938e16f0bbb0ee73 # v3.10.0
+        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
 
       - name: Install Skaffold
         if: steps.check.outputs.skip == 'false'
