@@ -50,8 +50,15 @@ impl ClassifiedMarsError {
 }
 
 fn classify_mars_error(raw: &str) -> ClassifiedMarsError {
+    // Note: Most of these are based on potentially out of date confluence pages. 
+    // Empirically observed errors are marked with a comment
     let lower = raw.to_lowercase();
-    if lower.contains("data not yet available") || lower.contains("scheduled for after") {
+    // observed, may be worth retrying in code before returning to the user
+    if lower.contains("connection reset by peer") || lower.contains("socket read failed") { 
+        ClassifiedMarsError::recoverable(format!(
+            "The data retrieval connection was interrupted. Please try again."
+        ))
+    } else if lower.contains("data not yet available") || lower.contains("scheduled for after") {
         let message = if let Some(release_time) = extract_release_time(raw) {
             format!("Data not released yet. Release time is {release_time}.")
         } else {
@@ -69,6 +76,7 @@ fn classify_mars_error(raw: &str) -> ClassifiedMarsError {
     } else if lower.contains("mars_expected_fields")
         || lower.contains("data not found")
         || lower.contains("no data found")
+        || lower.contains("0 message retrieved out of") //observed
     {
         ClassifiedMarsError::recoverable(format!(
             "Some of the requested data is not available. Details: {raw}"
@@ -277,6 +285,12 @@ mod tests {
             "Data not found",
             "syntax error near param",
             "invalid value for date",
+            // Empirically observed in production: TCP teardown mid-transfer.
+            "[ERROR] Socket read failed (TCPClient[port=0]) (Connection reset by peer)",
+            "Connection reset by peer",
+            // Empirically observed in production: same family as mars_expected_fields.
+            "[ERROR] Exception: UserError: 0 message retrieved out of 48 expected",
+            "UserError: 0 message retrieved out of 1 expected",
         ] {
             assert_eq!(
                 classify_mars_error(raw).disposition,
