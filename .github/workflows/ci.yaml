@@ -83,32 +83,48 @@ jobs:
       - name: Validate Skaffold configuration
         run: skaffold diagnose --yaml-only --filename skaffold.yaml >/dev/null
 
-  # Builds images (no push) on PRs. Skips any image whose tag already exists
-  # in ECCR — if the tag is there it was already built and published successfully.
-  # Fork PRs are skipped: they have no access to the ECCR/GH secrets this job needs.
+  # Select the images affected by a PR before starting the costly container
+  # builds. Release-tag existence is intentionally not considered here: a PR
+  # must validate its changed image even when an older immutable release image
+  # already has the same TAG-file value.
+  changed-images:
+    name: Select changed images
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+      has_images: ${{ steps.select.outputs.has_images }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Select affected images
+        id: select
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          matrix="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" | python3 .github/scripts/select-images.py)"
+          echo "Changed-image matrix: $matrix"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          if python3 -c 'import json, sys; sys.exit(not json.loads(sys.argv[1])["include"])' "$matrix"; then
+            echo "has_images=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_images=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Fork PRs are skipped: private dependency and ECCR credentials are required.
   image-build:
-    name: Build / ${{ matrix.image }}
-    needs: [fmt, test, skaffold-validate]
-    if: github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork
+    name: Build / ${{ matrix.name }}
+    needs: [fmt, test, skaffold-validate, changed-images]
+    if: github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork && needs.changed-images.outputs.has_images == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     strategy:
       fail-fast: false
       max-parallel: 2
-      matrix:
-        include:
-          - image: eccr.ecmwf.int/polytope/frontend
-            tag_file: frontend/TAG
-          - image: eccr.ecmwf.int/polytope/polytope-fe-worker
-            tag_file: workers/polytope-fe-worker/TAG
-          - image: eccr.ecmwf.int/polytope/fdb-worker
-            tag_file: workers/fdb-worker/TAG
-          - image: eccr.ecmwf.int/polytope/mars-worker
-            tag_file: workers/mars-worker/TAG
-          - image: eccr.ecmwf.int/polytope/test-worker
-            tag_file: workers/test-worker/TAG
-          - image: eccr.ecmwf.int/polytope/polytope-loadgen
-            tag_file: loadgen/TAG
+      matrix: ${{ fromJSON(needs.changed-images.outputs.matrix) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -120,20 +136,7 @@ jobs:
           ECCR_USERNAME: ${{ secrets.ECCR_USERNAME }}
         run: printf '%s' "$ECCR_PASSWORD" | docker login eccr.ecmwf.int --username "$ECCR_USERNAME" --password-stdin
 
-      - name: Check if image tag already exists
-        id: check
-        run: |
-          tag=$(cat "${{ matrix.tag_file }}")
-          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
-          if docker manifest inspect "${{ matrix.image }}:${tag}" >/dev/null 2>&1; then
-            echo "${{ matrix.image }}:${tag} already published; skipping build."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Prepare repository token
-        if: steps.check.outputs.skip == 'false'
         env:
           RAW_GH_TOKEN: ${{ secrets.GH_REPO_READ_TOKEN }}
         run: |
@@ -142,16 +145,15 @@ jobs:
           echo "GH_TOKEN=$token" >> "$GITHUB_ENV"
 
       - name: Install Skaffold
-        if: steps.check.outputs.skip == 'false'
         run: |
-          curl -fsSL "https://storage.googleapis.com/skaffold/releases/${SKAFFOLD_VERSION}/skaffold-linux-amd64" -o skaffold
-          echo "${SKAFFOLD_SHA256}  skaffold" | sha256sum --check -
-          sudo install skaffold /usr/local/bin/skaffold
+          tool_dir="$RUNNER_TEMP/skaffold"
+          mkdir -p "$tool_dir"
+          curl -fsSL "https://storage.googleapis.com/skaffold/releases/${SKAFFOLD_VERSION}/skaffold-linux-amd64" -o "$tool_dir/skaffold"
+          echo "${SKAFFOLD_SHA256}  $tool_dir/skaffold" | sha256sum --check -
+          chmod +x "$tool_dir/skaffold"
+          echo "$tool_dir" >> "$GITHUB_PATH"
 
-      - name: Build ${{ matrix.image }} (no push)
-        if: steps.check.outputs.skip == 'false'
-        env:
-          FIXED_TAG: ${{ steps.check.outputs.tag }}
+      - name: Build ${{ matrix.name }} (no push)
         run: skaffold build --push=false --filename skaffold.yaml --build-image "${{ matrix.image }}"
 
   # On push to main: create a {VERSION}.dev0 git tag if it doesn't exist yet.

@@ -1,0 +1,38 @@
+# Image-build optimisation progress
+
+This file tracks the phased work started on branch `agent/build-cache-versioning`.
+
+## Baseline
+
+- GitHub Actions job 91828185613 (2026-08-03) built the frontend in **5m46s**.
+- Its cold `cargo chef cook` step took **210s**; compiling `cargo-chef` took
+  about **52s**; the final application compile/link took **30s**.
+- The PR changed `mars-worker`, but CI skipped Mars because its release tag
+  already existed and instead built an unrelated un-published frontend tag.
+
+## Phases
+
+- [x] **1 — PR selection correctness:** dynamically select affected image(s),
+  including conservative shared-dependency fan-out; do not skip a PR image build
+  because a release image tag already exists.
+- [ ] **2 — Cold-build tooling:** replace in-Dockerfile `cargo install
+  cargo-chef` with a digest-pinned cargo-chef Rust base image.
+- [ ] **3 — Secret safety:** replace GitHub-token build arguments and persistent
+  Git configuration with BuildKit secrets.
+- [ ] **4 — Shared BuildKit cache:** add Skaffold read-only local and read/write
+  CI/release ECCR registry-cache profiles, after validating the Docker builder
+  supports registry exporters.
+- [ ] **5 — Release integration:** make release builds use the same Skaffold
+  cache and publish image digest metadata.
+- [ ] **6 — Versioning migration:** design/implement a product bundle manifest
+  and digest-pinned deployment handoff across `polytope-server`,
+  `polytope-chart`, and `polytope-config`. This requires coordinated changes in
+  the other repositories and is intentionally not mixed into container-cache
+  commits.
+
+## Guardrails
+
+- Cache misses must be visible; a skipped image is never considered a benchmark.
+- A cache exporter must never include a credential-bearing filesystem layer.
+- The production deployment identity remains an image digest; tags are human
+  metadata and cache lookup inputs only.
