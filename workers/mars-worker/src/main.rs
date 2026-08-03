@@ -19,6 +19,8 @@ mod k8s;
 mod mars_logs;
 mod port_cleanup;
 
+const DEFAULT_STREAM_QUEUE_BYTE_LIMIT: usize = 32 * 1024 * 1024;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MarsErrorDisposition {
     Recoverable,
@@ -125,6 +127,7 @@ struct MarsProcessor {
     local_port: u16,
     env_lock: std::sync::Arc<std::sync::Mutex<()>>,
     mars_logs: mars_logs::MarsLogBridge,
+    stream_queue_byte_limit: usize,
 }
 
 #[async_trait]
@@ -151,6 +154,7 @@ impl Processor for MarsProcessor {
         let env_lock = self.env_lock.clone();
         let mars_logs = self.mars_logs.clone();
         let request_id = work.job_id.clone();
+        let stream_queue_byte_limit = self.stream_queue_byte_limit;
         tokio::task::spawn_blocking(move || {
             let _env_guard = env_lock.lock().expect("MARS environment lock poisoned");
             let _log_scope = mars_logs.begin_request(request_id);
@@ -161,7 +165,7 @@ impl Processor for MarsProcessor {
                 std::env::set_var("MARS_USER_TOKEN", &mars_token);
             }
 
-            let mut client = match MarsClient::new() {
+            let mut client = match MarsClient::new(stream_queue_byte_limit) {
                 Ok(c) => c,
                 Err(e) => {
                     let raw = e.to_string();
@@ -310,6 +314,13 @@ mod tests {
     }
 }
 
+fn parse_positive_usize(value: &str) -> Result<usize, String> {
+    match value.parse::<usize>() {
+        Ok(parsed) if parsed > 0 => Ok(parsed),
+        _ => Err("value must be a positive integer".to_string()),
+    }
+}
+
 #[derive(Parser)]
 struct Cli {
     #[arg(long, default_value = "http://127.0.0.1:9001")]
@@ -324,6 +335,13 @@ struct Cli {
     config_path: String,
     #[arg(long, default_value_t = 1)]
     worker_concurrency: usize,
+    #[arg(
+        long,
+        env = "MARS_STREAM_QUEUE_BYTE_LIMIT",
+        default_value_t = DEFAULT_STREAM_QUEUE_BYTE_LIMIT,
+        value_parser = parse_positive_usize
+    )]
+    stream_queue_byte_limit: usize,
 }
 
 fn resolved_worker_concurrency(cli_value: usize) -> usize {
@@ -352,6 +370,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let worker_concurrency = resolved_worker_concurrency(cli.worker_concurrency);
     info!(
         worker_concurrency,
+        stream_queue_byte_limit = cli.stream_queue_byte_limit,
         poll_timeout_ms = cli.poll_timeout_ms,
         "resolved worker settings"
     );
@@ -389,6 +408,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             local_port: manager.local_port(),
             env_lock: std::sync::Arc::new(std::sync::Mutex::new(())),
             mars_logs,
+            stream_queue_byte_limit: cli.stream_queue_byte_limit,
         },
     )
     .await?;
@@ -411,6 +431,7 @@ mod processor_tests {
             local_port: 8100,
             env_lock: std::sync::Arc::new(std::sync::Mutex::new(())),
             mars_logs: mars_logs::test_instance(),
+            stream_queue_byte_limit: DEFAULT_STREAM_QUEUE_BYTE_LIMIT,
         };
         let result = processor
             .process(WorkItem {
@@ -422,5 +443,12 @@ mod processor_tests {
             })
             .await;
         assert!(matches!(result, ProcessResult::Error { .. }));
+    }
+
+    #[test]
+    fn stream_queue_byte_limit_must_be_positive() {
+        assert_eq!(parse_positive_usize("33554432"), Ok(33_554_432));
+        assert!(parse_positive_usize("0").is_err());
+        assert!(parse_positive_usize("not-a-number").is_err());
     }
 }

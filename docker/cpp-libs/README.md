@@ -46,8 +46,8 @@ image only when you need to symbolicate a crash in a C++ library.
 ## The `TAG` file
 
 Each image directory has a `TAG` file containing a single line — the tag the
-image is **published under** and the tag the consuming Dockerfile **pulls**. For
-example `fdb/TAG` holds `fdb5.19.2-r1`, which produces
+image is **published under** for releases and the tag the consuming Dockerfile
+**pulls by default**. For example `fdb/TAG` holds `fdb5.19.2-r1`, which produces
 `eccr.ecmwf.int/polytope/cpp-fdb-libs:fdb5.19.2-r1`.
 
 Why a file and not just a hardcoded tag?
@@ -67,7 +67,7 @@ Naming convention: describe the stack's headline versions, then a `-rN`
 - `cpp-metkit-libs:metkit1.17.0-r1`
 - `cpp-fdb-libs:fdb5.19.2-r1`
 - `cpp-fdb-gribjump-libs:fdb5.21.3-gribjump0.12.0-r1`
-- `cpp-mars-libs:7.1.9-r1`
+- `cpp-mars-libs:7.1.9-r2`
 
 The app Dockerfiles carry the current tag as the default of a build arg
 (`FDB_LIBS_IMAGE`, `METKIT_LIBS_IMAGE`, `MARS_LIBS_IMAGE`), so a normal `docker
@@ -78,74 +78,91 @@ build` / `skaffold build` needs no extra flags.
 1. Edit the version `ARG`s in `docker/cpp-libs/<name>/Dockerfile`.
 2. Put a new tag in `docker/cpp-libs/<name>/TAG` (bump the version part, reset
    `-r1`; or just bump `-rN` for a no-version-change rebuild).
-3. Publish the image (see below).
-4. Update the matching `*_LIBS_IMAGE` default in the consuming Dockerfile to the
-   new tag.
+3. Publish the new library image (see [Dev builds](#dev-builds-git-based-tags)
+   or [Releasing](#releasing-canonical-tags)).
+4. Update the matching `*_LIBS_IMAGE` default in the consuming app Dockerfile to
+   the new tag.
 
 Steps 3 and 4 are what make the new libraries actually take effect; until the
 consumer's build arg points at the new tag, nothing changes.
 
-## Publishing
+## Tag policy
 
-These images are built with **skaffold**, the same tool used for the application
-images. Their skaffold config is [`skaffold.yaml`](skaffold.yaml) in this
-directory (separate from the app config at the repo root, so app builds never
-rebuild the libraries).
+The skaffold config mirrors the root `skaffold.yaml` tag policy:
 
-The workflow [`.github/workflows/cpp-libs.yaml`](../../.github/workflows/cpp-libs.yaml)
-runs skaffold to build and push. PRs touching `docker/cpp-libs/` only run a
-Dockerfile lint (`docker buildx build --check`) — the images are never built in
-PR CI (hours of C++ compilation). **Publishing is manual dispatch only**:
+| Scenario | How to invoke | Resulting tag |
+|----------|--------------|---------------|
+| Dev build | omit `FIXED_TAG` | git commit hash (e.g. `cce9ed8`) |
+| Dev build with prefix | `PREFIX=dev-` | `dev-cce9ed8` |
+| Release | `FIXED_TAG=$(cat <img>/TAG)` | contents of `TAG` file |
 
-```bash
-gh workflow run cpp-libs.yaml -f image=all      # or: metkit | fdb | fdb-gribjump | mars
-```
+`ignoreChanges: true` means a dirty working tree does not block the git tag
+derivation (same behaviour as the app builds).
 
-### Building/pushing by hand
+## Dev builds (git-based tags)
 
-Requires `docker login eccr.ecmwf.int`. Build one image at a time, passing its
-tag via `FIXED_TAG` (skaffold applies it as the image tag). Image names are the
-`--build-image` targets.
+Use these when iterating on a library Dockerfile or pinning a new upstream
+commit. The image is tagged with the current git commit hash, which lets you
+reference it unambiguously when building the consuming app image.
 
-Run these **from this directory** (`docker/cpp-libs/`). Skaffold resolves each
-artifact's `context:` (e.g. `metkit`) relative to the current working directory,
-not to the location of `skaffold.yaml`, so invoking it from the repo root fails
-with `context "metkit" does not exist`.
+Run from **this directory** (`docker/cpp-libs/`). Skaffold resolves each
+artifact's `context:` (e.g. `mars`) relative to the current working directory,
+not to the location of `skaffold.yaml`.
 
 ```bash
 cd docker/cpp-libs
 
-FIXED_TAG=$(cat fdb/TAG) \
-  skaffold build --push \
-    --filename skaffold.yaml \
-    --build-image eccr.ecmwf.int/polytope/cpp-fdb-libs
+# Build and push one image; tag = git commit hash
+GH_TOKEN="$GH_TOKEN" skaffold build --push \
+  --filename skaffold.yaml \
+  --build-image eccr.ecmwf.int/polytope/cpp-mars-libs
 
-# mars needs a GitHub token for private clones (source build); set RPM_REPO too
-# if you build the RPM variant (MARS_BUILD_FROM_SOURCE=false, set in the Dockerfile):
-FIXED_TAG=$(cat mars/TAG) GH_TOKEN="$GH_TOKEN" \
-  skaffold build --push \
-    --filename skaffold.yaml \
-    --build-image eccr.ecmwf.int/polytope/cpp-mars-libs
+# Capture the tag skaffold assigned:
+TAG=$(git rev-parse --short HEAD)   # same value skaffold used
+
+# Build the consuming mars-worker against your dev library:
+cd ../..
+docker build -f workers/mars-worker/Dockerfile \
+  --build-arg MARS_LIBS_IMAGE=eccr.ecmwf.int/polytope/cpp-mars-libs:$TAG \
+  --build-arg GIT_AUTH_TOKEN="$GH_TOKEN" \
+  -t mars-worker:dev .
 ```
 
-> Build one image per invocation with `--build-image`. `skaffold build` without
-> it builds all four and applies the single `FIXED_TAG` to every image, which is
-> almost never what you want.
+> You can also use `PREFIX=dev-` to make dev images visually distinct from
+> release images in the registry.
 
-## Local development against a library image
+## Releasing (canonical tags)
 
-To test app changes against a locally built (unpushed) library image, build the
-library with skaffold (or plain `docker build`) and point the consuming build arg
-at your local tag:
+Set `FIXED_TAG` to the contents of the relevant `TAG` file. Skaffold uses that
+value as the image tag instead of the git commit.
 
 ```bash
-# build the library image from docker/cpp-libs/ (see note above on context resolution)
-( cd docker/cpp-libs && FIXED_TAG=dev skaffold build --push=false \
-    --filename skaffold.yaml \
-    --build-image eccr.ecmwf.int/polytope/cpp-fdb-libs )
+cd docker/cpp-libs
 
-# then build the consuming app image from the repo root
-docker build -f workers/fdb-worker/Dockerfile \
-  --build-arg FDB_LIBS_IMAGE=eccr.ecmwf.int/polytope/cpp-fdb-libs:dev \
-  --build-arg GIT_AUTH_TOKEN="$GH_TOKEN" -t fdb-worker:dev .
+# Publish the canonical versioned image (and its debug companion):
+FIXED_TAG=$(cat fdb/TAG) skaffold build --push \
+  --filename skaffold.yaml \
+  --build-image eccr.ecmwf.int/polytope/cpp-fdb-libs \
+  --build-image eccr.ecmwf.int/polytope/cpp-fdb-libs-debug
+
+# mars additionally needs GH_TOKEN:
+FIXED_TAG=$(cat mars/TAG) GH_TOKEN="$GH_TOKEN" skaffold build --push \
+  --filename skaffold.yaml \
+  --build-image eccr.ecmwf.int/polytope/cpp-mars-libs \
+  --build-image eccr.ecmwf.int/polytope/cpp-mars-libs-debug
+```
+
+> Build one stack per invocation with `--build-image`. Without it, skaffold
+> builds all eight artifacts (four stacks × stripped + debug) and applies the
+> same `FIXED_TAG` to every image — almost never what you want.
+
+### Via CI (preferred for releases)
+
+The workflow [`.github/workflows/cpp-libs.yaml`](../../.github/workflows/cpp-libs.yaml)
+runs skaffold with `FIXED_TAG` from the `TAG` file. PRs touching `docker/cpp-libs/`
+only run a Dockerfile lint (`docker buildx build --check`) — the images are never
+built in PR CI (hours of C++ compilation). **Publishing is manual dispatch only**:
+
+```bash
+gh workflow run cpp-libs.yaml -f image=fdb        # or: metkit | fdb-gribjump | mars | all
 ```

@@ -47,7 +47,7 @@ RUN mkdir -p /opt/mars-client && cp -a /opt/ecmwf/mars-client-cpp/. /opt/mars-cl
 FROM docker.io/library/debian:bookworm-slim AS mars-build
 ARG GIT_AUTH_TOKEN=""
 ARG MARS_CLIENT_BUNDLE_REF=5d0430a5a1793274118254bbb15a5be824a063ba
-ARG MARS_CLIENT_CPP_BRANCH=736f833
+ARG MARS_CLIENT_CPP_BRANCH=4e667f9c90db56ae7d0c81d5a01119f578fcd156
 ARG ECKIT_VERSION=1.33.0
 ARG ECCODES_VERSION=2.46.0
 ARG ODC_VERSION=1.6.2
@@ -140,8 +140,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends binutils file &
 COPY --from=mars-libs /opt/mars-client /opt/mars-client
 # Strip failures are real errors; only a missing bin/ or non-ELF files there
 # (e.g. the mars wrapper scripts) are tolerated.
-RUN find /opt/mars-client -type f -name '*.so*' -exec strip --strip-unneeded {} + \
-    && find /opt/mars-client -type f -name '*.a' -exec strip --strip-debug {} + \
+RUN find /opt/mars-client -type f -name '*.so*' -exec file {} + \
+         | awk -F': ' '/ELF/{print $1}' | xargs -r strip --strip-unneeded \
+    && find /opt/mars-client -type f -name '*.a' -exec file {} + \
+         | awk -F': ' '/ELF/{print $1}' | xargs -r strip --strip-debug \
     && { [ ! -d /opt/mars-client/bin ] || find /opt/mars-client/bin -type f -exec file {} + \
          | awk -F': ' '/ELF/{print $1}' | xargs -r strip --strip-all; }
 
