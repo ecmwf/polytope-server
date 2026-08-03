@@ -17,12 +17,14 @@ A Rust workspace containing a Polytope frontend plus separate worker crates, bac
 
 This repository is intentionally split so the frontend and workers can be moved independently later.
 
-- `frontend/` — the Polytope HTTP frontend crate (`polytope-server` binary)
+- `frontend/` — the Polytope HTTP frontend crate (`polytope-server` binary, `frontend` image)
 - `workers/common/` — shared remote-worker runtime and protocol client
 - `workers/polytope-fe-worker/` — Polytope worker crate
 - `workers/fdb-worker/` — FDB worker crate
 - `workers/mars-worker/` — Mars worker crate (requires native eckit/metkit C++ libraries; excluded from default workspace build)
 - `workers/test-worker/` — Test worker crate for integration tests
+- `loadgen/` — load-generation crate (`loadgen` binary, `polytope-loadgen` image)
+- `observability/`, `client/`, `tests/integration/` — shared support crates (telemetry helpers, client library, integration test harness)
 
 The frontend does not depend on worker crates. The only shared worker-side dependency is `workers/common/`.
 
@@ -54,6 +56,7 @@ The workspace produces separate binaries under `target/release/`:
 - `fdb-worker`
 - `mars-worker`
 - `test-worker`
+- `loadgen`
 
 ## Configuration
 
@@ -157,21 +160,32 @@ JSON/text results. See [docs/mcp.md](docs/mcp.md) and
 
 ## Images
 
-`skaffold.yaml` builds separate images for the frontend and each worker. The Docker build is workspace-aware:
+### App images
 
-- `PACKAGE_NAME=polytope-server`, `BIN_NAME=polytope-server`
-- `PACKAGE_NAME=polytope-fe-worker`, `BIN_NAME=polytope-fe-worker`
-- `PACKAGE_NAME=fdb-worker`, `BIN_NAME=fdb-worker`
-- `PACKAGE_NAME=mars-worker`, `BIN_NAME=mars-worker`
+`skaffold.yaml` builds separate images for the frontend, each worker, and the load generator from the same Rust workspace:
 
-That mapping is what keeps the images separate even though they live in one workspace.
+| Image | Binary | Version source |
+|---|---|---|
+| `eccr.ecmwf.int/polytope/frontend` | `polytope-server` | `frontend/TAG` |
+| `eccr.ecmwf.int/polytope/polytope-fe-worker` | `polytope-fe-worker` | `workers/polytope-fe-worker/TAG` |
+| `eccr.ecmwf.int/polytope/fdb-worker` | `fdb-worker` | `workers/fdb-worker/TAG` |
+| `eccr.ecmwf.int/polytope/mars-worker` | `mars-worker` | `workers/mars-worker/TAG` |
+| `eccr.ecmwf.int/polytope/test-worker` | `test-worker` | `workers/test-worker/TAG` |
+| `eccr.ecmwf.int/polytope/polytope-loadgen` | `loadgen` | `loadgen/TAG` |
 
-Each Dockerfile copies only its own crate's sources (not the whole workspace), so
-a change to the frontend does not rebuild the workers and vice versa.
+Each image is versioned **independently** via its own `TAG` file. On a GitHub release each image is published under the version in its `TAG` file — **not** the git release tag — so image versions can drift independently of each other and of the top-level `VERSION` file. Image tags are immutable: if an image's `TAG` already exists in ECCR it was published by an earlier release and is skipped rather than overwritten.
 
-The heavy C++ dependency stacks (eckit, metkit, fdb, gribjump, MARS) are **not**
-built inside these images. They are pre-built, published to ECCR, and pulled by
-tag — see [docker/cpp-libs/README.md](docker/cpp-libs/README.md).
+The top-level `VERSION` file is the app-wide version. On every push to `main`, CI creates a `{VERSION}.dev0` git tag if it doesn't already exist; a human promotes that to the real release tag (e.g. `2.2.0`) to trigger the release workflow.
+
+For dev builds, skaffold tags images with the current git commit SHA by default (`tagPolicy.gitCommit`). Set `FIXED_TAG` to override, or `PREFIX` to prepend to the SHA.
+
+### C++ library images
+
+The fdb-worker, polytope-fe-worker, and mars-worker images depend on pre-built C++ library images (eckit, metkit, FDB, gribjump, MARS client). These are published separately and versioned independently of the app images — each has its own `TAG` file under `docker/cpp-libs/<name>/TAG`.
+
+See [`docker/cpp-libs/README.md`](docker/cpp-libs/README.md) for the full list of images, how to build and publish them, and how to bump a C++ library version.
+
+Each Dockerfile copies only its own crate's sources (not the whole workspace), so a change to the frontend does not rebuild the workers and vice versa.
 
 ## Future extraction
 

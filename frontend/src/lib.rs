@@ -81,6 +81,8 @@ pub fn build_app(
         admin_bypass_roles: cfg.admin_bypass_roles,
         support: cfg.support,
         completed_redirects: std::sync::Mutex::new(std::collections::HashMap::new()),
+        v1_poll_timeout: std::time::Duration::from_millis(cfg.server.v1_poll_timeout_ms),
+        v2_poll_timeout: std::time::Duration::from_millis(cfg.server.v2_poll_timeout_ms),
     });
 
     let v1_protected = Router::new()
@@ -485,6 +487,8 @@ targets:
             support: Default::default(),
             completed_redirects: std::sync::Mutex::new(std::collections::HashMap::new()),
             completed_redirect_ttl: std::time::Duration::from_secs(600),
+            v1_poll_timeout: std::time::Duration::from_secs(30),
+            v2_poll_timeout: std::time::Duration::from_secs(30),
         });
         let submitter = BitsSubmitter {
             state: state.clone(),
