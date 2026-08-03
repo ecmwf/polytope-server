@@ -5,42 +5,45 @@
 name: CI
 
 on:
-  push:
-    branches:
-      - "**"
   pull_request:
+  push:
+    branches: [main]
 
 permissions:
   contents: read
 
+env:
+  SKAFFOLD_SHA256: 8f62095ba8c282c03ad7b4987fbaf4f29b289fd6cbafb0351effd49f73f0240d
+  SKAFFOLD_VERSION: v2.18.0
+
 jobs:
   fmt:
+    name: Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
-      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # stable
         with:
+          toolchain: stable
           components: rustfmt
-
       - name: Check formatting
         run: cargo fmt --all -- --check
 
   test:
+    name: Test
     runs-on: ubuntu-latest
     env:
       CARGO_NET_GIT_FETCH_WITH_CLI: "true"
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
-      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
-
-      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
-
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - name: Configure private repo access
         env:
           RAW_GH_TOKEN: ${{ secrets.GH_REPO_READ_TOKEN }}
@@ -48,17 +51,14 @@ jobs:
           token="$(printf '%s' "$RAW_GH_TOKEN" | tr -d '[:space:]')"
           echo "::add-mask::$token"
           git config --global url."https://x-access-token:${token}@github.com/".insteadOf "https://github.com/"
-
       - name: Strip local path patches
         run: sed -i '/^\[patch\./,$d' Cargo.toml
-
       - name: Frontend unit tests
         env:
           NO_PROXY: "127.0.0.1,localhost"
         run: |
           unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy ALL_PROXY all_proxy
           cargo test --locked -p polytope-server
-
       - name: Integration tests
         env:
           NO_PROXY: "127.0.0.1,localhost"
@@ -66,69 +66,74 @@ jobs:
           unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy ALL_PROXY all_proxy
           cargo test --locked -p polytope-server-integration-tests
 
-  repository-access:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Validate private dependency access
-        env:
-          RAW_GH_TOKEN: ${{ secrets.GH_REPO_READ_TOKEN }}
-        run: |
-          token="$(printf '%s' "$RAW_GH_TOKEN" | tr -d '[:space:]')"
-          if [ -z "$token" ]; then
-            echo "GH_REPO_READ_TOKEN is not configured" >&2
-            exit 1
-          fi
-          echo "::add-mask::$token"
-          git config --global url."https://x-access-token:${token}@github.com/".insteadOf "https://github.com/"
-          git ls-remote https://github.com/ecmwf/bits-broker.git HEAD >/dev/null
-
   skaffold-validate:
+    name: Validate Skaffold config
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: dummy
-      RPM_REPO: https://nexus.ecmwf.int/repository
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
       - name: Install Skaffold
-        env:
-          SKAFFOLD_SHA256: 8f62095ba8c282c03ad7b4987fbaf4f29b289fd6cbafb0351effd49f73f0240d
-          SKAFFOLD_VERSION: v2.18.0
         run: |
           curl -fsSL "https://storage.googleapis.com/skaffold/releases/${SKAFFOLD_VERSION}/skaffold-linux-amd64" -o skaffold
           echo "${SKAFFOLD_SHA256}  skaffold" | sha256sum --check -
           sudo install skaffold /usr/local/bin/skaffold
-
       - name: Validate Skaffold configuration
         run: skaffold diagnose --yaml-only --filename skaffold.yaml >/dev/null
 
+  # Builds images (no push) on PRs. Skips any image whose tag already exists
+  # in ECCR — if the tag is there it was already built and published successfully.
+  # Fork PRs are skipped: they have no access to the ECCR/GH secrets this job needs.
   image-build:
-    needs: [repository-access, skaffold-validate]
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    name: Build / ${{ matrix.image }}
+    needs: [fmt, test, skaffold-validate]
+    if: github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork
     runs-on: ubuntu-latest
     timeout-minutes: 120
     strategy:
       fail-fast: false
       max-parallel: 2
       matrix:
-        artifact:
-          - polytope-server
-          - polytope-fe-worker
-          - fdb-worker
-          - mars-worker
-          - test-worker
-          - polytope-loadgen
-    env:
-      FIXED_TAG: ci-${{ github.sha }}
-      RPM_REPO: https://nexus.ecmwf.int/repository
+        include:
+          - image: eccr.ecmwf.int/polytope/frontend
+            tag_file: frontend/TAG
+          - image: eccr.ecmwf.int/polytope/polytope-fe-worker
+            tag_file: workers/polytope-fe-worker/TAG
+          - image: eccr.ecmwf.int/polytope/fdb-worker
+            tag_file: workers/fdb-worker/TAG
+          - image: eccr.ecmwf.int/polytope/mars-worker
+            tag_file: workers/mars-worker/TAG
+          - image: eccr.ecmwf.int/polytope/test-worker
+            tag_file: workers/test-worker/TAG
+          - image: eccr.ecmwf.int/polytope/polytope-loadgen
+            tag_file: loadgen/TAG
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
+      - name: Log in to ECCR
+        env:
+          ECCR_PASSWORD: ${{ secrets.ECCR_PASSWORD }}
+          ECCR_USERNAME: ${{ secrets.ECCR_USERNAME }}
+        run: printf '%s' "$ECCR_PASSWORD" | docker login eccr.ecmwf.int --username "$ECCR_USERNAME" --password-stdin
+
+      - name: Check if image tag already exists
+        id: check
+        run: |
+          tag=$(cat "${{ matrix.tag_file }}")
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          if docker manifest inspect "${{ matrix.image }}:${tag}" >/dev/null 2>&1; then
+            echo "${{ matrix.image }}:${tag} already published; skipping build."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Prepare repository token
+        if: steps.check.outputs.skip == 'false'
         env:
           RAW_GH_TOKEN: ${{ secrets.GH_REPO_READ_TOKEN }}
         run: |
@@ -137,13 +142,58 @@ jobs:
           echo "GH_TOKEN=$token" >> "$GITHUB_ENV"
 
       - name: Install Skaffold
-        env:
-          SKAFFOLD_SHA256: 8f62095ba8c282c03ad7b4987fbaf4f29b289fd6cbafb0351effd49f73f0240d
-          SKAFFOLD_VERSION: v2.18.0
+        if: steps.check.outputs.skip == 'false'
         run: |
           curl -fsSL "https://storage.googleapis.com/skaffold/releases/${SKAFFOLD_VERSION}/skaffold-linux-amd64" -o skaffold
           echo "${SKAFFOLD_SHA256}  skaffold" | sha256sum --check -
           sudo install skaffold /usr/local/bin/skaffold
 
-      - name: Build ${{ matrix.artifact }} without pushing
-        run: skaffold build --push=false --filename skaffold.yaml --build-image "${{ matrix.artifact }}"
+      - name: Build ${{ matrix.image }} (no push)
+        if: steps.check.outputs.skip == 'false'
+        env:
+          FIXED_TAG: ${{ steps.check.outputs.tag }}
+        run: skaffold build --push=false --filename skaffold.yaml --build-image "${{ matrix.image }}"
+
+  # On push to main: create a {VERSION}.dev0 git tag if it doesn't exist yet.
+  # A human promotes to the real tag (e.g. 2.2.0) to trigger release.yaml.
+  tag:
+    name: Tag
+    needs: [fmt, test, skaffold-validate]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check if dev tag already exists
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version=$(cat VERSION 2>/dev/null | tr -d '[:space:]')
+          if [[ -z "$version" ]]; then
+            echo "No VERSION file; skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          dev_tag="${version}.dev0"
+          echo "dev_tag=${dev_tag}" >> "$GITHUB_OUTPUT"
+          if gh api /repos/${{ github.repository }}/git/ref/tags/${dev_tag} >/dev/null 2>&1; then
+            echo "${dev_tag} already exists; skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create tag
+        if: steps.check.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api /repos/${{ github.repository }}/git/refs \
+            --method POST \
+            --field ref="refs/tags/${{ steps.check.outputs.dev_tag }}" \
+            --field sha="${{ github.sha }}"

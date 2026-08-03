@@ -2,6 +2,13 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+# Publishes the application images on GitHub release. Each image is published
+# under the tag in its per-artifact TAG file (frontend/TAG, workers/*/TAG,
+# loadgen/TAG) — NOT the release tag — so image versions can drift
+# independently of each other and of the app VERSION. Tags are immutable: an
+# image whose TAG already exists in ECCR was published by an earlier release
+# and is skipped.
+
 name: Release images
 
 on:
@@ -26,52 +33,31 @@ jobs:
       max-parallel: 2
       matrix:
         include:
-          - artifact: polytope-server
-            image: eccr.ecmwf.int/polytope/polytope-server
+          - artifact: frontend
+            image: eccr.ecmwf.int/polytope/frontend
+            tag_file: frontend/TAG
           - artifact: polytope-fe-worker
             image: eccr.ecmwf.int/polytope/polytope-fe-worker
+            tag_file: workers/polytope-fe-worker/TAG
           - artifact: fdb-worker
             image: eccr.ecmwf.int/polytope/fdb-worker
+            tag_file: workers/fdb-worker/TAG
           - artifact: mars-worker
             image: eccr.ecmwf.int/polytope/mars-worker
+            tag_file: workers/mars-worker/TAG
           - artifact: test-worker
             image: eccr.ecmwf.int/polytope/test-worker
+            tag_file: workers/test-worker/TAG
           - artifact: polytope-loadgen
             image: eccr.ecmwf.int/polytope/polytope-loadgen
+            tag_file: loadgen/TAG
     env:
-      RPM_REPO: https://nexus.ecmwf.int/repository
       SKAFFOLD_SHA256: 8f62095ba8c282c03ad7b4987fbaf4f29b289fd6cbafb0351effd49f73f0240d
       SKAFFOLD_VERSION: v2.18.0
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
-      - name: Prepare repository token
-        env:
-          RAW_GH_TOKEN: ${{ secrets.GH_REPO_READ_TOKEN }}
-        run: |
-          token="$(printf '%s' "$RAW_GH_TOKEN" | tr -d '[:space:]')"
-          echo "::add-mask::$token"
-          echo "GH_TOKEN=$token" >> "$GITHUB_ENV"
-
-      - name: Validate release tag
-        id: version
-        env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: |
-          version="${RELEASE_TAG#v}"
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-            echo "Release tag must be a semantic version" >&2
-            exit 1
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      - name: Install Skaffold
-        run: |
-          curl -fsSL "https://storage.googleapis.com/skaffold/releases/${SKAFFOLD_VERSION}/skaffold-linux-amd64" -o skaffold
-          echo "${SKAFFOLD_SHA256}  skaffold" | sha256sum --check -
-          sudo install skaffold /usr/local/bin/skaffold
 
       - name: Log in to ECCR
         env:
@@ -79,17 +65,44 @@ jobs:
           ECCR_USERNAME: ${{ secrets.ECCR_USERNAME }}
         run: printf '%s' "$ECCR_PASSWORD" | docker login eccr.ecmwf.int --username "$ECCR_USERNAME" --password-stdin
 
-      - name: Refuse to overwrite an existing image
-        env:
-          IMAGE: ${{ matrix.image }}
-          VERSION: ${{ steps.version.outputs.version }}
+      # Image tags are immutable: if this image's TAG is already in ECCR it was
+      # published by an earlier release — skip instead of overwriting.
+      - name: Check if image tag already exists
+        id: check
         run: |
-          if docker manifest inspect "${IMAGE}:${VERSION}" >/dev/null 2>&1; then
-            echo "${IMAGE}:${VERSION} already exists; release tags are immutable" >&2
+          tag=$(cat "${{ matrix.tag_file }}")
+          if [[ ! "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "${{ matrix.tag_file }} must contain a semantic version, got '$tag'" >&2
             exit 1
           fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          if docker manifest inspect "${{ matrix.image }}:${tag}" >/dev/null 2>&1; then
+            echo "${{ matrix.image }}:${tag} already published; skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Prepare repository token
+        if: steps.check.outputs.skip == 'false'
+        env:
+          RAW_GH_TOKEN: ${{ secrets.GH_REPO_READ_TOKEN }}
+        run: |
+          token="$(printf '%s' "$RAW_GH_TOKEN" | tr -d '[:space:]')"
+          echo "::add-mask::$token"
+          echo "GH_TOKEN=$token" >> "$GITHUB_ENV"
+
+      - name: Install Skaffold
+        if: steps.check.outputs.skip == 'false'
+        run: |
+          curl -fsSL "https://storage.googleapis.com/skaffold/releases/${SKAFFOLD_VERSION}/skaffold-linux-amd64" -o skaffold
+          echo "${SKAFFOLD_SHA256}  skaffold" | sha256sum --check -
+          sudo install skaffold /usr/local/bin/skaffold
 
       - name: Build and publish ${{ matrix.artifact }}
+        if: steps.check.outputs.skip == 'false'
         env:
-          FIXED_TAG: ${{ steps.version.outputs.version }}
-        run: skaffold build --push=true --filename skaffold.yaml --build-image "${{ matrix.artifact }}"
+          FIXED_TAG: ${{ steps.check.outputs.tag }}
+          VERSION: ${{ steps.check.outputs.tag }}
+          REVISION: ${{ github.sha }}
+        run: skaffold build --push=true --filename skaffold.yaml --build-image "${{ matrix.image }}"

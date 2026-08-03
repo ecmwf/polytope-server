@@ -2,10 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! End-to-end checks that user-facing errors carry support guidance + a request
-//! ID, and that the error body stays a flat string→string object (so the Python
-//! `polytope-client`, which flattens every value and crashes on non-strings,
-//! renders it cleanly).
+//! End-to-end checks that user-facing errors carry support guidance (and a
+//! request ID when one is available), and that the error body stays a flat
+//! string→string object (so the Python `polytope-client`, which flattens every
+//! value and crashes on non-strings, renders it cleanly).
 
 use std::collections::HashMap;
 
@@ -16,7 +16,7 @@ use polytope_server::build_app;
 use polytope_server::config::{ServerConfig, SupportConfig};
 use tower::ServiceExt;
 
-fn app() -> axum::Router {
+fn config() -> ServerConfig {
     let yaml = r#"
 polytope:
   site: bol
@@ -30,12 +30,20 @@ support:
   realms:
     desp: "https://platform.destine.eu/contact/"
 "#;
-    let cfg: ServerConfig = serde_yaml::from_str(yaml).expect("config parses");
-    build_app(cfg).expect("app builds").0
+    serde_yaml::from_str(yaml).expect("config parses")
 }
 
+fn app() -> axum::Router {
+    build_app(config()).expect("app builds").0
+}
+
+// A plausible opaque request ID (26-char Crockford base32; see docs/request-ids.md).
+const RID: &str = "3k7p9q2r5s8t1v4w6x0y2z5a8b";
+
 #[tokio::test]
-async fn unauthenticated_error_is_rewritten_with_default_url_and_request_id() {
+async fn error_without_a_request_id_omits_the_id() {
+    // `/api/v2/collections` has no request ID in the URL and is not a submit, so
+    // there is no ID to report: the message must not quote one.
     let resp = app()
         .oneshot(
             Request::get("/api/v2/collections")
@@ -46,15 +54,6 @@ async fn unauthenticated_error_is_rewritten_with_default_url_and_request_id() {
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
-
-    let rid = resp
-        .headers()
-        .get("x-request-id")
-        .expect("X-Request-Id header present on error")
-        .to_str()
-        .unwrap()
-        .to_string();
-    assert!(!rid.is_empty());
 
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
@@ -70,21 +69,73 @@ async fn unauthenticated_error_is_rewritten_with_default_url_and_request_id() {
     let msg = obj["message"].as_str().unwrap();
     assert!(msg.starts_with("Your request was not authorised"));
     assert!(msg.contains("https://support.ecmwf.int/")); // deployment default (no realm pre-auth)
-    assert!(msg.contains(&rid)); // request ID quoted back to the user
+    assert!(!msg.contains("request ID"), "no ID to quote");
 }
 
 #[tokio::test]
-async fn successful_response_still_carries_request_id_header() {
+async fn error_on_a_request_path_quotes_the_url_derived_request_id() {
+    // The ID lives in the URL path; even an unauthenticated 401 (rejected before
+    // the handler) must quote it in the message.
     let resp = app()
-        .oneshot(Request::get("/api/v2/health").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::get(format!("/api/v2/requests/{RID}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-    assert!(resp.headers().get("x-request-id").is_some());
+
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let msg = v["message"].as_str().unwrap();
+    assert!(msg.contains(&format!("quote your request ID {RID}")));
 }
 
 #[tokio::test]
-async fn inbound_request_id_is_preserved() {
+async fn error_quotes_the_bits_generated_id_surfaced_by_the_handler() {
+    // A client that sends no `X-Request-Id` (e.g. the Python polytope-client)
+    // submitting a request that BITS accepts but then fails: the handler surfaces
+    // the BITS-generated ID via a response extension exactly like
+    // `submit_collection`, and the middleware must quote that ID in the error.
+    async fn boom() -> axum::response::Response {
+        use axum::response::IntoResponse;
+        let mut resp = (
+            StatusCode::BAD_REQUEST,
+            axum::Json(serde_json::json!({ "error": "boom" })),
+        )
+            .into_response();
+        resp.extensions_mut()
+            .insert(polytope_server::support::RequestId(RID.to_string()));
+        resp
+    }
+
+    let (_full_app, state) = build_app(config()).expect("app builds");
+    let router = axum::Router::new()
+        .route("/boom", axum::routing::get(boom))
+        .layer(axum::middleware::from_fn_with_state(
+            state,
+            polytope_server::support::request_context_middleware,
+        ));
+
+    // No X-Request-Id header from the client.
+    let resp = router
+        .oneshot(Request::get("/boom").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let msg = v["message"].as_str().unwrap();
+    assert!(msg.contains(&format!("quote your request ID {RID}")));
+}
+
+#[tokio::test]
+async fn inbound_request_id_header_is_ignored() {
+    // No real client supplies this header; a caller-supplied value must never be
+    // trusted or surfaced back to the user.
     let resp = app()
         .oneshot(
             Request::get("/api/v2/collections")
@@ -94,17 +145,10 @@ async fn inbound_request_id_is_preserved() {
         )
         .await
         .unwrap();
-    let rid = resp
-        .headers()
-        .get("x-request-id")
-        .unwrap()
-        .to_str()
-        .unwrap();
-    assert_eq!(rid, "caller-supplied-id");
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert!(
-        v["message"]
+        !v["message"]
             .as_str()
             .unwrap()
             .contains("caller-supplied-id")

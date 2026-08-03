@@ -4,8 +4,10 @@
 
 //! User-facing error enrichment.
 //!
-//! A single outer middleware gives every request a request ID (minted in the
-//! BITS ID format, or reused from an inbound `X-Request-Id`) and rewrites any
+//! A single outer middleware derives the request ID from the URL path (for the
+//! endpoints that act on an existing request) or from the ID that BITS generated
+//! when it accepted a new job (surfaced by the handler via a response
+//! extension), and rewrites any
 //! `>= 400` JSON response body into one self-contained, human-readable
 //! `{"message": ...}` field that tells the user what to do and where to raise a
 //! support ticket, quoting their request ID.
@@ -22,10 +24,8 @@ use axum::extract::{Request, State};
 use axum::http::{HeaderName, HeaderValue, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::Response;
-use chrono::Utc;
 use serde_json::json;
 
-use crate::auth::mock_roles::REQUEST_ID_HEADER;
 use crate::state::AppState;
 
 /// Cap on the error body we will buffer to rewrite. Error bodies are tiny JSON;
@@ -170,53 +170,55 @@ async fn transform_error(resp: Response, state: &AppState, request_id: &str) -> 
     Response::from_parts(parts, Body::from(new_body))
 }
 
-/// Outer middleware: assign a request ID, expose it on every response as
-/// `X-Request-Id`, and rewrite error bodies into the support-guidance shape.
+/// Extract the Polytope request ID from the URL path, for the endpoints that act
+/// on an existing request. The ID is an opaque path segment; we do not parse or
+/// validate its internal structure (see docs/request-ids.md).
+fn request_id_from_path(path: &str) -> Option<String> {
+    let segments: Vec<&str> = path.trim_matches('/').split('/').collect();
+    let id = match segments.as_slice() {
+        ["api", "v1" | "v2", "requests", id] => id,
+        ["api", "v1", "downloads" | "uploads", id] => id,
+        _ => return None,
+    };
+    let id = id.trim();
+    (!id.is_empty()).then(|| id.to_string())
+}
+
+/// Outer middleware: resolve the request ID (URL-derived, or BITS-generated and
+/// surfaced by the handler) and rewrite error bodies into the support-guidance
+/// shape, quoting the ID when one is available.
 pub async fn request_context_middleware(
     State(state): State<Arc<AppState>>,
     mut req: Request,
     next: Next,
 ) -> Response {
-    let request_id = req
-        .headers()
-        .get(REQUEST_ID_HEADER)
-        .and_then(|v| v.to_str().ok())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| {
-            bits::request_id::encode(
-                state.bits.site(),
-                state.bits.env(),
-                state.bits.broker_slot(),
-                Utc::now(),
-            )
-            .unwrap_or_default()
-        });
+    // The request ID is derived from the URL path for the endpoints that act on
+    // an existing request. We never read it from an inbound header and never
+    // mint one here: the frontend only creates a request ID when BITS accepts a
+    // new job, and the handler surfaces that ID back through a response
+    // extension.
+    let url_request_id = request_id_from_path(req.uri().path());
 
-    if !request_id.is_empty() {
-        if let Ok(hv) = HeaderValue::from_str(&request_id) {
-            req.headers_mut()
-                .insert(HeaderName::from_static(REQUEST_ID_HEADER), hv);
-        }
-        req.extensions_mut().insert(RequestId(request_id.clone()));
+    // Expose the URL-derived ID to inner layers (e.g. auth audit logging).
+    if let Some(id) = &url_request_id {
+        req.extensions_mut().insert(RequestId(id.clone()));
     }
 
     let preserve_native_error_shape = preserves_native_error_shape(req.uri().path());
     let resp = next.run(req).await;
+
+    // Prefer the URL-derived ID; otherwise fall back to an ID that a handler
+    // (e.g. a submit that BITS accepted) surfaced via a response extension. When
+    // neither exists there is simply no ID to report.
+    let request_id = url_request_id
+        .or_else(|| resp.extensions().get::<RequestId>().map(|r| r.0.clone()))
+        .unwrap_or_default();
 
     let mut resp = if resp.status().as_u16() >= 400 && !preserve_native_error_shape {
         transform_error(resp, &state, &request_id).await
     } else {
         resp
     };
-
-    if !request_id.is_empty()
-        && let Ok(hv) = HeaderValue::from_str(&request_id)
-    {
-        resp.headers_mut()
-            .insert(HeaderName::from_static(REQUEST_ID_HEADER), hv);
-    }
 
     // Security / caching headers on every response, matching the legacy Python
     // frontend's `after_request` hook so downstream expectations are preserved.

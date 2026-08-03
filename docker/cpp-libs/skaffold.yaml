@@ -1,0 +1,116 @@
+# SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# ─── C++ library base images ────────────────────────────────────────────────
+#
+# Standalone skaffold config for the pre-built C++ dependency images. These are
+# NOT part of the application build (../../skaffold.yaml): app images pull them
+# from ECCR by pinned tag. Build/publish them explicitly, one image at a time,
+# with the tag taken from that image's TAG file. Run from THIS directory
+# (docker/cpp-libs/) — skaffold resolves each artifact's context (e.g. `metkit`)
+# relative to the current working directory, not to this file:
+#
+#   cd docker/cpp-libs
+#   FIXED_TAG=$(cat fdb/TAG) \
+#     skaffold build -f skaffold.yaml \
+#       -b eccr.ecmwf.int/polytope/cpp-fdb-libs --push
+#
+# Environment variables:
+#   FIXED_TAG   image tag to publish (read from the image's TAG file)
+#   GH_TOKEN    GitHub token — only required for cpp-mars-libs (private clones)
+#   RPM_REPO    Nexus URL — only for cpp-mars-libs with MARS_BUILD_FROM_SOURCE=false
+# ────────────────────────────────────────────────────────────────────────────
+
+apiVersion: skaffold/v4beta13
+kind: Config
+metadata:
+  name: cpp-libs
+
+build:
+  artifacts:
+    - image: eccr.ecmwf.int/polytope/cpp-metkit-libs
+      context: metkit
+      docker:
+        dockerfile: Dockerfile
+        target: libs
+        buildArgs:
+          VERSION: '{{ default "latest" .FIXED_TAG }}'
+
+    - image: eccr.ecmwf.int/polytope/cpp-fdb-libs
+      context: fdb
+      docker:
+        dockerfile: Dockerfile
+        target: libs
+        buildArgs:
+          VERSION: '{{ default "latest" .FIXED_TAG }}'
+
+    - image: eccr.ecmwf.int/polytope/cpp-fdb-gribjump-libs
+      context: fdb-gribjump
+      docker:
+        dockerfile: Dockerfile
+        target: libs
+        buildArgs:
+          VERSION: '{{ default "latest" .FIXED_TAG }}'
+
+    - image: eccr.ecmwf.int/polytope/cpp-mars-libs
+      context: mars
+      docker:
+        dockerfile: Dockerfile
+        target: libs
+        buildArgs:
+          VERSION: '{{ default "latest" .FIXED_TAG }}'
+          GIT_AUTH_TOKEN: '{{ default "" .GH_TOKEN }}'
+          rpm_repo: '{{ default "" .RPM_REPO }}'
+
+    # ─── Debug companions ──────────────────────────────────────────────────
+    # Same build, same tag, unstripped (full debug symbols) — for gdb/backtrace
+    # diagnostics. Published under a `-debug` repo suffix (the global tagPolicy
+    # applies the same FIXED_TAG to every artifact, so the suffix goes in the
+    # image name, not the tag). Build one at a time with --build-image.
+    - image: eccr.ecmwf.int/polytope/cpp-metkit-libs-debug
+      context: metkit
+      docker:
+        dockerfile: Dockerfile
+        target: libs-debug
+        buildArgs:
+          VERSION: '{{ default "latest" .FIXED_TAG }}'
+
+    - image: eccr.ecmwf.int/polytope/cpp-fdb-libs-debug
+      context: fdb
+      docker:
+        dockerfile: Dockerfile
+        target: libs-debug
+        buildArgs:
+          VERSION: '{{ default "latest" .FIXED_TAG }}'
+
+    - image: eccr.ecmwf.int/polytope/cpp-fdb-gribjump-libs-debug
+      context: fdb-gribjump
+      docker:
+        dockerfile: Dockerfile
+        target: libs-debug
+        buildArgs:
+          VERSION: '{{ default "latest" .FIXED_TAG }}'
+
+    - image: eccr.ecmwf.int/polytope/cpp-mars-libs-debug
+      context: mars
+      docker:
+        dockerfile: Dockerfile
+        target: libs-debug
+        buildArgs:
+          VERSION: '{{ default "latest" .FIXED_TAG }}'
+          GIT_AUTH_TOKEN: '{{ default "" .GH_TOKEN }}'
+          rpm_repo: '{{ default "" .RPM_REPO }}'
+
+  tagPolicy:
+    customTemplate:
+      template: '{{.TAG}}'
+      components:
+        - name: TAG
+          envTemplate:
+            template: '{{ default "latest" .FIXED_TAG }}'
+  platforms:
+    - linux/amd64
+  local:
+    useDockerCLI: true
+    concurrency: 1

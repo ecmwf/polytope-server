@@ -19,6 +19,9 @@ path = [
   "pytest.ini",
   "**/requirements.txt",
   "dev/otel/grafana/dashboards/**",
+  "VERSION",
+  "**/TAG",
+  "docker/cpp-libs/README.md",
 ]
 precedence = "closest"
 SPDX-FileCopyrightText = "2026 European Centre for Medium-Range Weather Forecasts (ECMWF)"

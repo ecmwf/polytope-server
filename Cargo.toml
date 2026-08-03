@@ -3,6 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [workspace]
+# Docker builds copy member manifests explicitly: adding or moving a member
+# requires updating the `manifests` stage in every Dockerfile.
 members = [
     "observability",
     "frontend",

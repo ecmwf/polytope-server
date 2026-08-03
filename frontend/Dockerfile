@@ -2,53 +2,26 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+# Pre-built C++ eckit + metkit stack pulled from ECCR.
+# Built and published from docker/cpp-libs/metkit by the cpp-libs workflow.
+# The stripped image feeds `release`; the -debug (full-symbol) image feeds `debug`.
+ARG METKIT_LIBS_IMAGE=eccr.ecmwf.int/polytope/cpp-metkit-libs:metkit1.17.0-r1
+ARG METKIT_LIBS_DEBUG_IMAGE=eccr.ecmwf.int/polytope/cpp-metkit-libs-debug:metkit1.17.0-r1
+
 ###############################
 # Shared base: Rust + cargo-chef + system deps
 ###############################
-FROM docker.io/library/rust:1.93-slim-bookworm AS chef-base
+FROM docker.io/library/rust:1.94.1-slim-bookworm AS chef-base
 RUN cargo install cargo-chef --locked
 RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-dev && rm -rf /var/lib/apt/lists/*
 
 ###############################
-# Build eckit + metkit from public GitHub repos
+# eckit + metkit libraries (pre-built image, /opt/metkit)
 ###############################
-FROM docker.io/library/debian:bookworm-slim AS metkit-build
-ARG ECBUILD_VERSION=3.12.0
-ARG ECKIT_VERSION=1.33.0
-ARG METKIT_VERSION=1.17.0
+FROM ${METKIT_LIBS_IMAGE} AS metkit-build
 
-RUN apt-get update && apt-get install -y \
-    cmake build-essential git libaec-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN git clone --depth 1 --branch ${ECBUILD_VERSION} https://github.com/ecmwf/ecbuild.git /ecbuild
-ENV PATH=/ecbuild/bin:$PATH
-
-RUN git clone --depth 1 --branch ${ECKIT_VERSION} https://github.com/ecmwf/eckit.git /src/eckit \
-    && mkdir -p /build/eckit && cd /build/eckit \
-    && ecbuild --prefix=/opt/metkit \
-        -DENABLE_FORTRAN=OFF \
-        -DENABLE_BUILD_TOOLS=OFF \
-        -DENABLE_TESTS=OFF \
-        -DENABLE_GEO=OFF \
-        /src/eckit \
-    && make -j$(nproc) \
-    && make install
-
-RUN git clone --depth 1 --branch ${METKIT_VERSION} https://github.com/ecmwf/metkit.git /src/metkit \
-    && mkdir -p /build/metkit && cd /build/metkit \
-    && ecbuild --prefix=/opt/metkit \
-        -DENABLE_FORTRAN=OFF \
-        -DENABLE_BUILD_TOOLS=OFF \
-        -DENABLE_TESTS=OFF \
-        -DENABLE_GEO=OFF \
-        -DENABLE_ECCODES=OFF \
-        -DENABLE_MARS2GRIB=OFF \
-        -Deckit_DIR=/opt/metkit/lib/cmake/eckit \
-        /src/metkit \
-    && make -j$(nproc) metkit metkit.pc-pkg-config \
-    && : > /build/metkit/src/tools/cmake_install.cmake \
-    && cmake --install /build/metkit
+# Full-symbol variant, used only by the `debug` target.
+FROM ${METKIT_LIBS_DEBUG_IMAGE} AS metkit-build-debug
 
 ###############################
 # Prepare the root workspace Cargo Chef recipe
@@ -127,8 +100,13 @@ RUN cargo build --release --locked --package "${PACKAGE_NAME}" \
 ###############################
 FROM gcr.io/distroless/cc-debian12:nonroot AS release
 ARG VERSION
+ARG REVISION
+ARG METKIT_LIBS_IMAGE
 ARG BIN_NAME=polytope-server
-LABEL version=$VERSION
+LABEL org.opencontainers.image.version="$VERSION" \
+      org.opencontainers.image.revision="$REVISION" \
+      org.opencontainers.image.source="https://github.com/ecmwf/polytope-server" \
+      int.ecmwf.polytope.libs-image="$METKIT_LIBS_IMAGE"
 WORKDIR /app
 COPY --from=metkit-build /opt/metkit/lib /opt/metkit/lib
 COPY --from=metkit-build /opt/metkit/share /opt/metkit/share
@@ -141,12 +119,17 @@ ENTRYPOINT ["/app/polytope-server"]
 ###############################
 FROM docker.io/library/debian:bookworm-slim AS debug
 ARG VERSION
+ARG REVISION
+ARG METKIT_LIBS_IMAGE
 ARG BIN_NAME=polytope-server
-LABEL version=$VERSION
+LABEL org.opencontainers.image.version="$VERSION" \
+      org.opencontainers.image.revision="$REVISION" \
+      org.opencontainers.image.source="https://github.com/ecmwf/polytope-server" \
+      int.ecmwf.polytope.libs-image="$METKIT_LIBS_IMAGE"
 RUN apt-get update && apt-get install -y ca-certificates bash && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY --from=metkit-build /opt/metkit/lib /opt/metkit/lib
-COPY --from=metkit-build /opt/metkit/share /opt/metkit/share
+COPY --from=metkit-build-debug /opt/metkit/lib /opt/metkit/lib
+COPY --from=metkit-build-debug /opt/metkit/share /opt/metkit/share
 COPY --from=builder /ecmwf/polytope-server/target/release/${BIN_NAME} /app/polytope-server
 ENV LD_LIBRARY_PATH="/opt/metkit/lib"
 ENTRYPOINT ["/app/polytope-server"]
