@@ -119,10 +119,11 @@ build:
 # ─── Profiles ─────────────────────────────────────────────────────────────────
 
 profiles:
-  # ── Kaniko in-cluster build with remote layer caching ─────────────────────
+  # ── Legacy Kaniko profile ──────────────────────────────────────────────────
   #
-  # Usage:
-  #   skaffold build -p kaniko -b mars-worker
+  # Application Dockerfiles now use BuildKit secret mounts for private Git
+  # dependencies. Kaniko does not support those mounts, so this profile is
+  # retained only as migration reference and must not be used for app images.
   #
   # Prerequisites:
   #   1. Create ~/.docker/kaniko-config.json with registry credentials:
