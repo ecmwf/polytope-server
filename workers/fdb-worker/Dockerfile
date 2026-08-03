@@ -2,12 +2,26 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+# Pre-built C++ FDB stack (eckit, eccodes, metkit, fdb) pulled from ECCR.
+# Built and published from docker/cpp-libs/fdb by the cpp-libs workflow.
+# The stripped image feeds `release`; the -debug (full-symbol) image feeds `debug`.
+ARG FDB_LIBS_IMAGE=eccr.ecmwf.int/polytope/cpp-fdb-libs:fdb5.19.2-r1
+ARG FDB_LIBS_DEBUG_IMAGE=eccr.ecmwf.int/polytope/cpp-fdb-libs-debug:fdb5.19.2-r1
+
 ###############################
 # Shared base: Rust + cargo-chef + system deps (built once)
 ###############################
-FROM docker.io/library/rust:1.93-slim-bookworm AS chef-base
+FROM docker.io/library/rust:1.94.1-slim-bookworm AS chef-base
 RUN cargo install cargo-chef --locked
 RUN apt-get update && apt-get install -y git pkg-config build-essential libssl-dev && rm -rf /var/lib/apt/lists/*
+
+###############################
+# FDB libraries (pre-built image, /opt/fdb)
+###############################
+FROM ${FDB_LIBS_IMAGE} AS fdb-build
+
+# Full-symbol variant, used only by the `debug` target.
+FROM ${FDB_LIBS_DEBUG_IMAGE} AS fdb-build-debug
 
 ###############################
 # Prepare the root workspace Cargo Chef recipe
@@ -61,49 +75,17 @@ RUN if [ -n "$GIT_AUTH_TOKEN" ]; then \
 RUN cargo build --release --locked --package "${PACKAGE_NAME}"
 
 ###############################
-# FDB Build (from source)
-###############################
-FROM docker.io/library/debian:bookworm-slim AS fdb-build
-ARG ecbuild_version=3.12.0
-ARG eccodes_version=2.46.0
-ARG eckit_version=1.33.0
-ARG metkit_version=1.17.0
-ARG fdb_version=5.19.2
-
-RUN apt-get update && apt-get install -y --no-install-recommends cmake build-essential bison flex git libaec-dev ca-certificates && rm -rf /var/lib/apt/lists/*
-
-RUN git clone --depth 1 --branch ${ecbuild_version} https://github.com/ecmwf/ecbuild.git /ecbuild
-ENV PATH=/ecbuild/bin:$PATH
-
-RUN git clone --depth 1 --branch ${eckit_version} https://github.com/ecmwf/eckit.git /source/eckit \
-    && mkdir -p /build/eckit && cd /build/eckit \
-    && ecbuild --prefix=/opt/fdb -- -DCMAKE_PREFIX_PATH=/opt/fdb /source/eckit \
-    && make -j$(nproc) && make install
-
-RUN git clone --depth 1 --branch ${eccodes_version} https://github.com/ecmwf/eccodes.git /source/eccodes \
-    && mkdir -p /build/eccodes && cd /build/eccodes \
-    && ecbuild --prefix=/opt/fdb -- -DENABLE_FORTRAN=OFF -DENABLE_AEC=OFF -DCMAKE_PREFIX_PATH=/opt/fdb /source/eccodes \
-    && make -j$(nproc) && make install
-
-RUN git clone --depth 1 --branch ${metkit_version} https://github.com/ecmwf/metkit.git /source/metkit \
-    && mkdir -p /build/metkit && cd /build/metkit \
-    && ecbuild --prefix=/opt/fdb -- -DCMAKE_PREFIX_PATH=/opt/fdb /source/metkit \
-    && make -j$(nproc) && make install
-
-RUN git clone --depth 1 --branch ${fdb_version} https://github.com/ecmwf/fdb.git /source/fdb \
-    && mkdir -p /build/fdb && cd /build/fdb \
-    && ecbuild --prefix=/opt/fdb -- -DCMAKE_PREFIX_PATH="/opt/fdb;/opt/fdb/eckit;/opt/fdb/metkit" /source/fdb \
-    && make -j$(nproc) && make install
-
-RUN rm -rf /source /build
-
-###############################
 # Stage 4: Production Release Image
 ###############################
 FROM docker.io/library/debian:bookworm-slim AS release
 ARG VERSION
+ARG REVISION
+ARG FDB_LIBS_IMAGE
 ARG BIN_NAME=fdb-worker
-LABEL version=$VERSION
+LABEL org.opencontainers.image.version="$VERSION" \
+      org.opencontainers.image.revision="$REVISION" \
+      org.opencontainers.image.source="https://github.com/ecmwf/polytope-server" \
+      int.ecmwf.polytope.libs-image="$FDB_LIBS_IMAGE"
 RUN apt-get update && apt-get install -y ca-certificates libgomp1 libaec0 libcurl4 libopenjp2-7 && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=fdb-build /opt/fdb/ /opt/fdb/
@@ -116,11 +98,16 @@ ENTRYPOINT ["/app/fdb-worker"]
 ###############################
 FROM docker.io/library/debian:bookworm-slim AS debug
 ARG VERSION
+ARG REVISION
+ARG FDB_LIBS_IMAGE
 ARG BIN_NAME=fdb-worker
-LABEL version=$VERSION
+LABEL org.opencontainers.image.version="$VERSION" \
+      org.opencontainers.image.revision="$REVISION" \
+      org.opencontainers.image.source="https://github.com/ecmwf/polytope-server" \
+      int.ecmwf.polytope.libs-image="$FDB_LIBS_IMAGE"
 RUN apt-get update && apt-get install -y ca-certificates libgomp1 libaec0 libcurl4 libopenjp2-7 bash && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY --from=fdb-build /opt/fdb/ /opt/fdb/
+COPY --from=fdb-build-debug /opt/fdb/ /opt/fdb/
 ENV LD_LIBRARY_PATH=/opt/fdb/lib
 COPY --from=builder /ecmwf/polytope-server/target/release/${BIN_NAME} /app/fdb-worker
 ENTRYPOINT ["/app/fdb-worker"]

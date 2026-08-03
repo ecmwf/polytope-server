@@ -7,9 +7,9 @@
 # Required for private GitHub dependencies:
 #   GH_TOKEN                    GitHub token with repository read access
 #
-# Required only for the RPM-based Mars build (`docker build --build-arg
-# MARS_BUILD_FROM_SOURCE=false`):
-#   RPM_REPO                    Nexus RPM repository URL
+# C++ library stacks (metkit, fdb, fdb-gribjump, mars) are NOT built here: the
+# app Dockerfiles pull pre-built library images from ECCR (pinned via their
+# *_LIBS_IMAGE build args). See docker/cpp-libs/ and the cpp-libs workflow.
 # ──────────────────────────────────────────────────────────────────────────────
 
 apiVersion: skaffold/v4beta13
@@ -24,13 +24,15 @@ metadata:
 
 build:
   artifacts:
-    - image: eccr.ecmwf.int/polytope/polytope-server
+    - image: eccr.ecmwf.int/polytope/frontend
       context: .
       docker:
         dockerfile: frontend/Dockerfile
         target: release
         buildArgs:
           GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+          VERSION: '{{ default "" .VERSION }}'
+          REVISION: '{{ default "" .REVISION }}'
 
     - image: eccr.ecmwf.int/polytope/polytope-fe-worker
       context: .
@@ -39,6 +41,8 @@ build:
         target: release
         buildArgs:
           GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+          VERSION: '{{ default "" .VERSION }}'
+          REVISION: '{{ default "" .REVISION }}'
 
     - image: eccr.ecmwf.int/polytope/fdb-worker
       context: .
@@ -47,6 +51,8 @@ build:
         target: release
         buildArgs:
           GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+          VERSION: '{{ default "" .VERSION }}'
+          REVISION: '{{ default "" .REVISION }}'
 
     - image: eccr.ecmwf.int/polytope/mars-worker
       context: .
@@ -55,7 +61,8 @@ build:
         target: release
         buildArgs:
           GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
-          rpm_repo: '{{ .RPM_REPO }}'
+          VERSION: '{{ default "" .VERSION }}'
+          REVISION: '{{ default "" .REVISION }}'
 
     - image: eccr.ecmwf.int/polytope/test-worker
       context: .
@@ -64,6 +71,8 @@ build:
         target: release
         buildArgs:
           GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+          VERSION: '{{ default "" .VERSION }}'
+          REVISION: '{{ default "" .REVISION }}'
 
     - image: eccr.ecmwf.int/polytope/polytope-loadgen
       context: .
@@ -72,6 +81,8 @@ build:
         target: release
         buildArgs:
           GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+          VERSION: '{{ default "" .VERSION }}'
+          REVISION: '{{ default "" .REVISION }}'
 
   tagPolicy:
     customTemplate:
@@ -144,6 +155,8 @@ profiles:
             cacheTTL: 480h
           buildArgs:
             GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+            VERSION: '{{ default "" .VERSION }}'
+            REVISION: '{{ default "" .REVISION }}'
 
       - op: remove
         path: /build/artifacts/1/docker
@@ -159,6 +172,8 @@ profiles:
             cacheTTL: 480h
           buildArgs:
             GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+            VERSION: '{{ default "" .VERSION }}'
+            REVISION: '{{ default "" .REVISION }}'
 
       - op: remove
         path: /build/artifacts/2/docker
@@ -174,6 +189,8 @@ profiles:
             cacheTTL: 480h
           buildArgs:
             GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+            VERSION: '{{ default "" .VERSION }}'
+            REVISION: '{{ default "" .REVISION }}'
 
       - op: remove
         path: /build/artifacts/3/docker
@@ -189,7 +206,8 @@ profiles:
             cacheTTL: 480h
           buildArgs:
             GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
-            rpm_repo: '{{ .RPM_REPO }}'
+            VERSION: '{{ default "" .VERSION }}'
+            REVISION: '{{ default "" .REVISION }}'
 
       - op: remove
         path: /build/artifacts/4/docker
@@ -205,6 +223,8 @@ profiles:
             cacheTTL: 480h
           buildArgs:
             GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+            VERSION: '{{ default "" .VERSION }}'
+            REVISION: '{{ default "" .REVISION }}'
 
       - op: remove
         path: /build/artifacts/5/docker
@@ -220,3 +240,5 @@ profiles:
             cacheTTL: 480h
           buildArgs:
             GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
+            VERSION: '{{ default "" .VERSION }}'
+            REVISION: '{{ default "" .REVISION }}'
