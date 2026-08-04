@@ -3967,7 +3967,6 @@ dependencies = [
  "clap",
  "futures",
  "http-body-util",
- "hyper-util",
  "inventory",
  "jsonwebtoken",
  "metkit",
