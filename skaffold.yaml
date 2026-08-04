@@ -7,9 +7,11 @@
 # Required for private GitHub dependencies:
 #   GH_TOKEN                    GitHub token with repository read access
 #
-# C++ library stacks (metkit, fdb, fdb-gribjump, mars) are NOT built here: the
-# app Dockerfiles pull pre-built library images from ECCR (pinned via their
-# *_LIBS_IMAGE build args). See docker/cpp-libs/ and the cpp-libs workflow.
+# C++ library stacks (metkit, fdb, fdb-gribjump, mars) are NOT built here.
+# fdb-worker and mars-worker pull pre-built library images from ECCR (pinned
+# via their *_LIBS_IMAGE build args; see docker/cpp-libs/ and cpp-libs.yaml).
+# polytope-fe-worker uses PyPI manylinux wheels (pyfdb, pygribjump[binary])
+# that bundle their own C++ stack — no separate ECCR image required.
 # ──────────────────────────────────────────────────────────────────────────────
 
 apiVersion: skaffold/v4beta13

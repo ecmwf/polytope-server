@@ -15,6 +15,8 @@ class PolytopeDataSource:
         self.config = config
         self.type = config["type"]
         assert self.type == "polytope"
+        self.dynamic_grid = config.pop("dynamic_grid", False)
+        self.dynamic_grid_service_url = config.pop("dynamic_grid_service_url", None)
         self.pre_path = config.get("options", {}).pop("pre_path", [])
         self.defaults = config.get("defaults", {})
         # https://github.com/ecmwf/polytope-server/issues/68
@@ -97,12 +99,41 @@ class PolytopeDataSource:
             if k in pre_path_axes:
                 if isinstance(v, list):
                     if self.gh70_fix_step_ranges:
-                        if k == "param":
-                            pre_path[k] = v[0]
+                        if k == "param" and not str(v[0]).lstrip("-").isdigit():
+                            try:
+                                from covjsonkit.param_db import get_param_id_from_db
+                                v[0] = get_param_id_from_db(v[0])
+                            except Exception:
+                                logging.warning(
+                                    "Could not convert param shortname '%s' to param id",
+                                    v[0],
+                                )
+                        pre_path[k] = v[0]
                     if len(v) == 1:
                         v = v[0]
+                        if k == "param" and not str(v).lstrip("-").isdigit():
+                            try:
+                                from covjsonkit.param_db import get_param_id_from_db
+                                v = get_param_id_from_db(v)
+                            except Exception:
+                                logging.warning(
+                                    "Could not convert param shortname '%s' to param id",
+                                    v,
+                                )
                         pre_path[k] = v
         polytope_mars_config["options"]["pre_path"] = pre_path
+
+        if self.dynamic_grid:
+            from dynamic_grid.helper import (
+                build_grid_lookup_request,
+                replace_dynamic_grid_options,
+            )
+            grid_lookup_request = build_grid_lookup_request(r)
+            replace_dynamic_grid_options(
+                polytope_mars_config["options"],
+                grid_lookup_request,
+                service_url=self.dynamic_grid_service_url,
+            )
 
         if self.gh69_fix_grids:
             change_grids(r, polytope_mars_config)
@@ -243,8 +274,9 @@ def change_hash(request, config):
     if request.get("dataset", None) == "climate-dt":
         if request.get("resolution", None) == "high":
             if request.get("model", None) == "icon":
-                hash = "9533855ee8e38314e19aaa0434c310da"
-                return change_config_grid_hash(config, hash)
+                if request.get("generation", None) == "1":
+                    hash = "9533855ee8e38314e19aaa0434c310da"
+                    return change_config_grid_hash(config, hash)
     return config
 
 
