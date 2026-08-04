@@ -403,6 +403,39 @@ pub trait Processor: Send + Sync {
 /// *continuous* failure, so they stay at debug (silent at RUST_LOG=info).
 const POLL_FAILURE_GRACE: Duration = Duration::from_secs(30);
 
+/// TCP connection attempts must fail quickly enough for heartbeat recovery to make progress.
+const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+/// Caps a stuck HTTP exchange while allowing long-running streamed MARS completions.
+const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
+/// Heartbeats are small requests, so a shorter cap leaves time for retries inside the give-up window.
+const HEARTBEAT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// Matches the broker's default heartbeat reaper timeout. After this much continuous failure the
+/// broker has evicted the job and its output is no longer wanted.
+const BROKER_GIVE_UP_TIMEOUT: Duration = Duration::from_secs(60);
+/// Completion callbacks are retried briefly, but must never permanently consume a worker slot.
+const COMPLETION_MAX_ATTEMPTS: usize = 3;
+
+#[derive(Clone, Copy)]
+struct BrokerRecoveryPolicy {
+    connect_timeout: Duration,
+    request_timeout: Duration,
+    heartbeat_request_timeout: Duration,
+    give_up_timeout: Duration,
+    completion_attempts: usize,
+}
+
+impl Default for BrokerRecoveryPolicy {
+    fn default() -> Self {
+        Self {
+            connect_timeout: HTTP_CONNECT_TIMEOUT,
+            request_timeout: HTTP_REQUEST_TIMEOUT,
+            heartbeat_request_timeout: HEARTBEAT_REQUEST_TIMEOUT,
+            give_up_timeout: BROKER_GIVE_UP_TIMEOUT,
+            completion_attempts: COMPLETION_MAX_ATTEMPTS,
+        }
+    }
+}
+
 /// Tracks consecutive broker-poll failures so a worker only warns once it has
 /// been unable to get work from *any* broker for [`POLL_FAILURE_GRACE`],
 /// re-warning at most once per interval. Any successful poll — real work or a
@@ -445,6 +478,61 @@ impl PollHealth {
     }
 }
 
+async fn wait_for_failure_deadline(failing_since: Option<Instant>, timeout: Duration) {
+    match failing_since {
+        Some(since) => {
+            tokio::time::sleep_until(tokio::time::Instant::from_std(since + timeout)).await
+        }
+        None => std::future::pending::<()>().await,
+    }
+}
+
+async fn wait_for_abandonment(receiver: &mut tokio::sync::watch::Receiver<bool>) {
+    loop {
+        if *receiver.borrow() {
+            return;
+        }
+        if receiver.changed().await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    }
+}
+
+async fn send_completion_with_retries(
+    mut request: reqwest::RequestBuilder,
+    max_attempts: usize,
+    retry_backoff: Duration,
+) -> Result<reqwest::Response, (reqwest::Error, usize)> {
+    let max_attempts = max_attempts.max(1);
+    let mut attempts = 0;
+    loop {
+        attempts += 1;
+        // Streaming request bodies cannot be cloned. They get one safe attempt; JSON
+        // completion requests are cloned before sending and can use the full retry budget.
+        let retry_request = if attempts < max_attempts {
+            request.try_clone()
+        } else {
+            None
+        };
+        match request.send().await {
+            Ok(response) => return Ok(response),
+            Err(err) => match retry_request {
+                Some(next_request) => {
+                    tracing::warn!(
+                        attempt = attempts,
+                        max_attempts,
+                        error = %err,
+                        "worker completion request failed; retrying"
+                    );
+                    tokio::time::sleep(retry_backoff).await;
+                    request = next_request;
+                }
+                None => return Err((err, attempts)),
+            },
+        }
+    }
+}
+
 async fn worker_task<P: Processor + 'static>(
     config: WorkerConfig,
     worker_index: usize,
@@ -452,6 +540,7 @@ async fn worker_task<P: Processor + 'static>(
     processor: std::sync::Arc<P>,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
     restart_tx: tokio::sync::mpsc::UnboundedSender<String>,
+    recovery_policy: BrokerRecoveryPolicy,
 ) -> Result<(), reqwest::Error> {
     let mut poll_cycle: u64 = 0;
     let mut idle_anchor = Instant::now();
@@ -470,7 +559,10 @@ async fn worker_task<P: Processor + 'static>(
             poll_timeout_ms = config.poll_timeout_ms,
             "worker broker poll cycle started"
         );
-        let client = reqwest::Client::builder().build()?;
+        let client = reqwest::Client::builder()
+            .connect_timeout(recovery_policy.connect_timeout)
+            .timeout(recovery_policy.request_timeout)
+            .build()?;
 
         let poll_started = Instant::now();
         let response = tokio::select! {
@@ -560,28 +652,68 @@ async fn worker_task<P: Processor + 'static>(
         let job_id = work.job_id.clone();
         let heartbeat_enduser_id = enduser_id.map(str::to_string);
         let heartbeat_enduser_realm = enduser_realm.map(str::to_string);
+        let (abandon_tx, mut abandon_rx) = tokio::sync::watch::channel(false);
         let heartbeat = tokio::spawn(async move {
+            let mut failing_since = None;
             loop {
                 tokio::select! {
                     _ = stop_heartbeat.notified() => break,
-                    _ = tokio::time::sleep(heartbeat_interval) => {
-                        match heartbeat_client.post(&heartbeat_url).send().await {
-                            Ok(resp) if resp.status() == StatusCode::OK => {}
-                            Ok(resp) if resp.status() == StatusCode::NOT_FOUND => break,
-                            Ok(resp) => {
-                                if let (Some(enduser_id), Some(enduser_realm)) = (heartbeat_enduser_id.as_deref(), heartbeat_enduser_realm.as_deref()) {
-                                    tracing::warn!("event.name" = "worker.heartbeat.failed", outcome = "error", status=%resp.status(), request.id=%job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "heartbeat returned unexpected status")
-                                } else {
-                                    tracing::warn!("event.name" = "worker.heartbeat.failed", outcome = "error", status=%resp.status(), request.id=%job_id, "heartbeat returned unexpected status")
-                                }
-                            },
-                            Err(err) => {
-                                if let (Some(enduser_id), Some(enduser_realm)) = (heartbeat_enduser_id.as_deref(), heartbeat_enduser_realm.as_deref()) {
-                                    tracing::warn!("event.name" = "worker.heartbeat.failed", outcome = "error", error=%err, request.id=%job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "heartbeat request failed")
-                                } else {
-                                    tracing::warn!("event.name" = "worker.heartbeat.failed", outcome = "error", error=%err, request.id=%job_id, "heartbeat request failed")
-                                }
-                            },
+                    _ = wait_for_failure_deadline(failing_since, recovery_policy.give_up_timeout) => {
+                        tracing::warn!(
+                            "event.name" = "worker.heartbeat.abandoned",
+                            outcome = "error",
+                            request.id = %job_id,
+                            timeout_secs = recovery_policy.give_up_timeout.as_secs(),
+                            "broker heartbeat failed continuously; abandoning job"
+                        );
+                        let _ = abandon_tx.send(true);
+                        break;
+                    }
+                    _ = tokio::time::sleep(heartbeat_interval) => {}
+                }
+
+                let heartbeat_result = tokio::select! {
+                    _ = stop_heartbeat.notified() => break,
+                    _ = wait_for_failure_deadline(failing_since, recovery_policy.give_up_timeout) => {
+                        tracing::warn!(
+                            "event.name" = "worker.heartbeat.abandoned",
+                            outcome = "error",
+                            request.id = %job_id,
+                            timeout_secs = recovery_policy.give_up_timeout.as_secs(),
+                            "broker heartbeat failed continuously; abandoning job"
+                        );
+                        let _ = abandon_tx.send(true);
+                        break;
+                    }
+                    result = heartbeat_client
+                        .post(&heartbeat_url)
+                        .timeout(recovery_policy.heartbeat_request_timeout)
+                        .send() => result,
+                };
+
+                match heartbeat_result {
+                    Ok(resp) if resp.status() == StatusCode::OK => failing_since = None,
+                    Ok(resp) if resp.status() == StatusCode::NOT_FOUND => break,
+                    Ok(resp) => {
+                        failing_since.get_or_insert_with(Instant::now);
+                        if let (Some(enduser_id), Some(enduser_realm)) = (
+                            heartbeat_enduser_id.as_deref(),
+                            heartbeat_enduser_realm.as_deref(),
+                        ) {
+                            tracing::warn!("event.name" = "worker.heartbeat.failed", outcome = "error", status=%resp.status(), request.id=%job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "heartbeat returned unexpected status")
+                        } else {
+                            tracing::warn!("event.name" = "worker.heartbeat.failed", outcome = "error", status=%resp.status(), request.id=%job_id, "heartbeat returned unexpected status")
+                        }
+                    }
+                    Err(err) => {
+                        failing_since.get_or_insert_with(Instant::now);
+                        if let (Some(enduser_id), Some(enduser_realm)) = (
+                            heartbeat_enduser_id.as_deref(),
+                            heartbeat_enduser_realm.as_deref(),
+                        ) {
+                            tracing::warn!("event.name" = "worker.heartbeat.failed", outcome = "error", error=%err, request.id=%job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "heartbeat request failed")
+                        } else {
+                            tracing::warn!("event.name" = "worker.heartbeat.failed", outcome = "error", error=%err, request.id=%job_id, "heartbeat request failed")
                         }
                     }
                 }
@@ -589,66 +721,112 @@ async fn worker_task<P: Processor + 'static>(
         });
 
         let process_started = Instant::now();
-        let process_result = processor.process(work.clone()).await;
-        let process_ms = process_started.elapsed().as_millis() as u64;
-        let processing_duration = process_started.elapsed();
+        let processing = async {
+            let process_result = processor.process(work.clone()).await;
+            let process_ms = process_started.elapsed().as_millis() as u64;
+            let processing_duration = process_started.elapsed();
 
-        let mut deliver_ms: u64 = 0;
-        // Counts post-encoding bytes as the result body streams to delivery.
-        // None for non-Success outcomes (which do not emit worker.job.completed).
-        let mut byte_counter: Option<Arc<AtomicU64>> = None;
-        let mut source_error_for_restart: Option<SourceError> = None;
-        let completion = match process_result {
-            ProcessResult::Success {
-                content_type,
-                body,
-                source_error,
-            } => {
-                source_error_for_restart = source_error.clone();
-                let codec = codec_from_accept_encoding(work.metadata["accept_encoding"].as_str());
-                let content_encoding = codec.content_encoding_header().map(str::to_string);
-                let (encoded, counter) = encode_stream_counted(body, &codec);
-                byte_counter = Some(counter);
-                let deliver_started = Instant::now();
-                let completion = delivery
-                    .deliver(
-                        &content_type,
-                        content_encoding.as_deref(),
-                        encoded,
-                        &work.metadata,
-                        DeliveryContext {
-                            job_id: &work.job_id,
-                            user: &work.user,
-                            source_error,
-                        },
-                    )
-                    .await;
-                deliver_ms = deliver_started.elapsed().as_millis() as u64;
-                completion
-            }
-            ProcessResult::Reject { reason } => {
-                if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
-                    tracing::warn!("event.name" = "worker.job.rejected", outcome = "rejected", request.id = %work.job_id, reason = %reason, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "job rejected");
-                } else {
-                    tracing::warn!("event.name" = "worker.job.rejected", outcome = "rejected", request.id = %work.job_id, reason = %reason, "job rejected");
+            let mut deliver_ms: u64 = 0;
+            // Counts post-encoding bytes as the result body streams to delivery.
+            // None for non-Success outcomes (which do not emit worker.job.completed).
+            let mut byte_counter: Option<Arc<AtomicU64>> = None;
+            let mut source_error_for_restart: Option<SourceError> = None;
+            let completion = match process_result {
+                ProcessResult::Success {
+                    content_type,
+                    body,
+                    source_error,
+                } => {
+                    source_error_for_restart = source_error.clone();
+                    let codec =
+                        codec_from_accept_encoding(work.metadata["accept_encoding"].as_str());
+                    let content_encoding = codec.content_encoding_header().map(str::to_string);
+                    let (encoded, counter) = encode_stream_counted(body, &codec);
+                    byte_counter = Some(counter);
+                    let deliver_started = Instant::now();
+                    let completion = delivery
+                        .deliver(
+                            &content_type,
+                            content_encoding.as_deref(),
+                            encoded,
+                            &work.metadata,
+                            DeliveryContext {
+                                job_id: &work.job_id,
+                                user: &work.user,
+                                source_error,
+                            },
+                        )
+                        .await;
+                    deliver_ms = deliver_started.elapsed().as_millis() as u64;
+                    completion
                 }
-                Completion::Reject { reason }
-            }
-            ProcessResult::Error { message } => {
-                if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
-                    tracing::error!("event.name" = "worker.job.failed", outcome = "error", request.id = %work.job_id, error = %message, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "job failed");
-                } else {
-                    tracing::error!("event.name" = "worker.job.failed", outcome = "error", request.id = %work.job_id, error = %message, "job failed");
+                ProcessResult::Reject { reason } => {
+                    if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
+                        tracing::warn!("event.name" = "worker.job.rejected", outcome = "rejected", request.id = %work.job_id, reason = %reason, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "job rejected");
+                    } else {
+                        tracing::warn!("event.name" = "worker.job.rejected", outcome = "rejected", request.id = %work.job_id, reason = %reason, "job rejected");
+                    }
+                    Completion::Reject { reason }
                 }
-                Completion::Error { message }
-            }
+                ProcessResult::Error { message } => {
+                    if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
+                        tracing::error!("event.name" = "worker.job.failed", outcome = "error", request.id = %work.job_id, error = %message, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "job failed");
+                    } else {
+                        tracing::error!("event.name" = "worker.job.failed", outcome = "error", request.id = %work.job_id, error = %message, "job failed");
+                    }
+                    Completion::Error { message }
+                }
+            };
+            (
+                completion,
+                process_ms,
+                processing_duration,
+                deliver_ms,
+                byte_counter,
+                source_error_for_restart,
+            )
         };
 
+        let processing = tokio::select! {
+            biased;
+            _ = wait_for_abandonment(&mut abandon_rx) => None,
+            result = processing => Some(result),
+        };
         stop.notify_one();
         let _ = heartbeat.await;
+        if processing.is_none() || *abandon_rx.borrow() {
+            drop(processing);
+            let processing_duration = process_started.elapsed();
+            metrics::record_job_finished(
+                "abandoned",
+                job_start.elapsed().as_secs_f64(),
+                processing_duration.as_secs_f64(),
+                0.0,
+                0,
+            );
+            tracing::warn!(
+                "event.name" = "worker.job.abandoned",
+                outcome = "error",
+                request.id = %work.job_id,
+                "broker heartbeat failure window elapsed; discarded job output"
+            );
+            idle_anchor = Instant::now();
+            continue;
+        }
+        let (
+            completion,
+            process_ms,
+            processing_duration,
+            deliver_ms,
+            byte_counter,
+            source_error_for_restart,
+        ) = match processing {
+            Some(result) => result,
+            None => continue,
+        };
 
         let complete_started = Instant::now();
-        let (response, outcome) = match completion {
+        let completion_result = match completion {
             Completion::Complete {
                 content_type,
                 content_encoding,
@@ -666,9 +844,15 @@ async fn worker_task<P: Processor + 'static>(
                 if let Some(encoding) = content_encoding {
                     request = request.header(reqwest::header::CONTENT_ENCODING, encoding);
                 }
-                match request.send().await {
-                    Ok(resp) => (resp, "data"),
-                    Err(err) => {
+                match send_completion_with_retries(
+                    request,
+                    recovery_policy.completion_attempts,
+                    config.retry_backoff,
+                )
+                .await
+                {
+                    Ok(resp) => Ok((resp, "data")),
+                    Err((err, attempts)) => {
                         if let Some(message) = source_error.and_then(|source| source.message()) {
                             tracing::error!(
                                 "event.name" = "worker.delivery.failed",
@@ -679,35 +863,44 @@ async fn worker_task<P: Processor + 'static>(
                                 "direct result delivery failed after source stream error"
                             );
                             let payload = CompletionRequest::Error { message };
-                            let resp = client
-                                .post(config.complete_error_url_for_work(&work))
-                                .json(&payload)
-                                .send()
-                                .await?;
-                            (resp, "error")
+                            send_completion_with_retries(
+                                client
+                                    .post(config.complete_error_url_for_work(&work))
+                                    .json(&payload),
+                                recovery_policy.completion_attempts,
+                                config.retry_backoff,
+                            )
+                            .await
+                            .map(|resp| (resp, "error"))
                         } else {
-                            return Err(err);
+                            Err((err, attempts))
                         }
                     }
                 }
             }
             Completion::Reject { reason } => {
                 let payload = CompletionRequest::Reject { reason };
-                let resp = client
-                    .post(config.complete_reject_url_for_work(&work))
-                    .json(&payload)
-                    .send()
-                    .await?;
-                (resp, "reject")
+                send_completion_with_retries(
+                    client
+                        .post(config.complete_reject_url_for_work(&work))
+                        .json(&payload),
+                    recovery_policy.completion_attempts,
+                    config.retry_backoff,
+                )
+                .await
+                .map(|resp| (resp, "reject"))
             }
             Completion::Error { message } => {
                 let payload = CompletionRequest::Error { message };
-                let resp = client
-                    .post(config.complete_error_url_for_work(&work))
-                    .json(&payload)
-                    .send()
-                    .await?;
-                (resp, "error")
+                send_completion_with_retries(
+                    client
+                        .post(config.complete_error_url_for_work(&work))
+                        .json(&payload),
+                    recovery_policy.completion_attempts,
+                    config.retry_backoff,
+                )
+                .await
+                .map(|resp| (resp, "error"))
             }
             Completion::Redirect {
                 location,
@@ -727,12 +920,48 @@ async fn worker_task<P: Processor + 'static>(
                     content_type,
                     content_length,
                 };
-                let resp = client
-                    .post(config.complete_redirect_url_for_work(&work))
-                    .json(&payload)
-                    .send()
-                    .await?;
-                (resp, "redirect")
+                send_completion_with_retries(
+                    client
+                        .post(config.complete_redirect_url_for_work(&work))
+                        .json(&payload),
+                    recovery_policy.completion_attempts,
+                    config.retry_backoff,
+                )
+                .await
+                .map(|resp| (resp, "redirect"))
+            }
+        };
+        let (response, outcome) = match completion_result {
+            Ok(completion) => completion,
+            Err((err, attempts)) => {
+                let bytes = byte_counter
+                    .as_ref()
+                    .map(|counter| counter.load(Ordering::Relaxed))
+                    .unwrap_or(0);
+                metrics::record_job_finished(
+                    "error",
+                    job_start.elapsed().as_secs_f64(),
+                    processing_duration.as_secs_f64(),
+                    Duration::from_millis(deliver_ms).as_secs_f64(),
+                    bytes,
+                );
+                tracing::error!(
+                    "event.name" = "worker.completion.abandoned",
+                    outcome = "error",
+                    request.id = %work.job_id,
+                    attempts,
+                    error = %err,
+                    "completion callback failed; abandoning job and returning slot to poll loop"
+                );
+                if source_error_for_restart
+                    .as_ref()
+                    .is_some_and(SourceError::requires_worker_restart)
+                {
+                    let _ = restart_tx.send(work.job_id.clone());
+                    break;
+                }
+                idle_anchor = Instant::now();
+                continue;
             }
         };
         let complete_ms = complete_started.elapsed().as_millis() as u64;
@@ -792,6 +1021,21 @@ pub async fn run_worker_loop<P: Processor + 'static>(
     delivery_config: DeliveryConfig,
     processor: P,
 ) -> Result<(), reqwest::Error> {
+    run_worker_loop_with_policy(
+        config,
+        delivery_config,
+        processor,
+        BrokerRecoveryPolicy::default(),
+    )
+    .await
+}
+
+async fn run_worker_loop_with_policy<P: Processor + 'static>(
+    config: WorkerConfig,
+    delivery_config: DeliveryConfig,
+    processor: P,
+    recovery_policy: BrokerRecoveryPolicy,
+) -> Result<(), reqwest::Error> {
     assert!(
         config.worker_concurrency >= 1,
         "worker_concurrency must be at least 1"
@@ -833,6 +1077,7 @@ pub async fn run_worker_loop<P: Processor + 'static>(
         let task_processor = processor.clone();
         let task_shutdown = shutdown_rx.clone();
         let task_restart_tx = restart_tx.clone();
+        let task_recovery_policy = recovery_policy;
         tasks.push(tokio::spawn(async move {
             tracing::debug!(worker_index, "worker task started");
             let result = worker_task(
@@ -842,6 +1087,7 @@ pub async fn run_worker_loop<P: Processor + 'static>(
                 task_processor,
                 task_shutdown,
                 task_restart_tx,
+                task_recovery_policy,
             )
             .await;
             tracing::debug!(worker_index, "worker task stopped");
@@ -1329,6 +1575,129 @@ mod tests {
         async fn process(&self, _work: WorkItem) -> ProcessResult {
             ProcessResult::error("internal error")
         }
+    }
+
+    struct PendingProcessor;
+
+    #[async_trait]
+    impl Processor for PendingProcessor {
+        async fn process(&self, _work: WorkItem) -> ProcessResult {
+            std::future::pending().await
+        }
+    }
+
+    struct RecoveryBrokerState {
+        work_calls: AtomicUsize,
+        callback_url: String,
+    }
+
+    async fn recovery_work(
+        State(state): State<Arc<RecoveryBrokerState>>,
+    ) -> Result<axum::Json<WorkItem>, StatusCode> {
+        if state.work_calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            Ok(axum::Json(WorkItem {
+                job_id: "job-recovery".into(),
+                request: serde_json::json!({}),
+                user: serde_json::json!({}),
+                metadata: serde_json::json!({}),
+                callback_url: Some(state.callback_url.clone()),
+            }))
+        } else {
+            Err(StatusCode::NO_CONTENT)
+        }
+    }
+
+    fn recovery_test_policy() -> BrokerRecoveryPolicy {
+        BrokerRecoveryPolicy {
+            connect_timeout: Duration::from_millis(20),
+            request_timeout: Duration::from_millis(50),
+            heartbeat_request_timeout: Duration::from_millis(30),
+            give_up_timeout: Duration::from_millis(50),
+            completion_attempts: 3,
+        }
+    }
+
+    fn direct_delivery_config() -> DeliveryConfig {
+        DeliveryConfig {
+            delivery_type: delivery_config::DeliveryType::Direct,
+            bobs_url: None,
+            s3_bucket: None,
+            s3_region: None,
+            s3_endpoint_url: None,
+            s3_force_path_style: None,
+            s3_access_key_id: None,
+            s3_secret_access_key: None,
+            s3_presigned_url_expiry_secs: None,
+            s3_public_url: None,
+            s3_key_prefix: String::new(),
+        }
+    }
+
+    async fn run_recovery_case<P: Processor + 'static>(processor: P, heartbeat_interval: Duration) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        // This private address passes callback validation but has no listener, modelling a
+        // retired broker pod while /work remains reachable through the Service address.
+        let state = Arc::new(RecoveryBrokerState {
+            work_calls: AtomicUsize::new(0),
+            callback_url: format!("http://10.255.255.1:{}", addr.port()),
+        });
+        let app = Router::new()
+            .route("/work", get(recovery_work))
+            .with_state(state.clone());
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let config = WorkerConfig {
+            broker_url: format!("http://{addr}"),
+            poll_timeout_ms: 10,
+            heartbeat_interval,
+            retry_backoff: Duration::from_millis(5),
+            management_port: 0,
+            worker_concurrency: 1,
+        };
+        let delivery: Arc<dyn ResultDelivery> =
+            Arc::from(make_delivery(&direct_delivery_config()).await);
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let (restart_tx, _restart_rx) = tokio::sync::mpsc::unbounded_channel();
+        let worker = tokio::spawn(worker_task(
+            config,
+            0,
+            delivery,
+            Arc::new(processor),
+            shutdown_rx,
+            restart_tx,
+            recovery_test_policy(),
+        ));
+
+        let repolled = tokio::time::timeout(Duration::from_secs(1), async {
+            while state.work_calls.load(Ordering::SeqCst) < 2 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await;
+        assert!(
+            repolled.is_ok(),
+            "worker did not return its slot to the poll loop"
+        );
+
+        worker.abort();
+        server.abort();
+        assert!(
+            state.work_calls.load(Ordering::SeqCst) >= 2,
+            "worker should issue a fresh /work poll"
+        );
+    }
+
+    #[tokio::test]
+    async fn worker_abandons_job_when_callback_broker_stays_unreachable() {
+        run_recovery_case(PendingProcessor, Duration::from_millis(5)).await;
+    }
+
+    #[tokio::test]
+    async fn unreachable_completion_does_not_retire_worker_slot() {
+        run_recovery_case(StubProcessor, Duration::from_secs(1)).await;
     }
 
     #[tokio::test]
