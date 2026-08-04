@@ -318,3 +318,27 @@ profiles:
           dependencies:
             dockerfile:
               path: loadgen/Dockerfile
+
+  # ── Podman / no-BuildKit profile ───────────────────────────────────────────
+  #
+  # For local builds on a host where `docker` is a podman shim and buildx is
+  # unavailable. Skaffold then shells out to plain `docker build`, i.e. podman,
+  # which implements `RUN --mount=type=secret` itself rather than via BuildKit,
+  # so the GIT_AUTH_TOKEN mounts in the Dockerfiles still resolve.
+  #
+  # Requires GH_TOKEN in the environment (the `secrets` entries map it to the
+  # GIT_AUTH_TOKEN secret id) and a `docker login eccr.ecmwf.int` if pushing.
+  #
+  #   skaffold build --profile podman --push=false \
+  #     --build-image eccr.ecmwf.int/polytope/test-worker
+  #
+  - name: podman
+    patches:
+      - op: replace
+        path: /build/local/useBuildkit
+        value: false
+      # Podman's layer cache is per-image and local; one build at a time keeps
+      # the shared base-image layers from being pulled twice concurrently.
+      - op: replace
+        path: /build/local/concurrency
+        value: 1

@@ -44,8 +44,10 @@ class PolytopeDataSource:
 
     def retrieve(self, request):
         import time
-        from polytope_feature.utility.exceptions import PolytopeError
-        from polytope_mars.api import PolytopeMars
+        from polytope_feature.utility.exceptions import (  # type: ignore[import-not-found]
+            PolytopeError,
+        )
+        from polytope_mars.api import PolytopeMars  # type: ignore[import-not-found]
 
         t0 = time.monotonic()
 

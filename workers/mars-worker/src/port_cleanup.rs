@@ -83,9 +83,7 @@ pub fn close_leaked_listeners(port: u16) -> io::Result<usize> {
         if rc == 0 {
             debug!(
                 fd = fd_num,
-                inode,
-                port,
-                "closed leaked MARS DHS callback fd"
+                inode, port, "closed leaked MARS DHS callback fd"
             );
             closed += 1;
         } else {

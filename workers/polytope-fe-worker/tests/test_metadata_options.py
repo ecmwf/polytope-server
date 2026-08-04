@@ -61,6 +61,12 @@ class FakeUser:
         self.username = "test-user"
 
 
+def _output_json(datasource: PolytopeDataSource) -> dict:
+    output = datasource.output
+    assert isinstance(output, (str, bytes, bytearray))
+    return json.loads(output)
+
+
 @pytest.fixture
 def base_config():
     """Base worker config without metadata."""
@@ -97,7 +103,7 @@ def mock_polytope_mars(monkeypatch):
     
     # Create fake polytope_mars.api module
     fake_polytope_mars_api = types.ModuleType("polytope_mars.api")
-    fake_polytope_mars_api.PolytopeMars = FakePolytopeMars
+    setattr(fake_polytope_mars_api, "PolytopeMars", FakePolytopeMars)
     
     # Create parent modules
     if "polytope_mars" not in sys.modules:
@@ -115,7 +121,7 @@ def mock_polytope_mars(monkeypatch):
             self.message = message
             super().__init__(message)
     
-    fake_polytope_feature_utility_exceptions.PolytopeError = PolytopeError
+    setattr(fake_polytope_feature_utility_exceptions, "PolytopeError", PolytopeError)
     
     sys.modules["polytope_feature"] = fake_polytope_feature
     sys.modules["polytope_feature.utility"] = fake_polytope_feature_utility
@@ -160,7 +166,7 @@ def test_metadata_datacube_overlay(base_config, mock_polytope_mars, tmp_path):
     timings = datasource.retrieve(request)
 
     # Verify the constructed config used the metadata datacube
-    result = json.loads(datasource.output)
+    result = _output_json(datasource)
     assert result["datacube"]["axis"] == ["dataset", "date", "time"]
     assert result["datacube"]["config"] == "/tmp/different.yaml"
 
@@ -198,7 +204,7 @@ def test_metadata_options_overlay(base_config, mock_polytope_mars, tmp_path):
     timings = datasource.retrieve(request)
 
     # Verify the constructed config used the metadata options
-    result = json.loads(datasource.output)
+    result = _output_json(datasource)
     assert result["options"]["pre_path"] == {"class": "od", "stream": "oper"}
     assert result["options"]["use_catalogue"] is True
     assert result["options"]["engine_options"] == {"compact_result": True, "limit": 1000}
@@ -240,7 +246,7 @@ def test_client_request_fields_ignored(base_config, mock_polytope_mars, tmp_path
     timings = datasource.retrieve(request)
 
     # Verify the config used ONLY trusted metadata, not client request fields
-    result = json.loads(datasource.output)
+    result = _output_json(datasource)
     assert result["datacube"]["type"] == "fdb"  # Original, not "evil" or "client_evil"
     assert result["options"]["pre_path"] == {"class": "od"}  # From trusted metadata
     assert result["options"]["use_catalogue"] is True  # From trusted metadata
@@ -270,7 +276,7 @@ def test_two_sequential_requests_different_metadata(base_config, mock_polytope_m
     )
 
     datasource.retrieve(request1)
-    result1 = json.loads(datasource.output)
+    result1 = _output_json(datasource)
 
     # Verify first request used metadata A
     assert result1["datacube"]["axis"] == ["class", "stream"]
@@ -293,7 +299,7 @@ def test_two_sequential_requests_different_metadata(base_config, mock_polytope_m
     )
 
     datasource.retrieve(request2)
-    result2 = json.loads(datasource.output)
+    result2 = _output_json(datasource)
 
     # Verify second request used metadata B (completely different)
     assert result2["datacube"]["axis"] == ["dataset", "date", "time"]
@@ -357,7 +363,7 @@ def test_no_metadata_uses_fallback_prepath(base_config, mock_polytope_mars):
     )
 
     datasource.retrieve(request)
-    result = json.loads(datasource.output)
+    result = _output_json(datasource)
 
     # Verify fallback pre_path logic ran and extracted class/stream from request
     assert result["options"]["pre_path"]["class"] == "od"
@@ -396,7 +402,7 @@ def test_change_grids_runs_after_metadata_overlay(base_config, mock_polytope_mar
     )
 
     datasource.retrieve(request)
-    result = json.loads(datasource.output)
+    result = _output_json(datasource)
 
     # Verify change_grids ran and modified the mapper resolution to h128
     mapper_found = False
@@ -432,7 +438,7 @@ def test_preserved_trusted_metadata_namespaces(base_config, mock_polytope_mars):
 
     # Just verify it doesn't break and uses the polytope_mars part correctly
     datasource.retrieve(request)
-    result = json.loads(datasource.output)
+    result = _output_json(datasource)
 
     # Verify polytope_mars metadata was used
     assert result["options"]["pre_path"] == {"class": "od"}
@@ -497,7 +503,7 @@ def test_metadata_options_when_base_has_no_options(
     datasource = PolytopeDataSource(base_config_no_options)
     # Must not raise KeyError: 'options'
     datasource.retrieve(request)
-    result = json.loads(datasource.output)
+    result = _output_json(datasource)
 
     # pre_path list -> per-request dict for single-valued, in-list axes
     assert result["options"]["pre_path"] == {
