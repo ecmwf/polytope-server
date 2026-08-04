@@ -181,6 +181,38 @@ The top-level `VERSION` file is the app-wide version. On every push to `main`, C
 
 For dev builds, skaffold tags images with the current git commit SHA by default (`tagPolicy.gitCommit`). Set `FIXED_TAG` to override, or `PREFIX` to prepend to the SHA.
 
+### BuildKit cache and private dependencies
+
+Application images fetch private Git dependencies, so local builds require a
+GitHub token with read access to those repositories:
+
+```bash
+export GH_TOKEN=...
+```
+
+The normal Skaffold build uses the local Docker cache:
+
+```bash
+skaffold build -b eccr.ecmwf.int/polytope/frontend
+```
+
+To additionally import the shared ECCR BuildKit cache produced by CI, log in to
+ECCR and opt into the `buildx-cache` profile:
+
+```bash
+docker login eccr.ecmwf.int
+skaffold build -p buildx-cache -b eccr.ecmwf.int/polytope/frontend
+```
+
+The profile is read-only by default. CI for pull requests also imports only;
+trusted pushes to `main` and release jobs set `BUILDKIT_CACHE_MODE=read-write`
+to refresh the affected cache. Do not enable write mode for ordinary local
+builds. Cache entries are per image and platform, for example
+`eccr.ecmwf.int/polytope/build-cache:frontend-linux-amd64-v1`.
+
+The legacy `kaniko` profile does not support the BuildKit secret mounts used by
+application Dockerfiles and should not be used for these images.
+
 ### C++ library images
 
 The fdb-worker, polytope-fe-worker, and mars-worker images depend on pre-built C++ library images (eckit, metkit, FDB, gribjump, MARS client). These are published separately and versioned independently of the app images — each has its own `TAG` file under `docker/cpp-libs/<name>/TAG`.

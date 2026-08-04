@@ -29,8 +29,10 @@ build:
       docker:
         dockerfile: frontend/Dockerfile
         target: release
+        secrets:
+          - id: GIT_AUTH_TOKEN
+            env: GH_TOKEN
         buildArgs:
-          GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
           VERSION: '{{ default "" .VERSION }}'
           REVISION: '{{ default "" .REVISION }}'
 
@@ -39,8 +41,10 @@ build:
       docker:
         dockerfile: workers/polytope-fe-worker/Dockerfile
         target: release
+        secrets:
+          - id: GIT_AUTH_TOKEN
+            env: GH_TOKEN
         buildArgs:
-          GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
           VERSION: '{{ default "" .VERSION }}'
           REVISION: '{{ default "" .REVISION }}'
 
@@ -49,8 +53,10 @@ build:
       docker:
         dockerfile: workers/fdb-worker/Dockerfile
         target: release
+        secrets:
+          - id: GIT_AUTH_TOKEN
+            env: GH_TOKEN
         buildArgs:
-          GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
           VERSION: '{{ default "" .VERSION }}'
           REVISION: '{{ default "" .REVISION }}'
 
@@ -59,8 +65,10 @@ build:
       docker:
         dockerfile: workers/mars-worker/Dockerfile
         target: release
+        secrets:
+          - id: GIT_AUTH_TOKEN
+            env: GH_TOKEN
         buildArgs:
-          GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
           VERSION: '{{ default "" .VERSION }}'
           REVISION: '{{ default "" .REVISION }}'
 
@@ -69,8 +77,10 @@ build:
       docker:
         dockerfile: workers/test-worker/Dockerfile
         target: release
+        secrets:
+          - id: GIT_AUTH_TOKEN
+            env: GH_TOKEN
         buildArgs:
-          GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
           VERSION: '{{ default "" .VERSION }}'
           REVISION: '{{ default "" .REVISION }}'
 
@@ -79,8 +89,10 @@ build:
       docker:
         dockerfile: loadgen/Dockerfile
         target: release
+        secrets:
+          - id: GIT_AUTH_TOKEN
+            env: GH_TOKEN
         buildArgs:
-          GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
           VERSION: '{{ default "" .VERSION }}'
           REVISION: '{{ default "" .REVISION }}'
 
@@ -101,15 +113,17 @@ build:
     - linux/amd64
   local:
     useDockerCLI: true
+    useBuildkit: true
     concurrency: 2
 
 # ─── Profiles ─────────────────────────────────────────────────────────────────
 
 profiles:
-  # ── Kaniko in-cluster build with remote layer caching ─────────────────────
+  # ── Legacy Kaniko profile ──────────────────────────────────────────────────
   #
-  # Usage:
-  #   skaffold build -p kaniko -b mars-worker
+  # Application Dockerfiles now use BuildKit secret mounts for private Git
+  # dependencies. Kaniko does not support those mounts, so this profile is
+  # retained only as migration reference and must not be used for app images.
   #
   # Prerequisites:
   #   1. Create ~/.docker/kaniko-config.json with registry credentials:
@@ -242,3 +256,63 @@ profiles:
             GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
             VERSION: '{{ default "" .VERSION }}'
             REVISION: '{{ default "" .REVISION }}'
+
+  # Buildx is opt-in: normal local builds continue to use Skaffold's Docker
+  # builder, while this profile imports the shared ECCR cache. Set
+  # BUILDKIT_CACHE_MODE=read-write only in trusted CI/release builds.
+  - name: buildx-cache
+    patches:
+      - op: remove
+        path: /build/artifacts/0/docker
+      - op: add
+        path: /build/artifacts/0/custom
+        value:
+          buildCommand: .github/scripts/buildx-build.sh
+          dependencies:
+            dockerfile:
+              path: frontend/Dockerfile
+      - op: remove
+        path: /build/artifacts/1/docker
+      - op: add
+        path: /build/artifacts/1/custom
+        value:
+          buildCommand: .github/scripts/buildx-build.sh
+          dependencies:
+            dockerfile:
+              path: workers/polytope-fe-worker/Dockerfile
+      - op: remove
+        path: /build/artifacts/2/docker
+      - op: add
+        path: /build/artifacts/2/custom
+        value:
+          buildCommand: .github/scripts/buildx-build.sh
+          dependencies:
+            dockerfile:
+              path: workers/fdb-worker/Dockerfile
+      - op: remove
+        path: /build/artifacts/3/docker
+      - op: add
+        path: /build/artifacts/3/custom
+        value:
+          buildCommand: .github/scripts/buildx-build.sh
+          dependencies:
+            dockerfile:
+              path: workers/mars-worker/Dockerfile
+      - op: remove
+        path: /build/artifacts/4/docker
+      - op: add
+        path: /build/artifacts/4/custom
+        value:
+          buildCommand: .github/scripts/buildx-build.sh
+          dependencies:
+            dockerfile:
+              path: workers/test-worker/Dockerfile
+      - op: remove
+        path: /build/artifacts/5/docker
+      - op: add
+        path: /build/artifacts/5/custom
+        value:
+          buildCommand: .github/scripts/buildx-build.sh
+          dependencies:
+            dockerfile:
+              path: loadgen/Dockerfile

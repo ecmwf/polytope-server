@@ -12,3 +12,5 @@ node_modules/
 .cargo/
 .ruff_cache
 .pytest_cache/
+skaffold
+skaffold.env
