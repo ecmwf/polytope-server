@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
+#
+# SPDX-License-Identifier: Apache-2.0
+
 """Select container images affected by a list of repository paths.
 
 The script reads newline-delimited repository-relative paths from standard input

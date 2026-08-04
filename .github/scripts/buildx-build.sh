@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
+#
+# SPDX-License-Identifier: Apache-2.0
+
 # Build a Skaffold custom artifact with Buildx and the shared ECCR cache.
 #
 # Skaffold's Docker builder invokes `docker build`, whose default docker driver
