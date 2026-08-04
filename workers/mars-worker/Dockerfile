@@ -33,7 +33,12 @@ COPY workers/mars-worker/ workers/mars-worker/
 COPY observability/ observability/
 COPY workers/common/ workers/common/
 RUN mkdir -p .cargo && printf '[net]\ngit-fetch-with-cli = true\n' > .cargo/config.toml
-RUN cd workers/mars-worker && cargo chef prepare --recipe-path recipe.json
+RUN --mount=type=secret,id=GIT_AUTH_TOKEN,required=true \
+    export GIT_CONFIG_GLOBAL="$(mktemp)" \
+    && trap 'rm -f "$GIT_CONFIG_GLOBAL"' EXIT \
+    && git config --global credential.helper '' \
+    && git config --global url."https://x-access-token:$(cat /run/secrets/GIT_AUTH_TOKEN)@github.com/".insteadOf "https://github.com/" \
+    && cd workers/mars-worker && cargo chef prepare --recipe-path recipe.json
 
 ###############################
 # Cache standalone Mars dependencies without application source

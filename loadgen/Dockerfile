@@ -15,7 +15,12 @@ FROM chef-base AS chef
 WORKDIR /ecmwf/polytope-server
 COPY . .
 RUN mkdir -p .cargo && printf '[net]\ngit-fetch-with-cli = true\n' > .cargo/config.toml
-RUN cargo chef prepare --recipe-path recipe.json
+RUN --mount=type=secret,id=GIT_AUTH_TOKEN,required=true \
+    export GIT_CONFIG_GLOBAL="$(mktemp)" \
+    && trap 'rm -f "$GIT_CONFIG_GLOBAL"' EXIT \
+    && git config --global credential.helper '' \
+    && git config --global url."https://x-access-token:$(cat /run/secrets/GIT_AUTH_TOKEN)@github.com/".insteadOf "https://github.com/" \
+    && cargo chef prepare --recipe-path recipe.json
 
 ###############################
 # Cache root workspace dependencies without application source
