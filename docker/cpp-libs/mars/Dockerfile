@@ -53,7 +53,7 @@ ARG MARS_CLIENT_CPP_REF=d0670436490d1c62e916a04fc15d3291b98027e7
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential git bison flex net-tools \
-    libssl-dev libnetcdf-dev curl ca-certificates \
+    libssl-dev libnetcdf-dev liblz4-dev curl ca-certificates \
     && curl -fsSL https://github.com/Kitware/CMake/releases/download/v3.31.6/cmake-3.31.6-linux-x86_64.sh -o /tmp/cmake.sh \
     && sh /tmp/cmake.sh --skip-license --prefix=/usr/local \
     && rm /tmp/cmake.sh \
@@ -88,6 +88,7 @@ RUN mkdir -p /build/mars-client-bundle && cd /build/mars-client-bundle \
         -DENABLE_FORTRAN=OFF \
         -DENABLE_PYTHON=OFF \
         -DENABLE_AEC=ON \
+        -DENABLE_LZ4=ON \
         -DENABLE_POLYTOPE=OFF \
         -DENABLE_BUILD_TOOLS=OFF \
         /source/mars-client-bundle \
