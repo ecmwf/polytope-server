@@ -47,15 +47,9 @@ RUN mkdir -p /opt/mars-client && cp -a /opt/ecmwf/mars-client-cpp/. /opt/mars-cl
 FROM docker.io/library/debian:bookworm-slim AS mars-build
 ARG GIT_AUTH_TOKEN=""
 ARG MARS_CLIENT_BUNDLE_REF=5d0430a5a1793274118254bbb15a5be824a063ba
-ARG MARS_CLIENT_CPP_BRANCH=4e667f9c90db56ae7d0c81d5a01119f578fcd156
-ARG ECKIT_VERSION=1.33.0
-ARG ECCODES_VERSION=2.46.0
-ARG ODC_VERSION=1.6.2
-ARG METKIT_VERSION=1.17.0
-ARG ATLAS_VERSION=0.45.0
-ARG ATLAS_ORCA_VERSION=0.4.3
-ARG MIR_VERSION=1.23.7
-ARG FDB_VERSION=5.19.0
+ARG MARS_CLIENT_CPP_REF=d0670436490d1c62e916a04fc15d3291b98027e7
+# All other dependency versions come from the immutable bundle reference above;
+# only the downstream Rust-enabled mars-client-cpp source is overridden.
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential git bison flex net-tools \
@@ -83,32 +77,8 @@ RUN git init /source/mars-client-bundle \
     && git -C /source/mars-client-bundle fetch --depth 1 origin "${MARS_CLIENT_BUNDLE_REF}" \
     && git -C /source/mars-client-bundle checkout --detach FETCH_HEAD
 
-RUN if [ -n "$ECKIT_VERSION" ]; then sed -i \
-    -e "s|PROJECT eckit.*UPDATE)|PROJECT eckit GIT \"https://github.com/ecmwf/eckit\" TAG ${ECKIT_VERSION} UPDATE)|" \
-    /source/mars-client-bundle/CMakeLists.txt; fi
-RUN if [ -n "$ECCODES_VERSION" ]; then sed -i \
-    -e "s|PROJECT eccodes.*UPDATE)|PROJECT eccodes GIT \"https://github.com/ecmwf/eccodes\" TAG ${ECCODES_VERSION} UPDATE)|" \
-    /source/mars-client-bundle/CMakeLists.txt; fi
-RUN if [ -n "$ODC_VERSION" ]; then sed -i \
-    -e "s|PROJECT odc.*UPDATE)|PROJECT odc GIT \"https://github.com/ecmwf/odc\" TAG ${ODC_VERSION} UPDATE)|" \
-    /source/mars-client-bundle/CMakeLists.txt; fi
-RUN if [ -n "$METKIT_VERSION" ]; then sed -i \
-    -e "s|PROJECT metkit.*UPDATE)|PROJECT metkit GIT \"https://github.com/ecmwf/metkit\" TAG ${METKIT_VERSION} UPDATE)|" \
-    /source/mars-client-bundle/CMakeLists.txt; fi
-RUN if [ -n "$ATLAS_VERSION" ]; then sed -i \
-    -e "s|PROJECT atlas .*UPDATE)|PROJECT atlas GIT \"https://github.com/ecmwf/atlas\" TAG ${ATLAS_VERSION} UPDATE)|" \
-    /source/mars-client-bundle/CMakeLists.txt; fi
-RUN if [ -n "$ATLAS_ORCA_VERSION" ]; then sed -i \
-    -e "s|PROJECT atlas-orca.*UPDATE)|PROJECT atlas-orca GIT \"https://github.com/ecmwf/atlas-orca\" TAG ${ATLAS_ORCA_VERSION} UPDATE)|" \
-    /source/mars-client-bundle/CMakeLists.txt; fi
-RUN if [ -n "$MIR_VERSION" ]; then sed -i \
-    -e "s|PROJECT mir .*UPDATE)|PROJECT mir GIT \"https://github.com/ecmwf/mir\" TAG ${MIR_VERSION} UPDATE)|" \
-    /source/mars-client-bundle/CMakeLists.txt; fi
-RUN if [ -n "$FDB_VERSION" ]; then sed -i \
-    -e "s|PROJECT fdb5.*UPDATE)|PROJECT fdb5 GIT \"https://github.com/ecmwf/fdb\" TAG ${FDB_VERSION} UPDATE)|" \
-    /source/mars-client-bundle/CMakeLists.txt; fi
-RUN if [ -n "$MARS_CLIENT_CPP_BRANCH" ]; then sed -i \
-    -e "s|PROJECT mars-client-cpp.*|PROJECT mars-client-cpp GIT \"https://github.com/ecmwf/mars-client-cpp\" TAG ${MARS_CLIENT_CPP_BRANCH} UPDATE)|" \
+RUN if [ -n "$MARS_CLIENT_CPP_REF" ]; then sed -i \
+    -e "s|PROJECT mars-client-cpp.*|PROJECT mars-client-cpp GIT \"https://github.com/ecmwf/mars-client-cpp\" TAG ${MARS_CLIENT_CPP_REF} UPDATE)|" \
     /source/mars-client-bundle/CMakeLists.txt; fi
 
 RUN mkdir -p /build/mars-client-bundle && cd /build/mars-client-bundle \

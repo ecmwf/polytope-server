@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: 2026 ECMWF
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Relevant fragment for a mars-worker Pod template. Service creation and RBAC
+# remain deployment-specific; the worker creates its per-Pod NodePort Service.
+containers:
+  - name: mars-worker
+    args:
+      - --mars-callback-relay-port=18100
+    ports:
+      - name: mars-callback
+        containerPort: 18100
+        protocol: TCP
+    env:
+      - name: POD_NAME
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.name
+      - name: POD_UID
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.uid
+      - name: POD_NAMESPACE
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.namespace
+      - name: K8S_NODE_NAME
+        valueFrom:
+          fieldRef:
+            fieldPath: spec.nodeName
