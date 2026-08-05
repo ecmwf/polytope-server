@@ -167,6 +167,22 @@ pub fn set_job_user_context(
         user_context.insert("auth".to_string(), serde_json::to_value(user).unwrap());
     }
     job.user = Value::Object(user_context).into();
+
+    if auth_user.is_some()
+        && let Some(authorization) = headers
+            .get(header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+        && let Some((scheme, value)) = authorization.split_once(' ')
+        && scheme.eq_ignore_ascii_case("EmailKey")
+        && let Some((email, token)) = value.split_once(':')
+        && !email.is_empty()
+        && !token.is_empty()
+    {
+        job.metadata_mut()["mars_credentials"] = json!({
+            "email": email,
+            "token": token,
+        });
+    }
 }
 
 // Trust boundary invariant: request body, `original_request`, and transform output must never
@@ -283,6 +299,30 @@ mod tests {
         set_job_user_context(&mut job, &HeaderMap::new(), Some(&user), None, &bypass());
         assert_eq!(job.user["can_bypass_role_check"], json!(true));
         assert_eq!(job.user["auth"]["realm"], json!("alpha"));
+    }
+
+    #[test]
+    fn email_key_credentials_are_forwarded_in_trusted_job_metadata() {
+        let mut job = Job::new(json!({}));
+        let user = user("ecmwf", &["admin"]);
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            "EmailKey claimed@example.test:secret-token"
+                .parse()
+                .unwrap(),
+        );
+
+        set_job_user_context(&mut job, &headers, Some(&user), None, &bypass());
+
+        assert_eq!(
+            job.metadata["mars_credentials"],
+            json!({
+                "email": "claimed@example.test",
+                "token": "secret-token",
+            })
+        );
+        assert!(!job.user.to_string().contains("secret-token"));
     }
 
     #[test]

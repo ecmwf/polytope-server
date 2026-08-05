@@ -130,21 +130,36 @@ fn extract_release_time(raw: &str) -> Option<String> {
     }
 }
 
-fn mars_credentials(user: &Value) -> Result<(String, String), String> {
-    let attributes = user
-        .pointer("/attributes")
+fn mars_credentials(metadata: &Value, user: &Value) -> Result<(String, String), String> {
+    if let Some(credentials) = metadata
+        .pointer("/mars_credentials")
         .and_then(Value::as_object)
-        .ok_or_else(|| "authenticated user context is missing MARS credentials".to_string())?;
-    let email = attributes
-        .get("ecmwf-email")
+    {
+        return credential_pair(credentials, "email", "token");
+    }
+
+    let attributes = ["/auth/attributes", "/attributes"]
+        .into_iter()
+        .find_map(|pointer| user.pointer(pointer).and_then(Value::as_object))
+        .ok_or_else(|| "job metadata is missing MARS credentials".to_string())?;
+    credential_pair(attributes, "ecmwf-email", "ecmwf-apikey")
+}
+
+fn credential_pair(
+    values: &serde_json::Map<String, Value>,
+    email_key: &str,
+    token_key: &str,
+) -> Result<(String, String), String> {
+    let email = values
+        .get(email_key)
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| "authenticated user context is missing the MARS email".to_string())?;
-    let token = attributes
-        .get("ecmwf-apikey")
+        .ok_or_else(|| "MARS credentials are missing the email".to_string())?;
+    let token = values
+        .get(token_key)
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| "authenticated user context is missing the MARS API key".to_string())?;
+        .ok_or_else(|| "MARS credentials are missing the token".to_string())?;
 
     Ok((email.to_owned(), token.to_owned()))
 }
@@ -166,7 +181,7 @@ impl Processor for MarsProcessor {
             Err(msg) => return ProcessResult::error(msg),
         };
 
-        let (mars_email, mars_token) = match mars_credentials(&work.user) {
+        let (mars_email, mars_token) = match mars_credentials(&work.metadata, &work.user) {
             Ok(credentials) => credentials,
             Err(message) => return ProcessResult::error(message),
         };
@@ -343,34 +358,52 @@ mod tests {
     }
 
     #[test]
-    fn extracts_mars_credentials_from_canonical_user_context() {
-        let user = serde_json::json!({
-            "auth": {
-                "username": "test-user",
-                "realm": "ecmwf"
-            },
-            "attributes": {
-                "ecmwf-email": "user@example.test",
-                "ecmwf-apikey": "secret-token"
+    fn extracts_mars_credentials_from_job_metadata() {
+        let metadata = serde_json::json!({
+            "mars_credentials": {
+                "email": "user@example.test",
+                "token": "secret-token"
             }
         });
 
         assert_eq!(
-            mars_credentials(&user),
+            mars_credentials(&metadata, &serde_json::json!({})),
+            Ok(("user@example.test".to_string(), "secret-token".to_string()))
+        );
+    }
+
+    #[test]
+    fn accepts_legacy_credentials_from_user_context() {
+        let user = serde_json::json!({
+            "auth": {
+                "attributes": {
+                    "ecmwf-email": "user@example.test",
+                    "ecmwf-apikey": "secret-token"
+                }
+            }
+        });
+
+        assert_eq!(
+            mars_credentials(&serde_json::json!({}), &user),
             Ok(("user@example.test".to_string(), "secret-token".to_string()))
         );
     }
 
     #[test]
     fn rejects_missing_or_empty_mars_credentials() {
-        assert!(mars_credentials(&serde_json::json!({})).is_err());
         assert!(
-            mars_credentials(&serde_json::json!({
-                "attributes": {
-                    "ecmwf-email": "user@example.test",
-                    "ecmwf-apikey": ""
-                }
-            }))
+            mars_credentials(&serde_json::json!({}), &serde_json::json!({})).is_err()
+        );
+        assert!(
+            mars_credentials(
+                &serde_json::json!({
+                    "mars_credentials": {
+                        "email": "user@example.test",
+                        "token": ""
+                    }
+                }),
+                &serde_json::json!({})
+            )
             .is_err()
         );
     }
