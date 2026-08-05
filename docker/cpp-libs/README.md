@@ -67,7 +67,7 @@ Naming convention: describe the stack's headline versions, then a `-rN`
 - `cpp-metkit-libs:metkit1.17.0-r1`
 - `cpp-fdb-libs:fdb5.19.2-r1`
 - `cpp-fdb-gribjump-libs:fdb5.21.3-gribjump0.12.0-r1`
-- `cpp-mars-libs:7.1.12-r1`
+- `cpp-mars-libs:7.1.12-r2`
 
 The app Dockerfiles carry the current tag as the default of a build arg
 (`FDB_LIBS_IMAGE`, `METKIT_LIBS_IMAGE`, `MARS_LIBS_IMAGE`), so a normal `docker

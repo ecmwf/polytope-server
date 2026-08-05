@@ -47,7 +47,7 @@ RUN mkdir -p /opt/mars-client && cp -a /opt/ecmwf/mars-client-cpp/. /opt/mars-cl
 FROM docker.io/library/debian:bookworm-slim AS mars-build
 ARG GIT_AUTH_TOKEN=""
 ARG MARS_CLIENT_BUNDLE_REF=5d0430a5a1793274118254bbb15a5be824a063ba
-ARG MARS_CLIENT_CPP_REF=d0670436490d1c62e916a04fc15d3291b98027e7
+ARG MARS_CLIENT_CPP_REF=5eb1cfc04a8b1b5db4575de90aca1b2b20f06f8b
 # All other dependency versions come from the immutable bundle reference above;
 # only the downstream Rust-enabled mars-client-cpp source is overridden.
 
