@@ -132,7 +132,7 @@ fn extract_release_time(raw: &str) -> Option<String> {
 
 fn mars_credentials(user: &Value) -> Result<(String, String), String> {
     let attributes = user
-        .pointer("/auth/attributes")
+        .pointer("/attributes")
         .and_then(Value::as_object)
         .ok_or_else(|| "authenticated user context is missing MARS credentials".to_string())?;
     let email = attributes
@@ -346,10 +346,12 @@ mod tests {
     fn extracts_mars_credentials_from_canonical_user_context() {
         let user = serde_json::json!({
             "auth": {
-                "attributes": {
-                    "ecmwf-email": "user@example.test",
-                    "ecmwf-apikey": "secret-token"
-                }
+                "username": "test-user",
+                "realm": "ecmwf"
+            },
+            "attributes": {
+                "ecmwf-email": "user@example.test",
+                "ecmwf-apikey": "secret-token"
             }
         });
 
@@ -364,11 +366,9 @@ mod tests {
         assert!(mars_credentials(&serde_json::json!({})).is_err());
         assert!(
             mars_credentials(&serde_json::json!({
-                "auth": {
-                    "attributes": {
-                        "ecmwf-email": "user@example.test",
-                        "ecmwf-apikey": ""
-                    }
+                "attributes": {
+                    "ecmwf-email": "user@example.test",
+                    "ecmwf-apikey": ""
                 }
             }))
             .is_err()
