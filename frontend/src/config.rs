@@ -376,27 +376,37 @@ impl ServerConfig {
             serde_yaml::Value::String(self.polytope.env.clone()),
         );
 
-        // A `worker_server` block means this broker dispatches to remote-pool
-        // workers, which must send completion/heartbeat callbacks back to THIS
-        // specific broker instance. bits derives that direct callback address
-        // from `advertised_addr`, which we populate from POD_IP. If POD_IP is
-        // missing, bits' `callback_url` is `None` and workers silently fall back
-        // to the load-balanced broker URL — completion callbacks then land on a
-        // random broker, are dropped, and the job is stranded in-progress with
-        // an un-reclaimable durable record. Fail loud rather than silently
-        // misroute (a silent fallback previously masked exactly this bug).
+        // Worker callbacks and broker-to-broker polls must both target THIS broker
+        // instance. The chart supplies POD_IP through the downward API; use it to
+        // replace any load-balanced Service URL before Bits publishes its lease.
         let worker_server_key = serde_yaml::Value::String("worker_server".to_string());
-        if inner.contains_key(&worker_server_key) {
-            let pod_ip = std::env::var("POD_IP").unwrap_or_default();
-            let pod_ip = pod_ip.trim();
-            if pod_ip.is_empty() {
-                return Err(<serde_yaml::Error as serde::ser::Error>::custom(
-                    "bits.worker_server is configured but POD_IP is empty or unset: cannot \
-                     advertise a direct worker-callback address. Refusing to start to avoid \
-                     load-balanced callback misrouting that strands jobs. Ensure the frontend \
-                     pod sets POD_IP from status.podIP (downward API).",
-                ));
-            }
+        let has_worker_server = inner.contains_key(&worker_server_key);
+        let pod_ip = std::env::var("POD_IP").unwrap_or_default();
+        let pod_ip = pod_ip.trim();
+        if has_worker_server && pod_ip.is_empty() {
+            return Err(<serde_yaml::Error as serde::ser::Error>::custom(
+                "bits.worker_server is configured but POD_IP is empty or unset: cannot \
+                 advertise direct worker-callback and internal-poll addresses. Ensure the \
+                 frontend pod sets POD_IP from status.podIP (downward API).",
+            ));
+        }
+
+        let pod_host = if pod_ip.contains(':') && !pod_ip.starts_with('[') {
+            format!("[{pod_ip}]")
+        } else {
+            pod_ip.to_string()
+        };
+
+        if !pod_ip.is_empty()
+            && let Some(port) = self.server.internal_poll_port
+        {
+            inner.insert(
+                serde_yaml::Value::String("internal_poll_endpoint".to_string()),
+                serde_yaml::Value::String(format!("http://{pod_host}:{port}/internal/poll")),
+            );
+        }
+
+        if has_worker_server {
             let worker_server = inner
                 .get_mut(&worker_server_key)
                 .and_then(serde_yaml::Value::as_mapping_mut)
@@ -410,14 +420,9 @@ impl ServerConfig {
                 .and_then(serde_yaml::Value::as_u64)
                 .and_then(|port| u16::try_from(port).ok())
                 .unwrap_or(9001);
-            let advertised_addr = if pod_ip.contains(':') && !pod_ip.starts_with('[') {
-                format!("[{pod_ip}]:{port}")
-            } else {
-                format!("{pod_ip}:{port}")
-            };
             worker_server.insert(
                 serde_yaml::Value::String("advertised_addr".to_string()),
-                serde_yaml::Value::String(advertised_addr),
+                serde_yaml::Value::String(format!("{pod_host}:{port}")),
             );
         }
 
@@ -533,13 +538,16 @@ bits: {}
     }
 
     #[test]
-    fn bits_yaml_injects_worker_server_advertised_addr_from_pod_ip() {
+    fn bits_yaml_injects_direct_worker_and_internal_poll_addresses_from_pod_ip() {
         let _guard = env_lock();
         set_pod_ip("10.1.2.3");
 
         let yaml = config_with_polytope(
-            r#"bits:
+            r#"server:
+  internal_poll_port: 9002
+bits:
   bits:
+    internal_poll_endpoint: "http://shared-service:9002/internal/poll"
     worker_server:
       host: "0.0.0.0"
       port: 9001
@@ -550,15 +558,19 @@ bits: {}
         remove_pod_ip();
 
         let bits_cfg: serde_yaml::Value = serde_yaml::from_str(&bits_yaml).unwrap();
-        let worker_server = bits_cfg
-            .get("bits")
-            .and_then(|bits| bits.get("worker_server"))
+        let inner = bits_cfg.get("bits").expect("inner BitsConfig should exist");
+        let worker_server = inner
+            .get("worker_server")
             .expect("inner worker_server should exist");
         assert_eq!(
             worker_server
                 .get("advertised_addr")
                 .and_then(|v| v.as_str()),
             Some("10.1.2.3:9001")
+        );
+        assert_eq!(
+            inner.get("internal_poll_endpoint").and_then(|v| v.as_str()),
+            Some("http://10.1.2.3:9002/internal/poll")
         );
     }
 
