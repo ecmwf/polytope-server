@@ -1,5 +1,5 @@
 polytope-mars==0.3.12
-polytope-python==2.1.15
+polytope-python==2.1.17
 covjsonkit==0.2.22
 PyYAML==6.0.3
 pyfdb==5.22.0.26
