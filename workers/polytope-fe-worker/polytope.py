@@ -110,7 +110,7 @@ class PolytopeDataSource:
                                     "Could not convert param shortname '%s' to param id",
                                     v[0],
                                 )
-                        pre_path[k] = v[0]
+                            pre_path[k] = v[0]
                     if len(v) == 1:
                         v = v[0]
                         if k == "param" and not str(v).lstrip("-").isdigit():
