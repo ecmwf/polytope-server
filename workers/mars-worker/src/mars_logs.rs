@@ -77,20 +77,21 @@ impl ChunkBuffer {
         let (rendered, line_count) = render_message(level, message);
         let mut chunks = Vec::with_capacity(2);
 
-        if !self.message.is_empty() && self.message.len() + rendered.len() > max_bytes {
-            if let Some(chunk) = self.drain(ChunkReason::SizeLimit) {
-                chunks.push(chunk);
-            }
+        if !self.message.is_empty()
+            && self.message.len() + rendered.len() > max_bytes
+            && let Some(chunk) = self.drain(ChunkReason::SizeLimit)
+        {
+            chunks.push(chunk);
         }
 
         self.message.push_str(&rendered);
         self.line_count += line_count;
         self.max_level = Some(self.max_level.map_or(level, |current| current.max(level)));
 
-        if self.message.len() >= max_bytes {
-            if let Some(chunk) = self.drain(ChunkReason::SizeLimit) {
-                chunks.push(chunk);
-            }
+        if self.message.len() >= max_bytes
+            && let Some(chunk) = self.drain(ChunkReason::SizeLimit)
+        {
+            chunks.push(chunk);
         }
 
         chunks

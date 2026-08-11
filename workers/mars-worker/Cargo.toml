@@ -13,12 +13,21 @@ async-trait = "0.1"
 bytes = "1"
 clap = { version = "4", features = ["derive", "env"] }
 futures = "0.3"
-k8s-openapi = { version = "0.22", default-features = false, features = ["v1_28"] }
-kube = { version = "0.91", default-features = false, features = ["client", "rustls-tls"] }
-libc = "0.2"
-mars-client = { git = "https://github.com/ecmwf/mars-client-cpp", rev = "4e667f9c90db56ae7d0c81d5a01119f578fcd156" }
+k8s-openapi = { version = "0.22", default-features = false, features = [
+  "v1_28",
+] }
+kube = { version = "0.91", default-features = false, features = [
+  "client",
+  "rustls-tls",
+] }
+mars-client = { git = "https://github.com/ecmwf/mars-client-cpp", rev = "d0670436490d1c62e916a04fc15d3291b98027e7" }
 polytope-worker-common = { path = "../common" }
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "http2"] }
+reqwest = { version = "0.12", default-features = false, features = [
+  "json",
+  "stream",
+  "rustls-tls",
+  "http2",
+] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"

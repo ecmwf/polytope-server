@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::callback_relay::{CallbackRelay, RelayController};
 use crate::k8s::NodePortManager;
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -11,13 +12,14 @@ use polytope_worker_common::config::{DEFAULT_CONFIG_PATH, WorkerConfigFile};
 use polytope_worker_common::{
     ProcessResult, Processor, SourceError, WorkItem, WorkerConfig, run_worker_loop,
 };
+use serde_json::Value;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{info, warn};
 
+mod callback_relay;
 mod convert;
 mod k8s;
 mod mars_logs;
-mod port_cleanup;
 
 const DEFAULT_STREAM_QUEUE_BYTE_LIMIT: usize = 32 * 1024 * 1024;
 
@@ -50,14 +52,14 @@ impl ClassifiedMarsError {
 }
 
 fn classify_mars_error(raw: &str) -> ClassifiedMarsError {
-    // Note: Most of these are based on potentially out of date confluence pages. 
+    // Note: Most of these are based on potentially out of date confluence pages.
     // Empirically observed errors are marked with a comment
     let lower = raw.to_lowercase();
-    // observed, may be worth retrying in code before returning to the user
-    if lower.contains("connection reset by peer") || lower.contains("socket read failed") { 
-        ClassifiedMarsError::recoverable(format!(
-            "The data retrieval connection was interrupted. Please try again."
-        ))
+    // Empirically observed; retrying within the worker may also be worthwhile.
+    if lower.contains("connection reset by peer") || lower.contains("socket read failed") {
+        ClassifiedMarsError::recoverable(
+            "The data retrieval connection was interrupted. Please try again.".to_string(),
+        )
     } else if lower.contains("data not yet available") || lower.contains("scheduled for after") {
         let message = if let Some(release_time) = extract_release_time(raw) {
             format!("Data not released yet. Release time is {release_time}.")
@@ -76,7 +78,8 @@ fn classify_mars_error(raw: &str) -> ClassifiedMarsError {
     } else if lower.contains("mars_expected_fields")
         || lower.contains("data not found")
         || lower.contains("no data found")
-        || lower.contains("0 message retrieved out of") //observed
+        // Empirically observed equivalent of MARS_EXPECTED_FIELDS.
+        || lower.contains("0 message retrieved out of")
     {
         ClassifiedMarsError::recoverable(format!(
             "Some of the requested data is not available. Details: {raw}"
@@ -118,9 +121,7 @@ fn extract_release_time(raw: &str) -> Option<String> {
     let idx = lower.find("scheduled for after")?;
     let start = idx + "scheduled for after".len();
     let tail = raw[start..].trim_start_matches([' ', ':']);
-    let end = tail
-        .find(|c: char| c == ',' || c == '.' || c == '\n' || c == '\r')
-        .unwrap_or(tail.len());
+    let end = tail.find([',', '.', '\n', '\r']).unwrap_or(tail.len());
     let value = tail[..end].trim();
     if value.is_empty() {
         None
@@ -129,11 +130,45 @@ fn extract_release_time(raw: &str) -> Option<String> {
     }
 }
 
+fn mars_credentials(metadata: &Value, user: &Value) -> Result<(String, String), String> {
+    if let Some(credentials) = metadata
+        .pointer("/mars_credentials")
+        .and_then(Value::as_object)
+    {
+        return credential_pair(credentials, "email", "token");
+    }
+
+    let attributes = ["/auth/attributes", "/attributes"]
+        .into_iter()
+        .find_map(|pointer| user.pointer(pointer).and_then(Value::as_object))
+        .ok_or_else(|| "job metadata is missing MARS credentials".to_string())?;
+    credential_pair(attributes, "ecmwf-email", "ecmwf-apikey")
+}
+
+fn credential_pair(
+    values: &serde_json::Map<String, Value>,
+    email_key: &str,
+    token_key: &str,
+) -> Result<(String, String), String> {
+    let email = values
+        .get(email_key)
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "MARS credentials are missing the email".to_string())?;
+    let token = values
+        .get(token_key)
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "MARS credentials are missing the token".to_string())?;
+
+    Ok((email.to_owned(), token.to_owned()))
+}
+
 struct MarsProcessor {
-    /// Port the C++ MARS client binds for DHS callbacks. We forcibly close any
-    /// leaked listener on this port between retrieves; see `port_cleanup`.
-    local_port: u16,
+    /// Serializes relay generations, MARS environment mutation, and the full
+    /// blocking C++ retrieval while broker workers queue safely behind it.
     env_lock: std::sync::Arc<std::sync::Mutex<()>>,
+    relay: RelayController,
     mars_logs: mars_logs::MarsLogBridge,
     stream_queue_byte_limit: usize,
 }
@@ -146,31 +181,43 @@ impl Processor for MarsProcessor {
             Err(msg) => return ProcessResult::error(msg),
         };
 
-        let mars_email = work.user["attributes"]["ecmwf-email"]
-            .as_str()
-            .unwrap_or("no-email")
-            .to_owned();
-        let mars_token = work.user["attributes"]["ecmwf-apikey"]
-            .as_str()
-            .unwrap_or("no-api-key")
-            .to_owned();
+        let (mars_email, mars_token) = match mars_credentials(&work.metadata, &work.user) {
+            Ok(credentials) => credentials,
+            Err(message) => return ProcessResult::error(message),
+        };
 
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(32);
         let source_error = SourceError::new();
         let source_error_for_task = source_error.clone();
-        let local_port = self.local_port;
+        let relay = self.relay.clone();
         let env_lock = self.env_lock.clone();
         let mars_logs = self.mars_logs.clone();
         let request_id = work.job_id.clone();
         let stream_queue_byte_limit = self.stream_queue_byte_limit;
         tokio::task::spawn_blocking(move || {
-            let _env_guard = env_lock.lock().expect("MARS environment lock poisoned");
+            // Broker concurrency may be greater than one. This process-wide
+            // lock permits exactly one active relay generation and MARS call.
+            let _env_guard = env_lock
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if tx.is_closed() {
+                tracing::debug!("discarding abandoned MARS job before retrieval starts");
+                return;
+            }
             let _log_scope = mars_logs.begin_request(request_id);
-            // SAFETY: this mutex serializes all per-request mutation of process environment
-            // variables used by the MARS client.
+            let generation = match relay.start_generation() {
+                Ok(generation) => generation,
+                Err(e) => {
+                    let raw = format!("failed to start MARS callback relay generation: {e}");
+                    source_error_for_task.set_unrecoverable_once(raw.clone());
+                    let _ = tx.blocking_send(Err(std::io::Error::other(raw)));
+                    return;
+                }
+            };
+            // SAFETY: this mutex serializes every MARS call and mutation of the
+            // process environment variable consumed by the callback listener.
             unsafe {
-                std::env::set_var("MARS_USER_EMAIL", &mars_email);
-                std::env::set_var("MARS_USER_TOKEN", &mars_token);
+                std::env::set_var("MARS_DHS_LOCALPORT", generation.target_port().to_string());
             }
 
             let mut client = match MarsClient::new(stream_queue_byte_limit) {
@@ -182,7 +229,7 @@ impl Processor for MarsProcessor {
                     return;
                 }
             };
-            let mut stream = match client.retrieve(request_map) {
+            let mut stream = match client.retrieve(request_map, &mars_email, &mars_token) {
                 Ok(s) => s,
                 Err(e) => {
                     let raw = e.to_string();
@@ -222,26 +269,9 @@ impl Processor for MarsProcessor {
                 }
             }
             stream.close();
-
-            // mars-client-cpp leaks the DHS callback listener (and, on the
-            // "Data not found" path, the accepted CLOSE_WAIT data socket);
-            // force-close any fd in our process still bound to `local_port`,
-            // otherwise the next retrieve fails with `Address already in
-            // use`. Remove this once the C++ lifecycle is fixed upstream.
-            // Tracked: https://jira.ecmwf.int/projects/MARSC/issues/MARSC-468
-            match port_cleanup::close_leaked_listeners(local_port) {
-                Ok(0) => {}
-                Ok(n) => tracing::info!(
-                    closed = n,
-                    port = local_port,
-                    "reclaimed leaked MARS DHS callback listener(s)"
-                ),
-                Err(e) => tracing::warn!(
-                    error = %e,
-                    port = local_port,
-                    "failed to scan /proc for leaked MARS DHS callback listeners"
-                ),
-            }
+            // End the relay generation before releasing env_lock. Early-return
+            // paths preserve the same order through reverse declaration drops.
+            drop(generation);
         });
 
         let stream = ReceiverStream::new(rx);
@@ -326,6 +356,57 @@ mod tests {
             "The data stream was interrupted before completing. Please retry."
         );
     }
+
+    #[test]
+    fn extracts_mars_credentials_from_job_metadata() {
+        let metadata = serde_json::json!({
+            "mars_credentials": {
+                "email": "user@example.test",
+                "token": "secret-token"
+            }
+        });
+
+        assert_eq!(
+            mars_credentials(&metadata, &serde_json::json!({})),
+            Ok(("user@example.test".to_string(), "secret-token".to_string()))
+        );
+    }
+
+    #[test]
+    fn accepts_legacy_credentials_from_user_context() {
+        let user = serde_json::json!({
+            "auth": {
+                "attributes": {
+                    "ecmwf-email": "user@example.test",
+                    "ecmwf-apikey": "secret-token"
+                }
+            }
+        });
+
+        assert_eq!(
+            mars_credentials(&serde_json::json!({}), &user),
+            Ok(("user@example.test".to_string(), "secret-token".to_string()))
+        );
+    }
+
+    #[test]
+    fn rejects_missing_or_empty_mars_credentials() {
+        assert!(
+            mars_credentials(&serde_json::json!({}), &serde_json::json!({})).is_err()
+        );
+        assert!(
+            mars_credentials(
+                &serde_json::json!({
+                    "mars_credentials": {
+                        "email": "user@example.test",
+                        "token": ""
+                    }
+                }),
+                &serde_json::json!({})
+            )
+            .is_err()
+        );
+    }
 }
 
 fn parse_positive_usize(value: &str) -> Result<usize, String> {
@@ -343,8 +424,8 @@ struct Cli {
     poll_timeout_ms: u64,
     #[arg(long, default_value_t = 10.0)]
     heartbeat_secs: f64,
-    #[arg(long, default_value_t = 8100)]
-    mars_dhs_local_port: u16,
+    #[arg(long, env = "MARS_CALLBACK_RELAY_PORT", default_value_t = 18100)]
+    mars_callback_relay_port: u16,
     #[arg(long, default_value = DEFAULT_CONFIG_PATH)]
     config_path: String,
     #[arg(long, default_value_t = 1)]
@@ -395,20 +476,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     tracing::info!("event.name" = "startup.config.loaded", outcome = "success", config_path = %cli.config_path, "config loaded");
 
-    let manager = NodePortManager::new(cli.mars_dhs_local_port).await?;
-    // SAFETY: set once at startup before run_worker_loop spawns any processing threads;
-    // these env vars are never mutated afterwards.
+    // The relay must accept callbacks before its NodePort Service is created.
+    let relay = CallbackRelay::bind(cli.mars_callback_relay_port).await?;
+    let manager = match NodePortManager::new(relay.listen_port()).await {
+        Ok(manager) => manager,
+        Err(error) => {
+            relay.shutdown().await;
+            return Err(error);
+        }
+    };
+    // SAFETY: set once at startup before run_worker_loop spawns processing
+    // threads; per-request variables are set separately under env_lock.
     unsafe {
-        std::env::set_var("MARS_DHS_LOCALPORT", manager.local_port().to_string());
         std::env::set_var("MARS_DHS_CALLBACK_HOST", manager.node_name());
         std::env::set_var("MARS_DHS_CALLBACK_PORT", manager.node_port().to_string());
     }
     tracing::debug!(
         node_port = manager.node_port(),
-        "NodePort service created, MARS DHS callback configured"
+        relay_port = manager.relay_port(),
+        "NodePort service created, MARS DHS callback relay configured"
     );
 
-    run_worker_loop(
+    let worker_result = run_worker_loop(
         WorkerConfig {
             broker_url: cli.broker_url,
             poll_timeout_ms: cli.poll_timeout_ms,
@@ -419,17 +508,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         config.delivery,
         MarsProcessor {
-            local_port: manager.local_port(),
             env_lock: std::sync::Arc::new(std::sync::Mutex::new(())),
+            relay: relay.controller(),
             mars_logs,
             stream_queue_byte_limit: cli.stream_queue_byte_limit,
         },
     )
-    .await?;
+    .await;
+
+    relay.shutdown().await;
 
     if let Err(e) = manager.cleanup().await {
         tracing::warn!(error = %e, "Failed to cleanup NodePort service on shutdown");
     }
+
+    worker_result?;
 
     Ok(())
 }
@@ -441,9 +534,10 @@ mod processor_tests {
 
     #[tokio::test]
     async fn process_returns_error_for_invalid_request() {
+        let relay = CallbackRelay::bind(0).await.unwrap();
         let processor = MarsProcessor {
-            local_port: 8100,
             env_lock: std::sync::Arc::new(std::sync::Mutex::new(())),
+            relay: relay.controller(),
             mars_logs: mars_logs::test_instance(),
             stream_queue_byte_limit: DEFAULT_STREAM_QUEUE_BYTE_LIMIT,
         };
@@ -457,6 +551,7 @@ mod processor_tests {
             })
             .await;
         assert!(matches!(result, ProcessResult::Error { .. }));
+        relay.shutdown().await;
     }
 
     #[test]

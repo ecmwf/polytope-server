@@ -12,7 +12,7 @@ builds compile only Rust and never touch a C++ compiler.
 ## The images
 
 | Directory | Image | Contents | Consumed by |
-|-----------|-------|----------|-------------|
+| ----------- | ------- | ---------- | ------------- |
 | [`metkit/`](metkit/Dockerfile) | `eccr.ecmwf.int/polytope/cpp-metkit-libs` | eckit + metkit → `/opt/metkit` | `frontend/Dockerfile` |
 | [`fdb/`](fdb/Dockerfile) | `eccr.ecmwf.int/polytope/cpp-fdb-libs` | eckit, eccodes, metkit, fdb → `/opt/fdb` | `workers/fdb-worker/Dockerfile` |
 | [`fdb-gribjump/`](fdb-gribjump/Dockerfile) | `eccr.ecmwf.int/polytope/cpp-fdb-gribjump-libs` | eckit, libaec, eccodes, metkit, fdb, gribjump → `/opt/fdb` | `workers/polytope-fe-worker/Dockerfile` |
@@ -28,10 +28,10 @@ The library `.so`/`.a`/binaries are built `RelWithDebInfo` (ecbuild's default),
 so they ship with DWARF debug symbols — the bulk of the image size. Each
 Dockerfile therefore has two final targets:
 
-| Target | Image | Symbols | Size (fdb-gribjump) |
-|--------|-------|---------|---------------------|
-| `libs` (default) | `cpp-<name>-libs` | stripped | **147 MB** |
-| `libs-debug` | `cpp-<name>-libs-debug` | full | 419 MB |
+| Target           | Image                     | Symbols  | Size       |
+| ---------------- | ------------------------- | -------- | ---------- |
+| `libs` (default) | `cpp-<name>-libs`         | stripped | **147 MB** |
+| `libs-debug`     | `cpp-<name>-libs-debug`   | full     | 419 MB     |
 
 `strip --strip-unneeded` on the shared libraries keeps the exported dynamic
 symbols (so consumers still link and load them) while dropping ~260 MB of debug
@@ -67,7 +67,7 @@ Naming convention: describe the stack's headline versions, then a `-rN`
 - `cpp-metkit-libs:metkit1.17.0-r1`
 - `cpp-fdb-libs:fdb5.19.2-r1`
 - `cpp-fdb-gribjump-libs:fdb5.21.3-gribjump0.12.0-r1`
-- `cpp-mars-libs:7.1.9-r2`
+- `cpp-mars-libs:7.1.12-r2`
 
 The app Dockerfiles carry the current tag as the default of a build arg
 (`FDB_LIBS_IMAGE`, `METKIT_LIBS_IMAGE`, `MARS_LIBS_IMAGE`), so a normal `docker
@@ -75,7 +75,8 @@ build` / `skaffold build` needs no extra flags.
 
 ## Bumping a library version
 
-1. Edit the version `ARG`s in `docker/cpp-libs/<name>/Dockerfile`.
+1. Edit the immutable bundle/source refs in `docker/cpp-libs/<name>/Dockerfile`;
+   dependency versions should remain owned by the selected bundle where one exists.
 2. Put a new tag in `docker/cpp-libs/<name>/TAG` (bump the version part, reset
    `-r1`; or just bump `-rN` for a no-version-change rebuild).
 3. Publish the new library image (see [Dev builds](#dev-builds-git-based-tags)
@@ -91,7 +92,7 @@ consumer's build arg points at the new tag, nothing changes.
 The skaffold config mirrors the root `skaffold.yaml` tag policy:
 
 | Scenario | How to invoke | Resulting tag |
-|----------|--------------|---------------|
+| ---------- | -------------- | --------------- |
 | Dev build | omit `FIXED_TAG` | git commit hash (e.g. `cce9ed8`) |
 | Dev build with prefix | `PREFIX=dev-` | `dev-cce9ed8` |
 | Release | `FIXED_TAG=$(cat <img>/TAG)` | contents of `TAG` file |
@@ -164,5 +165,6 @@ only run a Dockerfile lint (`docker buildx build --check`) — the images are ne
 built in PR CI (hours of C++ compilation). **Publishing is manual dispatch only**:
 
 ```bash
-gh workflow run cpp-libs.yaml -f image=fdb        # or: metkit | fdb-gribjump | mars | all
+# image: fdb | metkit | fdb-gribjump | mars | all
+gh workflow run cpp-libs.yaml -f image=fdb
 ```

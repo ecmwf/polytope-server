@@ -56,7 +56,14 @@ fn value_to_strings(key: &str, value: &Value) -> Result<Vec<String>, String> {
                     .and_then(Value::as_i64)
                     .ok_or_else(|| format!("unsupported value type for key: {key}"))?;
 
-                Ok(vec![format!("{start}/to/{end}/by/{step}")])
+                Ok([
+                    start.to_string(),
+                    "to".into(),
+                    end.to_string(),
+                    "by".into(),
+                    step.to_string(),
+                ]
+                .into())
             } else {
                 Err(format!("unsupported nested object for key: {key}"))
             }
