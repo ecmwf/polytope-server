@@ -9,7 +9,101 @@ use polytope_worker_common::{ProcessResult, Processor, WorkItem, WorkerConfig, r
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyTuple};
 use serde_json::json;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
+
+#[derive(serde::Deserialize)]
+struct PyStatus {
+    ok: bool,
+    #[serde(default)]
+    timings: serde_json::Value,
+    #[serde(default)]
+    logs: Vec<PyLogRecord>,
+    #[serde(default)]
+    error: Option<PyError>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+struct PyLogRecord {
+    level: String,
+    logger: String,
+    message: String,
+}
+
+#[derive(serde::Deserialize)]
+struct PyError {
+    message: String,
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum LogSeverity {
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+
+impl LogSeverity {
+    fn from_python_level(level: &str) -> Self {
+        match level.to_uppercase().as_str() {
+            "CRITICAL" | "ERROR" => LogSeverity::Error,
+            "WARNING" | "WARN" => LogSeverity::Warn,
+            "INFO" => LogSeverity::Info,
+            "DEBUG" => LogSeverity::Debug,
+            _ => LogSeverity::Info,
+        }
+    }
+}
+
+fn emit_python_logs(job_id: &str, logs: &[PyLogRecord]) {
+    if logs.is_empty() {
+        return;
+    }
+
+    let max_severity = logs
+        .iter()
+        .map(|log| LogSeverity::from_python_level(&log.level))
+        .max()
+        .unwrap_or(LogSeverity::Info);
+
+    let log_count = logs.len();
+    let logs_json = serde_json::to_string(logs)
+        .unwrap_or_else(|e| format!("[failed to serialize logs: {}]", e));
+
+    match max_severity {
+        LogSeverity::Error => {
+            error!(
+                job_id = %job_id,
+                python_log_count = log_count,
+                python_logs = %logs_json,
+                "python worker logs"
+            );
+        }
+        LogSeverity::Warn => {
+            warn!(
+                job_id = %job_id,
+                python_log_count = log_count,
+                python_logs = %logs_json,
+                "python worker logs"
+            );
+        }
+        LogSeverity::Info => {
+            info!(
+                job_id = %job_id,
+                python_log_count = log_count,
+                python_logs = %logs_json,
+                "python worker logs"
+            );
+        }
+        LogSeverity::Debug => {
+            debug!(
+                job_id = %job_id,
+                python_log_count = log_count,
+                python_logs = %logs_json,
+                "python worker logs"
+            );
+        }
+    }
+}
 
 struct PolytopeProcessor {
     config_path: String,
@@ -51,21 +145,43 @@ impl Processor for PolytopeProcessor {
                         "expected bytes at index 0, got: {e}"
                     ))
                 })?;
-                let timings: String = tuple.get_item(1)?.extract()?;
-                Ok((py_bytes.as_bytes().to_vec(), timings))
+                let status_json: String = tuple.get_item(1)?.extract()?;
+                Ok((py_bytes.as_bytes().to_vec(), status_json))
             })
         })
         .await;
 
         match result {
-            Ok(Ok((bytes, timings))) => {
-                let len = bytes.len() as u64;
-                info!(job_id = %job_id, bytes = len, timings = %timings, "request completed");
-                let stream =
-                    futures::stream::once(futures::future::ready(
-                        Ok::<bytes::Bytes, std::io::Error>(bytes::Bytes::from(bytes)),
-                    ));
-                ProcessResult::success("application/prs.coverage+json", Box::new(stream))
+            Ok(Ok((bytes, status_json))) => {
+                let status: PyStatus = match serde_json::from_str(&status_json) {
+                    Ok(s) => s,
+                    Err(err) => {
+                        error!(job_id = %job_id, error = %err, status_json = %status_json, "failed to parse status_json");
+                        return ProcessResult::error(format!(
+                            "protocol error: failed to parse status_json: {err}"
+                        ));
+                    }
+                };
+
+                emit_python_logs(&job_id, &status.logs);
+
+                if status.ok {
+                    let len = bytes.len() as u64;
+                    let timings = serde_json::to_string(&status.timings).unwrap_or_default();
+                    info!(job_id = %job_id, bytes = len, timings = %timings, "request completed");
+                    let stream = futures::stream::once(futures::future::ready(Ok::<
+                        bytes::Bytes,
+                        std::io::Error,
+                    >(
+                        bytes::Bytes::from(bytes),
+                    )));
+                    ProcessResult::success("application/prs.coverage+json", Box::new(stream))
+                } else {
+                    let message = status.error.map(|e| e.message).unwrap_or_else(|| {
+                        "python worker reported failure with no message".to_string()
+                    });
+                    ProcessResult::error(message)
+                }
             }
             Ok(Err(py_err)) => {
                 error!(job_id = %job_id, error = %py_err, "python error");
@@ -202,7 +318,13 @@ def process(payload_json):
     # Fail if metadata value is not passed through
     assert payload["metadata"].get("test_key") == "test_value", "metadata content not preserved"
     output = json.dumps({"echo": payload["request"], "metadata": payload["metadata"]}).encode("utf-8")
-    return (output, '{"total_ms": 0}')
+    status = {
+        "ok": True,
+        "timings": {"total_ms": 0},
+        "logs": [{"level": "INFO", "logger": "root", "message": "hello from test"}],
+        "error": None
+    }
+    return (output, json.dumps(status))
 "#,
         )
         .unwrap();
@@ -240,6 +362,70 @@ def process(payload_json):
             }
             ProcessResult::Reject { reason } => panic!("expected success, got reject: {reason}"),
             ProcessResult::Error { message } => panic!("expected success, got error: {message}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn pyo3_error_handling() {
+        let dir = temp_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        // Use a different temp directory to ensure no module conflicts
+        std::fs::write(
+            dir.join("run_polytope_worker.py"),
+            r#"
+import json
+
+def process(payload_json):
+    status = {
+        "ok": False,
+        "timings": {},
+        "logs": [{"level": "ERROR", "logger": "root", "message": "test error log"}],
+        "error": {"message": "simulated failure"}
+    }
+    return (b"", json.dumps(status))
+"#,
+        )
+        .unwrap();
+
+        pyo3::prepare_freethreaded_python();
+        Python::with_gil(|py| {
+            let sys = py.import("sys").unwrap();
+            let modules = sys.getattr("modules").unwrap();
+            let _ = modules.call_method1("pop", ("run_polytope_worker",));
+            // Remove old path entries
+            let path = sys.getattr("path").unwrap();
+            let path_list: Vec<String> = path.extract().unwrap();
+            for p in path_list.iter().rev() {
+                if p.contains("polytope-worker-test") {
+                    let _ = path.call_method1("remove", (p,));
+                }
+            }
+            path.call_method1("insert", (0i32, dir.display().to_string()))
+                .unwrap();
+        });
+
+        let processor = PolytopeProcessor {
+            config_path: "/tmp/unused.yaml".into(),
+        };
+
+        let result = processor
+            .process(WorkItem {
+                job_id: "job-2".into(),
+                request: json!({"class": "od"}),
+                user: json!({}),
+                metadata: json!({}),
+                callback_url: None,
+            })
+            .await;
+
+        std::fs::remove_dir_all(&dir).ok();
+
+        match result {
+            ProcessResult::Error { message } => {
+                assert_eq!(message, "simulated failure");
+            }
+            ProcessResult::Success { .. } => panic!("expected error, got success"),
+            ProcessResult::Reject { reason } => panic!("expected error, got reject: {reason}"),
         }
     }
 }
