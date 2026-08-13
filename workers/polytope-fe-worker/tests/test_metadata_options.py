@@ -520,6 +520,80 @@ def test_metadata_options_when_base_has_no_options(
     assert "options" not in base_config_no_options
 
 
+def test_dynamic_grid_from_metadata(base_config, mock_polytope_mars, tmp_path):
+    """dynamic_grid and dynamic_grid_service_url in metadata must override the
+    instance-level defaults set from the base pool config."""
+    base_config["gribjump_config"] = {"gribjump_servers": []}
+    # Base pool config has dynamic_grid disabled
+    assert base_config.get("dynamic_grid", False) is False
+
+    datasource = PolytopeDataSource(base_config)
+    assert datasource.dynamic_grid is False
+
+    captured = []
+
+    def fake_replace(config_options, req, service_url=None):
+        captured.append({"config_options": config_options, "req": req, "service_url": service_url})
+        return True
+
+    with patch("polytope.replace_dynamic_grid_options", fake_replace, create=True):
+        with patch("polytope.build_grid_lookup_request", return_value={"georef": "u09tvk"}, create=True):
+            # Patch the import inside retrieve()
+            import types, sys
+            fake_mod = types.ModuleType("dynamic_grid.helper")
+            fake_mod.build_grid_lookup_request = lambda r: {"georef": "u09tvk"}
+            fake_mod.replace_dynamic_grid_options = fake_replace
+            sys.modules["dynamic_grid.helper"] = fake_mod
+
+            request = FakeRequest(
+                coerced_request={"class": "d1", "dataset": "on-demand-extremes-dt", "georef": "u09tvk"},
+                metadata={
+                    "polytope_mars": {
+                        "dynamic_grid": True,
+                        "dynamic_grid_service_url": "http://grid-svc:8080",
+                        "datacube": {"type": "gribjump"},
+                        "options": {"pre_path": ["class", "dataset"]},
+                    }
+                },
+            )
+            datasource.retrieve(request)
+
+            del sys.modules["dynamic_grid.helper"]
+
+    # dynamic_grid was enabled by metadata — replace_dynamic_grid_options must have been called
+    assert len(captured) == 1
+    assert captured[0]["service_url"] == "http://grid-svc:8080"
+    # Instance flag must be unchanged
+    assert datasource.dynamic_grid is False
+
+
+def test_unknown_metadata_keys_logged_at_debug(base_config, mock_polytope_mars, caplog):
+    """Unknown keys in polytope_mars metadata (e.g. coverageconfig, polygonrules) must
+    be silently ignored with a debug-level log, not raise."""
+    import logging
+
+    base_config["gribjump_config"] = {"gribjump_servers": []}
+    datasource = PolytopeDataSource(base_config)
+
+    request = FakeRequest(
+        coerced_request={"class": "od"},
+        metadata={
+            "polytope_mars": {
+                "coverageconfig": {"some": "value"},
+                "polygonrules": ["rule1"],
+                "options": {"pre_path": {"class": "od"}},
+            }
+        },
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="root"):
+        datasource.retrieve(request)
+
+    assert any("coverageconfig" in r.message or "polygonrules" in r.message for r in caplog.records)
+    result = _output_json(datasource)
+    assert result["options"]["pre_path"] == {"class": "od"}
+
+
 def test_destroy_preserves_process_scoped_config_files(base_config):
     datasource = PolytopeDataSource(base_config)
 
