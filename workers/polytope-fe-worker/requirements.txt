@@ -8,3 +8,4 @@ pygribjump[binary]==0.12.0.26
 # eccodeslib C library shipped by pygribjump[binary] (currently 2.48.x).
 # Uses findlibs at runtime so no separate libeccodes.so install is needed.
 eccodes==2.47.0
+requests
