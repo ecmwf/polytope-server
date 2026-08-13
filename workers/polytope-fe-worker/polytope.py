@@ -70,6 +70,20 @@ class PolytopeDataSource:
         # axis list, so prefer the metadata-supplied list when present.
         pre_path_axes = self.pre_path
 
+        # Per-request dynamic-grid settings; may be overridden by metadata below.
+        dynamic_grid = self.dynamic_grid
+        dynamic_grid_service_url = self.dynamic_grid_service_url
+
+        # Keys in the polytope_mars metadata block that are consumed here.
+        # Other keys (e.g. coverageconfig, polygonrules) are for other consumers
+        # in the stack and are intentionally ignored by the fe-worker.
+        _FE_WORKER_METADATA_KEYS = {
+            "datacube",
+            "dynamic_grid",
+            "dynamic_grid_service_url",
+            "options",
+        }
+
         # Merge trusted metadata options if present (written only by the broker
         # set_metadata action; never sourced from the client request).
         metadata_polytope_mars = request.metadata.get("polytope_mars")
@@ -78,7 +92,6 @@ class PolytopeDataSource:
                 raise ValueError(
                     f"request.metadata['polytope_mars'] must be a dict, got {type(metadata_polytope_mars).__name__}"
                 )
-            # Overlay only allowed structural keys: datacube and options
             if "datacube" in metadata_polytope_mars:
                 polytope_mars_config["datacube"] = metadata_polytope_mars["datacube"]
             if "options" in metadata_polytope_mars:
@@ -92,6 +105,16 @@ class PolytopeDataSource:
                 if "pre_path" in merged_options:
                     pre_path_axes = merged_options.pop("pre_path")
                 polytope_mars_config["options"].update(merged_options)
+            if "dynamic_grid" in metadata_polytope_mars:
+                dynamic_grid = bool(metadata_polytope_mars["dynamic_grid"])
+            if "dynamic_grid_service_url" in metadata_polytope_mars:
+                dynamic_grid_service_url = metadata_polytope_mars["dynamic_grid_service_url"]
+            unknown = set(metadata_polytope_mars.keys()) - _FE_WORKER_METADATA_KEYS
+            if unknown:
+                logging.debug(
+                    "polytope_mars metadata contains keys not consumed by the fe-worker: %s",
+                    sorted(unknown),
+                )
 
         # Build the per-request pre_path dict from the selected axis list (works
         # for both the metadata path and the backward-compatible base-config path).
@@ -125,7 +148,7 @@ class PolytopeDataSource:
                         pre_path[k] = v
         polytope_mars_config["options"]["pre_path"] = pre_path
 
-        if self.dynamic_grid:
+        if dynamic_grid:
             from dynamic_grid.helper import (
                 build_grid_lookup_request,
                 replace_dynamic_grid_options,
@@ -134,7 +157,7 @@ class PolytopeDataSource:
             replace_dynamic_grid_options(
                 polytope_mars_config["options"],
                 grid_lookup_request,
-                service_url=self.dynamic_grid_service_url,
+                service_url=dynamic_grid_service_url,
             )
 
         if self.gh69_fix_grids:
