@@ -78,8 +78,11 @@ fn classify_mars_error(raw: &str) -> ClassifiedMarsError {
     } else if lower.contains("mars_expected_fields")
         || lower.contains("data not found")
         || lower.contains("no data found")
-        // Empirically observed equivalent of MARS_EXPECTED_FIELDS.
-        || lower.contains("0 message retrieved out of")
+        // Empirically observed equivalent of MARS_EXPECTED_FIELDS:
+        // "0 message retrieved out of N expected" (no fields found) and
+        // "N messages retrieved out of M expected" (partial retrieval).
+        // Both are data-availability errors — no need to restart the worker.
+        || lower.contains("retrieved out of")
     {
         ClassifiedMarsError::recoverable(format!(
             "Some of the requested data is not available. Details: {raw}"
@@ -321,6 +324,10 @@ mod tests {
             // Empirically observed in production: same family as mars_expected_fields.
             "[ERROR] Exception: UserError: 0 message retrieved out of 48 expected",
             "UserError: 0 message retrieved out of 1 expected",
+            // Empirically observed: partial retrieval — some fields returned but
+            // fewer than expected. Not an internal error; no restart needed.
+            "UserError: 144 messages retrieved out of 192 expected",
+            "[ERROR] Exception: UserError: 97 messages retrieved out of 388 expected",
         ] {
             assert_eq!(
                 classify_mars_error(raw).disposition,
