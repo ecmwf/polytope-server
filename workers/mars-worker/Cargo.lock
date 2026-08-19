@@ -1927,6 +1927,7 @@ dependencies = [
  "futures",
  "k8s-openapi",
  "kube",
+ "libc",
  "mars-client",
  "polytope-observability",
  "polytope-worker-common",
