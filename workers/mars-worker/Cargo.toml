@@ -34,3 +34,8 @@ tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# malloc_trim(3) is a glibc extension; musl and non-Linux targets do not
+# provide the symbol, so scope the dependency to the same cfg as its use.
+[target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
+libc = "0.2"
