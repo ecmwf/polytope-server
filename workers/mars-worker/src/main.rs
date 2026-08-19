@@ -159,14 +159,18 @@ const CREDENTIAL_INERT_DATABASE_CLASSES: &[&str] =
 /// `databases.yaml` (the same file `mars-client-cpp` itself uses for backend
 /// routing).
 ///
+/// The chart renders this file as a bare YAML sequence (`toYaml
+/// $pool.marsConfig.databases`) — i.e. the top-level document *is* the list
+/// of database entries, not a mapping with a `databases:` key.
+///
 /// Fails closed: returns `true` (require real credentials) unless every
 /// configured database entry has a `class` present in
-/// `CREDENTIAL_INERT_DATABASE_CLASSES`. A missing/unparseable `databases`
-/// list, an empty list, or any entry with a missing or unrecognised `class`
-/// all default to `true` rather than silently permitting the lenient
+/// `CREDENTIAL_INERT_DATABASE_CLASSES`. A missing/unparseable/non-sequence
+/// document, an empty list, or any entry with a missing or unrecognised
+/// `class` all default to `true` rather than silently permitting the lenient
 /// identity passthrough for something unaudited.
 fn requires_checked_mars_credentials_from_yaml(parsed: &serde_yml::Value) -> bool {
-    let Some(databases) = parsed.get("databases").and_then(|v| v.as_sequence()) else {
+    let Some(databases) = parsed.as_sequence() else {
         return true;
     };
     if databases.is_empty() {
@@ -609,52 +613,53 @@ mod tests {
         serde_yml::from_str(yaml).expect("valid test fixture yaml")
     }
 
+    // The chart renders databases.yaml as a bare YAML sequence
+    // (`toYaml $pool.marsConfig.databases`), not wrapped in a `databases:`
+    // key. Verified directly against a real mn5-test pod's
+    // /mars-home/etc/mars-client/databases.yaml.
+
     #[test]
     fn fdb5base_only_does_not_require_checked_credentials() {
         let parsed = parse_databases_yaml(
-            "databases:\n  - name: databridge\n    class: fdb5base\n    home: /home/polytope/fdb-home\n",
+            "- name: databridge\n  class: fdb5base\n  home: /home/polytope/fdb-home\n",
         );
         assert!(!requires_checked_mars_credentials_from_yaml(&parsed));
     }
 
     #[test]
     fn dhsbase_requires_checked_credentials() {
-        let parsed = parse_databases_yaml(
-            "databases:\n  - name: marsod\n    class: dhsbase\n    host: marsod.ecmwf.int\n",
-        );
+        let parsed =
+            parse_databases_yaml("- name: marsod\n  class: dhsbase\n  host: marsod.ecmwf.int\n");
         assert!(requires_checked_mars_credentials_from_yaml(&parsed));
     }
 
     #[test]
     fn mixed_backend_classes_require_checked_credentials() {
         let parsed = parse_databases_yaml(
-            "databases:\n  - name: databridge\n    class: fdb5base\n  - name: marsod\n    class: dhsbase\n",
+            "- name: databridge\n  class: fdb5base\n- name: marsod\n  class: dhsbase\n",
         );
         assert!(requires_checked_mars_credentials_from_yaml(&parsed));
     }
 
     #[test]
     fn unknown_or_missing_class_defaults_to_checked_credentials() {
-        let unknown_class =
-            parse_databases_yaml("databases:\n  - name: mystery\n    class: futurebase\n");
+        let unknown_class = parse_databases_yaml("- name: mystery\n  class: futurebase\n");
         assert!(requires_checked_mars_credentials_from_yaml(&unknown_class));
 
-        let missing_class = parse_databases_yaml("databases:\n  - name: mystery\n");
+        let missing_class = parse_databases_yaml("- name: mystery\n");
         assert!(requires_checked_mars_credentials_from_yaml(&missing_class));
 
-        let empty_list = parse_databases_yaml("databases: []\n");
+        let empty_list = parse_databases_yaml("[]\n");
         assert!(requires_checked_mars_credentials_from_yaml(&empty_list));
 
-        let no_databases_key = parse_databases_yaml("other: value\n");
-        assert!(requires_checked_mars_credentials_from_yaml(
-            &no_databases_key
-        ));
+        let not_a_sequence = parse_databases_yaml("other: value\n");
+        assert!(requires_checked_mars_credentials_from_yaml(&not_a_sequence));
     }
 
     #[test]
     fn multiple_credential_inert_classes_do_not_require_checked_credentials() {
         let parsed = parse_databases_yaml(
-            "databases:\n  - name: a\n    class: fdb5base\n  - name: b\n    class: apibase\n  - name: c\n    class: filebase\n  - name: d\n    class: polytopebase\n",
+            "- name: a\n  class: fdb5base\n- name: b\n  class: apibase\n- name: c\n  class: filebase\n- name: d\n  class: polytopebase\n",
         );
         assert!(!requires_checked_mars_credentials_from_yaml(&parsed));
     }
