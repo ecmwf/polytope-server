@@ -133,12 +133,129 @@ fn extract_release_time(raw: &str) -> Option<String> {
     }
 }
 
-fn mars_credentials(metadata: &Value, user: &Value) -> Result<(String, String), String> {
+/// Database backend classes (from mars-client's `databases.yaml`) that are
+/// proven, by inspecting the `mars-client-cpp` `Database` subclasses, to
+/// never read the request "environment" map carrying `email`/`token`:
+/// `FDBBase` (`fdb5base`), `APIBase` (`apibase`), `FileBase` (`filebase`) and
+/// `PolytopeBase` (`polytopebase`) — none of them reference `env_` anywhere.
+///
+/// `dhsbase` is deliberately excluded from this list: `DHSBase` forwards
+/// `env_` into `metkit::mars::DHSProtocol`, which is the real MARS server
+/// wire protocol — the server uses `email`/`token` there for genuine
+/// per-user authentication and accounting. Hermes offloading is likewise
+/// excluded (even though it isn't a `databases.yaml`-selectable class): it is
+/// only ever reached as a server-driven follow-on from an existing `dhsbase`
+/// session, so a pool with no `dhsbase` entry can never reach it either.
+///
+/// A pool whose `databases.yaml` contains only classes from this list can
+/// safely use a synthetic, identity-derived MARS credential instead of
+/// requiring a real ECMWF apikey, because nothing downstream ever inspects
+/// the value.
+const CREDENTIAL_INERT_DATABASE_CLASSES: &[&str] =
+    &["fdb5base", "apibase", "filebase", "polytopebase"];
+
+/// Determines whether this pool's MARS backend(s) require a real, checked
+/// ECMWF credential, from the already-parsed contents of mars-client's
+/// `databases.yaml` (the same file `mars-client-cpp` itself uses for backend
+/// routing).
+///
+/// Fails closed: returns `true` (require real credentials) unless every
+/// configured database entry has a `class` present in
+/// `CREDENTIAL_INERT_DATABASE_CLASSES`. A missing/unparseable `databases`
+/// list, an empty list, or any entry with a missing or unrecognised `class`
+/// all default to `true` rather than silently permitting the lenient
+/// identity passthrough for something unaudited.
+fn requires_checked_mars_credentials_from_yaml(parsed: &serde_yml::Value) -> bool {
+    let Some(databases) = parsed.get("databases").and_then(|v| v.as_sequence()) else {
+        return true;
+    };
+    if databases.is_empty() {
+        return true;
+    }
+    !databases.iter().all(|db| {
+        db.get("class")
+            .and_then(|v| v.as_str())
+            .is_some_and(|class| CREDENTIAL_INERT_DATABASE_CLASSES.contains(&class))
+    })
+}
+
+/// Reads and parses `$MARS_HOME/etc/mars-client/databases.yaml` — the file
+/// mounted into every mars-worker pod from `workerPools.<name>.marsConfig.databases`
+/// — and resolves the MARS credential mode via
+/// [`requires_checked_mars_credentials_from_yaml`].
+///
+/// Any I/O or parse failure defaults to `true` (require real credentials),
+/// consistent with the fail-closed behaviour of the underlying classifier.
+fn requires_checked_mars_credentials(mars_home: &str) -> bool {
+    let path = std::path::Path::new(mars_home).join("etc/mars-client/databases.yaml");
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(contents) => contents,
+        Err(error) => {
+            tracing::warn!(
+                path = %path.display(),
+                %error,
+                "failed to read mars-client databases.yaml; defaulting to strict MARS credential checking"
+            );
+            return true;
+        }
+    };
+    match serde_yml::from_str::<serde_yml::Value>(&contents) {
+        Ok(parsed) => requires_checked_mars_credentials_from_yaml(&parsed),
+        Err(error) => {
+            tracing::warn!(
+                path = %path.display(),
+                %error,
+                "failed to parse mars-client databases.yaml; defaulting to strict MARS credential checking"
+            );
+            true
+        }
+    }
+}
+
+/// Builds a synthetic MARS credential pair from the job's already-verified
+/// identity (`job.user.auth.realm` / `.username`, set unconditionally by the
+/// frontend for every authenticated request, in every frontend version).
+///
+/// Used for pools whose backends never check `email`/`token` at all (see
+/// [`CREDENTIAL_INERT_DATABASE_CLASSES`]) — the values are inert on the wire,
+/// so this only needs to be non-empty and useful for our own tracing/logs,
+/// not a real credential.
+fn identity_credentials(user: &Value) -> Result<(String, String), String> {
+    let realm = user
+        .pointer("/auth/realm")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            "job metadata is missing the authenticated realm required for identity-based MARS credentials".to_string()
+        })?;
+    let username = user
+        .pointer("/auth/username")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            "job metadata is missing the authenticated username required for identity-based MARS credentials".to_string()
+        })?;
+
+    Ok((
+        format!("{username}@{realm}.polytope-identity.invalid"),
+        format!("{realm}:{username}"),
+    ))
+}
+
+fn mars_credentials(
+    requires_checked_credentials: bool,
+    metadata: &Value,
+    user: &Value,
+) -> Result<(String, String), String> {
     if let Some(credentials) = metadata
         .pointer("/mars_credentials")
         .and_then(Value::as_object)
     {
         return credential_pair(credentials, "email", "token");
+    }
+
+    if !requires_checked_credentials {
+        return identity_credentials(user);
     }
 
     let attributes = ["/auth/attributes", "/attributes"]
@@ -174,6 +291,11 @@ struct MarsProcessor {
     relay: RelayController,
     mars_logs: mars_logs::MarsLogBridge,
     stream_queue_byte_limit: usize,
+    /// Resolved once at startup from mars-client's `databases.yaml` (see
+    /// [`requires_checked_mars_credentials`]). `true` for pools backed by
+    /// the real MARS server (`dhsbase`), `false` for FDB5-direct pools
+    /// (`fdb5base`), where `email`/`token` are never read downstream.
+    requires_checked_credentials: bool,
 }
 
 #[async_trait]
@@ -184,7 +306,11 @@ impl Processor for MarsProcessor {
             Err(msg) => return ProcessResult::error(msg),
         };
 
-        let (mars_email, mars_token) = match mars_credentials(&work.metadata, &work.user) {
+        let (mars_email, mars_token) = match mars_credentials(
+            self.requires_checked_credentials,
+            &work.metadata,
+            &work.user,
+        ) {
             Ok(credentials) => credentials,
             Err(message) => return ProcessResult::error(message),
         };
@@ -374,7 +500,12 @@ mod tests {
         });
 
         assert_eq!(
-            mars_credentials(&metadata, &serde_json::json!({})),
+            mars_credentials(true, &metadata, &serde_json::json!({})),
+            Ok(("user@example.test".to_string(), "secret-token".to_string()))
+        );
+        // Trusted job metadata always wins, regardless of credential mode.
+        assert_eq!(
+            mars_credentials(false, &metadata, &serde_json::json!({})),
             Ok(("user@example.test".to_string(), "secret-token".to_string()))
         );
     }
@@ -391,18 +522,17 @@ mod tests {
         });
 
         assert_eq!(
-            mars_credentials(&serde_json::json!({}), &user),
+            mars_credentials(true, &serde_json::json!({}), &user),
             Ok(("user@example.test".to_string(), "secret-token".to_string()))
         );
     }
 
     #[test]
-    fn rejects_missing_or_empty_mars_credentials() {
-        assert!(
-            mars_credentials(&serde_json::json!({}), &serde_json::json!({})).is_err()
-        );
+    fn rejects_missing_or_empty_mars_credentials_when_checked() {
+        assert!(mars_credentials(true, &serde_json::json!({}), &serde_json::json!({})).is_err());
         assert!(
             mars_credentials(
+                true,
                 &serde_json::json!({
                     "mars_credentials": {
                         "email": "user@example.test",
@@ -413,6 +543,120 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn builds_identity_credentials_when_not_checked() {
+        let user = serde_json::json!({
+            "auth": {
+                "realm": "desp",
+                "username": "peter"
+            }
+        });
+
+        assert_eq!(
+            mars_credentials(false, &serde_json::json!({}), &user),
+            Ok((
+                "peter@desp.polytope-identity.invalid".to_string(),
+                "desp:peter".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn identity_credentials_do_not_fall_back_to_ecmwf_attributes() {
+        // A pool that doesn't require checked credentials should never need
+        // (or accidentally require) ecmwf-email/ecmwf-apikey attributes.
+        let user = serde_json::json!({
+            "auth": {
+                "realm": "ecmwf",
+                "username": "ecm1141",
+                "attributes": {}
+            }
+        });
+
+        assert_eq!(
+            mars_credentials(false, &serde_json::json!({}), &user),
+            Ok((
+                "ecm1141@ecmwf.polytope-identity.invalid".to_string(),
+                "ecmwf:ecm1141".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn rejects_identity_credentials_when_realm_or_username_missing() {
+        assert!(
+            mars_credentials(
+                false,
+                &serde_json::json!({}),
+                &serde_json::json!({"auth": {"username": "peter"}})
+            )
+            .is_err()
+        );
+        assert!(
+            mars_credentials(
+                false,
+                &serde_json::json!({}),
+                &serde_json::json!({"auth": {"realm": "desp"}})
+            )
+            .is_err()
+        );
+        assert!(mars_credentials(false, &serde_json::json!({}), &serde_json::json!({})).is_err());
+    }
+
+    fn parse_databases_yaml(yaml: &str) -> serde_yml::Value {
+        serde_yml::from_str(yaml).expect("valid test fixture yaml")
+    }
+
+    #[test]
+    fn fdb5base_only_does_not_require_checked_credentials() {
+        let parsed = parse_databases_yaml(
+            "databases:\n  - name: databridge\n    class: fdb5base\n    home: /home/polytope/fdb-home\n",
+        );
+        assert!(!requires_checked_mars_credentials_from_yaml(&parsed));
+    }
+
+    #[test]
+    fn dhsbase_requires_checked_credentials() {
+        let parsed = parse_databases_yaml(
+            "databases:\n  - name: marsod\n    class: dhsbase\n    host: marsod.ecmwf.int\n",
+        );
+        assert!(requires_checked_mars_credentials_from_yaml(&parsed));
+    }
+
+    #[test]
+    fn mixed_backend_classes_require_checked_credentials() {
+        let parsed = parse_databases_yaml(
+            "databases:\n  - name: databridge\n    class: fdb5base\n  - name: marsod\n    class: dhsbase\n",
+        );
+        assert!(requires_checked_mars_credentials_from_yaml(&parsed));
+    }
+
+    #[test]
+    fn unknown_or_missing_class_defaults_to_checked_credentials() {
+        let unknown_class =
+            parse_databases_yaml("databases:\n  - name: mystery\n    class: futurebase\n");
+        assert!(requires_checked_mars_credentials_from_yaml(&unknown_class));
+
+        let missing_class = parse_databases_yaml("databases:\n  - name: mystery\n");
+        assert!(requires_checked_mars_credentials_from_yaml(&missing_class));
+
+        let empty_list = parse_databases_yaml("databases: []\n");
+        assert!(requires_checked_mars_credentials_from_yaml(&empty_list));
+
+        let no_databases_key = parse_databases_yaml("other: value\n");
+        assert!(requires_checked_mars_credentials_from_yaml(
+            &no_databases_key
+        ));
+    }
+
+    #[test]
+    fn multiple_credential_inert_classes_do_not_require_checked_credentials() {
+        let parsed = parse_databases_yaml(
+            "databases:\n  - name: a\n    class: fdb5base\n  - name: b\n    class: apibase\n  - name: c\n    class: filebase\n  - name: d\n    class: polytopebase\n",
+        );
+        assert!(!requires_checked_mars_credentials_from_yaml(&parsed));
     }
 }
 
@@ -483,6 +727,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     tracing::info!("event.name" = "startup.config.loaded", outcome = "success", config_path = %cli.config_path, "config loaded");
 
+    // Resolved once at startup from mars-client's own databases.yaml (the
+    // same file it uses for backend routing) rather than a separate config
+    // knob: pools backed only by credential-inert classes (fdb5base, etc.)
+    // never need a real ECMWF apikey, so this decides whether mars_credentials()
+    // enforces one or synthesizes an identity-derived placeholder instead.
+    let mars_home = std::env::var("MARS_HOME").unwrap_or_else(|_| "/mars-home".to_string());
+    let requires_checked_credentials = requires_checked_mars_credentials(&mars_home);
+    tracing::info!(
+        "event.name" = "startup.mars_credentials_mode.resolved",
+        outcome = "success",
+        mars_home = %mars_home,
+        mode = if requires_checked_credentials { "checked" } else { "identity" },
+        "resolved MARS credential mode from mars-client databases.yaml"
+    );
+
     // The relay must accept callbacks before its NodePort Service is created.
     let relay = CallbackRelay::bind(cli.mars_callback_relay_port).await?;
     let manager = match NodePortManager::new(relay.listen_port()).await {
@@ -519,6 +778,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             relay: relay.controller(),
             mars_logs,
             stream_queue_byte_limit: cli.stream_queue_byte_limit,
+            requires_checked_credentials,
         },
     )
     .await;
@@ -547,6 +807,7 @@ mod processor_tests {
             relay: relay.controller(),
             mars_logs: mars_logs::test_instance(),
             stream_queue_byte_limit: DEFAULT_STREAM_QUEUE_BYTE_LIMIT,
+            requires_checked_credentials: true,
         };
         let result = processor
             .process(WorkItem {
