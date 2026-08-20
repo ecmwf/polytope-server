@@ -148,6 +148,43 @@ class PolytopeDataSource:
                         pre_path[k] = v
         polytope_mars_config["options"]["pre_path"] = pre_path
 
+        # Overlay compact, metkit-canonicalized MARS ranges (e.g.
+        # "0/to/240/by/6") computed by transform::metkit_expansion onto `r`,
+        # in place of the fully-enumerated value it wrote there, so
+        # PolytopeMars/the datacube layer can do its own availability-aware
+        # expansion for that axis instead of being handed every value. See
+        # docs/job-metadata-options.md ("The metkit_ranges metadata key") and
+        # docs/2026-08-19-metkit-range-preservation-plan.md for the design.
+        #
+        # Trusted, best-effort, and additive only: written only by the broker
+        # metkit_expansion transform (never sourced from the client request),
+        # and absence of a key here just means that axis stays fully
+        # enumerated in `r` as before. Keys that are also pre_path axes are
+        # skipped -- pre_path was already built above from the fully
+        # enumerated value and must not be disturbed by a compact range
+        # string (pre_path axes are expected to be fixed identity axes, e.g.
+        # class/stream/dataset, never range axes, but this is a deliberate
+        # defensive exclusion rather than an assumption).
+        metkit_ranges = request.metadata.get("metkit_ranges")
+        if metkit_ranges is not None:
+            if not isinstance(metkit_ranges, dict):
+                raise ValueError(
+                    f"request.metadata['metkit_ranges'] must be a dict, got {type(metkit_ranges).__name__}"
+                )
+            for k, compact_range in metkit_ranges.items():
+                if k in pre_path_axes:
+                    logging.debug(
+                        "Ignoring metkit_ranges entry for '%s': also a pre_path axis",
+                        k,
+                    )
+                    continue
+                if not isinstance(compact_range, str):
+                    raise ValueError(
+                        f"request.metadata['metkit_ranges']['{k}'] must be a string, "
+                        f"got {type(compact_range).__name__}"
+                    )
+                r[k] = compact_range
+
         if dynamic_grid:
             from dynamic_grid.helper import (
                 build_grid_lookup_request,

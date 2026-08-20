@@ -602,5 +602,104 @@ def test_destroy_preserves_process_scoped_config_files(base_config):
     assert Path(datasource.config_file).is_file()
 
 
+# ---------------------------------------------------------------------------
+# metkit_ranges overlay
+#
+# See docs/job-metadata-options.md ("The metkit_ranges metadata key") and
+# docs/2026-08-19-metkit-range-preservation-plan.md for the design.
+# ---------------------------------------------------------------------------
+
+
+def test_metkit_ranges_overlays_compact_range_onto_request(base_config, mock_polytope_mars):
+    """metkit_ranges entries replace the fully-enumerated value in the
+    request dict passed to PolytopeMars.extract()."""
+    base_config["gribjump_config"] = {"gribjump_servers": []}
+    datasource = PolytopeDataSource(base_config)
+
+    request = FakeRequest(
+        coerced_request={
+            "class": "od",
+            "stream": "oper",
+            "step": "0/6/12/18/24/30/36/42/48",
+        },
+        metadata={"metkit_ranges": {"step": "0/to/48/by/6"}},
+    )
+
+    datasource.retrieve(request)
+
+    result = _output_json(datasource)
+    assert result["request"]["step"] == "0/to/48/by/6"
+    # Unrelated keys are untouched.
+    assert result["request"]["class"] == "od"
+    assert result["request"]["stream"] == "oper"
+
+
+def test_metkit_ranges_absent_key_leaves_request_unchanged(base_config, mock_polytope_mars):
+    """No metkit_ranges metadata at all -- request passes through exactly as
+    the fully-enumerated coerced_request had it, with no error."""
+    base_config["gribjump_config"] = {"gribjump_servers": []}
+    datasource = PolytopeDataSource(base_config)
+
+    request = FakeRequest(
+        coerced_request={"class": "od", "step": "0/6/12/18/24"},
+        metadata={},
+    )
+
+    datasource.retrieve(request)
+
+    result = _output_json(datasource)
+    assert result["request"]["step"] == "0/6/12/18/24"
+
+
+def test_metkit_ranges_skips_pre_path_axes(base_config, mock_polytope_mars):
+    """A metkit_ranges entry for a key that is also a pre_path axis must not
+    overwrite that key in the request, and pre_path itself must still be
+    built from the original (fully-enumerated) value."""
+    base_config["gribjump_config"] = {"gribjump_servers": []}
+    datasource = PolytopeDataSource(base_config)
+
+    request = FakeRequest(
+        coerced_request={"class": "od", "stream": "oper"},
+        metadata={
+            "polytope_mars": {"options": {"pre_path": ["class", "stream"]}},
+            # Deliberately unrealistic (pre_path axes are identity axes, not
+            # range axes) -- exercises the defensive exclusion regardless.
+            "metkit_ranges": {"class": "od/to/zz"},
+        },
+    )
+
+    datasource.retrieve(request)
+
+    result = _output_json(datasource)
+    assert result["request"]["class"] == "od"
+    assert result["options"]["pre_path"] == {"class": "od", "stream": "oper"}
+
+
+def test_metkit_ranges_rejects_non_dict(base_config, mock_polytope_mars):
+    base_config["gribjump_config"] = {"gribjump_servers": []}
+    datasource = PolytopeDataSource(base_config)
+
+    request = FakeRequest(
+        coerced_request={"class": "od"},
+        metadata={"metkit_ranges": ["not", "a", "dict"]},
+    )
+
+    with pytest.raises(ValueError, match="metkit_ranges"):
+        datasource.retrieve(request)
+
+
+def test_metkit_ranges_rejects_non_string_value(base_config, mock_polytope_mars):
+    base_config["gribjump_config"] = {"gribjump_servers": []}
+    datasource = PolytopeDataSource(base_config)
+
+    request = FakeRequest(
+        coerced_request={"class": "od", "step": "0/6/12"},
+        metadata={"metkit_ranges": {"step": ["0", "to", "12"]}},
+    )
+
+    with pytest.raises(ValueError, match="metkit_ranges"):
+        datasource.retrieve(request)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
