@@ -1932,6 +1932,7 @@ dependencies = [
  "polytope-worker-common",
  "reqwest",
  "serde_json",
+ "serde_yml",
  "tokio",
  "tokio-stream",
  "tracing",
