@@ -452,10 +452,7 @@ mod tests {
         assert_eq!(detected[0].key, "step");
 
         let ranges = probe_ranges(&obj, &detected);
-        assert_eq!(
-            ranges.get("step").and_then(|v| v.as_str()),
-            Some("0/to/12")
-        );
+        assert_eq!(ranges.get("step").and_then(|v| v.as_str()), Some("0/to/12"));
     }
 
     #[test]
@@ -474,7 +471,9 @@ mod tests {
     #[tokio::test]
     async fn execute_writes_metkit_ranges_metadata_and_still_fully_expands_request() {
         let action = MetkitExpansion {};
-        let mut job = Job::new(serde_json::Value::Object(sample_retrieve_request("0/to/12/by/6")));
+        let mut job = Job::new(serde_json::Value::Object(sample_retrieve_request(
+            "0/to/12/by/6",
+        )));
 
         let result = action.execute(&mut job).await.unwrap();
         assert!(matches!(result, TransformResult::Continue));
