@@ -288,6 +288,46 @@ fn credential_pair(
     Ok((email.to_owned(), token.to_owned()))
 }
 
+/// Returns freed glibc arena pages to the OS when a MARS retrieval finishes.
+///
+/// The FDB5 remote client allocates a large number of medium-sized buffers
+/// (roughly 1-4 MiB each) while streaming GRIB data from the remote FDB store.
+/// They are freed by the C++ layer as each field is consumed, but glibc's
+/// dynamic mmap threshold ratchets upward (up to `DEFAULT_MMAP_THRESHOLD_MAX`,
+/// 32 MiB on 64-bit) as those buffers are released, so subsequent allocations
+/// of that size come from the heap rather than mmap. Heap pages stay in
+/// glibc's arenas after `free()`, and small live FDB objects scattered above
+/// them block top-of-heap trimming, so the pod's RSS baseline rises to roughly
+/// the peak in-flight size of the largest job it has processed. A second large
+/// job then runs on top of that baseline and OOMKills the pod (exit code 137).
+///
+/// `malloc_trim(0)` walks all glibc arenas and releases free pages back to the
+/// OS via `madvise(MADV_DONTNEED)`. Measured at 40-80 ms when it is the only
+/// mitigation, and under 0.4 ms alongside `MALLOC_MMAP_THRESHOLD_=131072`
+/// (which is set in the worker pod env and is the primary fix).
+///
+/// This is a drop guard rather than a straight-line call so that it also runs
+/// on the early-return paths - in particular client disconnect part way
+/// through a large retrieval, which is exactly when a lot has been allocated.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+struct MallocTrimOnDrop;
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+impl Drop for MallocTrimOnDrop {
+    fn drop(&mut self) {
+        // SAFETY: malloc_trim only inspects glibc's own arenas and releases
+        // pages that are already on its free lists. It never invalidates live
+        // allocations, and it is safe to call from any thread.
+        unsafe {
+            libc::malloc_trim(0);
+        }
+    }
+}
+
+/// No-op on musl and non-Linux targets, which do not provide `malloc_trim`.
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+struct MallocTrimOnDrop;
+
 struct MarsProcessor {
     /// Serializes relay generations, MARS environment mutation, and the full
     /// blocking C++ retrieval while broker workers queue safely behind it.
@@ -337,6 +377,13 @@ impl Processor for MarsProcessor {
                 tracing::debug!("discarding abandoned MARS job before retrieval starts");
                 return;
             }
+            // Declared before the relay generation, MARS client and stream so
+            // that it drops *after* all of them (locals drop in reverse
+            // declaration order). By that point the C++ layer has freed every
+            // GRIB buffer, so the arenas hold only free pages and the trim can
+            // return them immediately. It still runs while `_env_guard` is
+            // held, so the trim is serialized with respect to other MARS jobs.
+            let _malloc_trim = MallocTrimOnDrop;
             let _log_scope = mars_logs.begin_request(request_id);
             let generation = match relay.start_generation() {
                 Ok(generation) => generation,
@@ -402,6 +449,9 @@ impl Processor for MarsProcessor {
                 }
             }
             stream.close();
+            // `_malloc_trim` (declared above) returns the freed arena pages to
+            // the OS once this scope unwinds.
+            //
             // End the relay generation before releasing env_lock. Early-return
             // paths preserve the same order through reverse declaration drops.
             drop(generation);
