@@ -55,12 +55,16 @@ fn classify_mars_error(raw: &str) -> ClassifiedMarsError {
     // Note: Most of these are based on potentially out of date confluence pages.
     // Empirically observed errors are marked with a comment
     let lower = raw.to_lowercase();
-    // Empirically observed; retrying within the worker may also be worthwhile.
-    if lower.contains("connection reset by peer") || lower.contains("socket read failed") {
-        ClassifiedMarsError::recoverable(
-            "The data retrieval connection was interrupted. Please try again.".to_string(),
-        )
-    } else if lower.contains("data not yet available") || lower.contains("scheduled for after") {
+    // TCP-level errors (dropped/reset connections, e.g. from an FDB store
+    // restart) are treated as unrecoverable — force a worker restart. A
+    // stale/half-dead pooled connection can otherwise be silently reused by
+    // a later, unrelated job and crash the whole process (see the
+    // `std::future_error: Future already retrieved` incident); restarting
+    // the worker guarantees a fresh process with no leftover connection
+    // state. This is deliberately blunt — occasional restarts (and the
+    // resulting k8s backoff) are considered acceptable since these events
+    // are not expected to happen constantly.
+    if lower.contains("data not yet available") || lower.contains("scheduled for after") {
         let message = if let Some(release_time) = extract_release_time(raw) {
             format!("Data not released yet. Release time is {release_time}.")
         } else {
@@ -498,9 +502,6 @@ mod tests {
             "Data not found",
             "syntax error near param",
             "invalid value for date",
-            // Empirically observed in production: TCP teardown mid-transfer.
-            "[ERROR] Socket read failed (TCPClient[port=0]) (Connection reset by peer)",
-            "Connection reset by peer",
             // Empirically observed in production: same family as mars_expected_fields.
             "[ERROR] Exception: UserError: 0 message retrieved out of 48 expected",
             "UserError: 0 message retrieved out of 1 expected",
@@ -527,6 +528,12 @@ mod tests {
             "std::future_error: Future already retrieved",
             "Unexpected message received (Blob(300))",
             "something else",
+            // TCP-level errors force a worker restart (see comment in
+            // classify_mars_error) rather than being retried in place.
+            "[ERROR] Exception: TCPException: Write error. Expected 36. Error =  (Broken pipe)",
+            "[ERROR] Exception: TCPException: Read error. Expected 36 bytes. Error =  (Success)",
+            "[ERROR] Socket read failed (TCPClient[port=0]) (Connection reset by peer)",
+            "Connection reset by peer",
         ] {
             assert_eq!(
                 classify_mars_error(raw).disposition,
