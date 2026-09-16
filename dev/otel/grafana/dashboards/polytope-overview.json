@@ -102,7 +102,11 @@
         "allValue": ".*",
         "multi": false,
         "sort": 1,
-        "current": {}
+        "current": {
+          "selected": true,
+          "text": "polytope-prod",
+          "value": "polytope-prod"
+        }
       }
     ]
   },
@@ -994,12 +998,163 @@
       ]
     },
     {
+      "id": 50,
+      "title": "Resource Usage",
+      "type": "row",
+      "gridPos": {
+        "x": 0,
+        "y": 37,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 51,
+      "title": "Memory Usage by Container",
+      "type": "timeseries",
+      "description": "Working-set memory per container (summed across pods in the pool). Watch for a climb leading up to a restart in the Pod Health row above \u2014 that's the signature of a leak heading towards OOMKilled. Source: container_memory_working_set_bytes (kubelet/cAdvisor).",
+      "gridPos": {
+        "x": 0,
+        "y": 38,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sum by (cluster, container) (max by (cluster, namespace, pod, container)(container_memory_working_set_bytes{job=\"kubelet\", metrics_path=\"/metrics/cadvisor\", cluster=~\"$cluster\", namespace=~\"$namespace\", container!=\"\", image!=\"\"}))",
+          "legendFormat": "{{cluster}} / {{container}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": ["lastNotNull", "max"]
+        }
+      }
+    },
+    {
+      "id": 52,
+      "title": "Memory Usage vs Limit % by Container",
+      "type": "bargauge",
+      "description": "Current working-set memory as a % of the container's memory limit, summed per pool. Containers using <1% are hidden to keep this readable.",
+      "gridPos": {
+        "x": 12,
+        "y": 38,
+        "w": 6,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "100 * sum by (cluster, container) (max by (cluster, namespace, pod, container)(container_memory_working_set_bytes{job=\"kubelet\", metrics_path=\"/metrics/cadvisor\", cluster=~\"$cluster\", namespace=~\"$namespace\", container!=\"\", image!=\"\"})) / sum by (cluster, container) (kube_pod_container_resource_limits{job=\"kube-state-metrics\", cluster=~\"$cluster\", namespace=~\"$namespace\", resource=\"memory\"}) > 1",
+          "legendFormat": "{{cluster}} / {{container}}",
+          "instant": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "green" },
+              { "value": 70, "color": "yellow" },
+              { "value": 90, "color": "red" }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 53,
+      "title": "CPU Usage vs Limit % by Container",
+      "type": "bargauge",
+      "description": "Current CPU usage as a % of the container's CPU limit, summed per pool. Containers using <1% are hidden to keep this readable.",
+      "gridPos": {
+        "x": 18,
+        "y": 38,
+        "w": 6,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "100 * sum by (cluster, container) (max by (cluster, namespace, pod, container)(node_namespace_pod_container:container_cpu_usage_seconds_total:sum_rate5m{cluster=~\"$cluster\", namespace=~\"$namespace\"})) / sum by (cluster, container) (kube_pod_container_resource_limits{job=\"kube-state-metrics\", cluster=~\"$cluster\", namespace=~\"$namespace\", resource=\"cpu\"}) > 1",
+          "legendFormat": "{{cluster}} / {{container}}",
+          "instant": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "green" },
+              { "value": 70, "color": "yellow" },
+              { "value": 90, "color": "red" }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
       "id": 30,
       "title": "By Collection",
       "type": "row",
       "gridPos": {
         "x": 0,
-        "y": 37,
+        "y": 46,
         "w": 24,
         "h": 1
       },
@@ -1011,7 +1166,7 @@
           "type": "timeseries",
           "gridPos": {
             "x": 0,
-            "y": 38,
+            "y": 47,
             "w": 6,
             "h": 8
           },
@@ -1053,7 +1208,7 @@
           "type": "timeseries",
           "gridPos": {
             "x": 6,
-            "y": 38,
+            "y": 47,
             "w": 6,
             "h": 8
           },
@@ -1095,7 +1250,7 @@
           "type": "timeseries",
           "gridPos": {
             "x": 12,
-            "y": 38,
+            "y": 47,
             "w": 6,
             "h": 8
           },
@@ -1145,7 +1300,7 @@
           "type": "piechart",
           "gridPos": {
             "x": 18,
-            "y": 38,
+            "y": 47,
             "w": 6,
             "h": 8
           },
