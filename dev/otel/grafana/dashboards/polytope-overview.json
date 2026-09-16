@@ -833,12 +833,173 @@
       }
     },
     {
+      "id": 39,
+      "title": "Pod Health (Restarts)",
+      "type": "row",
+      "gridPos": {
+        "x": 0,
+        "y": 28,
+        "w": 24,
+        "h": 1
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 40,
+      "title": "Container Restarts (in range)",
+      "type": "stat",
+      "description": "Total container restarts across the selected cluster/namespace, in the dashboard time range. Source: kube-state-metrics (kube_pod_container_status_restarts_total).",
+      "gridPos": {
+        "x": 0,
+        "y": 29,
+        "w": 6,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(kube_pod_container_status_restarts_total{cluster=~\"$cluster\", namespace=~\"$namespace\"}[$__range]))",
+          "instant": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "green" },
+              { "value": 5, "color": "yellow" },
+              { "value": 20, "color": "red" }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 41,
+      "title": "Restarts by Container (in range)",
+      "type": "bargauge",
+      "description": "Which container(s) are restarting. Grouped by container name, not app.kubernetes.io/component (kube-state-metrics on lumi/mn5 does not currently expose custom pod labels).",
+      "gridPos": {
+        "x": 6,
+        "y": 29,
+        "w": 9,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sum by (cluster, container) (increase(kube_pod_container_status_restarts_total{cluster=~\"$cluster\", namespace=~\"$namespace\"}[$__range])) > 0",
+          "legendFormat": "{{cluster}} / {{container}}",
+          "instant": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "green" },
+              { "value": 5, "color": "yellow" },
+              { "value": 20, "color": "red" }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 42,
+      "title": "Current Restart Reasons",
+      "type": "table",
+      "description": "Last known termination reason per container currently reporting one (OOMKilled/Error/Completed/etc). Snapshot, not a rate: Completed is normal job-pod churn (e.g. mars/mars-heavy), OOMKilled/Error are worth investigating. Source: kube_pod_container_status_last_terminated_reason.",
+      "gridPos": {
+        "x": 15,
+        "y": 29,
+        "w": 9,
+        "h": 8
+      },
+      "targets": [
+        {
+          "expr": "sum by (cluster, namespace, container, reason) (kube_pod_container_status_last_terminated_reason{cluster=~\"$cluster\", namespace=~\"$namespace\", reason!=\"\"})",
+          "format": "table",
+          "instant": true,
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "cellOptions": { "type": "auto" }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Value" },
+            "properties": [
+              { "id": "displayName", "value": "count" },
+              { "id": "custom.width", "value": 80 }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "displayName": "count", "desc": true }]
+      },
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true },
+            "indexByName": {},
+            "renameByName": {}
+          }
+        }
+      ]
+    },
+    {
       "id": 30,
       "title": "By Collection",
       "type": "row",
       "gridPos": {
         "x": 0,
-        "y": 28,
+        "y": 37,
         "w": 24,
         "h": 1
       },
@@ -850,7 +1011,7 @@
           "type": "timeseries",
           "gridPos": {
             "x": 0,
-            "y": 29,
+            "y": 38,
             "w": 6,
             "h": 8
           },
@@ -892,7 +1053,7 @@
           "type": "timeseries",
           "gridPos": {
             "x": 6,
-            "y": 29,
+            "y": 38,
             "w": 6,
             "h": 8
           },
@@ -934,7 +1095,7 @@
           "type": "timeseries",
           "gridPos": {
             "x": 12,
-            "y": 29,
+            "y": 38,
             "w": 6,
             "h": 8
           },
@@ -984,7 +1145,7 @@
           "type": "piechart",
           "gridPos": {
             "x": 18,
-            "y": 29,
+            "y": 38,
             "w": 6,
             "h": 8
           },
