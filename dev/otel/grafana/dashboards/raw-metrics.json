@@ -845,7 +845,11 @@
         "allValue": ".*",
         "multi": false,
         "sort": 1,
-        "current": {}
+        "current": {
+          "selected": true,
+          "text": "polytope-prod",
+          "value": "polytope-prod"
+        }
       }
     ]
   },
