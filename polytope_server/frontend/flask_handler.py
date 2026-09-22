@@ -72,10 +72,9 @@ class FlaskHandler(frontend.FrontendHandler):
 
         @handler.route("/")
         def index():
-            prefix = request.root_url
             template_path = root_path / "static/index.html"
             template = string.Template(template_path.read_text())
-            content = template.substitute(openapi_url=f"{prefix}api/v1/openapi.yaml")
+            content = template.substitute(openapi_url="api/v1/openapi.yaml")
             return flask.Response(content)
 
         @handler.route("/api/v1/openapi.yaml")
