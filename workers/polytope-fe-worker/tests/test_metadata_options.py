@@ -14,6 +14,7 @@ Proves that:
 
 import copy
 import json
+import os
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -40,6 +41,10 @@ class FakePolytopeMars:
             "datacube": self.config.get("datacube", {}),
             "options": self.config.get("options", {}),
             "request": request,
+            # Snapshot of GRIBJUMP_CONFIG_FILE at the moment extract() runs,
+            # so tests can assert the per-request override was actually in
+            # effect during the call (and nowhere else).
+            "gribjump_config_file": os.environ.get("GRIBJUMP_CONFIG_FILE"),
         }
 
 
@@ -599,6 +604,162 @@ def test_destroy_preserves_process_scoped_config_files(base_config):
 
     assert Path(datasource.config_file).is_file()
     datasource.destroy(FakeRequest({}))
+    assert Path(datasource.config_file).is_file()
+
+
+# ---------------------------------------------------------------------------
+# gribjump_config metadata override
+#
+# Lets a route-level set_metadata action point a single fe-worker deployment
+# at a different gribjump/FDB backend per request (e.g. fdbprod vs fdbtest),
+# without needing separate worker pools per backend. See
+# polytope-server commit 3003f42 for why self.config_file (the process-scoped
+# default, shared by every job on this worker) must never be touched/removed
+# as a side effect of handling a single request.
+# ---------------------------------------------------------------------------
+
+
+def test_gribjump_config_metadata_overrides_env_var_during_extract(
+    base_config, mock_polytope_mars
+):
+    """A gribjump_config override in metadata must be in effect (via
+    GRIBJUMP_CONFIG_FILE) for the duration of extract(), pointing at a file
+    distinct from the process-scoped default."""
+    base_config["gribjump_config"] = {"gribjump_servers": [{"host": "fdbtest", "port": 9123}]}
+    datasource = PolytopeDataSource(base_config)
+    default_config_file = datasource.config_file
+
+    request = FakeRequest(
+        coerced_request={"class": "od"},
+        metadata={
+            "polytope_mars": {
+                "options": {"pre_path": {"class": "od"}},
+                "gribjump_config": {"uri": "fdbprod:9123", "type": "remote"},
+            }
+        },
+    )
+
+    datasource.retrieve(request)
+    result = _output_json(datasource)
+
+    override_file = result["gribjump_config_file"]
+    assert override_file is not None
+    assert override_file != default_config_file
+    assert Path(override_file).is_file()
+    with open(override_file) as f:
+        assert "fdbprod" in f.read()
+
+    # The env var must be restored to the process-scoped default immediately
+    # after extract() returns.
+    assert os.environ["GRIBJUMP_CONFIG_FILE"] == default_config_file
+
+    datasource.destroy(request)
+
+
+def test_gribjump_config_metadata_absent_uses_process_default(
+    base_config, mock_polytope_mars
+):
+    """No gribjump_config override in metadata -> GRIBJUMP_CONFIG_FILE stays
+    pointed at the process-scoped default throughout."""
+    base_config["gribjump_config"] = {"gribjump_servers": [{"host": "fdbtest", "port": 9123}]}
+    datasource = PolytopeDataSource(base_config)
+
+    request = FakeRequest(
+        coerced_request={"class": "od"},
+        metadata={"polytope_mars": {"options": {"pre_path": {"class": "od"}}}},
+    )
+
+    datasource.retrieve(request)
+    result = _output_json(datasource)
+
+    assert result["gribjump_config_file"] == datasource.config_file
+    assert os.environ["GRIBJUMP_CONFIG_FILE"] == datasource.config_file
+
+
+def test_two_sequential_requests_different_gribjump_backends(
+    base_config, mock_polytope_mars
+):
+    """Consecutive requests on one worker/datasource can target different
+    gribjump backends -- this is the whole point: one fe-worker deployment
+    serving both fdbprod and fdbtest."""
+    base_config["gribjump_config"] = {"gribjump_servers": [{"host": "fdbtest", "port": 9123}]}
+    datasource = PolytopeDataSource(base_config)
+
+    prod_request = FakeRequest(
+        coerced_request={"class": "od"},
+        metadata={
+            "polytope_mars": {
+                "options": {"pre_path": {"class": "od"}},
+                "gribjump_config": {"uri": "fdbprod:9123", "type": "remote"},
+            }
+        },
+    )
+    datasource.retrieve(prod_request)
+    prod_result = _output_json(datasource)
+    prod_file = prod_result["gribjump_config_file"]
+    with open(prod_file) as f:
+        assert "fdbprod" in f.read()
+    datasource.destroy(prod_request)
+    assert not Path(prod_file).exists()
+
+    test_request = FakeRequest(
+        coerced_request={"class": "od"},
+        metadata={
+            "polytope_mars": {
+                "options": {"pre_path": {"class": "od"}},
+                "gribjump_config": {"uri": "fdbtest:9123", "type": "remote"},
+            }
+        },
+    )
+    datasource.retrieve(test_request)
+    test_result = _output_json(datasource)
+    test_file = test_result["gribjump_config_file"]
+    assert test_file != prod_file
+    with open(test_file) as f:
+        assert "fdbtest" in f.read()
+    datasource.destroy(test_request)
+
+    # Neither request ever touched the process-scoped default file.
+    assert Path(datasource.config_file).is_file()
+
+
+def test_gribjump_config_metadata_rejects_non_dict(base_config, mock_polytope_mars):
+    base_config["gribjump_config"] = {"gribjump_servers": []}
+    datasource = PolytopeDataSource(base_config)
+
+    request = FakeRequest(
+        coerced_request={"class": "od"},
+        metadata={"polytope_mars": {"gribjump_config": ["not", "a", "dict"]}},
+    )
+
+    with pytest.raises(ValueError, match="gribjump_config"):
+        datasource.retrieve(request)
+
+
+def test_destroy_removes_gribjump_override_but_preserves_default(
+    base_config, mock_polytope_mars
+):
+    """Regression guard for commit 3003f42: destroy() must clean up the
+    per-request override file but never the process-scoped default."""
+    base_config["gribjump_config"] = {"gribjump_servers": []}
+    datasource = PolytopeDataSource(base_config)
+
+    request = FakeRequest(
+        coerced_request={"class": "od"},
+        metadata={
+            "polytope_mars": {
+                "options": {"pre_path": {"class": "od"}},
+                "gribjump_config": {"uri": "fdbprod:9123"},
+            }
+        },
+    )
+    datasource.retrieve(request)
+    override_file = _output_json(datasource)["gribjump_config_file"]
+    assert Path(override_file).is_file()
+
+    datasource.destroy(request)
+
+    assert not Path(override_file).exists()
     assert Path(datasource.config_file).is_file()
 
 

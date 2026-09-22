@@ -6,8 +6,18 @@ import copy
 import json
 import logging
 import os
+import tempfile
+import threading
 
 import yaml
+
+# Guards the process-global GRIBJUMP_CONFIG_FILE env var while a per-request
+# gribjump config override (see request.metadata['polytope_mars']['gribjump_config'])
+# is swapped in for the duration of a single PolytopeMars.extract() call.
+# gj.GribJump() (invoked inside extract()) only ever reads this env var, so
+# concurrent jobs with different overrides (worker_concurrency > 1) would
+# otherwise race on it.
+_GRIBJUMP_CONFIG_LOCK = threading.Lock()
 
 
 class PolytopeDataSource:
@@ -74,6 +84,10 @@ class PolytopeDataSource:
         dynamic_grid = self.dynamic_grid
         dynamic_grid_service_url = self.dynamic_grid_service_url
 
+        # Per-request gribjump backend override; None means "use the
+        # process-scoped default written to self.config_file at __init__".
+        gribjump_override = None
+
         # Keys in the polytope_mars metadata block that are consumed here.
         # Other keys (e.g. coverageconfig, polygonrules) are for other consumers
         # in the stack and are intentionally ignored by the fe-worker.
@@ -81,6 +95,7 @@ class PolytopeDataSource:
             "datacube",
             "dynamic_grid",
             "dynamic_grid_service_url",
+            "gribjump_config",
             "options",
         }
 
@@ -109,6 +124,12 @@ class PolytopeDataSource:
                 dynamic_grid = bool(metadata_polytope_mars["dynamic_grid"])
             if "dynamic_grid_service_url" in metadata_polytope_mars:
                 dynamic_grid_service_url = metadata_polytope_mars["dynamic_grid_service_url"]
+            if "gribjump_config" in metadata_polytope_mars:
+                gribjump_override = metadata_polytope_mars["gribjump_config"]
+                if not isinstance(gribjump_override, dict):
+                    raise ValueError(
+                        "request.metadata['polytope_mars']['gribjump_config'] must be a dict"
+                    )
             unknown = set(metadata_polytope_mars.keys()) - _FE_WORKER_METADATA_KEYS
             if unknown:
                 logging.debug(
@@ -216,8 +237,35 @@ class PolytopeDataSource:
 
         t_mars_init = time.monotonic()
 
+        # If this request carries a trusted gribjump_config override, write it
+        # to a per-request-unique temp file (never self.config_file -- that one
+        # is process-scoped and shared with every other job on this worker,
+        # see commit 3003f42) and stash the path on `request` so destroy() can
+        # clean it up once this job is fully done with it.
+        gribjump_override_path = None
+        if gribjump_override is not None:
+            gribjump_override_path = self._write_gribjump_override(gribjump_override)
+            request._gribjump_override_file = gribjump_override_path
+
         try:
-            self.output = polytope_mars.extract(r)
+            if gribjump_override_path is not None:
+                # gj.GribJump() (called inside extract()) only ever reads the
+                # GRIBJUMP_CONFIG_FILE env var, which is process-global state --
+                # guard the swap-in/extract/restore window so a concurrent job
+                # on another thread (worker_concurrency > 1) can't observe or
+                # clobber this job's override.
+                with _GRIBJUMP_CONFIG_LOCK:
+                    os.environ["GRIBJUMP_CONFIG_FILE"] = gribjump_override_path
+                    try:
+                        self.output = polytope_mars.extract(r)
+                    finally:
+                        # Always restore the process-scoped default so any
+                        # subsequent job on this worker that carries no
+                        # override still gets the pool's default gribjump
+                        # config.
+                        os.environ["GRIBJUMP_CONFIG_FILE"] = self.config_file
+            else:
+                self.output = polytope_mars.extract(r)
             t_extract = time.monotonic()
             self.output = json.dumps(self.output).encode("utf-8")
             t_encode = time.monotonic()
@@ -236,10 +284,33 @@ class PolytopeDataSource:
         logging.debug("Getting result")
         yield self.output
 
+    def _write_gribjump_override(self, gribjump_config: dict) -> str:
+        """Write a per-request gribjump config override to a unique temp file.
+
+        Returns the file path. Distinct from self.config_file (the
+        process-scoped default written once in __init__ and reused by every
+        job) so this can safely be removed by destroy() without affecting any
+        other job on this worker.
+        """
+        fd, path = tempfile.mkstemp(prefix="gribjump-override-", suffix=".yaml")
+        with os.fdopen(fd, "w") as f:
+            f.write(yaml.dump(gribjump_config))
+        return path
+
     def destroy(self, request) -> None:
-        # These files are created once with this process-scoped datasource and
-        # reused by every job. Removing them here breaks all subsequent jobs.
-        pass
+        # self.config_file / self.fdb_config_file are created once with this
+        # process-scoped datasource and reused by every job. Removing them
+        # here breaks all subsequent jobs (see commit 3003f42) -- do not touch
+        # them.
+        #
+        # A per-request gribjump_config override (see retrieve()) is unique to
+        # this job, so it's safe -- and necessary -- to clean up here.
+        override_path = getattr(request, "_gribjump_override_file", None)
+        if override_path is not None:
+            try:
+                os.remove(override_path)
+            except OSError:
+                pass
 
     def mime_type(self) -> str:
         return "application/prs.coverage+json"
