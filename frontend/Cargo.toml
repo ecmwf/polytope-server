@@ -21,7 +21,7 @@ async-trait = "0.1"
 axum = { version = "0.8", features = ["http2"] }
 tower-http = { version = "0.6", features = ["cors", "compression-full"] }
 polytope-edr = { git = "https://github.com/ecmwf/polytope-edr", tag = "0.1.0" }
-bits = { git = "https://github.com/ecmwf/bits-broker.git", rev = "441697d0d726930b39e6ad2db2b2b0aa71c9b684", features = [
+bits = { git = "https://github.com/ecmwf/bits-broker.git", rev = "0cc7ac6", features = [
   "nats",
 ] }
 bytes = "1"
