@@ -9,7 +9,6 @@ flask-mongoengine==1.0.0
 Flask-RESTful==0.3.10
 flask-restplus==0.13.0
 Flask-Script==2.0.6
-flask-swagger-ui==4.11.1
 Flask-WTF==1.2.1
 geographiclib==2.0
 gunicorn==23.0.0

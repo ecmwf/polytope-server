@@ -21,6 +21,7 @@
 import json
 import logging
 import pathlib
+import string
 from typing import Dict
 
 import flask
@@ -45,6 +46,7 @@ from .common.data_transfer import DataTransfer
 from .common.flask_decorators import RequestSucceeded
 
 instrumentor = FlaskInstrumentor()
+root_path = pathlib.Path(__file__).parent.absolute()
 
 
 class FlaskHandler(frontend.FrontendHandler):
@@ -63,10 +65,17 @@ class FlaskHandler(frontend.FrontendHandler):
         if proxy_support:
             handler.wsgi_app = ProxyFix(handler.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
-        spec_path = pathlib.Path(__file__).parent.absolute() / "static/openapi.yaml"
+        spec_path = root_path / "static/openapi.yaml"
         with spec_path.open("r", encoding="utf8") as f:
             spec = yaml.safe_load(f)
         spec["info"]["version"] = __version__
+
+        @handler.route("/")
+        def index():
+            template_path = root_path / "static/index.html"
+            template = string.Template(template_path.read_text())
+            content = template.substitute(openapi_url="api/v1/openapi.yaml")
+            return flask.Response(content)
 
         @handler.route("/api/v1/openapi.yaml")
         def openapi_spec():
