@@ -21,13 +21,12 @@
 import json
 import logging
 import pathlib
-import tempfile
+import string
 from typing import Dict
 
 import flask
 import yaml
 from flask import Flask, Request, g, request
-from flask_swagger_ui import get_swaggerui_blueprint
 from opentelemetry import baggage
 from opentelemetry.context import attach, detach
 from opentelemetry.instrumentation.flask import FlaskInstrumentor
@@ -47,6 +46,7 @@ from .common.data_transfer import DataTransfer
 from .common.flask_decorators import RequestSucceeded
 
 instrumentor = FlaskInstrumentor()
+root_path = pathlib.Path(__file__).parent.absolute()
 
 
 class FlaskHandler(frontend.FrontendHandler):
@@ -63,22 +63,26 @@ class FlaskHandler(frontend.FrontendHandler):
         instrumentor.instrument_app(handler, excluded_urls="/api/v1/test")
 
         if proxy_support:
-            handler.wsgi_app = ProxyFix(handler.wsgi_app, x_for=1, x_proto=1, x_host=1)
+            handler.wsgi_app = ProxyFix(handler.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
-        openapi_spec = "static/openapi.yaml"
-        spec_path = pathlib.Path(__file__).parent.absolute() / openapi_spec
-        with spec_path.open("r+", encoding="utf8") as f:
+        spec_path = root_path / "static/openapi.yaml"
+        with spec_path.open("r", encoding="utf8") as f:
             spec = yaml.safe_load(f)
         spec["info"]["version"] = __version__
-        with tempfile.NamedTemporaryFile(delete=False) as tmp:
-            with open(tmp.name, "w") as f:
-                yaml.dump(spec, f)
-        SWAGGER_URL = "/openapi"
-        SWAGGERUI_BLUEPRINT = get_swaggerui_blueprint(
-            SWAGGER_URL, tmp.name, config={"app_name": "Polytope", "spec": spec}
-        )
-        handler.register_blueprint(SWAGGERUI_BLUEPRINT, name="openapi", url_prefix=SWAGGER_URL)
-        handler.register_blueprint(SWAGGERUI_BLUEPRINT, name="home", url_prefix="/")
+
+        @handler.route("/")
+        def index():
+            template_path = root_path / "static/index.html"
+            template = string.Template(template_path.read_text())
+            content = template.substitute(openapi_url="api/v1/openapi.yaml")
+            return flask.Response(content)
+
+        @handler.route("/api/v1/openapi.yaml")
+        def openapi_spec():
+            """Serve OpenAPI spec with server URL adjusted for proxy prefix."""
+            prefix = request.script_root or ""
+            dynamic_spec = spec | {"servers": [{"url": f"{prefix}/api/v1", "description": "API v1"}]}
+            return flask.Response(yaml.dump(dynamic_spec, sort_keys=False), mimetype="application/x-yaml")
 
         data_transfer = DataTransfer(request_store, staging)
 

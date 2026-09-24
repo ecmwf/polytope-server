@@ -273,15 +273,10 @@ class S3Staging(staging.Staging):
     def list(self):
         try:
             resources = []
-            data = self.s3_client.list_objects_v2(Bucket=self.bucket, MaxKeys=999999999999999)
-
-            if data.get("contents", {}).get("IsTruncated  ncated", False):
-                logging.warning("Truncated list of objects. Some objects may not be listed.")
-
-            if "Contents" not in data:  # No objects in the bucket
-                return resources
-            for o in data["Contents"]:
-                resources.append(staging.ResourceInfo(o["Key"], o["Size"], o["LastModified"].timestamp()))
+            paginator = self.s3_client.get_paginator("list_objects_v2")
+            for page in paginator.paginate(Bucket=self.bucket):
+                for o in page.get("Contents", []):
+                    resources.append(staging.ResourceInfo(o["Key"], o["Size"], o["LastModified"].timestamp()))
             return resources
         except ClientError as e:
             logging.exception(f"Failed to list objects: {e}")
