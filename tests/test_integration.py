@@ -326,6 +326,151 @@ def test_v2_cancel(polytope_server):
 
 
 # ---------------------------------------------------------------------------
+# Reconnect buffer: a completed-but-unpolled job must survive a poll gap
+# ---------------------------------------------------------------------------
+# This is the behaviour polytope-config's common.yaml raises
+# `frontend.reconnect_buffer_secs` (-> bits.bits.reconnect_buffer_secs) to 180s
+# in production for: a client that can't come back to poll for a while
+# (rolling frontend restart, network blip, a slow client-side loop, ...) must
+# not lose an already-computed result. With the library default of 5s, a gap
+# past that sweeps the job (subsequent poll gets 404/410).
+#
+# The values here are deliberately scaled down (sub-second) rather than the
+# real 180s/175s so the test runs in ~1s instead of ~3 minutes; the mechanism
+# being exercised (poll gap vs. configured reconnect_buffer_secs) doesn't
+# depend on the absolute magnitude.
+
+RECONNECT_BUFFER_SECS = 1.2
+# Comfortably inside RECONNECT_BUFFER_SECS but past when the backend has
+# already finished -- a gap this long only survives because of the buffer.
+RECONNECT_POLL_GAP_SECS = 0.9
+
+
+class SlowGribHandler(BaseHTTPRequestHandler):
+    """Like GribHandler, but sleeps before responding so the job is still
+    running (and thus still \"pending\") the first time the client polls it."""
+
+    RESPONSE_DELAY_SECS = 0.3
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", 0))
+        self.rfile.read(length)
+        time.sleep(self.RESPONSE_DELAY_SECS)
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-grib")
+        self.send_header("Content-Length", str(len(FAKE_GRIB)))
+        self.end_headers()
+        self.wfile.write(FAKE_GRIB)
+
+    def log_message(self, *_):
+        pass
+
+
+def start_mock_slow_backend():
+    port = free_port()
+    server = HTTPServer(("127.0.0.1", port), SlowGribHandler)
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    return port, server
+
+
+@pytest.fixture(scope="module")
+def slow_backend():
+    port, server = start_mock_slow_backend()
+    yield port
+    server.shutdown()
+
+
+@pytest.fixture(scope="module")
+def reconnect_buffer_server(slow_backend):
+    """A polytope-server instance with the raised reconnect_buffer_secs and a
+    'slow' collection routed at the delayed backend above."""
+    server_port = free_port()
+
+    config = textwrap.dedent(f"""\
+        server:
+          host: "127.0.0.1"
+          port: {server_port}
+          # Short enough that the first poll below reliably observes the job
+          # as still pending (SlowGribHandler takes {SlowGribHandler.RESPONSE_DELAY_SECS}s).
+          v1_poll_timeout_ms: 50
+
+        polytope:
+          site: tst
+          env: dev
+
+        bits:
+          bits:
+            reconnect_buffer_secs: {RECONNECT_BUFFER_SECS}
+            # The sweeper defaults to a 180s cycle, which would make this test
+            # pass vacuously (the sweeper might never run within the test
+            # window regardless of reconnect_buffer_secs). Run it often enough
+            # to actually exercise the reconnect deadline.
+            sweep_interval_secs: 0.1
+          collections:
+            slow:
+              - route:
+                  - target::http:
+                      url: "http://127.0.0.1:{slow_backend}/"
+    """)
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        f.write(config)
+        config_path = f.name
+
+    proc = subprocess.Popen(
+        [str(SERVER_BIN), config_path],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    try:
+        wait_for_port(server_port)
+        yield f"http://127.0.0.1:{server_port}"
+    finally:
+        proc.terminate()
+        proc.wait(timeout=5)
+        os.unlink(config_path)
+
+
+def test_v1_poll_survives_gap_with_raised_reconnect_buffer(reconnect_buffer_server):
+    """Submit against the slow backend, poll once while it's still pending,
+    then wait RECONNECT_POLL_GAP_SECS -- past when the backend has finished
+    but still inside RECONNECT_BUFFER_SECS -- before polling again. The
+    result must still be there."""
+    import json
+    import urllib.request
+
+    req = urllib.request.Request(
+        f"{reconnect_buffer_server}/api/v1/requests/slow",
+        data=json.dumps({"verb": "retrieve", "request": {"class": "od"}}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req) as r:
+        assert r.status == 202, "v1 submit must always return 202, never the payload"
+        job_id = r.headers["Location"].split("/")[-1]
+
+    poll_url = f"{reconnect_buffer_server}/api/v1/requests/{job_id}"
+
+    # First poll: v1_poll_timeout_ms (500ms) is much shorter than the
+    # backend's response delay, so this must observe the job as pending.
+    # 202 is a success status as far as urllib is concerned (no exception).
+    with urllib.request.urlopen(poll_url) as r:
+        assert r.status == 202, f"expected 202 pending on the first poll, got {r.status}"
+
+    # The backend finishes a couple of seconds later and the result sits
+    # unpolled for the rest of the gap. Without the raised buffer this is
+    # exactly the window in which the sweeper would reclaim the job.
+    time.sleep(RECONNECT_POLL_GAP_SECS)
+
+    with urllib.request.urlopen(poll_url) as r:
+        assert r.status == 200, "result was lost across the poll gap"
+        assert r.read() == FAKE_GRIB
+
+
+# ---------------------------------------------------------------------------
 # Auth-o-tron integration
 # ---------------------------------------------------------------------------
 
