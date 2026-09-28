@@ -20,7 +20,13 @@ struct PyStatus {
     logs: Vec<PyLogRecord>,
     #[serde(default)]
     error: Option<PyError>,
+    /// MIME type of the body. Absent => legacy CoverageJSON. `/chunks/v1`
+    /// extract jobs report `application/octet-stream`.
+    #[serde(default)]
+    content_type: Option<String>,
 }
+
+const DEFAULT_CONTENT_TYPE: &str = "application/prs.coverage+json";
 
 #[derive(serde::Deserialize, serde::Serialize)]
 struct PyLogRecord {
@@ -175,7 +181,11 @@ impl Processor for PolytopeProcessor {
                     >(
                         bytes::Bytes::from(bytes),
                     )));
-                    ProcessResult::success("application/prs.coverage+json", Box::new(stream))
+                    let content_type = status
+                        .content_type
+                        .filter(|ct| !ct.is_empty())
+                        .unwrap_or_else(|| DEFAULT_CONTENT_TYPE.to_string());
+                    ProcessResult::success(content_type, Box::new(stream))
                 } else {
                     let message = status.error.map(|e| e.message).unwrap_or_else(|| {
                         "python worker reported failure with no message".to_string()
@@ -426,6 +436,68 @@ def process(payload_json):
             }
             ProcessResult::Success { .. } => panic!("expected error, got success"),
             ProcessResult::Reject { reason } => panic!("expected error, got reject: {reason}"),
+        }
+    }
+    #[tokio::test]
+    async fn pyo3_content_type_passthrough() {
+        let dir = temp_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("run_polytope_worker.py"),
+            r#"
+import json
+
+def process(payload_json):
+    status = {
+        "ok": True,
+        "timings": {},
+        "logs": [],
+        "error": None,
+        "content_type": "application/octet-stream",
+    }
+    return (b"\x28\xb5\x2f\xfd", json.dumps(status))
+"#,
+        )
+        .unwrap();
+
+        pyo3::prepare_freethreaded_python();
+        Python::with_gil(|py| {
+            let sys = py.import("sys").unwrap();
+            let modules = sys.getattr("modules").unwrap();
+            let _ = modules.call_method1("pop", ("run_polytope_worker",));
+            let path = sys.getattr("path").unwrap();
+            let path_list: Vec<String> = path.extract().unwrap();
+            for p in path_list.iter().rev() {
+                if p.contains("polytope-worker-test") {
+                    let _ = path.call_method1("remove", (p,));
+                }
+            }
+            path.call_method1("insert", (0i32, dir.display().to_string()))
+                .unwrap();
+        });
+
+        let processor = PolytopeProcessor {
+            config_path: "/tmp/unused.yaml".into(),
+        };
+
+        let result = processor
+            .process(WorkItem {
+                job_id: "job-3".into(),
+                request: json!({"class": "d1", "extract": {"ranges": [[0, 1]]}}),
+                user: json!({}),
+                metadata: json!({}),
+                callback_url: None,
+            })
+            .await;
+
+        std::fs::remove_dir_all(&dir).ok();
+
+        match result {
+            ProcessResult::Success { content_type, .. } => {
+                assert_eq!(content_type, "application/octet-stream");
+            }
+            ProcessResult::Reject { reason } => panic!("expected success, got reject: {reason}"),
+            ProcessResult::Error { message } => panic!("expected success, got error: {message}"),
         }
     }
 }

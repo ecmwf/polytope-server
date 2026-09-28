@@ -125,6 +125,27 @@ def _load_config(path):
 _datasource = None
 _config_path = None
 
+DEFAULT_CONTENT_TYPE = "application/prs.coverage+json"
+
+
+def _is_extract_request(request_payload) -> bool:
+    """A job is a /chunks/v1 extract job iff its request has a top-level
+    ``extract`` object (wire contract v0 §2). Kept import-free so the legacy
+    path never imports extract.py or its deps."""
+    return isinstance(request_payload, dict) and isinstance(
+        request_payload.get("extract"), dict
+    )
+
+
+def _datasource_mime_type(datasource) -> str:
+    mime_type = getattr(datasource, "mime_type", None)
+    if callable(mime_type):
+        try:
+            return str(mime_type() or DEFAULT_CONTENT_TYPE)
+        except Exception:
+            return DEFAULT_CONTENT_TYPE
+    return DEFAULT_CONTENT_TYPE
+
 
 def _get_datasource(config_path):
     global _datasource, _config_path
@@ -149,6 +170,11 @@ def process(payload_json: str) -> tuple:
         for every Python log record emitted during THIS call.
       - error — null when ok=true; when ok=false, {"message": str} with a
         clean message (never a traceback).
+      - content_type (str, ok=true only) — MIME type of body_bytes:
+        "application/prs.coverage+json" for PolytopeMars jobs,
+        "application/octet-stream" for /chunks/v1 extract jobs (zstd frame of
+        little-endian float64). The Rust host falls back to coverage+json when
+        absent.
 
     On success: ok=true, body_bytes = output bytes, timings populated, error=null.
     On job-level exception: ok=false, body_bytes=b"", error.message = clean message,
@@ -179,14 +205,26 @@ def process(payload_json: str) -> tuple:
     )
 
     try:
-        timings = datasource.retrieve(request)
-        t_retrieve = time.monotonic()
+        if _is_extract_request(request.coerced_request):
+            # /chunks/v1 extract job (D17): straight pygribjump, no
+            # PolytopeMars. The datasource above has already materialised the
+            # worker's gribjump/fdb config files and env vars.
+            import extract
 
-        output = b"".join(
-            chunk.encode("utf-8") if isinstance(chunk, str) else chunk
-            for chunk in datasource.result(request)
-        )
-        t_result = time.monotonic()
+            output, content_type, timings = extract.run_extract(
+                request.coerced_request, user=request.user
+            )
+            t_retrieve = t_result = time.monotonic()
+        else:
+            timings = datasource.retrieve(request)
+            t_retrieve = time.monotonic()
+
+            output = b"".join(
+                chunk.encode("utf-8") if isinstance(chunk, str) else chunk
+                for chunk in datasource.result(request)
+            )
+            t_result = time.monotonic()
+            content_type = _datasource_mime_type(datasource)
 
         timings.update(
             {
@@ -204,6 +242,7 @@ def process(payload_json: str) -> tuple:
             "timings": timings,
             "logs": logs,
             "error": None,
+            "content_type": content_type,
         }
         return (output, json.dumps(status))
 
@@ -253,11 +292,19 @@ def main():
     )
 
     try:
-        datasource.retrieve(request)
-        for chunk in datasource.result(request):
-            if isinstance(chunk, str):
-                chunk = chunk.encode("utf-8")
-            sys.stdout.buffer.write(chunk)
+        if _is_extract_request(request.coerced_request):
+            import extract
+
+            output, _content_type, _timings = extract.run_extract(
+                request.coerced_request, user=request.user
+            )
+            sys.stdout.buffer.write(output)
+        else:
+            datasource.retrieve(request)
+            for chunk in datasource.result(request):
+                if isinstance(chunk, str):
+                    chunk = chunk.encode("utf-8")
+                sys.stdout.buffer.write(chunk)
         sys.stdout.flush()
     except Exception as exc:
         print(str(exc), file=sys.stderr)

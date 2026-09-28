@@ -9,3 +9,5 @@ pygribjump[binary]==0.12.0.26
 # Uses findlibs at runtime so no separate libeccodes.so install is needed.
 eccodes==2.47.0
 requests
+# /chunks/v1 extract path: zstd frame over the float64 chunk payload.
+zstandard==0.25.0
