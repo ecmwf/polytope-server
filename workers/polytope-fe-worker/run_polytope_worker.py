@@ -207,12 +207,15 @@ def process(payload_json: str) -> tuple:
     try:
         if _is_extract_request(request.coerced_request):
             # /chunks/v1 extract job (D17): straight pygribjump, no
-            # PolytopeMars. The datasource above has already materialised the
-            # worker's gribjump/fdb config files and env vars.
+            # PolytopeMars. The datasource above is process-scoped (built once
+            # at host startup, cached in _datasource); it has already
+            # materialised the worker's gribjump/fdb config files and env vars.
             import extract
 
             output, content_type, timings = extract.run_extract(
-                request.coerced_request, user=request.user
+                request.coerced_request,
+                user=request.user,
+                job_id=payload.get("job_id"),
             )
             t_retrieve = t_result = time.monotonic()
         else:

@@ -125,6 +125,7 @@ impl Processor for PolytopeProcessor {
             "user": work.user,
             "metadata": work.metadata,
             "config_path": self.config_path,
+            "job_id": work.job_id,
         });
 
         let payload_str = match serde_json::to_string(&payload) {
@@ -327,6 +328,8 @@ def process(payload_json):
     assert "metadata" in payload, "metadata field missing from PyO3 payload"
     # Fail if metadata value is not passed through
     assert payload["metadata"].get("test_key") == "test_value", "metadata content not preserved"
+    # The job id is forwarded so the extract path can tag its profile line
+    assert payload.get("job_id") == "job-1", "job_id missing from PyO3 payload"
     output = json.dumps({"echo": payload["request"], "metadata": payload["metadata"]}).encode("utf-8")
     status = {
         "ok": True,

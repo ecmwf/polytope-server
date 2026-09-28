@@ -12,6 +12,8 @@ returns deterministic per-field values; no gribjump/FDB/polytope-mars needed.
 
 import itertools
 import json
+import logging
+import re
 import sys
 import types
 from pathlib import Path
@@ -426,3 +428,107 @@ def test_dispatch_extract_error_reports_job_failure(fake_gj, recording_ds):
     assert "extract.dtype" in status["error"]["message"]
     assert recording_ds.retrieved == []
     assert "content_type" not in status
+
+
+# ---------------------------------------------------------------------------
+# Per-phase profiling (chunks-profile log line + timings)
+# ---------------------------------------------------------------------------
+
+_PROFILE_RE = re.compile(
+    r"^chunks-profile job=(?P<job>\S+) status=(?P<status>\w+) phase=(?P<phase>\w+) "
+    r"fields=(?P<fields>\d+) ranges=(?P<ranges>\d+) points=(?P<points>\d+) "
+    r"t_parse=(?P<t_parse>[\d.]+)ms t_enum=(?P<t_enum>[\d.]+)ms "
+    r"t_extract=(?P<t_extract>[\d.]+)ms t_assemble=(?P<t_assemble>[\d.]+)ms "
+    r"t_zstd=(?P<t_zstd>[\d.]+)ms t_total=(?P<t_total>[\d.]+)ms "
+    r"raw_bytes=(?P<raw_bytes>\d+) bytes=(?P<bytes>\d+) zstd_level=(?P<level>\d+)$"
+)
+
+
+def _profile_lines(messages):
+    return [m for m in messages if m.startswith("chunks-profile ")]
+
+
+def test_profile_line_and_phase_timings(fake_gj, caplog):
+    caplog.set_level(logging.INFO)
+    req = base_request(extract={**base_request()["extract"], "ranges": [[0, 4], [10, 13]]})
+    payload, _, timings = extract.run_extract(req, job_id="job-xyz")
+
+    (line,) = _profile_lines([r.getMessage() for r in caplog.records])
+    m = _PROFILE_RE.match(line)
+    assert m, line
+    assert m["job"] == "job-xyz"
+    assert m["status"] == "ok" and m["phase"] == "done"
+    assert int(m["fields"]) == 6 and int(m["ranges"]) == 2
+    assert int(m["points"]) == 6 * 7
+    assert int(m["raw_bytes"]) == 6 * 7 * 8
+    assert int(m["bytes"]) == len(payload)
+    assert int(m["level"]) == extract.ZSTD_LEVEL
+
+    for k in ("parse_ms", "enum_ms", "extract_ms", "assemble_ms", "compress_ms", "retrieve_ms"):
+        assert isinstance(timings[k], float) and timings[k] >= 0.0, k
+    assert timings["points"] == 42 and timings["fields"] == 6
+    assert timings["raw_bytes"] == 42 * 8 and timings["payload_bytes"] == len(payload)
+
+
+def test_profile_line_on_failure_reports_phase(fake_gj, caplog, monkeypatch):
+    caplog.set_level(logging.INFO)
+
+    # Real pygribjump does the remote extraction eagerly inside extract()
+    # (the fake is a lazy generator), so raise from the call itself.
+    def eager_raise(self, requests, ctx=None):
+        raise GribJumpException("boom")
+
+    monkeypatch.setattr(FakeGribJump, "extract", eager_raise)
+    with pytest.raises(extract.ExtractError):
+        extract.run_extract(base_request(), job_id="job-err")
+    (line,) = _profile_lines([r.getMessage() for r in caplog.records])
+    m = _PROFILE_RE.match(line)
+    assert m, line
+    assert m["job"] == "job-err" and m["status"] == "error" and m["phase"] == "extract"
+    assert int(m["fields"]) == 6 and int(m["bytes"]) == 0
+
+
+def test_profile_line_on_validation_failure(fake_gj, caplog):
+    caplog.set_level(logging.INFO)
+    req = base_request()
+    req["extract"]["dtype"] = "float32"
+    with pytest.raises(extract.ExtractError):
+        extract.run_extract(req)
+    (line,) = _profile_lines([r.getMessage() for r in caplog.records])
+    m = _PROFILE_RE.match(line)
+    assert m and m["job"] == "-" and m["status"] == "error" and m["phase"] == "parse"
+    assert fake_gj.calls == []
+
+
+def test_compress_accepts_numpy_buffer_without_copy():
+    arr = np.arange(1000, dtype="<f8")
+    assert zstandard.ZstdDecompressor().decompress(extract.compress(arr)) == arr.tobytes()
+
+
+def test_gribjump_handle_is_process_scoped(fake_gj, monkeypatch):
+    created = []
+    orig = fake_gj.GribJump
+
+    def counting():
+        created.append(1)
+        return orig()
+
+    monkeypatch.setattr(fake_gj, "GribJump", counting)
+    for _ in range(3):
+        extract.run_extract(base_request())
+    assert len(created) == 1
+    assert len(fake_gj.calls) == 3
+
+
+def test_dispatch_passes_job_id_and_emits_one_profile_log(fake_gj, recording_ds):
+    payload = json.loads(_payload(base_request()))
+    payload["job_id"] = "01abc"
+    body, status_json = run_polytope_worker.process(json.dumps(payload))
+    status = json.loads(status_json)
+    assert status["ok"] is True, status
+    assert fake_gj.calls[0]["ctx"] == {"user": "ecmwf:tester", "job_id": "01abc"}
+    lines = _profile_lines([rec["message"] for rec in status["logs"]])
+    assert len(lines) == 1 and lines[0].startswith("chunks-profile job=01abc status=ok ")
+    assert status["timings"]["payload_bytes"] == len(body)
+    for k in ("parse_ms", "enum_ms", "extract_ms", "assemble_ms", "compress_ms", "total_ms"):
+        assert k in status["timings"], k

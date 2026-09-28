@@ -18,11 +18,20 @@ gribjump/FDB configuration: this module does not read any config itself. It
 relies on the process-scoped ``PolytopeDataSource`` (polytope.py) having
 already materialised the worker config's ``gribjump_config`` (and optional
 ``fdb_config``) to /tmp and exported ``GRIBJUMP_CONFIG_FILE`` /
-``FDB5_CONFIG_FILE`` -- exactly what the PolytopeMars path relies on.
+``FDB5_CONFIG_FILE`` -- exactly what the PolytopeMars path relies on. That
+happens ONCE per process (the Rust host calls ``_get_datasource`` at startup and
+``run_polytope_worker`` caches it); nothing here is rebuilt per job except the
+per-field ``ExtractionRequest`` objects and the output buffer.
+
+Profiling: every job emits exactly one ``chunks-profile`` INFO log line (see
+``_log_profile``) with per-phase wall times, so worker-side cost can be read
+straight out of ``kubectl logs`` (inside the host's ``python worker logs``
+record).
 """
 
 import itertools
 import logging
+import os
 import time
 
 import numpy as np
@@ -36,6 +45,18 @@ EXTRACT_KEY = "extract"
 _NON_FIELD_KEYS = {"verb", EXTRACT_KEY}
 
 _SUPPORTED_DTYPES = {"float64"}
+
+
+def _zstd_level() -> int:
+    raw = os.environ.get("POLYTOPE_CHUNKS_ZSTD_LEVEL", "").strip()
+    try:
+        return int(raw) if raw else 3
+    except ValueError:
+        return 3
+
+
+# Read once per process; override via env for profiling experiments.
+ZSTD_LEVEL = _zstd_level()
 
 
 class ExtractError(ValueError):
@@ -202,57 +223,55 @@ def _describe(field):
     return ",".join(f"{k}={v}" for k, v in field.items())
 
 
-def extract_raw(field_requests, spec, pygribjump=None, ctx=None):
-    """Run gribjump and return the uncompressed little-endian float64 payload."""
-    if pygribjump is None:
-        import pygribjump  # type: ignore[import-not-found]
-
+def build_requests(field_requests, spec, pygribjump):
+    """One ``pygribjump.ExtractionRequest`` per field, in FIELD_ORDER."""
     ranges = spec["ranges"]
     grid_hash = spec["grid_hash"]
-    expected = [hi - lo for lo, hi in ranges]
-    per_field = sum(expected)
-    nfields = len(field_requests)
-
-    requests = [
+    return [
         pygribjump.ExtractionRequest(field, list(ranges), gridHash=grid_hash)
         for field in field_requests
     ]
 
-    gj = _get_gribjump(pygribjump)
+
+def assemble(results, field_requests, spec):
+    """Copy gribjump results into one contiguous little-endian float64 array.
+
+    ``results`` is the iterator returned by ``GribJump.extract``. With the real
+    pygribjump the remote extraction happens inside ``extract()`` itself; the
+    iteration here only walks the already-materialised results and copies them.
+    """
+    ranges = spec["ranges"]
+    expected = [hi - lo for lo, hi in ranges]
+    per_field = sum(expected)
+    nfields = len(field_requests)
     out = np.empty(nfields * per_field, dtype="<f8")
 
-    try:
-        results = gj.extract(requests, ctx=ctx) if ctx is not None else gj.extract(requests)
-        n = 0
-        for i, result in enumerate(results):
-            if i >= nfields:
+    n = 0
+    for i, result in enumerate(results):
+        if i >= nfields:
+            raise ExtractError(
+                f"gribjump returned more results than requested fields ({nfields})"
+            )
+        # result.values: one array per range, in request range order; these
+        # are views into memory owned by `result`, so copy immediately.
+        values = result.values
+        if len(values) != len(ranges):
+            raise ExtractError(
+                f"field {_describe(field_requests[i])}: gribjump returned "
+                f"{len(values)} ranges, expected {len(ranges)}"
+            )
+        base = i * per_field
+        off = 0
+        for j, (arr, count) in enumerate(zip(values, expected)):
+            arr = np.asarray(arr)
+            if arr.shape != (count,):
                 raise ExtractError(
-                    f"gribjump returned more results than requested fields ({nfields})"
+                    f"field {_describe(field_requests[i])}: range {list(ranges[j])} "
+                    f"returned {arr.size} values, expected {count}"
                 )
-            # result.values: one array per range, in request range order; these
-            # are views into memory owned by `result`, so copy immediately.
-            values = result.values
-            if len(values) != len(ranges):
-                raise ExtractError(
-                    f"field {_describe(field_requests[i])}: gribjump returned "
-                    f"{len(values)} ranges, expected {len(ranges)}"
-                )
-            base = i * per_field
-            off = 0
-            for j, (arr, count) in enumerate(zip(values, expected)):
-                arr = np.asarray(arr)
-                if arr.shape != (count,):
-                    raise ExtractError(
-                        f"field {_describe(field_requests[i])}: range {list(ranges[j])} "
-                        f"returned {arr.size} values, expected {count}"
-                    )
-                out[base + off: base + off + count] = arr
-                off += count
-            n += 1
-    except ExtractError:
-        raise
-    except Exception as exc:  # GribJumpException and anything else -> job failure
-        raise ExtractError(f"gribjump extraction failed: {exc}") from exc
+            out[base + off: base + off + count] = arr
+            off += count
+        n += 1
 
     if n != nfields:
         missing = field_requests[n] if n < nfields else None
@@ -260,45 +279,146 @@ def extract_raw(field_requests, spec, pygribjump=None, ctx=None):
             f"gribjump returned {n} of {nfields} fields; missing field "
             f"{_describe(missing) if missing else '?'}"
         )
-    return out.tobytes()
+    return out
 
 
-def compress(raw: bytes) -> bytes:
+def extract_raw(field_requests, spec, pygribjump=None, ctx=None):
+    """Run gribjump and return the uncompressed little-endian float64 payload."""
+    if pygribjump is None:
+        import pygribjump  # type: ignore[import-not-found]
+    requests = build_requests(field_requests, spec, pygribjump)
+    gj = _get_gribjump(pygribjump)
+    try:
+        results = gj.extract(requests, ctx=ctx) if ctx is not None else gj.extract(requests)
+        return assemble(results, field_requests, spec).tobytes()
+    except ExtractError:
+        raise
+    except Exception as exc:  # GribJumpException and anything else -> job failure
+        raise ExtractError(f"gribjump extraction failed: {exc}") from exc
+
+
+def compress(raw) -> bytes:
+    """One zstd frame over ``raw`` (bytes or any C-contiguous buffer)."""
     import zstandard  # type: ignore[import-not-found]
 
-    return zstandard.ZstdCompressor(level=3, write_content_size=True).compress(raw)
+    return zstandard.ZstdCompressor(level=ZSTD_LEVEL, write_content_size=True).compress(raw)
 
 
-def run_extract(request, pygribjump=None, user=None):
-    """Serve an extract job. Returns ``(payload_bytes, content_type, timings)``."""
-    t0 = time.monotonic()
-    spec, field_values = parse_extract(request)
-    fields = list(enumerate_fields(field_values, spec["order"]))
-    t_parse = time.monotonic()
+def _ms(a, b):
+    return round((b - a) * 1000, 1)
 
-    ctx = None
-    if user is not None:
-        ctx = {"user": f"{getattr(user, 'realm', '')}:{getattr(user, 'username', '')}"}
 
+def _log_profile(prof):
+    """Emit the single per-job ``chunks-profile`` line (key=value, grep-able)."""
     logging.info(
-        "chunks extract: %d field(s) x %d range(s) (%d values/field), grid_hash=%s",
-        len(fields),
-        len(spec["ranges"]),
-        sum(hi - lo for lo, hi in spec["ranges"]),
-        spec["grid_hash"],
+        "chunks-profile job=%s status=%s phase=%s fields=%d ranges=%d points=%d "
+        "t_parse=%.1fms t_enum=%.1fms t_extract=%.1fms t_assemble=%.1fms "
+        "t_zstd=%.1fms t_total=%.1fms raw_bytes=%d bytes=%d zstd_level=%d",
+        prof["job"],
+        prof["status"],
+        prof["phase"],
+        prof["fields"],
+        prof["ranges"],
+        prof["points"],
+        prof["parse_ms"],
+        prof["enum_ms"],
+        prof["extract_ms"],
+        prof["assemble_ms"],
+        prof["compress_ms"],
+        prof["total_ms"],
+        prof["raw_bytes"],
+        prof["payload_bytes"],
+        ZSTD_LEVEL,
     )
-    raw = extract_raw(fields, spec, pygribjump=pygribjump, ctx=ctx)
-    t_extract = time.monotonic()
-    payload = compress(raw)
-    t_compress = time.monotonic()
+
+
+def run_extract(request, pygribjump=None, user=None, job_id=None):
+    """Serve an extract job. Returns ``(payload_bytes, content_type, timings)``.
+
+    Phases (each wall-timed, reported in ``timings`` and the chunks-profile
+    log line): parse (validate payload), enum (FIELD_ORDER enumeration +
+    ExtractionRequest construction), extract (``GribJump.extract()`` call --
+    the remote gribjump round trip), assemble (iterate results, copy into one
+    float64 buffer), zstd (compress).
+    """
+    if pygribjump is None:
+        import pygribjump  # type: ignore[import-not-found]
+
+    prof = {
+        "job": job_id or "-",
+        "status": "error",
+        "phase": "parse",
+        "fields": 0,
+        "ranges": 0,
+        "points": 0,
+        "parse_ms": 0.0,
+        "enum_ms": 0.0,
+        "extract_ms": 0.0,
+        "assemble_ms": 0.0,
+        "compress_ms": 0.0,
+        "total_ms": 0.0,
+        "raw_bytes": 0,
+        "payload_bytes": 0,
+    }
+    t0 = time.monotonic()
+    try:
+        spec, field_values = parse_extract(request)
+        t_parse = time.monotonic()
+        prof["parse_ms"] = _ms(t0, t_parse)
+
+        prof["phase"] = "enum"
+        fields = list(enumerate_fields(field_values, spec["order"]))
+        requests = build_requests(fields, spec, pygribjump)
+        prof["fields"] = len(fields)
+        prof["ranges"] = len(spec["ranges"])
+        prof["points"] = len(fields) * sum(hi - lo for lo, hi in spec["ranges"])
+        ctx = None
+        if user is not None:
+            ctx = {"user": f"{getattr(user, 'realm', '')}:{getattr(user, 'username', '')}"}
+            if job_id:
+                ctx["job_id"] = job_id
+        gj = _get_gribjump(pygribjump)
+        t_enum = time.monotonic()
+        prof["enum_ms"] = _ms(t_parse, t_enum)
+
+        try:
+            prof["phase"] = "extract"
+            results = gj.extract(requests, ctx=ctx) if ctx is not None else gj.extract(requests)
+            t_extract = time.monotonic()
+            prof["extract_ms"] = _ms(t_enum, t_extract)
+
+            prof["phase"] = "assemble"
+            out = assemble(results, fields, spec)
+            t_assemble = time.monotonic()
+            prof["assemble_ms"] = _ms(t_extract, t_assemble)
+        except ExtractError:
+            raise
+        except Exception as exc:  # GribJumpException and anything else -> job failure
+            raise ExtractError(f"gribjump extraction failed: {exc}") from exc
+
+        prof["phase"] = "zstd"
+        prof["raw_bytes"] = out.nbytes
+        # Compress straight from the numpy buffer (no intermediate bytes copy).
+        payload = compress(out)
+        t_zstd = time.monotonic()
+        prof["compress_ms"] = _ms(t_assemble, t_zstd)
+        prof["payload_bytes"] = len(payload)
+        prof["status"] = "ok"
+        prof["phase"] = "done"
+    finally:
+        prof["total_ms"] = _ms(t0, time.monotonic())
+        _log_profile(prof)
 
     timings = {
-        "parse_ms": round((t_parse - t0) * 1000, 1),
-        "extract_ms": round((t_extract - t_parse) * 1000, 1),
-        "compress_ms": round((t_compress - t_extract) * 1000, 1),
-        "retrieve_ms": round((t_compress - t0) * 1000, 1),
-        "fields": len(fields),
-        "raw_bytes": len(raw),
-        "payload_bytes": len(payload),
+        "parse_ms": prof["parse_ms"],
+        "enum_ms": prof["enum_ms"],
+        "extract_ms": prof["extract_ms"],
+        "assemble_ms": prof["assemble_ms"],
+        "compress_ms": prof["compress_ms"],
+        "retrieve_ms": prof["total_ms"],
+        "fields": prof["fields"],
+        "points": prof["points"],
+        "raw_bytes": prof["raw_bytes"],
+        "payload_bytes": prof["payload_bytes"],
     }
     return payload, CONTENT_TYPE, timings
