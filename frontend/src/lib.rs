@@ -29,6 +29,15 @@ use tower_http::cors::{Any, CorsLayer};
 pub fn build_app(
     cfg: config::ServerConfig,
 ) -> Result<(Router, Arc<AppState>), Box<dyn std::error::Error>> {
+    build_app_with_expander(cfg, api::chunks::expand::default_expander())
+}
+
+/// [`build_app`] with an explicit MARS request expander for the `/chunks/v1`
+/// metadata endpoint (tests inject a fake; production uses metkit).
+pub fn build_app_with_expander(
+    cfg: config::ServerConfig,
+    chunks_expander: Arc<dyn api::chunks::expand::RequestExpander>,
+) -> Result<(Router, Arc<AppState>), Box<dyn std::error::Error>> {
     let bits_yaml = cfg.bits_yaml()?;
     // `cfg.bits_yaml()` returns the contents of the chart's outer `bits:`
     // block. That block IS the top-level YAML consumed by
@@ -141,6 +150,28 @@ pub fn build_app(
         None
     };
 
+    let chunks_router = match cfg.chunks {
+        Some(chunks_cfg) if chunks_cfg.enabled => {
+            chunks_cfg
+                .validate()
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+            for grid in &chunks_cfg.grids {
+                if !state.collections.contains_key(&grid.collection) {
+                    tracing::warn!(
+                        collection = %grid.collection,
+                        "chunks.grids entry references an unknown bits collection; it will never match"
+                    );
+                }
+            }
+            Some(api::chunks::router::<()>(
+                state.clone(),
+                chunks_cfg,
+                chunks_expander,
+            ))
+        }
+        _ => None,
+    };
+
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
@@ -169,6 +200,20 @@ pub fn build_app(
         app.nest(
             "/edr",
             edr.layer(middleware::from_fn_with_state(
+                state.clone(),
+                auth::middleware::auth_middleware,
+            )),
+        )
+    } else {
+        app
+    };
+
+    // /chunks/v1 (polytope-zarr): separately-stated router, same auth
+    // middleware as v2, mounted like /edr.
+    let app = if let Some(chunks) = chunks_router {
+        app.nest(
+            "/chunks/v1",
+            chunks.layer(middleware::from_fn_with_state(
                 state.clone(),
                 auth::middleware::auth_middleware,
             )),

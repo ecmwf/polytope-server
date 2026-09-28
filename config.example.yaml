@@ -24,3 +24,18 @@ bits:
     - default:
         - target::http:
             url: "http://your-backend/"   # replace with real target
+
+# Optional — /chunks/v1 chunk API (polytope-zarr). Omit the section to leave
+# the API unmounted. Metadata expansion needs the binary built with
+# --features metkit (otherwise /metadata returns 501).
+# chunks:
+#   enabled: true                 # default true when the section is present
+#   max_chunk_cost: 20000000      # max fields x points per extract (default 20M)
+#   grids:                        # grid registry: first match wins, no match -> 400
+#     - collection: destination-earth
+#       match:                    # subset match on the metkit-canonical request
+#         class: d1
+#         dataset: climate-dt
+#         resolution: high        # scalar or list of allowed canonical values
+#       count_values: 12582912
+#       md5_grid_section: null    # or "<hex>"; echoed as extract.grid_hash

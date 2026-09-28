@@ -327,6 +327,41 @@ fn feature_axes_list(feature: &serde_json::Map<String, serde_json::Value>) -> Ve
 
 bits::register_action!(transform, "metkit_expansion", MetkitExpansion);
 
+/// Synchronous metkit expansion for `/chunks/v1/{collection}/metadata`.
+///
+/// Same FFI path as [`MetkitExpansion`] (`metkit::expand_json` with the verb
+/// defaulted to `retrieve`), invoked directly on a flat MARS request (the
+/// chunks handler has already rejected object-valued keys such as
+/// `feature`). Returns each key's canonical values split on `/`.
+pub struct MetkitRequestExpander;
+
+impl crate::api::chunks::expand::RequestExpander for MetkitRequestExpander {
+    fn expand(
+        &self,
+        request: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<Vec<(String, Vec<String>)>, crate::api::chunks::expand::ExpandError> {
+        use crate::api::chunks::expand::ExpandError;
+
+        let mut obj = request.clone();
+        obj.insert("verb".to_string(), serde_json::json!("retrieve"));
+        let expanded = metkit::expand_json(&serde_json::Value::Object(obj))
+            .map_err(|e| ExpandError::Invalid(format!("request expansion failed: {e}")))?;
+        let expanded = expanded
+            .as_object()
+            .ok_or_else(|| ExpandError::Invalid("metkit returned a non-object".to_string()))?;
+        expanded
+            .iter()
+            .filter(|(k, _)| k.as_str() != "verb")
+            .map(|(k, v)| {
+                let text = v.as_str().ok_or_else(|| {
+                    ExpandError::Invalid(format!("metkit returned a non-string value for '{k}'"))
+                })?;
+                Ok((k.clone(), text.split('/').map(str::to_string).collect()))
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -500,5 +535,66 @@ mod tests {
         action.execute(&mut job).await.unwrap();
 
         assert!(job.metadata.get("metkit_ranges").is_none());
+    }
+
+    // ---------------------------------------------------------------------
+    // /chunks/v1 (polytope-zarr) contracts that depend on real metkit.
+    // ---------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn execute_preserves_chunks_extract_object_verbatim() {
+        // /chunks/v1 extract jobs carry a top-level `extract` object next to
+        // flat MARS keys; it must survive expansion untouched (same set-aside
+        // mechanism as `feature`).
+        let extract = json!({
+            "ranges": [[0, 10], [20, 25]],
+            "order": ["date", "time"],
+            "grid_hash": null,
+            "dtype": "float64",
+        });
+        let mut request = sample_retrieve_request("0");
+        request.insert("date".into(), json!(["20240101", "20240102"]));
+        request.insert("time".into(), json!(["0000", "1200"]));
+        request.remove("verb");
+        request.insert("extract".into(), extract.clone());
+        let mut job = Job::new(serde_json::Value::Object(request));
+
+        let result = MetkitExpansion {}.execute(&mut job).await.unwrap();
+        assert!(matches!(result, TransformResult::Continue));
+        assert_eq!(job.request["extract"], extract);
+        assert_eq!(job.request["date"], json!("20240101/20240102"));
+        assert_eq!(job.request["time"], json!("0000/1200"));
+        assert_eq!(job.request["param"], json!("167"));
+        assert!(job.request.get("verb").is_none());
+    }
+
+    #[test]
+    fn chunks_expander_returns_canonical_values() {
+        use crate::api::chunks::expand::{RequestExpander, canonicalise};
+
+        let mut request = sample_retrieve_request("0");
+        request.remove("verb");
+        request.insert("param".into(), json!(["2t", "10u"]));
+        request.insert("time".into(), json!(["0", "12"]));
+        let entries = MetkitRequestExpander.expand(&request).unwrap();
+        let canonical = canonicalise(entries).unwrap();
+        assert_eq!(canonical.get("param").unwrap(), ["167", "165"]);
+        assert_eq!(canonical.get("time").unwrap(), ["0000", "1200"]);
+        assert_eq!(canonical.get("expver").unwrap(), ["0001"]);
+        let keys: Vec<&str> = canonical.entries.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(&keys[..4], ["class", "type", "stream", "levtype"]);
+    }
+
+    #[test]
+    fn chunks_expander_rejects_invalid_values() {
+        use crate::api::chunks::expand::{ExpandError, RequestExpander};
+
+        let mut request = sample_retrieve_request("0");
+        request.remove("verb");
+        request.insert("param".into(), json!("not-a-real-param-xyz"));
+        assert!(matches!(
+            MetkitRequestExpander.expand(&request),
+            Err(ExpandError::Invalid(_))
+        ));
     }
 }

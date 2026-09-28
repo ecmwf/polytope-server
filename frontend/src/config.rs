@@ -56,6 +56,112 @@ pub struct ServerConfig {
     pub admin_bypass_roles: Option<HashMap<String, Vec<String>>>,
     pub metrics: Option<MetricsConfig>,
     pub support: SupportConfig,
+    /// Optional `/chunks/v1` API configuration. Absent => the API is not mounted.
+    pub chunks: Option<ChunksConfig>,
+}
+
+/// `/chunks/v1` (polytope-zarr) configuration. See
+/// `polytope-zarr-contract.md` §6 for the grid registry semantics.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ChunksConfig {
+    /// Mount the `/chunks/v1` routes. Defaults to `true` when the section is
+    /// present; set `false` to keep the config but disable the API.
+    #[serde(default = "default_chunks_enabled")]
+    pub enabled: bool,
+    /// Upper bound on fields x points for a single extract (chunk) request.
+    #[serde(default = "default_max_chunk_cost")]
+    pub max_chunk_cost: u64,
+    /// Grid registry: first entry whose `collection` equals the request's
+    /// collection and whose `match` is a subset of the canonical request wins.
+    #[serde(default)]
+    pub grids: Vec<ChunksGridConfig>,
+}
+
+impl Default for ChunksConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_chunks_enabled(),
+            max_chunk_cost: default_max_chunk_cost(),
+            grids: Vec::new(),
+        }
+    }
+}
+
+/// One grid-registry entry (contract §6).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChunksGridConfig {
+    pub collection: String,
+    /// Subset match on the metkit-canonical request. Each value is a scalar
+    /// or a list of scalars (compared as canonical strings); a request key
+    /// matches when every one of its canonical values is in the allowed set.
+    #[serde(default, rename = "match")]
+    pub match_keys: std::collections::BTreeMap<String, serde_json::Value>,
+    pub count_values: u64,
+    #[serde(default)]
+    pub md5_grid_section: Option<String>,
+}
+
+impl ChunksGridConfig {
+    /// Allowed canonical string values for a `match` value (scalar or list).
+    pub fn allowed_values(value: &serde_json::Value) -> Option<Vec<String>> {
+        fn scalar(value: &serde_json::Value) -> Option<String> {
+            match value {
+                serde_json::Value::String(s) => Some(s.clone()),
+                serde_json::Value::Number(n) => Some(n.to_string()),
+                _ => None,
+            }
+        }
+        match value {
+            serde_json::Value::Array(items) => items.iter().map(scalar).collect(),
+            other => scalar(other).map(|s| vec![s]),
+        }
+    }
+}
+
+impl ChunksConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.max_chunk_cost == 0 {
+            return Err("chunks.max_chunk_cost must be greater than 0".to_string());
+        }
+        for (i, grid) in self.grids.iter().enumerate() {
+            if grid.collection.is_empty() {
+                return Err(format!("chunks.grids[{i}].collection must not be empty"));
+            }
+            if grid.count_values == 0 {
+                return Err(format!(
+                    "chunks.grids[{i}].count_values must be greater than 0"
+                ));
+            }
+            for (key, value) in &grid.match_keys {
+                match ChunksGridConfig::allowed_values(value) {
+                    Some(values) if !values.is_empty() => {}
+                    _ => {
+                        return Err(format!(
+                            "chunks.grids[{i}].match.{key} must be a string, number or \
+                             non-empty list of strings/numbers"
+                        ));
+                    }
+                }
+            }
+            if let Some(md5) = &grid.md5_grid_section
+                && (md5.is_empty() || !md5.chars().all(|c| c.is_ascii_hexdigit()))
+            {
+                return Err(format!(
+                    "chunks.grids[{i}].md5_grid_section must be a hex string or null"
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+const fn default_chunks_enabled() -> bool {
+    true
+}
+
+const fn default_max_chunk_cost() -> u64 {
+    20_000_000
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -223,6 +329,8 @@ impl<'de> Deserialize<'de> for ServerConfig {
             metrics: Option<MetricsConfig>,
             #[serde(default)]
             support: SupportConfig,
+            #[serde(default)]
+            chunks: Option<ChunksConfig>,
         }
 
         let raw = RawServerConfig::deserialize(deserializer)?;
@@ -240,6 +348,7 @@ impl<'de> Deserialize<'de> for ServerConfig {
             admin_bypass_roles: raw.admin_bypass_roles,
             metrics: raw.metrics,
             support: raw.support,
+            chunks: raw.chunks,
         })
     }
 }
@@ -338,6 +447,10 @@ impl ServerConfig {
         }
         if let Some(ref m) = cfg.metrics {
             m.validate()
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        }
+        if let Some(ref c) = cfg.chunks {
+            c.validate()
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         }
         Ok(cfg)

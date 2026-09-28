@@ -90,12 +90,63 @@ pub async fn submit_collection(
         return (StatusCode::BAD_REQUEST, Json(json!({"error": msg}))).into_response();
     }
 
+    submit_and_poll(
+        &state,
+        Submission {
+            collection: &collection,
+            route_handle,
+            headers: &headers,
+            auth_user: auth_user.as_ref().map(|Extension(user)| user),
+            mock_audit: mock_audit.as_ref().map(|Extension(audit)| audit),
+            mock_time: &mock_time_extensions,
+            api: None,
+        },
+        body,
+    )
+    .await
+}
+
+/// Everything needed to submit an already-validated, flat job body to a
+/// collection's bits route with the v2 submission semantics.
+pub(crate) struct Submission<'a> {
+    pub collection: &'a str,
+    pub route_handle: bits::RouteHandle,
+    pub headers: &'a HeaderMap,
+    pub auth_user: Option<&'a AuthUser>,
+    pub mock_audit: Option<&'a MockRolesAudit>,
+    pub mock_time: &'a super::MockTimeSubmissionExtensions,
+    /// Optional trusted `metadata.api` tag (e.g. `"chunks"`); v2 leaves it unset.
+    pub api: Option<&'static str>,
+}
+
+/// Build a job from `body`, attach user context and trusted metadata, submit
+/// it to the route and inline-poll it, returning the v2 response (200 inline
+/// bytes | 303 pending redirect to `/api/v2/requests/{id}` | 303 result
+/// redirect | error status).
+///
+/// Shared by v2 `submit_collection` and `/chunks/v1/{collection}/extract` so
+/// both APIs have identical submission and poll semantics.
+pub(crate) async fn submit_and_poll(
+    state: &Arc<AppState>,
+    submission: Submission<'_>,
+    body: Value,
+) -> Response {
+    let Submission {
+        collection,
+        route_handle,
+        headers,
+        auth_user,
+        mock_audit,
+        mock_time: mock_time_extensions,
+        api,
+    } = submission;
+
     let mut job = Job::new(body);
     super::set_job_user_context(
         &mut job,
-        &headers,
-        auth_user.as_ref().map(|Extension(user)| user),
-        mock_audit.as_ref().map(|Extension(audit)| audit),
+        headers,
+        auth_user,
+        mock_audit,
         &state.admin_bypass_roles,
     );
     // Propagate Accept-Encoding so workers can choose an encoding codec
@@ -105,7 +156,10 @@ pub async fn submit_collection(
     {
         job.metadata_mut()["accept_encoding"] = serde_json::json!(enc);
     }
-    job.metadata_mut()["collection"] = serde_json::json!(&collection);
+    job.metadata_mut()["collection"] = serde_json::json!(collection);
+    if let Some(api) = api {
+        job.metadata_mut()["api"] = serde_json::json!(api);
+    }
     super::set_job_mock_time_metadata(&mut job, mock_time_extensions.mock_time.as_ref());
     tracing::debug!(
         x_forwarded_for_present = headers.get("x-forwarded-for").is_some(),
@@ -124,16 +178,16 @@ pub async fn submit_collection(
                 .into_response();
         }
     };
-    if let Some(Extension(user)) = auth_user.as_ref() {
+    if let Some(user) = auth_user {
         tracing::info!("event.name" = "api.job.submitted", outcome = "success", request.id = %id, "enduser.id" = %user.username, "enduser.realm" = %user.realm, polytope.request = %polytope_observability::request(&submitted_request), "job submitted");
     } else {
         tracing::info!("event.name" = "api.job.submitted", outcome = "success", request.id = %id, polytope.request = %polytope_observability::request(&submitted_request), "job submitted");
     }
-    super::audit_mock_job_submission(mock_audit.as_ref().map(|Extension(audit)| audit), &id);
+    super::audit_mock_job_submission(mock_audit, &id);
     super::audit_mock_time_job_submission(mock_time_extensions.mock_time_audit.as_ref(), &id);
 
     let timeout = state.v2_poll_timeout;
-    let mut response = poll_job_v2(&state, id.clone(), timeout).await;
+    let mut response = poll_job_v2(state, id.clone(), timeout).await;
     // Surface the BITS-generated request ID so the outer middleware can quote it
     // in error responses (helps correlate with logs).
     response

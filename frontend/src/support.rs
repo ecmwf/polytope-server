@@ -126,6 +126,7 @@ fn compose_message(
 fn preserves_native_error_shape(path: &str) -> bool {
     path == "/edr"
         || path.starts_with("/edr/")
+        || path.starts_with("/chunks/")
         || path == "/openmeteo"
         || path.starts_with("/openmeteo/")
 }
@@ -319,6 +320,7 @@ mod tests {
         assert!(preserves_native_error_shape("/edr/collections"));
         assert!(preserves_native_error_shape("/openmeteo"));
         assert!(preserves_native_error_shape("/openmeteo/v1/forecast"));
+        assert!(preserves_native_error_shape("/chunks/v1/c/metadata"));
         assert!(!preserves_native_error_shape("/api/v2/collections"));
     }
 }
