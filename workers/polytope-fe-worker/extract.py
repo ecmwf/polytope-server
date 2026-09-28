@@ -219,6 +219,17 @@ def _reset_gribjump():  # for tests
     _gribjump = None
 
 
+def warm_up(pygribjump=None):
+    """Process-level warm-up (called once at worker startup, after the
+    gribjump/FDB config env vars are set): import zstandard/pygribjump and
+    create the shared GribJump handle. Idempotent."""
+    import zstandard  # noqa: F401  # type: ignore[import-not-found]
+
+    if pygribjump is None:
+        import pygribjump  # type: ignore[import-not-found]
+    _get_gribjump(pygribjump)
+
+
 def _describe(field):
     return ",".join(f"{k}={v}" for k, v in field.items())
 

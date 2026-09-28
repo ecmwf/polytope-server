@@ -532,3 +532,51 @@ def test_dispatch_passes_job_id_and_emits_one_profile_log(fake_gj, recording_ds)
     assert status["timings"]["payload_bytes"] == len(body)
     for k in ("parse_ms", "enum_ms", "extract_ms", "assemble_ms", "compress_ms", "total_ms"):
         assert k in status["timings"], k
+
+
+def test_warm_up_creates_handle_once_and_jobs_reuse_it(fake_gj, monkeypatch):
+    created = []
+    orig = fake_gj.GribJump
+
+    def counting():
+        created.append(1)
+        return orig()
+
+    monkeypatch.setattr(fake_gj, "GribJump", counting)
+    extract.warm_up()
+    extract.warm_up()
+    assert len(created) == 1
+    extract.run_extract(base_request())
+    assert len(created) == 1
+
+
+def test_get_datasource_warms_extract_path_once(fake_gj, monkeypatch, tmp_path):
+    calls = []
+    fake_polytope = types.ModuleType("polytope")
+
+    class FakeDS:
+        def __init__(self, config):
+            calls.append(("ds", config))
+
+    fake_polytope.PolytopeDataSource = FakeDS  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "polytope", fake_polytope)
+    monkeypatch.setattr(extract, "warm_up", lambda: calls.append(("warm",)))
+    monkeypatch.setattr(run_polytope_worker, "_datasource", None)
+    monkeypatch.setattr(run_polytope_worker, "_config_path", None)
+    cfg = tmp_path / "c.json"
+    cfg.write_text(json.dumps({"polytope": {"type": "polytope"}}))
+
+    ds1 = run_polytope_worker._get_datasource(str(cfg))
+    ds2 = run_polytope_worker._get_datasource(str(cfg))
+    assert ds1 is ds2
+    assert calls == [("ds", {"type": "polytope"}), ("warm",)]
+
+
+def test_warm_up_failure_does_not_block_startup(monkeypatch, caplog):
+    def boom():
+        raise OSError("libgribjump not found")
+
+    monkeypatch.setattr(extract, "warm_up", boom)
+    caplog.set_level(logging.WARNING)
+    run_polytope_worker._warm_extract_path()  # must not raise
+    assert any("warm-up failed" in r.getMessage() for r in caplog.records)

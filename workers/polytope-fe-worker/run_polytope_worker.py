@@ -147,6 +147,22 @@ def _datasource_mime_type(datasource) -> str:
     return DEFAULT_CONTENT_TYPE
 
 
+def _warm_extract_path():
+    """Best-effort, once per process: import the /chunks/v1 extract path's
+    heavy deps (numpy, zstandard, pygribjump) and create the process-scoped
+    GribJump handle, so the first extract job served by this process does not
+    pay ~0.5-0.8 s of cold start (measured on mn5-dev). Must run after the
+    datasource has exported GRIBJUMP_CONFIG_FILE. Failures are logged and
+    otherwise ignored -- the job path retries lazily and reports errors per job.
+    """
+    try:
+        import extract
+
+        extract.warm_up()
+    except Exception as exc:  # noqa: BLE001 - never block worker startup
+        logging.warning("chunks extract warm-up failed (will retry per job): %s", exc)
+
+
 def _get_datasource(config_path):
     global _datasource, _config_path
     if _datasource is None or _config_path != config_path:
@@ -155,6 +171,7 @@ def _get_datasource(config_path):
 
         _datasource = PolytopeDataSource(config)
         _config_path = config_path
+        _warm_extract_path()
     return _datasource
 
 
