@@ -476,7 +476,7 @@ def test_path_only_fdb_uri_uses_internal_scheme():
         offset=1234,
         length=5678,
         host="mn5-prod-store6.novalocal",
-        port=0,
+        port=9000,
     )
 
 

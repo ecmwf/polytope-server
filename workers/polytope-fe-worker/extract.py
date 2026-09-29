@@ -298,16 +298,19 @@ def _location_from_element(element):
     # URI, but encode the store host in the archive filename; passing that host
     # lets gribjump's servermap route the path instead of opening it locally.
     host = uri.hostname() or ""
+    inferred_store = False
     if not host:
         match = re.search(r"\.([A-Za-z0-9-]+\.novalocal)\.", path)
         host = match.group(1) if match else ""
+        inferred_store = bool(match)
+    port = uri.port() or (9000 if inferred_store else 0)
     return FieldLocation(
         path=path,
         scheme=scheme,
         offset=_location_int(offset, "offset"),
         length=_location_int(length, "length"),
         host=host,
-        port=_location_int(uri.port() or 0, "port"),
+        port=_location_int(port, "port"),
     )
 
 
