@@ -75,6 +75,15 @@ pub struct ChunksConfig {
     /// collection and whose `match` is a subset of the canonical request wins.
     #[serde(default)]
     pub grids: Vec<ChunksGridConfig>,
+    /// Catalogue qube URL (full-collection arena JSON). When absent, the
+    /// `/metadata` endpoint returns `501` (the extract path still works). See
+    /// `polytope-zarr-contract.md` Contract v2 §V2.2.
+    #[serde(default)]
+    pub catalogue_url: Option<String>,
+    /// In-memory catalogue cache TTL in seconds (default 300). The qube is
+    /// refreshed lazily on access once older than this.
+    #[serde(default = "default_catalogue_ttl_secs")]
+    pub catalogue_ttl_secs: u64,
 }
 
 impl Default for ChunksConfig {
@@ -83,6 +92,8 @@ impl Default for ChunksConfig {
             enabled: default_chunks_enabled(),
             max_chunk_cost: default_max_chunk_cost(),
             grids: Vec::new(),
+            catalogue_url: None,
+            catalogue_ttl_secs: default_catalogue_ttl_secs(),
         }
     }
 }
@@ -162,6 +173,10 @@ const fn default_chunks_enabled() -> bool {
 
 const fn default_max_chunk_cost() -> u64 {
     20_000_000
+}
+
+const fn default_catalogue_ttl_secs() -> u64 {
+    300
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -2,17 +2,23 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! `/chunks/v1/{collection}/metadata` request parsing and response building
-//! (contract §1).
+//! `/chunks/v1/{collection}/metadata` request parsing and response building.
+//!
+//! Contract v2 (`polytope-zarr-contract.md`): the response is a qube-derived
+//! **structure tree** (`version: 2`). The request gains one optional field,
+//! `structure.gaps` (`"exact"` | `"span"`).
 
-use serde::Serialize;
 use serde::ser::SerializeMap;
+use serde::Serialize;
 use serde_json::{Map, Value};
 
+use super::catalogue::QubeHandle;
 use super::expand::CanonicalRequest;
+use super::qube::Cube;
+use super::tree;
 use crate::config::{ChunksConfig, ChunksGridConfig};
 
-pub const METADATA_VERSION: u32 = 1;
+pub const METADATA_VERSION: u32 = 2;
 
 /// A JSON object whose keys serialise in insertion order regardless of
 /// serde_json's `preserve_order` feature.
@@ -29,15 +35,85 @@ impl<V: Serialize> Serialize for OrderedMap<V> {
     }
 }
 
+/// Gap policy for the `date` axis (Contract v2 §V2.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gaps {
+    /// Keep the catalogued (possibly non-contiguous) date values.
+    Exact,
+    /// Replace the `date` axis with the full daily calendar between its min
+    /// and max, and set `fill_on_missing: true`.
+    Span,
+}
+
+/// A parsed metadata request body.
+#[derive(Debug)]
+pub struct MetadataBody {
+    pub request: Map<String, Value>,
+    pub gaps: Gaps,
+}
+
+// ---------------------------------------------------------------------------
+// Response shape (Contract v2 §V2.3)
+// ---------------------------------------------------------------------------
+
 #[derive(Debug, Serialize)]
 pub struct MetadataResponse {
     pub version: u32,
     pub canonical_request: OrderedMap<Vec<String>>,
-    pub axes: Vec<Axis>,
-    pub grid: Grid,
-    pub variables: Vec<Variable>,
+    pub tree: Node,
     pub chunking: Chunking,
-    pub extract: ExtractInfo,
+    pub catalogue: CatalogueInfo,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Node {
+    Group {
+        name: String,
+        attrs: GroupAttrs,
+        children: Vec<Node>,
+    },
+    ArraySet {
+        name: String,
+        base_request: OrderedMap<String>,
+        axes: Vec<Axis>,
+        variables: Vec<Variable>,
+        grid: Grid,
+        fill_on_missing: bool,
+        extract: ExtractInfo,
+    },
+}
+
+impl Node {
+    /// Overwrite this node's `name` (used when a parent names its children).
+    pub fn set_name(&mut self, new_name: String) {
+        match self {
+            Node::Group { name, .. } | Node::ArraySet { name, .. } => *name = new_name,
+        }
+    }
+
+    /// Collect every distinct axis `dim` in the subtree, in canonical order.
+    pub fn collect_axis_dims(&self, out: &mut Vec<String>) {
+        match self {
+            Node::Group { children, .. } => {
+                for child in children {
+                    child.collect_axis_dims(out);
+                }
+            }
+            Node::ArraySet { axes, .. } => {
+                for axis in axes {
+                    if !out.contains(&axis.dim) {
+                        out.push(axis.dim.clone());
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct GroupAttrs {
+    pub defined_by: OrderedMap<Vec<String>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -73,9 +149,20 @@ pub struct ExtractInfo {
     pub order: Vec<String>,
 }
 
-/// Validate a metadata body (`{"request": {...}}`) and return the flat MARS
-/// request to expand. `verb` is dropped (expansion always uses `retrieve`).
-pub fn parse_metadata_body(body: &Value) -> Result<Map<String, Value>, String> {
+#[derive(Debug, Serialize)]
+pub struct CatalogueInfo {
+    pub source: String,
+    pub etag: Option<String>,
+    pub advisory: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Request parsing
+// ---------------------------------------------------------------------------
+
+/// Validate a metadata body (`{"request": {...}, "structure"?: {"gaps": ...}}`)
+/// and return the flat MARS request plus the gap policy. `verb` is dropped.
+pub fn parse_metadata_body(body: &Value) -> Result<MetadataBody, String> {
     let obj = body
         .as_object()
         .ok_or("request body must be a JSON object")?;
@@ -87,7 +174,24 @@ pub fn parse_metadata_body(body: &Value) -> Result<Map<String, Value>, String> {
         .ok_or("request body must contain a 'request' object")?
         .as_object()
         .ok_or("'request' must be a JSON object")?;
-    parse_flat_request(request)
+    let request = parse_flat_request(request)?;
+    let gaps = parse_gaps(obj.get("structure"))?;
+    Ok(MetadataBody { request, gaps })
+}
+
+fn parse_gaps(structure: Option<&Value>) -> Result<Gaps, String> {
+    let Some(structure) = structure else {
+        return Ok(Gaps::Exact);
+    };
+    let structure = structure
+        .as_object()
+        .ok_or("'structure' must be a JSON object")?;
+    match structure.get("gaps") {
+        None | Some(Value::Null) => Ok(Gaps::Exact),
+        Some(Value::String(s)) if s == "exact" => Ok(Gaps::Exact),
+        Some(Value::String(s)) if s == "span" => Ok(Gaps::Span),
+        Some(_) => Err("structure.gaps must be \"exact\" or \"span\"".to_string()),
+    }
 }
 
 pub(crate) fn feature_unsupported() -> String {
@@ -132,6 +236,10 @@ pub(crate) fn parse_flat_request(
     Ok(out)
 }
 
+// ---------------------------------------------------------------------------
+// Grid registry (Contract §6, applied per cube in v2 §V2.2(7))
+// ---------------------------------------------------------------------------
+
 fn grid_matches(grid: &ChunksGridConfig, collection: &str, canonical: &CanonicalRequest) -> bool {
     grid.collection == collection
         && grid.match_keys.iter().all(|(key, expected)| {
@@ -144,7 +252,7 @@ fn grid_matches(grid: &ChunksGridConfig, collection: &str, canonical: &Canonical
         })
 }
 
-/// First grid-registry entry matching `collection` + `canonical` (contract §6).
+/// First grid-registry entry matching `collection` + `canonical` (Contract §6).
 pub fn find_grid<'a>(
     config: &'a ChunksConfig,
     collection: &str,
@@ -156,71 +264,84 @@ pub fn find_grid<'a>(
         .find(|grid| grid_matches(grid, collection, canonical))
 }
 
-/// Build the contract §1 metadata response from a canonical request.
-pub fn build_metadata(
+// ---------------------------------------------------------------------------
+// Contract v2 derivation
+// ---------------------------------------------------------------------------
+
+/// Build the Contract v2 metadata response: intersect the canonical request
+/// with the catalogue qube, factor it into dense cubes, and assemble the
+/// structure tree.
+pub fn build_metadata_v2(
     config: &ChunksConfig,
     collection: &str,
     canonical: &CanonicalRequest,
+    handle: &QubeHandle,
+    gaps: Gaps,
 ) -> Result<MetadataResponse, String> {
-    let params = canonical
-        .get("param")
-        .filter(|p| !p.is_empty())
-        .ok_or("request expanded to no 'param' value")?;
-
-    let axes: Vec<Axis> = canonical
+    // Canonical request as dim -> allowed value set.
+    let request: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> = canonical
         .entries
         .iter()
-        .filter(|(key, values)| key != "param" && values.len() > 1)
-        .map(|(key, values)| Axis {
-            dim: key.clone(),
-            key: key.clone(),
-            values: values.clone(),
-        })
+        .map(|(k, vs)| (k.clone(), vs.iter().cloned().collect()))
         .collect();
 
-    if axes.iter().any(|a| a.dim == "values") {
-        return Err("request key 'values' clashes with the grid dimension name".to_string());
+    // Intersect with the qube (prune semantics).
+    let mut datacubes: Vec<Cube> = handle.qube.select_datacubes(&request);
+    if datacubes.is_empty() {
+        return Err(
+            "the request selects nothing in this collection's catalogue (empty intersection)"
+                .to_string(),
+        );
     }
 
-    let grid = find_grid(config, collection, canonical).ok_or_else(|| {
-        format!(
-            "no grid is registered for this request in collection '{collection}' \
-             (chunks.grids)"
-        )
-    })?;
-
-    let variables = params
+    // Keys the user constrained that the qube does not branch on: pin them into
+    // every cube with their canonical values (single-valued -> base_request,
+    // multi-valued -> axis). This lets the catalogue carry MORE structure than
+    // the request without dropping request-only pins.
+    let qube_dims = handle.qube.dimensions();
+    let request_only: Vec<(String, Vec<String>)> = canonical
+        .entries
         .iter()
-        .map(|param| Variable {
-            // v0: metkit's expansion does not expose shortnames through the
-            // bridge; the canonical param id doubles as the variable name.
-            name: param.clone(),
-            param: param.clone(),
+        .filter(|(k, _)| !qube_dims.contains(k.as_str()))
+        .map(|(k, vs)| {
+            let mut vs = vs.clone();
+            vs.sort();
+            vs.dedup();
+            (k.clone(), vs)
         })
         .collect();
+    for cube in &mut datacubes {
+        for (k, vs) in &request_only {
+            cube.entry(k.clone()).or_insert_with(|| vs.clone());
+        }
+    }
 
-    let mut default_chunks: Vec<(String, u64)> = axes.iter().map(|a| (a.dim.clone(), 1)).collect();
-    default_chunks.push(("values".to_string(), grid.count_values));
+    // The dense cubes are the qube's root-to-leaf datacubes (the catalogue is
+    // already canonically factored by qubed). We do NOT re-factor: a pure
+    // datacube re-factorisation would wrongly merge cubes across param-footprint
+    // and grid boundaries that the catalogue deliberately keeps separate.
+    // Determinism comes from the (qubed-canonical) qube plus ascending value
+    // sorting and canonical-key-order tree divergence.
+    let tree = tree::build_tree(&datacubes, config, collection, gaps)?;
 
-    let order: Vec<String> = axes.iter().map(|a| a.dim.clone()).collect();
+    // chunking.default: 1 per axis dim (canonical order), whole field on values.
+    let mut axis_dims = Vec::new();
+    tree.collect_axis_dims(&mut axis_dims);
+    let mut default_chunks: Vec<(String, u64)> = axis_dims.into_iter().map(|d| (d, 1)).collect();
+    default_chunks.push(("values".to_string(), 0));
 
     Ok(MetadataResponse {
         version: METADATA_VERSION,
         canonical_request: OrderedMap(canonical.entries.clone()),
-        axes,
-        grid: Grid {
-            kind: "unstructured",
-            count_values: grid.count_values,
-            md5_grid_section: grid.md5_grid_section.clone(),
-        },
-        variables,
+        tree,
         chunking: Chunking {
             default: OrderedMap(default_chunks),
             max_chunk_cost: config.max_chunk_cost,
         },
-        extract: ExtractInfo {
-            grid_hash: grid.md5_grid_section.clone(),
-            order,
+        catalogue: CatalogueInfo {
+            source: handle.source.clone(),
+            etag: handle.etag.clone(),
+            advisory: true,
         },
     })
 }
@@ -296,24 +417,6 @@ grids:
     }
 
     #[test]
-    fn metadata_with_no_axes_is_single_field() {
-        let cfg = config("grids: [{collection: c, count_values: 5}]");
-        let md = build_metadata(
-            &cfg,
-            "c",
-            &canonical(&[("class", &["od"]), ("param", &["167"])]),
-        )
-        .unwrap();
-        let v = serde_json::to_value(&md).unwrap();
-        assert_eq!(v["axes"], json!([]));
-        assert_eq!(v["extract"]["order"], json!([]));
-        assert_eq!(v["chunking"]["default"], json!({"values": 5}));
-        assert_eq!(v["grid"]["md5GridSection"], Value::Null);
-        assert_eq!(v["extract"]["grid_hash"], Value::Null);
-        assert_eq!(v["chunking"]["max_chunk_cost"], json!(20_000_000));
-    }
-
-    #[test]
     fn parse_metadata_body_validation() {
         assert!(parse_metadata_body(&json!([])).is_err());
         assert!(parse_metadata_body(&json!({})).is_err());
@@ -330,6 +433,22 @@ grids:
         assert!(err.contains("feature"));
         let ok =
             parse_metadata_body(&json!({"request": {"verb": "retrieve", "a": [1, "2"]}})).unwrap();
-        assert_eq!(Value::Object(ok), json!({"a": [1, "2"]}));
+        assert_eq!(Value::Object(ok.request), json!({"a": [1, "2"]}));
+        assert_eq!(ok.gaps, Gaps::Exact);
+    }
+
+    #[test]
+    fn parse_gaps_default_and_values() {
+        let exact = parse_metadata_body(&json!({"request": {"a": "1"}})).unwrap();
+        assert_eq!(exact.gaps, Gaps::Exact);
+        let span =
+            parse_metadata_body(&json!({"request": {"a": "1"}, "structure": {"gaps": "span"}}))
+                .unwrap();
+        assert_eq!(span.gaps, Gaps::Span);
+        assert!(
+            parse_metadata_body(&json!({"request": {"a": "1"}, "structure": {"gaps": "wat"}}))
+                .is_err()
+        );
+        assert!(parse_metadata_body(&json!({"request": {"a": "1"}, "structure": []})).is_err());
     }
 }

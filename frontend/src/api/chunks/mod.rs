@@ -16,9 +16,12 @@
 //! Errors are `{"error": ...}` JSON (the support middleware preserves the
 //! native shape for `/chunks/` paths).
 
+pub mod catalogue;
 pub mod expand;
 pub mod extract;
 pub mod metadata;
+pub mod qube;
+pub mod tree;
 
 use std::sync::Arc;
 
@@ -43,6 +46,9 @@ pub struct ChunksState {
     pub app: Arc<AppState>,
     pub config: ChunksConfig,
     pub expander: Arc<dyn RequestExpander>,
+    /// Catalogue qube cache. `None` when `chunks.catalogue_url` is unset,
+    /// in which case `/metadata` returns `501`.
+    pub catalogue: Option<Arc<catalogue::CatalogueCache>>,
 }
 
 /// Build the `/chunks/v1` router (routes relative to the mount point).
@@ -51,11 +57,13 @@ pub fn router<S>(
     app: Arc<AppState>,
     config: ChunksConfig,
     expander: Arc<dyn RequestExpander>,
+    catalogue: Option<Arc<catalogue::CatalogueCache>>,
 ) -> Router<S> {
     let state = Arc::new(ChunksState {
         app,
         config,
         expander,
+        catalogue,
     });
     Router::new()
         .route("/{collection}/metadata", post(metadata_handler))
@@ -86,10 +94,11 @@ pub async fn metadata_handler(
     if !state.app.collections.contains_key(&collection) {
         return bad_request(EP, format!("unknown collection '{collection}'"));
     }
-    let request = match parse_json(&body).and_then(|b| metadata::parse_metadata_body(&b)) {
-        Ok(request) => request,
-        Err(msg) => return bad_request(EP, msg),
-    };
+    let metadata::MetadataBody { request, gaps } =
+        match parse_json(&body).and_then(|b| metadata::parse_metadata_body(&b)) {
+            Ok(parsed) => parsed,
+            Err(msg) => return bad_request(EP, msg),
+        };
 
     // metkit is a blocking C++ call; keep it off the async workers.
     let expander = state.expander.clone();
@@ -114,9 +123,29 @@ pub async fn metadata_handler(
         Ok(canonical) => canonical,
         Err(msg) => return bad_request(EP, msg),
     };
-    match metadata::build_metadata(&state.config, &collection, &canonical) {
+
+    // Contract v2: derive the structure tree from the catalogue qube.
+    let Some(catalogue) = state.catalogue.as_ref() else {
+        return error_response(
+            StatusCode::NOT_IMPLEMENTED,
+            "catalogue is not configured (chunks.catalogue_url); /metadata is unavailable in \
+             this deployment",
+        );
+    };
+    let handle = match catalogue.get().await {
+        Ok(handle) => handle,
+        Err(catalogue::CatalogueError::Unavailable(msg)) => {
+            tracing::error!("event.name" = "api.chunks.failed", endpoint = EP, error = %msg, "catalogue unavailable");
+            return error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                format!("catalogue unavailable: {msg}"),
+            );
+        }
+    };
+
+    match metadata::build_metadata_v2(&state.config, &collection, &canonical, &handle, gaps) {
         Ok(md) => {
-            tracing::info!("event.name" = "api.chunks.metadata", outcome = "success", collection = %collection, axes = md.axes.len() as u64, variables = md.variables.len() as u64, "chunks metadata served");
+            tracing::info!("event.name" = "api.chunks.metadata", outcome = "success", collection = %collection, version = md.version as u64, "chunks metadata served");
             (StatusCode::OK, Json(md)).into_response()
         }
         Err(msg) => bad_request(EP, msg),

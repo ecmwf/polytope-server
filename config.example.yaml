@@ -31,6 +31,11 @@ bits:
 # chunks:
 #   enabled: true                 # default true when the section is present
 #   max_chunk_cost: 20000000      # max fields x points per extract (default 20M)
+#   # Contract v2 (qube-derived structure tree): catalogue qube URL, fetched as
+#   # full-collection arena JSON and ETag/TTL-cached in memory. When absent,
+#   # /metadata returns 501 (the extract path still works).
+#   catalogue_url: "https://catalogue.mn5.apps.dte.destination-earth.eu/api/v2/"
+#   catalogue_ttl_secs: 300        # lazy refresh once the cached qube is older (default 300)
 #   grids:                        # grid registry: first match wins, no match -> 400
 #     - collection: destination-earth
 #       match:                    # subset match on the metkit-canonical request

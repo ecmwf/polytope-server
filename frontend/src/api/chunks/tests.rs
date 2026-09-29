@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! End-to-end `/chunks/v1` tests through the full `build_app` stack (auth,
-//! support middleware, bits routing) with a fake MARS expander.
+//! support middleware, bits routing) with a fake MARS expander and an injected
+//! catalogue qube (no network).
 
 use std::sync::{Arc, Mutex};
 
@@ -17,6 +18,7 @@ use http_body_util::BodyExt;
 use serde_json::{Map, Value, json};
 use tower::ServiceExt;
 
+use super::catalogue::{CatalogueSource, Fetched};
 use super::expand::{ExpandError, RequestExpander, UnavailableExpander};
 use crate::config::ServerConfig;
 use crate::state::AppState;
@@ -76,6 +78,7 @@ impl RequestExpander for FakeExpander {
 
 const COLLECTION: &str = "destination-earth";
 const MD5: &str = "f78d9d2d6f6f1b4c8f0b3a6d1b1e2c3d";
+const CATALOGUE_URL: &str = "https://catalogue.test/api/v2/";
 
 fn server_config(target_url: &str, extra: &str) -> ServerConfig {
     let yaml = format!(
@@ -122,12 +125,123 @@ fn app_with(
 }
 
 fn app() -> Router {
-    app_with(
-        "http://127.0.0.1:1/",
-        chunks_section(),
+    app_with("http://127.0.0.1:1/", chunks_section(), Arc::new(FakeExpander)).0
+}
+
+// ---------------------------------------------------------------------------
+// Catalogue injection (no network)
+// ---------------------------------------------------------------------------
+
+/// A [`CatalogueSource`] that serves a fixed arena-JSON qube.
+struct FixtureCatalogue {
+    arena: Value,
+}
+
+#[async_trait::async_trait]
+impl CatalogueSource for FixtureCatalogue {
+    async fn fetch(&self, _etag: Option<String>) -> Result<Fetched, String> {
+        Ok(Fetched::Modified {
+            body: serde_json::to_vec(&self.arena).unwrap(),
+            etag: Some("\"fixture-etag\"".to_string()),
+        })
+    }
+    fn source_url(&self) -> &str {
+        CATALOGUE_URL
+    }
+}
+
+/// A [`CatalogueSource`] whose fetch always fails.
+struct FailingCatalogue;
+
+#[async_trait::async_trait]
+impl CatalogueSource for FailingCatalogue {
+    async fn fetch(&self, _etag: Option<String>) -> Result<Fetched, String> {
+        Err("connection refused".to_string())
+    }
+    fn source_url(&self) -> &str {
+        CATALOGUE_URL
+    }
+}
+
+fn app_with_catalogue(source: Option<Arc<dyn CatalogueSource>>) -> (Router, Arc<AppState>) {
+    crate::build_app_with_catalogue(
+        server_config("http://127.0.0.1:1/", chunks_section()),
         Arc::new(FakeExpander),
+        source,
     )
-    .0
+    .expect("app builds")
+}
+
+fn app_with_qube(arena: Value) -> Router {
+    app_with_catalogue(Some(Arc::new(FixtureCatalogue { arena }))).0
+}
+
+// ---------------------------------------------------------------------------
+// Arena-JSON fixtures (crafted to reproduce real-world cases)
+// ---------------------------------------------------------------------------
+
+/// (a) One dense cube: date x time, two params.
+fn arena_simple() -> Value {
+    json!({"version": "1", "qube": [
+        {"dim": "root", "coords": null, "parent": null, "children": [1]},
+        {"dim": "date", "coords": {"strings": ["20200101", "20200102"]}, "parent": 0, "children": [2]},
+        {"dim": "time", "coords": {"ints": [0, 1200]}, "parent": 1, "children": [3]},
+        {"dim": "param", "coords": {"strings": ["165", "167"]}, "parent": 2, "children": []},
+    ]})
+}
+
+/// (b) climate-dt sfc heterogeneity: 3 "common" params at 3 times, 2 "special"
+/// params only at time 0000 (a faithful, pasteable down-scaling of the real
+/// 34 params x 24 times u 2 params x 1 time case). Stored param-major to prove
+/// the derivation re-factors deterministically in canonical (time-major) order.
+fn arena_heterogeneous() -> Value {
+    json!({"version": "1", "qube": [
+        {"dim": "root", "coords": null, "parent": null, "children": [1, 3]},
+        {"dim": "param", "coords": {"strings": ["167", "168", "169"]}, "parent": 0, "children": [2]},
+        {"dim": "time", "coords": {"ints": [0, 600, 1200]}, "parent": 1, "children": []},
+        {"dim": "param", "coords": {"strings": ["228", "229"]}, "parent": 0, "children": [4]},
+        {"dim": "time", "coords": {"ints": [0]}, "parent": 3, "children": []},
+    ]})
+}
+
+/// (c) A single param over a non-contiguous date set (holes at 0102/0104).
+fn arena_date_holes() -> Value {
+    json!({"version": "1", "qube": [
+        {"dim": "root", "coords": null, "parent": null, "children": [1]},
+        {"dim": "date", "coords": {"strings": ["20200101", "20200103", "20200105"]}, "parent": 0, "children": [2]},
+        {"dim": "param", "coords": {"strings": ["167"]}, "parent": 1, "children": []},
+    ]})
+}
+
+/// (d) Two cubes hitting different grid-registry entries via `resolution`.
+fn arena_two_grids() -> Value {
+    json!({"version": "1", "qube": [
+        {"dim": "root", "coords": null, "parent": null, "children": [1, 3]},
+        {"dim": "resolution", "coords": {"strings": ["high"]}, "parent": 0, "children": [2]},
+        {"dim": "param", "coords": {"strings": ["167"]}, "parent": 1, "children": []},
+        {"dim": "resolution", "coords": {"strings": ["standard"]}, "parent": 0, "children": [4]},
+        {"dim": "param", "coords": {"strings": ["167"]}, "parent": 3, "children": []},
+    ]})
+}
+
+fn climate_dt_request() -> Value {
+    json!({
+        "class": "d1",
+        "dataset": "climate-dt",
+        "activity": "scenariomip",
+        "experiment": "ssp3-7.0",
+        "generation": "1",
+        "model": "ifs-nemo",
+        "realization": "1",
+        "resolution": "high",
+        "expver": "1",
+        "stream": "clte",
+        "type": "fc",
+        "levtype": "sfc",
+        "date": ["20200101", "20200102"],
+        "time": ["0", "1200"],
+        "param": ["2t", "10u"],
+    })
 }
 
 async fn post_json(
@@ -158,71 +272,14 @@ async fn post_raw(
     (status, headers, bytes)
 }
 
-fn climate_dt_request() -> Value {
-    json!({
-        "class": "d1",
-        "dataset": "climate-dt",
-        "activity": "scenariomip",
-        "experiment": "ssp3-7.0",
-        "generation": "1",
-        "model": "ifs-nemo",
-        "realization": "1",
-        "resolution": "high",
-        "expver": "1",
-        "stream": "clte",
-        "type": "fc",
-        "levtype": "sfc",
-        "date": ["20200101", "20200102"],
-        "time": ["0", "1200"],
-        "param": ["2t", "10u"],
-    })
-}
-
-fn expected_metadata() -> Value {
-    json!({
-        "version": 1,
-        "canonical_request": {
-            "class": ["d1"],
-            "type": ["fc"],
-            "stream": ["clte"],
-            "levtype": ["sfc"],
-            "date": ["20200101", "20200102"],
-            "time": ["0000", "1200"],
-            "dataset": ["climate-dt"],
-            "expver": ["0001"],
-            "param": ["167", "165"],
-            "activity": ["scenariomip"],
-            "experiment": ["ssp3-7.0"],
-            "generation": ["1"],
-            "model": ["ifs-nemo"],
-            "realization": ["1"],
-            "resolution": ["high"],
-        },
-        "axes": [
-            {"dim": "date", "key": "date", "values": ["20200101", "20200102"]},
-            {"dim": "time", "key": "time", "values": ["0000", "1200"]},
-        ],
-        "grid": {"kind": "unstructured", "count_values": 12582912, "md5GridSection": MD5},
-        "variables": [
-            {"name": "167", "param": "167"},
-            {"name": "165", "param": "165"},
-        ],
-        "chunking": {
-            "default": {"date": 1, "time": 1, "values": 12582912},
-            "max_chunk_cost": 30000000,
-        },
-        "extract": {"grid_hash": MD5, "order": ["date", "time"]},
-    })
-}
-
 // ---------------------------------------------------------------------------
-// metadata
+// metadata (Contract v2)
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn metadata_happy_path_matches_contract_exactly() {
+async fn metadata_single_cube_is_root_array_set() {
     let (status, headers, body) = post_json(
-        app(),
+        app_with_qube(arena_simple()),
         "/chunks/v1/destination-earth/metadata",
         &json!({"request": climate_dt_request()}),
     )
@@ -230,147 +287,334 @@ async fn metadata_happy_path_matches_contract_exactly() {
     assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
     assert_eq!(headers[header::CONTENT_TYPE], "application/json");
     let v: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(v, expected_metadata());
 
-    // Object key order on the wire is canonical (metkit axis order), not
-    // alphabetical, for canonical_request and chunking.default.
+    assert_eq!(v["version"], 2);
+    // Single cube -> the tree root is the array_set itself (anonymous name).
+    let tree = &v["tree"];
+    assert_eq!(tree["type"], "array_set");
+    assert_eq!(tree["name"], "");
+    assert_eq!(
+        tree["axes"],
+        json!([
+            {"dim": "date", "key": "date", "values": ["20200101", "20200102"]},
+            {"dim": "time", "key": "time", "values": ["0000", "1200"]},
+        ])
+    );
+    // param -> variables, sorted ascending as canonical strings.
+    assert_eq!(
+        tree["variables"],
+        json!([{"name": "165", "param": "165"}, {"name": "167", "param": "167"}])
+    );
+    assert_eq!(
+        tree["grid"],
+        json!({"kind": "unstructured", "count_values": 12582912, "md5GridSection": MD5})
+    );
+    assert_eq!(tree["fill_on_missing"], false);
+    assert_eq!(tree["extract"], json!({"grid_hash": MD5, "order": ["date", "time"]}));
+
+    // All single-valued keys are pinned into base_request (never param/axes).
+    let base = &tree["base_request"];
+    assert_eq!(base["class"], "d1");
+    assert_eq!(base["dataset"], "climate-dt");
+    assert_eq!(base["resolution"], "high");
+    assert_eq!(base["expver"], "0001");
+    assert!(base.get("date").is_none(), "date is an axis, not pinned");
+    assert!(base.get("param").is_none(), "param is a variable, not pinned");
+
+    // chunking + catalogue provenance.
+    assert_eq!(
+        v["chunking"],
+        json!({"default": {"date": 1, "time": 1, "values": 0}, "max_chunk_cost": 30000000})
+    );
+    assert_eq!(
+        v["catalogue"],
+        json!({"source": CATALOGUE_URL, "etag": "\"fixture-etag\"", "advisory": true})
+    );
+
+    // canonical_request echo is present and canonically ordered on the wire.
     let text = String::from_utf8(body.to_vec()).unwrap();
-    let pos = |needle: &str| {
-        text.find(needle)
-            .unwrap_or_else(|| panic!("{needle} missing"))
-    };
-    let order = [
-        "\"class\"",
-        "\"type\"",
-        "\"stream\"",
-        "\"levtype\"",
-        "\"date\"",
-        "\"time\"",
-        "\"dataset\"",
-        "\"expver\"",
-        "\"param\"",
-        "\"activity\"",
-        "\"resolution\"",
-    ];
-    for pair in order.windows(2) {
-        assert!(
-            pos(pair[0]) < pos(pair[1]),
-            "{} should precede {}",
-            pair[0],
-            pair[1]
-        );
-    }
-    let chunking = &text[pos("\"chunking\"")..];
-    assert!(chunking.find("\"date\"").unwrap() < chunking.find("\"time\"").unwrap());
-    assert!(chunking.find("\"time\"").unwrap() < chunking.find("\"values\"").unwrap());
+    let cr = &text[text.find("\"canonical_request\"").unwrap()..];
+    assert!(cr.find("\"class\"").unwrap() < cr.find("\"date\"").unwrap());
+    assert!(cr.find("\"date\"").unwrap() < cr.find("\"time\"").unwrap());
 }
 
 #[tokio::test]
-async fn metadata_single_param_and_second_grid_entry() {
-    let mut request = climate_dt_request();
-    request["resolution"] = json!("standard");
-    request["generation"] = json!(2);
-    request["param"] = json!("2t");
-    request["time"] = json!("1200");
+async fn metadata_heterogeneous_builds_two_named_array_sets() {
+    let request = json!({
+        "class": "d1", "dataset": "climate-dt", "resolution": "high",
+        "activity": "scenariomip", "experiment": "ssp3-7.0", "generation": "1",
+        "model": "ifs-nemo", "realization": "1", "expver": "1", "stream": "clte",
+        "type": "fc", "levtype": "sfc",
+        "date": "20200101",
+        "time": ["0", "600", "1200"],
+        "param": ["167", "168", "169", "228", "229"],
+    });
     let (status, _, body) = post_json(
-        app(),
+        app_with_qube(arena_heterogeneous()),
         "/chunks/v1/destination-earth/metadata",
         &json!({"request": request}),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
     let v: Value = serde_json::from_slice(&body).unwrap();
+
+    let tree = &v["tree"];
+    assert_eq!(tree["type"], "group");
+    assert_eq!(tree["name"], "");
+    let children = tree["children"].as_array().unwrap();
+    assert_eq!(children.len(), 2);
+
+    // The catalogue qube's root-to-leaf cubes are used directly (param-major,
+    // matching the real 34-params-x-24-times u 2-params-x-1-time case): the two
+    // array_sets are {167,168,169} x {0000,0600,1200} and {228,229} x {0000}.
+    // The group diverges on `time` (canonical order), so children are named by
+    // their time value-set and ordered by it (BTreeMap: ["0000"] first).
+    let names: Vec<&str> = children.iter().map(|c| c["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["time-0000", "time-0000_0600_1200"]);
+
+    // child 0: the 2 special params, only at time 0000. time is single-valued
+    // here, so it is PINNED into base_request (not an axis).
+    let c0 = &children[0];
+    assert_eq!(c0["type"], "array_set");
+    assert_eq!(c0["axes"], json!([]));
+    assert_eq!(c0["base_request"]["time"], "0000");
     assert_eq!(
-        v["axes"],
-        json!([{"dim": "date", "key": "date", "values": ["20200101", "20200102"]}])
+        c0["variables"],
+        json!([{"name": "228", "param": "228"}, {"name": "229", "param": "229"}])
     );
-    assert_eq!(v["variables"], json!([{"name": "167", "param": "167"}]));
+    assert_eq!(c0["extract"], json!({"grid_hash": MD5, "order": []}));
+
+    // child 1: the 3 common params, at all three times.
+    let c1 = &children[1];
     assert_eq!(
-        v["grid"],
-        json!({"kind": "unstructured", "count_values": 196608, "md5GridSection": null})
+        c1["axes"],
+        json!([{"dim": "time", "key": "time", "values": ["0000", "0600", "1200"]}])
     );
     assert_eq!(
-        v["chunking"]["default"],
-        json!({"date": 1, "values": 196608})
+        c1["variables"],
+        json!([
+            {"name": "167", "param": "167"}, {"name": "168", "param": "168"},
+            {"name": "169", "param": "169"},
+        ])
     );
-    assert_eq!(v["extract"], json!({"grid_hash": null, "order": ["date"]}));
+
+    // date is pinned (single value) into every array_set's base_request.
+    assert_eq!(c0["base_request"]["date"], "20200101");
+    assert_eq!(c1["base_request"]["date"], "20200101");
+    // Group attrs record the shared pinned selection.
+    assert_eq!(tree["attrs"]["defined_by"]["class"], json!(["d1"]));
+    assert_eq!(tree["attrs"]["defined_by"]["resolution"], json!(["high"]));
 }
 
-async fn assert_metadata_400(collection: &str, body: Value, needle: &str) {
-    let (status, _, bytes) =
-        post_json(app(), &format!("/chunks/v1/{collection}/metadata"), &body).await;
+#[tokio::test]
+async fn metadata_date_holes_exact_keeps_gaps_span_fills_calendar() {
+    let request = json!({
+        "class": "d1", "dataset": "climate-dt", "resolution": "high", "levtype": "sfc",
+        "date": ["20200101", "20200103", "20200105"],
+        "param": "167",
+    });
+
+    // exact: non-contiguous values, no fill.
+    let (status, _, body) = post_json(
+        app_with_qube(arena_date_holes()),
+        "/chunks/v1/destination-earth/metadata",
+        &json!({"request": request, "structure": {"gaps": "exact"}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let v: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["tree"]["type"], "array_set");
     assert_eq!(
-        status,
-        StatusCode::BAD_REQUEST,
-        "{}",
-        String::from_utf8_lossy(&bytes)
+        v["tree"]["axes"],
+        json!([{"dim": "date", "key": "date", "values": ["20200101", "20200103", "20200105"]}])
     );
+    assert_eq!(v["tree"]["fill_on_missing"], false);
+
+    // span: calendar-filled between min and max, fill_on_missing true.
+    let (status, _, body) = post_json(
+        app_with_qube(arena_date_holes()),
+        "/chunks/v1/destination-earth/metadata",
+        &json!({"request": request, "structure": {"gaps": "span"}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let v: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        v["tree"]["axes"],
+        json!([{"dim": "date", "key": "date", "values": [
+            "20200101", "20200102", "20200103", "20200104", "20200105"
+        ]}])
+    );
+    assert_eq!(v["tree"]["fill_on_missing"], true);
+}
+
+#[tokio::test]
+async fn metadata_pins_qube_only_single_valued_keys_the_user_omitted() {
+    // The qube branches on `stream` (single value clte) that the request never
+    // mentions. It must still be pinned into base_request (catalogue carries
+    // more structure than the request).
+    let arena = json!({"version": "1", "qube": [
+        {"dim": "root", "coords": null, "parent": null, "children": [1]},
+        {"dim": "stream", "coords": {"strings": ["clte"]}, "parent": 0, "children": [2]},
+        {"dim": "param", "coords": {"strings": ["167"]}, "parent": 1, "children": []},
+    ]});
+    let request = json!({
+        "class": "d1", "dataset": "climate-dt", "resolution": "high", "levtype": "sfc",
+        "param": "167",
+    });
+    let (status, _, body) = post_json(
+        app_with_qube(arena),
+        "/chunks/v1/destination-earth/metadata",
+        &json!({"request": request}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let v: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["tree"]["type"], "array_set");
+    // stream was never in the request, yet it is pinned from the qube.
+    assert_eq!(v["tree"]["base_request"]["stream"], "clte");
+    assert_eq!(v["tree"]["base_request"]["class"], "d1");
+    assert_eq!(v["tree"]["axes"], json!([]));
+    assert_eq!(v["tree"]["variables"], json!([{"name": "167", "param": "167"}]));
+}
+
+#[tokio::test]
+async fn metadata_two_cubes_resolve_different_grids() {
+    let request = json!({
+        "class": "d1", "dataset": "climate-dt", "levtype": "sfc",
+        "resolution": ["high", "standard"],
+        "generation": "2",
+        "param": "167",
+    });
+    let (status, _, body) = post_json(
+        app_with_qube(arena_two_grids()),
+        "/chunks/v1/destination-earth/metadata",
+        &json!({"request": request}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let v: Value = serde_json::from_slice(&body).unwrap();
+
+    let tree = &v["tree"];
+    assert_eq!(tree["type"], "group");
+    let children = tree["children"].as_array().unwrap();
+    assert_eq!(children.len(), 2);
+    let names: Vec<&str> = children.iter().map(|c| c["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["resolution-high", "resolution-standard"]);
+
+    // resolution=high -> grid 1 (12582912, MD5); resolution=standard+gen2 -> grid 2 (196608).
+    assert_eq!(children[0]["grid"]["count_values"], 12582912);
+    assert_eq!(children[0]["grid"]["md5GridSection"], MD5);
+    assert_eq!(children[1]["grid"]["count_values"], 196608);
+    assert_eq!(children[1]["grid"]["md5GridSection"], Value::Null);
+    // Each pins its own resolution.
+    assert_eq!(children[0]["base_request"]["resolution"], "high");
+    assert_eq!(children[1]["base_request"]["resolution"], "standard");
+}
+
+async fn assert_metadata_status(app: Router, body: Value, status: StatusCode, needle: &str) {
+    let (got, _, bytes) =
+        post_json(app, "/chunks/v1/destination-earth/metadata", &body).await;
+    assert_eq!(got, status, "{}", String::from_utf8_lossy(&bytes));
     let v: Value = serde_json::from_slice(&bytes).unwrap();
     let err = v["error"]
         .as_str()
         .unwrap_or_else(|| panic!("no error field in {v}"));
-    assert!(
-        err.contains(needle),
-        "error '{err}' should contain '{needle}'"
-    );
-    assert_eq!(
-        v.as_object().unwrap().len(),
-        1,
-        "error body is exactly {{\"error\"}}: {v}"
-    );
+    assert!(err.contains(needle), "error '{err}' should contain '{needle}'");
+    assert_eq!(v.as_object().unwrap().len(), 1, "error body is exactly {{\"error\"}}: {v}");
 }
 
 #[tokio::test]
-async fn metadata_rejects_unknown_collection() {
-    assert_metadata_400(
-        "nope",
-        json!({"request": climate_dt_request()}),
-        "unknown collection 'nope'",
+async fn metadata_empty_intersection_is_400() {
+    let mut request = climate_dt_request();
+    request["param"] = json!("999"); // qube only has 165/167
+    assert_metadata_status(
+        app_with_qube(arena_simple()),
+        json!({"request": request}),
+        StatusCode::BAD_REQUEST,
+        "empty intersection",
     )
     .await;
 }
 
 #[tokio::test]
+async fn metadata_missing_catalogue_config_is_501() {
+    // No catalogue source and no catalogue_url configured.
+    let app = app_with_catalogue(None).0;
+    assert_metadata_status(
+        app,
+        json!({"request": climate_dt_request()}),
+        StatusCode::NOT_IMPLEMENTED,
+        "catalogue is not configured",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn metadata_catalogue_fetch_failure_with_no_cache_is_503() {
+    let app = app_with_catalogue(Some(Arc::new(FailingCatalogue))).0;
+    assert_metadata_status(
+        app,
+        json!({"request": climate_dt_request()}),
+        StatusCode::SERVICE_UNAVAILABLE,
+        "catalogue unavailable",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn metadata_no_grid_match_for_a_cube_is_400_naming_the_cube() {
+    // resolution=standard but generation 1 (registry entry 2 needs generation 2).
+    let request = json!({
+        "class": "d1", "dataset": "climate-dt", "levtype": "sfc",
+        "resolution": "standard", "generation": "1", "param": "167",
+    });
+    assert_metadata_status(
+        app_with_qube(arena_two_grids()),
+        json!({"request": request}),
+        StatusCode::BAD_REQUEST,
+        "no grid is registered for cube",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn metadata_rejects_unknown_collection() {
+    let (status, _, bytes) = post_json(
+        app_with_qube(arena_simple()),
+        "/chunks/v1/nope/metadata",
+        &json!({"request": climate_dt_request()}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let v: Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(v["error"].as_str().unwrap().contains("unknown collection 'nope'"));
+}
+
+#[tokio::test]
 async fn metadata_rejects_feature() {
-    assert_metadata_400(
-        COLLECTION,
+    assert_metadata_status(
+        app(),
         json!({"request": climate_dt_request(), "feature": {"type": "polygon", "shape": []}}),
+        StatusCode::BAD_REQUEST,
         "feature",
     )
     .await;
     let mut request = climate_dt_request();
     request["feature"] = json!({"type": "polygon"});
-    assert_metadata_400(COLLECTION, json!({"request": request}), "feature").await;
-}
-
-#[tokio::test]
-async fn metadata_rejects_no_grid_match() {
-    let mut request = climate_dt_request();
-    request["resolution"] = json!("standard"); // generation 1 != registry's 2
-    assert_metadata_400(
-        COLLECTION,
-        json!({"request": request}),
-        "no grid is registered",
-    )
-    .await;
-    // A request spanning two grids matches neither entry.
-    let mut request = climate_dt_request();
-    request["resolution"] = json!(["high", "standard"]);
-    assert_metadata_400(
-        COLLECTION,
-        json!({"request": request}),
-        "no grid is registered",
-    )
-    .await;
+    assert_metadata_status(app(), json!({"request": request}), StatusCode::BAD_REQUEST, "feature")
+        .await;
 }
 
 #[tokio::test]
 async fn metadata_rejects_bad_expansion() {
     let mut request = climate_dt_request();
     request["param"] = json!("bogus");
-    assert_metadata_400(
-        COLLECTION,
+    // Expansion fails before the catalogue is consulted.
+    assert_metadata_status(
+        app(),
         json!({"request": request}),
+        StatusCode::BAD_REQUEST,
         "request expansion failed",
     )
     .await;
@@ -381,9 +625,10 @@ async fn metadata_rejects_inconsistent_expansion() {
     // "0" and "0000" canonicalise to the same time: not a valid axis.
     let mut request = climate_dt_request();
     request["time"] = json!(["0", "0000"]);
-    assert_metadata_400(
-        COLLECTION,
+    assert_metadata_status(
+        app(),
         json!({"request": request}),
+        StatusCode::BAD_REQUEST,
         "duplicate value '0000'",
     )
     .await;
@@ -398,17 +643,28 @@ async fn metadata_rejects_malformed_bodies() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_metadata_400(COLLECTION, json!({}), "'request'").await;
-    assert_metadata_400(COLLECTION, json!({"request": {}}), "must not be empty").await;
+    assert_metadata_status(app(), json!({}), StatusCode::BAD_REQUEST, "'request'").await;
+    assert_metadata_status(app(), json!({"request": {}}), StatusCode::BAD_REQUEST, "must not be empty")
+        .await;
+    assert_metadata_status(
+        app(),
+        json!({"request": climate_dt_request(), "structure": {"gaps": "wat"}}),
+        StatusCode::BAD_REQUEST,
+        "structure.gaps",
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn metadata_without_metkit_is_not_implemented() {
-    let (app, _) = app_with(
-        "http://127.0.0.1:1/",
-        chunks_section(),
+    let (app, _) = crate::build_app_with_catalogue(
+        server_config("http://127.0.0.1:1/", chunks_section()),
         Arc::new(UnavailableExpander),
-    );
+        Some(Arc::new(FixtureCatalogue {
+            arena: arena_simple(),
+        })),
+    )
+    .expect("app builds");
     let (status, _, body) = post_json(
         app,
         "/chunks/v1/destination-earth/metadata",
@@ -466,7 +722,18 @@ fn chunks_config_defaults_and_validation() {
     assert!(chunks.enabled);
     assert_eq!(chunks.max_chunk_cost, 20_000_000);
     assert!(chunks.grids.is_empty());
+    // Contract v2 catalogue defaults.
+    assert!(chunks.catalogue_url.is_none());
+    assert_eq!(chunks.catalogue_ttl_secs, 300);
     chunks.validate().unwrap();
+
+    let cfg = server_config(
+        "http://127.0.0.1:1/",
+        "chunks:\n  catalogue_url: \"https://x/api/v2/\"\n  catalogue_ttl_secs: 60\n",
+    );
+    let chunks = cfg.chunks.unwrap();
+    assert_eq!(chunks.catalogue_url.as_deref(), Some("https://x/api/v2/"));
+    assert_eq!(chunks.catalogue_ttl_secs, 60);
 
     let bad: crate::config::ChunksConfig =
         serde_yaml::from_str("grids: [{collection: c, count_values: 0}]").unwrap();
@@ -488,7 +755,7 @@ fn chunks_config_defaults_and_validation() {
 }
 
 // ---------------------------------------------------------------------------
-// extract
+// extract (UNCHANGED by v2)
 // ---------------------------------------------------------------------------
 
 fn extract_body() -> Value {
@@ -594,12 +861,7 @@ async fn extract_pending_redirects_to_v2_poll_url() {
     )
     .await;
 
-    assert_eq!(
-        status,
-        StatusCode::SEE_OTHER,
-        "{}",
-        String::from_utf8_lossy(&body)
-    );
+    assert_eq!(status, StatusCode::SEE_OTHER, "{}", String::from_utf8_lossy(&body));
     let location = headers[header::LOCATION].to_str().unwrap().to_string();
     let id = location
         .strip_prefix("/api/v2/requests/")
@@ -678,17 +940,11 @@ async fn extract_validation_errors_are_400_and_submit_nothing() {
         );
         let v: Value = serde_json::from_slice(&bytes).unwrap();
         let err = v["error"].as_str().unwrap();
-        assert!(
-            err.contains(needle),
-            "error '{err}' should contain '{needle}'"
-        );
+        assert!(err.contains(needle), "error '{err}' should contain '{needle}'");
     }
     let (status, _, _) = post_raw(app, "/chunks/v1/destination-earth/extract", b"{".to_vec()).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(
-        state.bits.active_jobs().is_empty(),
-        "no job may be submitted"
-    );
+    assert!(state.bits.active_jobs().is_empty(), "no job may be submitted");
 }
 
 // ---------------------------------------------------------------------------
@@ -698,6 +954,14 @@ async fn extract_validation_errors_are_400_and_submit_nothing() {
 #[cfg(feature = "metkit")]
 #[tokio::test]
 async fn metadata_with_real_metkit_expansion() {
+    // A qube for od/oper with the axes the request expands to.
+    let arena = json!({"version": "1", "qube": [
+        {"dim": "root", "coords": null, "parent": null, "children": [1]},
+        {"dim": "date", "coords": {"strings": ["20240101", "20240102"]}, "parent": 0, "children": [2]},
+        {"dim": "time", "coords": {"ints": [0, 1200]}, "parent": 1, "children": [3]},
+        {"dim": "step", "coords": {"ints": [0, 6]}, "parent": 2, "children": [4]},
+        {"dim": "param", "coords": {"strings": ["165", "167"]}, "parent": 3, "children": []},
+    ]});
     let extra = r#"
 chunks:
   grids:
@@ -706,11 +970,12 @@ chunks:
       count_values: 6599680
       md5_grid_section: null
 "#;
-    let (app, _) = app_with(
-        "http://127.0.0.1:1/",
-        extra,
+    let (app, _) = crate::build_app_with_catalogue(
+        server_config("http://127.0.0.1:1/", extra),
         super::expand::default_expander(),
-    );
+        Some(Arc::new(FixtureCatalogue { arena })),
+    )
+    .expect("app builds");
     let request = json!({
         "class": "od", "type": "fc", "stream": "oper", "expver": 1,
         "levtype": "sfc", "date": ["20240101", "20240102"], "time": ["0", "12"],
@@ -726,24 +991,23 @@ chunks:
     println!("real metkit metadata: {text}");
     assert_eq!(status, StatusCode::OK, "{text}");
     let v: Value = serde_json::from_slice(&body).unwrap();
-    let dims: Vec<&str> = v["axes"]
+    assert_eq!(v["version"], 2);
+    let tree = &v["tree"];
+    assert_eq!(tree["type"], "array_set");
+    let dims: Vec<&str> = tree["axes"]
         .as_array()
         .unwrap()
         .iter()
         .map(|a| a["dim"].as_str().unwrap())
         .collect();
     assert_eq!(dims, ["date", "time", "step"]);
-    assert_eq!(v["axes"][1]["values"], json!(["0000", "1200"]));
+    assert_eq!(tree["axes"][1]["values"], json!(["0000", "1200"]));
     assert_eq!(
-        v["variables"],
-        json!([{"name": "167", "param": "167"}, {"name": "165", "param": "165"}])
+        tree["variables"],
+        json!([{"name": "165", "param": "165"}, {"name": "167", "param": "167"}])
     );
     assert_eq!(v["canonical_request"]["expver"], json!(["0001"]));
-    assert_eq!(v["extract"]["order"], json!(["date", "time", "step"]));
-    assert_eq!(
-        v["chunking"]["default"],
-        json!({"date": 1, "time": 1, "step": 1, "values": 6599680})
-    );
+    assert_eq!(tree["extract"]["order"], json!(["date", "time", "step"]));
 
     // Invalid MARS values are a 400 from metkit.
     let (status, _, body) = post_json(
@@ -752,10 +1016,6 @@ chunks:
         &json!({"request": {"class": "od", "param": "not-a-param-xyz"}}),
     )
     .await;
-    assert_eq!(
-        status,
-        StatusCode::BAD_REQUEST,
-        "{}",
-        String::from_utf8_lossy(&body)
-    );
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{}", String::from_utf8_lossy(&body));
 }
+

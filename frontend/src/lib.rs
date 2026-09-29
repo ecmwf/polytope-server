@@ -38,6 +38,25 @@ pub fn build_app_with_expander(
     cfg: config::ServerConfig,
     chunks_expander: Arc<dyn api::chunks::expand::RequestExpander>,
 ) -> Result<(Router, Arc<AppState>), Box<dyn std::error::Error>> {
+    build_app_full(cfg, chunks_expander, None)
+}
+
+/// [`build_app_with_expander`] with an explicit `/chunks/v1` catalogue source
+/// override (tests inject a fixture/failing qube source; production builds an
+/// HTTP source from `chunks.catalogue_url`).
+pub fn build_app_with_catalogue(
+    cfg: config::ServerConfig,
+    chunks_expander: Arc<dyn api::chunks::expand::RequestExpander>,
+    catalogue_source: Option<Arc<dyn api::chunks::catalogue::CatalogueSource>>,
+) -> Result<(Router, Arc<AppState>), Box<dyn std::error::Error>> {
+    build_app_full(cfg, chunks_expander, catalogue_source)
+}
+
+fn build_app_full(
+    cfg: config::ServerConfig,
+    chunks_expander: Arc<dyn api::chunks::expand::RequestExpander>,
+    catalogue_source: Option<Arc<dyn api::chunks::catalogue::CatalogueSource>>,
+) -> Result<(Router, Arc<AppState>), Box<dyn std::error::Error>> {
     let bits_yaml = cfg.bits_yaml()?;
     // `cfg.bits_yaml()` returns the contents of the chart's outer `bits:`
     // block. That block IS the top-level YAML consumed by
@@ -163,10 +182,22 @@ pub fn build_app_with_expander(
                     );
                 }
             }
+            let ttl = std::time::Duration::from_secs(chunks_cfg.catalogue_ttl_secs);
+            let catalogue = match catalogue_source {
+                Some(source) => {
+                    Some(Arc::new(api::chunks::catalogue::CatalogueCache::new(source, ttl)))
+                }
+                None => chunks_cfg.catalogue_url.clone().map(|url| {
+                    let source = Arc::new(api::chunks::catalogue::HttpCatalogueSource::new(url))
+                        as Arc<dyn api::chunks::catalogue::CatalogueSource>;
+                    Arc::new(api::chunks::catalogue::CatalogueCache::new(source, ttl))
+                }),
+            };
             Some(api::chunks::router::<()>(
                 state.clone(),
                 chunks_cfg,
                 chunks_expander,
+                catalogue,
             ))
         }
         _ => None,

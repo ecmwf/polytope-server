@@ -153,7 +153,7 @@ impl CanonicalRequest {
     }
 }
 
-fn axis_rank(key: &str) -> usize {
+pub fn axis_rank(key: &str) -> usize {
     AXIS_ORDER
         .iter()
         .position(|k| *k == key)
