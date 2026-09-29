@@ -14,14 +14,14 @@ No polytope-mars, no CoverageJSON. Any missing field, value-count mismatch,
 grid-hash mismatch or gribjump error fails the whole job (D5) -- this module
 raises and never returns partial results.
 
-gribjump/FDB configuration: this module does not read any config itself. It
-relies on the process-scoped ``PolytopeDataSource`` (polytope.py) having
-already materialised the worker config's ``gribjump_config`` (and optional
-``fdb_config``) to /tmp and exported ``GRIBJUMP_CONFIG_FILE`` /
-``FDB5_CONFIG_FILE`` -- exactly what the PolytopeMars path relies on. That
-happens once per process. With the location cache enabled, a miss resolves one
-field with pyfdb and subsequent chunks use pygribjump's path-based API directly;
-size zero retains the original request-based extraction path exactly.
+gribjump/FDB configuration: the process-scoped ``PolytopeDataSource``
+materialises the worker's own ``gribjump_config`` (and optional
+``fdb_config``) to /tmp and exports ``GRIBJUMP_CONFIG_FILE`` /
+``FDB5_CONFIG_FILE``. The cache reads that same gribjump file once to map
+pyfdb's internal store aliases onto the configured FDB servermap endpoints.
+With the location cache enabled, a miss resolves one field with pyfdb and
+subsequent chunks use pygribjump's path-based API directly; size zero retains
+the original request-based extraction path exactly.
 
 Profiling: every job emits exactly one ``chunks-profile`` INFO log line (see
 ``_log_profile``) with per-phase wall times, so worker-side cost can be read
@@ -38,7 +38,11 @@ from urllib.parse import parse_qs
 
 import numpy as np
 
-from location_cache import FieldLocation, LocationCache  # type: ignore[import-not-found]
+from location_cache import (  # type: ignore[import-not-found]
+    FieldLocation,
+    LocationCache,
+    LocationServerMap,
+)
 
 CONTENT_TYPE = "application/octet-stream"
 
@@ -210,7 +214,7 @@ def enumerate_fields(field_values, order):
 _gribjump = None
 _fdb = None
 _location_cache = None
-
+_location_servermap = None
 
 def _get_gribjump(pygribjump):
     """Process-scoped GribJump handle (created after config is set)."""
@@ -235,15 +239,23 @@ def _get_location_cache():
     return _location_cache
 
 
+def _get_location_servermap():
+    global _location_servermap
+    if _location_servermap is None:
+        _location_servermap = LocationServerMap.from_config()
+    return _location_servermap
+
+
 def _reset_gribjump():  # for tests
     global _gribjump
     _gribjump = None
 
 
 def _reset_location_state():  # for tests
-    global _fdb, _location_cache
+    global _fdb, _location_cache, _location_servermap
     _fdb = None
     _location_cache = None
+    _location_servermap = None
 
 
 def warm_up(pygribjump=None):
@@ -294,16 +306,13 @@ def _location_from_element(element):
         scheme = values[0] if values else ""
     if not path or not scheme:
         raise ExtractError(f"FDB location lookup returned invalid URI {uri!r}")
-    # Preserve the outer FDB URI. Local mn5 FDB listings expose a path-only
-    # URI, but encode the store host in the archive filename; passing that host
-    # lets gribjump's servermap route the path instead of opening it locally.
+    # Preserve the FDB URI host. Local mn5 FDB listings expose a path-only URI
+    # but encode the internal store alias in the archive filename.
     host = uri.hostname() or ""
-    inferred_store = False
     if not host:
         match = re.search(r"\.([A-Za-z0-9-]+\.novalocal)\.", path)
         host = match.group(1) if match else ""
-        inferred_store = bool(match)
-    port = uri.port() or (9000 if inferred_store else 0)
+    port = uri.port() or 0
     return FieldLocation(
         path=path,
         scheme=scheme,
@@ -441,7 +450,7 @@ def _log_profile(prof):
     """Emit the single per-job ``chunks-profile`` line (key=value, grep-able)."""
     logging.info(
         "chunks-profile job=%s status=%s phase=%s fields=%d ranges=%d points=%d "
-        "cache=%d/%d t_lookup=%.1fms "
+        "cache=%d/%d fallback=%d t_lookup=%.1fms "
         "t_parse=%.1fms t_enum=%.1fms t_extract=%.1fms t_assemble=%.1fms "
         "t_zstd=%.1fms t_total=%.1fms raw_bytes=%d bytes=%d zstd_level=%d",
         prof["job"],
@@ -452,6 +461,7 @@ def _log_profile(prof):
         prof["points"],
         prof["cache_hits"],
         prof["cache_misses"],
+        prof["fallbacks"],
         prof["lookup_ms"],
         prof["parse_ms"],
         prof["enum_ms"],
@@ -479,6 +489,7 @@ def run_extract(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
         "points": 0,
         "cache_hits": 0,
         "cache_misses": 0,
+        "fallbacks": 0,
         "lookup_ms": 0.0,
         "parse_ms": 0.0,
         "enum_ms": 0.0,
@@ -532,47 +543,105 @@ def run_extract(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
                 prof["extract_ms"] = _ms(t_enum, t_extract)
             else:
                 locations = []
-                for field in fields:
+                fallback_indices = set()
+                for index, field in enumerate(fields):
                     location = cache.get(field)
                     if location is None:
                         prof["cache_misses"] += 1
-                        location = lookup(field)
-                        cache.put(field, location)
+                        try:
+                            location = lookup(field)
+                        except ExtractError:
+                            fallback_indices.add(index)
+                            location = None
+                        else:
+                            cache.put(field, location)
                     else:
                         prof["cache_hits"] += 1
                     locations.append(location)
 
+                servermap = _get_location_servermap()
+                results_by_index = [None] * len(fields)
+                path_items = []
+                for index, (field, location) in enumerate(zip(fields, locations)):
+                    if location is None:
+                        continue
+                    translated = servermap.translate(location)
+                    if translated is None:
+                        fallback_indices.add(index)
+                    else:
+                        path_items.append((index, field, translated))
+
                 prof["phase"] = "extract"
                 extract_seconds = 0.0
-                started = time.monotonic()
-                try:
-                    results = _extract_locations(
-                        gj, pygribjump, locations, spec, ctx
-                    )
-                    extract_seconds += time.monotonic() - started
-                except RuntimeError:
-                    extract_seconds += time.monotonic() - started
-                    # The path API reports a batch error without an index. Refresh
-                    # every candidate location so the stale entry is guaranteed to
-                    # be invalidated, then retry the batch exactly once.
-                    fresh_locations = []
-                    for field in fields:
-                        cache.invalidate(field)
-                        fresh_location = lookup(field)
-                        cache.put(field, fresh_location)
-                        fresh_locations.append(fresh_location)
-                    prof["phase"] = "extract"
+
+                def extract_paths(items):
+                    nonlocal extract_seconds
                     started = time.monotonic()
                     try:
-                        results = _extract_locations(
-                            gj, pygribjump, fresh_locations, spec, ctx
+                        extracted = _extract_locations(
+                            gj, pygribjump, [item[2] for item in items], spec, ctx
                         )
+                    finally:
                         extract_seconds += time.monotonic() - started
-                    except RuntimeError as exc:
+                    for item, result in zip(items, extracted):
+                        results_by_index[item[0]] = result
+
+                if path_items:
+                    try:
+                        extract_paths(path_items)
+                    except Exception:
+                        # Refresh every path candidate because the path API reports
+                        # only a batch failure, then retry the routable subset once.
+                        fresh_items = []
+                        for index, field, _location in path_items:
+                            cache.invalidate(field)
+                            try:
+                                fresh_location = lookup(field)
+                            except ExtractError:
+                                fallback_indices.add(index)
+                                continue
+                            cache.put(field, fresh_location)
+                            translated = servermap.translate(fresh_location)
+                            if translated is None:
+                                fallback_indices.add(index)
+                            else:
+                                fresh_items.append((index, field, translated))
+                        prof["phase"] = "extract"
+                        if fresh_items:
+                            try:
+                                extract_paths(fresh_items)
+                            except Exception as retry_exc:
+                                logging.warning(
+                                    "gribjump location extraction failed after refresh; "
+                                    "falling back for %d field(s): %s",
+                                    len(fresh_items),
+                                    retry_exc,
+                                )
+                                fallback_indices.update(item[0] for item in fresh_items)
+
+                if fallback_indices:
+                    ordered_indices = sorted(fallback_indices)
+                    logging.warning(
+                        "Cached FDB location route unavailable; falling back to "
+                        "request extraction for %d field(s)",
+                        len(ordered_indices),
+                    )
+                    fallback_fields = [fields[index] for index in ordered_indices]
+                    fallback_requests = build_requests(fallback_fields, spec, pygribjump)
+                    started = time.monotonic()
+                    try:
+                        fallback_results = list(
+                            gj.extract(fallback_requests, ctx=ctx)
+                            if ctx is not None
+                            else gj.extract(fallback_requests)
+                        )
+                    finally:
                         extract_seconds += time.monotonic() - started
-                        raise ExtractError(
-                            f"gribjump location extraction failed after refresh: {exc}"
-                        ) from exc
+                    for index, result in zip(ordered_indices, fallback_results):
+                        results_by_index[index] = result
+                    prof["fallbacks"] = len(ordered_indices)
+
+                results = results_by_index
                 t_extract = time.monotonic()
                 prof["extract_ms"] = round(extract_seconds * 1000, 1)
 
@@ -610,6 +679,7 @@ def run_extract(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
         "points": prof["points"],
         "cache_hits": prof["cache_hits"],
         "cache_misses": prof["cache_misses"],
+        "fallbacks": prof["fallbacks"],
         "raw_bytes": prof["raw_bytes"],
         "payload_bytes": prof["payload_bytes"],
     }

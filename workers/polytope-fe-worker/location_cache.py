@@ -5,10 +5,13 @@
 """Process-local LRU cache of FDB field locations for /chunks/v1."""
 
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+import logging
 import os
 import threading
 import time
+
+import yaml
 
 
 DEFAULT_SIZE = 4096
@@ -26,6 +29,84 @@ class FieldLocation:
     length: int
     host: str = ""
     port: int = 0
+
+
+def _store_stem(host):
+    """Return the exact first-label store stem used to join FDB host aliases."""
+    label = str(host or "").rstrip(".").split(".", 1)[0].lower()
+    return label[:-4] if label.endswith("-ope") else label
+
+
+def _parse_endpoint(value):
+    """Parse the host:port form used by gribjump's servermap."""
+    host, separator, raw_port = str(value or "").strip().rpartition(":")
+    if not separator or not host or not raw_port:
+        return None
+    try:
+        port = int(raw_port)
+    except ValueError:
+        return None
+    if not 0 < port <= 65535:
+        return None
+    return host.rstrip("."), port
+
+
+class LocationServerMap:
+    """Translate pyfdb location hosts to configured gribjump FDB endpoints."""
+
+    def __init__(self, servermap=()):
+        endpoints = {}
+        ambiguous = set()
+        for entry in servermap or ():
+            if not isinstance(entry, dict):
+                continue
+            endpoint = _parse_endpoint(entry.get("fdb"))
+            if endpoint is None:
+                continue
+            stem = _store_stem(endpoint[0])
+            if not stem:
+                continue
+            if stem in endpoints and endpoints[stem] != endpoint:
+                ambiguous.add(stem)
+            else:
+                endpoints[stem] = endpoint
+        for stem in ambiguous:
+            endpoints.pop(stem, None)
+            logging.warning("Ignoring ambiguous gribjump servermap FDB stem %s", stem)
+        self._endpoints = endpoints
+        self._logged_hosts = set()
+        self._lock = threading.Lock()
+
+    @classmethod
+    def from_config(cls, path=None):
+        path = path or os.environ.get("GRIBJUMP_CONFIG_FILE", "/tmp/gribjump.yaml")
+        try:
+            with open(path, encoding="utf-8") as stream:
+                config = yaml.safe_load(stream) or {}
+            servermap = config.get("servermap", []) if isinstance(config, dict) else []
+        except (OSError, yaml.YAMLError) as exc:
+            logging.warning("Cannot load gribjump servermap from %s: %s", path, exc)
+            servermap = []
+        return cls(servermap)
+
+    def translate(self, location):
+        """Return a location routed through servermap, or None when unmappable."""
+        endpoint = self._endpoints.get(_store_stem(location.host))
+        if endpoint is None:
+            return None
+        external_host, external_port = endpoint
+        source = f"{location.host}:{location.port}"
+        with self._lock:
+            first = source not in self._logged_hosts
+            self._logged_hosts.add(source)
+        if first:
+            logging.info(
+                "Translating cached FDB location %s to %s:%d via gribjump servermap",
+                source,
+                external_host,
+                external_port,
+            )
+        return replace(location, host=external_host, port=external_port)
 
 
 def canonical_field_key(field_request):

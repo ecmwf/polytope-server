@@ -237,6 +237,9 @@ def enable_location_cache(monkeypatch, size=4096, ttl=3600):
     monkeypatch.setenv("POLYTOPE_CHUNKS_LOCCACHE_SIZE", str(size))
     monkeypatch.setenv("POLYTOPE_CHUNKS_LOCCACHE_TTL_SECS", str(ttl))
     extract._reset_location_state()
+    extract._location_servermap = location_cache.LocationServerMap(
+        [{"fdb": "store.example:9000"}]
+    )
 
 
 def base_request(**overrides):
@@ -476,7 +479,7 @@ def test_path_only_fdb_uri_uses_internal_scheme():
         offset=1234,
         length=5678,
         host="mn5-prod-store6.novalocal",
-        port=9000,
+        port=0,
     )
 
 
@@ -536,7 +539,7 @@ def test_location_failure_invalidates_refreshes_and_retries_once(
     assert extract._get_location_cache().stats()["invalidations"] == 1
 
 
-def test_location_failure_after_refresh_fails_job(fake_gj, fake_fdb, monkeypatch):
+def test_location_failure_after_refresh_falls_back(fake_gj, fake_fdb, monkeypatch):
     enable_location_cache(monkeypatch)
     req = single_field_request()
     field = single_field(req)
@@ -545,11 +548,80 @@ def test_location_failure_after_refresh_fails_job(fake_gj, fake_fdb, monkeypatch
     fake_fdb.set_sequence(field, [stale, fresh])
     fake_gj.path_failures.update({stale.path: 1, fresh.path: 1})
 
-    with pytest.raises(extract.ExtractError, match="failed after refresh"):
-        extract.run_extract(req)
+    payload, _, timings = extract.run_extract(req)
 
+    np.testing.assert_array_equal(decode(payload), default_values(field, 0, 4))
     assert len(fake_fdb.calls) == 2
     assert len(fake_gj.path_calls) == 2
+    assert len(fake_gj.calls) == 1
+    assert timings["fallbacks"] == 1
+
+
+def test_unmappable_location_uses_identical_request_fallback(
+    fake_gj, fake_fdb, monkeypatch, caplog
+):
+    req = single_field_request()
+    request_payload, _, _ = extract.run_extract(req)
+    caplog.set_level(logging.INFO)
+
+    enable_location_cache(monkeypatch)
+    field = single_field(req)
+    unmappable = location_cache.FieldLocation(
+        path="/archive/internal.grib",
+        scheme="fdb",
+        offset=1234,
+        length=5678,
+        host="unknown-store.novalocal",
+        port=0,
+    )
+    extract._get_location_cache().put(field, unmappable)
+    path_calls_before = len(fake_gj.path_calls)
+
+    fallback_payload, _, timings = extract.run_extract(req, job_id="fallback-profile")
+
+    assert fallback_payload == request_payload
+    assert len(fake_gj.path_calls) == path_calls_before
+    assert timings["fallbacks"] == 1
+    assert timings["cache_hits"] == 1
+    (line,) = _profile_lines([record.getMessage() for record in caplog.records])
+    match = _PROFILE_RE.match(line)
+    assert match and match["job"] == "fallback-profile"
+    assert as_int(match["fallback"]) == 1
+
+
+def test_novalocal_port_zero_translates_before_path_request(
+    fake_gj, fake_fdb, monkeypatch
+):
+    enable_location_cache(monkeypatch)
+    extract._location_servermap = location_cache.LocationServerMap(
+        [
+            {
+                "fdb": (
+                    "mn5-prod-store6-ope.mn5.apps.dte.destination-earth.eu:10000"
+                )
+            }
+        ]
+    )
+    req = single_field_request()
+    field = single_field(req)
+    internal = location_cache.FieldLocation(
+        path="/archive/internal.grib",
+        scheme="fdb",
+        offset=1234,
+        length=5678,
+        host="mn5-prod-store6.novalocal",
+        port=0,
+    )
+    fake_gj.path_fields[internal.path] = field
+    extract._get_location_cache().put(field, internal)
+
+    payload, _, timings = extract.run_extract(req)
+
+    np.testing.assert_array_equal(decode(payload), default_values(field, 0, 4))
+    path_request = fake_gj.path_calls[0]["requests"][0]
+    assert path_request.host == "mn5-prod-store6-ope.mn5.apps.dte.destination-earth.eu"
+    assert path_request.port == 10000
+    assert timings["fallbacks"] == 0
 
 
 def test_size_zero_uses_byte_identical_request_path(fake_gj, fake_fdb):
@@ -753,7 +825,8 @@ def test_dispatch_extract_error_reports_job_failure(fake_gj, recording_ds):
 _PROFILE_RE = re.compile(
     r"^chunks-profile job=(?P<job>\S+) status=(?P<status>\w+) phase=(?P<phase>\w+) "
     r"fields=(?P<fields>\d+) ranges=(?P<ranges>\d+) points=(?P<points>\d+) "
-    r"cache=(?P<hits>\d+)/(?P<misses>\d+) t_lookup=(?P<t_lookup>[\d.]+)ms "
+    r"cache=(?P<hits>\d+)/(?P<misses>\d+) fallback=(?P<fallback>\d+) "
+    r"t_lookup=(?P<t_lookup>[\d.]+)ms "
     r"t_parse=(?P<t_parse>[\d.]+)ms t_enum=(?P<t_enum>[\d.]+)ms "
     r"t_extract=(?P<t_extract>[\d.]+)ms t_assemble=(?P<t_assemble>[\d.]+)ms "
     r"t_zstd=(?P<t_zstd>[\d.]+)ms t_total=(?P<t_total>[\d.]+)ms "
@@ -786,6 +859,7 @@ def test_profile_line_and_phase_timings(fake_gj, caplog):
     assert timings["points"] == 42 and timings["fields"] == 6
     assert timings["raw_bytes"] == 42 * 8 and timings["payload_bytes"] == len(payload)
     assert as_int(m["hits"]) == 0 and as_int(m["misses"]) == 0
+    assert as_int(m["fallback"]) == 0
     assert as_float(m["t_lookup"]) == 0.0
     assert timings["lookup_ms"] == 0.0
 
@@ -800,6 +874,7 @@ def test_profile_line_reports_cache_counts_and_lookup_time(
     match = _PROFILE_RE.match(line)
     assert match, line
     assert as_int(match["hits"]) == 0 and as_int(match["misses"]) == 1
+    assert as_int(match["fallback"]) == 0
     assert as_float(match["t_lookup"]) >= 0.0
 
 

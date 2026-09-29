@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import logging
 from pathlib import Path
 import sys
 
@@ -62,3 +63,42 @@ def test_size_zero_is_disabled_and_does_not_record_misses():
         "entries": 0,
         "size": 0,
     }
+
+
+def test_servermap_translates_internal_host_and_port_zero(tmp_path, caplog):
+    caplog.set_level(logging.INFO)
+    config = tmp_path / "gribjump.yaml"
+    config.write_text(
+        "servermap:\n"
+        "  - fdb: mn5-prod-store6-ope.mn5.apps.example:10000\n"
+        "    gribjump: mn5-prod-store6-ope.mn5.apps.example:10001\n"
+    )
+    servermap = location_cache.LocationServerMap.from_config(config)
+    internal = location_cache.FieldLocation(
+        "/archive/data", "fdb", 1, 2, "mn5-prod-store6.novalocal", 0
+    )
+
+    translated = servermap.translate(internal)
+    servermap.translate(internal)
+
+    assert translated == location_cache.FieldLocation(
+        "/archive/data",
+        "fdb",
+        1,
+        2,
+        "mn5-prod-store6-ope.mn5.apps.example",
+        10000,
+    )
+    messages = [record.getMessage() for record in caplog.records]
+    assert len([message for message in messages if "Translating cached FDB" in message]) == 1
+
+
+def test_servermap_requires_exact_normalised_store_stem():
+    servermap = location_cache.LocationServerMap(
+        [{"fdb": "mn5-prod-store6-ope.example:10000"}]
+    )
+    near_match = location_cache.FieldLocation(
+        "/archive/data", "fdb", 1, 2, "mn5-prod-store60.novalocal", 0
+    )
+
+    assert servermap.translate(near_match) is None
