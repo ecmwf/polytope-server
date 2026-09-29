@@ -101,6 +101,7 @@ COPY --from=builder /ecmwf/polytope-server/target/release/${BIN_NAME} /app/polyt
 COPY workers/polytope-fe-worker/run_polytope_worker.py /app/
 COPY workers/polytope-fe-worker/polytope.py /app/
 COPY workers/polytope-fe-worker/extract.py /app/
+COPY workers/polytope-fe-worker/location_cache.py /app/
 COPY workers/polytope-fe-worker/dynamic_grid/ /app/dynamic_grid/
 ENTRYPOINT ["/app/polytope-fe-worker"]
 
@@ -131,5 +132,6 @@ COPY --from=builder /ecmwf/polytope-server/target/release/${BIN_NAME} /app/polyt
 COPY workers/polytope-fe-worker/run_polytope_worker.py /app/
 COPY workers/polytope-fe-worker/polytope.py /app/
 COPY workers/polytope-fe-worker/extract.py /app/
+COPY workers/polytope-fe-worker/location_cache.py /app/
 COPY workers/polytope-fe-worker/dynamic_grid/ /app/dynamic_grid/
 ENTRYPOINT ["/app/polytope-fe-worker"]
