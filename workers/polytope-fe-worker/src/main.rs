@@ -176,17 +176,12 @@ impl Processor for PolytopeProcessor {
                     let len = bytes.len() as u64;
                     let timings = serde_json::to_string(&status.timings).unwrap_or_default();
                     info!(job_id = %job_id, bytes = len, timings = %timings, "request completed");
-                    let stream = futures::stream::once(futures::future::ready(Ok::<
-                        bytes::Bytes,
-                        std::io::Error,
-                    >(
-                        bytes::Bytes::from(bytes),
-                    )));
+                    let bytes = bytes::Bytes::from(bytes);
                     let content_type = status
                         .content_type
                         .filter(|ct| !ct.is_empty())
                         .unwrap_or_else(|| DEFAULT_CONTENT_TYPE.to_string());
-                    ProcessResult::success(content_type, Box::new(stream))
+                    ProcessResult::success_bytes(content_type, bytes)
                 } else {
                     let message = status.error.map(|e| e.message).unwrap_or_else(|| {
                         "python worker reported failure with no message".to_string()

@@ -45,6 +45,7 @@ pub trait ResultDelivery: Send + Sync {
         content_type: &str,
         content_encoding: Option<&str>,
         body: reqwest::Body,
+        buffered_length: Option<u64>,
         metadata: &serde_json::Value,
         context: DeliveryContext<'_>,
     ) -> Completion;
@@ -82,6 +83,7 @@ pub async fn make_delivery(config: &DeliveryConfig) -> Box<dyn ResultDelivery> {
                 api_base,
                 create_client,
                 body_client,
+                early_release: config.bobs_early_release,
             })
         }
         DeliveryType::S3 => {
@@ -141,6 +143,7 @@ impl ResultDelivery for DirectDelivery {
         content_type: &str,
         content_encoding: Option<&str>,
         body: reqwest::Body,
+        buffered_length: Option<u64>,
         metadata: &serde_json::Value,
         context: DeliveryContext<'_>,
     ) -> Completion {
@@ -152,7 +155,7 @@ impl ResultDelivery for DirectDelivery {
         Completion::Complete {
             content_type: content_type.to_string(),
             content_encoding: content_encoding.map(str::to_string),
-            content_length: None,
+            content_length: buffered_length,
             body,
             source_error: context.source_error,
         }

@@ -97,11 +97,12 @@ impl SourceError {
             .restart_worker
     }
 }
-
 pub enum ProcessResult {
     Success {
         content_type: String,
         body: RawStream,
+        /// Set only when the complete payload is already buffered in memory.
+        buffered_length: Option<u64>,
         source_error: Option<SourceError>,
     },
     Reject {
@@ -117,6 +118,19 @@ impl ProcessResult {
         Self::Success {
             content_type: content_type.into(),
             body,
+            buffered_length: None,
+            source_error: None,
+        }
+    }
+
+    /// Construct a success whose complete bytes are already in hand.
+    pub fn success_bytes(content_type: impl Into<String>, bytes: bytes::Bytes) -> Self {
+        let buffered_length = bytes.len() as u64;
+        let body = futures::stream::once(futures::future::ready(Ok(bytes)));
+        Self::Success {
+            content_type: content_type.into(),
+            body: Box::new(body),
+            buffered_length: Some(buffered_length),
             source_error: None,
         }
     }
@@ -129,6 +143,7 @@ impl ProcessResult {
         Self::Success {
             content_type: content_type.into(),
             body,
+            buffered_length: None,
             source_error: Some(source_error),
         }
     }
@@ -156,6 +171,31 @@ pub struct WorkItem {
     pub callback_url: Option<String>,
 }
 
+pub struct DeferredDelivery {
+    future:
+        std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'static>>,
+}
+
+impl std::fmt::Debug for DeferredDelivery {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("DeferredDelivery(..)")
+    }
+}
+
+impl DeferredDelivery {
+    pub(crate) fn new(
+        future: impl std::future::Future<Output = Result<(), String>> + Send + 'static,
+    ) -> Self {
+        Self {
+            future: Box::pin(future),
+        }
+    }
+
+    async fn finish(self) -> Result<(), String> {
+        self.future.await
+    }
+}
+
 #[derive(Debug)]
 pub enum Completion {
     Complete {
@@ -170,6 +210,13 @@ pub enum Completion {
         message: String,
         content_type: Option<String>,
         content_length: Option<u64>,
+    },
+    EarlyRedirect {
+        location: String,
+        message: String,
+        content_type: Option<String>,
+        content_length: u64,
+        upload: DeferredDelivery,
     },
     Reject {
         reason: String,
@@ -330,6 +377,14 @@ impl WorkerConfig {
     pub fn complete_redirect_url_for_work(&self, work: &WorkItem) -> String {
         format!(
             "{}/complete/redirect/{}",
+            self.callback_base_for_work(work),
+            work.job_id
+        )
+    }
+
+    pub fn release_redirect_url_for_work(&self, work: &WorkItem) -> String {
+        format!(
+            "{}/release/redirect/{}",
             self.callback_base_for_work(work),
             work.job_id
         )
@@ -747,6 +802,7 @@ async fn worker_task<P: Processor + 'static>(
                 ProcessResult::Success {
                     content_type,
                     body,
+                    buffered_length,
                     source_error,
                 } => {
                     source_error_for_restart = source_error.clone();
@@ -763,6 +819,7 @@ async fn worker_task<P: Processor + 'static>(
                             &content_type,
                             content_encoding.as_deref(),
                             encoded,
+                            buffered_length,
                             &work.metadata,
                             DeliveryContext {
                                 job_id: &work.job_id,
@@ -831,7 +888,7 @@ async fn worker_task<P: Processor + 'static>(
             completion,
             process_ms,
             processing_duration,
-            deliver_ms,
+            mut deliver_ms,
             byte_counter,
             source_error_for_restart,
         ) = match processing {
@@ -915,6 +972,75 @@ async fn worker_task<P: Processor + 'static>(
                 )
                 .await
                 .map(|resp| (resp, "error"))
+            }
+            Completion::EarlyRedirect {
+                location,
+                message,
+                content_type,
+                content_length,
+                upload,
+            } => {
+                let redirect_payload = CompletionRequest::Redirect {
+                    location,
+                    message,
+                    content_type,
+                    content_length: Some(content_length),
+                };
+                let release = send_completion_with_retries(
+                    client
+                        .post(config.release_redirect_url_for_work(&work))
+                        .json(&redirect_payload),
+                    recovery_policy.completion_attempts,
+                    config.retry_backoff,
+                )
+                .await;
+                let released =
+                    matches!(&release, Ok(response) if response.status() == StatusCode::OK);
+                if !released {
+                    tracing::warn!(
+                        "event.name" = "worker.delivery.early_release.failed",
+                        outcome = "error",
+                        request.id = %work.job_id,
+                        "early redirect callback failed; completing delivery before final callback"
+                    );
+                }
+
+                let upload_started = Instant::now();
+                let upload_result = upload.finish().await;
+                deliver_ms = deliver_ms.saturating_add(upload_started.elapsed().as_millis() as u64);
+                match upload_result {
+                    Ok(()) => send_completion_with_retries(
+                        client
+                            .post(config.complete_redirect_url_for_work(&work))
+                            .json(&redirect_payload),
+                        recovery_policy.completion_attempts,
+                        config.retry_backoff,
+                    )
+                    .await
+                    .map(|response| (response, "redirect")),
+                    Err(error) => {
+                        tracing::error!(
+                            "event.name" = "worker.delivery.failed",
+                            outcome = "error",
+                            request.id = %work.job_id,
+                            error = %error,
+                            early_release = released,
+                            "BOBS upload failed after redirect preparation"
+                        );
+                        let error_payload = CompletionRequest::Error {
+                            message: format!("delivery failed: {error}"),
+                        };
+                        send_completion_with_retries(
+                            client
+                                .post(config.complete_error_url_for_work(&work))
+                                .json(&error_payload),
+                            recovery_policy.completion_attempts,
+                            config.retry_backoff,
+                        )
+                        .await
+                        .map(|response| (response, "error"))
+                    }
+                }
             }
             Completion::Redirect {
                 location,
@@ -1385,6 +1511,7 @@ mod tests {
         delivered: Mutex<bool>,
         completions: Mutex<Vec<(String, Vec<u8>)>>,
         work_metadata: Mutex<serde_json::Value>,
+        events: Arc<Mutex<Vec<String>>>,
     }
 
     impl Default for BrokerState {
@@ -1393,6 +1520,7 @@ mod tests {
                 delivered: Mutex::new(false),
                 completions: Mutex::new(Vec::new()),
                 work_metadata: Mutex::new(serde_json::json!({})),
+                events: Arc::new(Mutex::new(Vec::new())),
             }
         }
     }
@@ -1401,6 +1529,8 @@ mod tests {
         write_base_url: String,
         calls: Mutex<Vec<String>>,
         writes: Mutex<Vec<Vec<u8>>>,
+        events: Arc<Mutex<Vec<String>>>,
+        fail_write: bool,
     }
 
     async fn broker_work(
@@ -1431,6 +1561,14 @@ mod tests {
         body: axum::body::Body,
     ) -> StatusCode {
         broker_complete("data", state, body).await
+    }
+
+    async fn broker_release_redirect(
+        Path(_job_id): Path<String>,
+        State(state): State<Arc<BrokerState>>,
+        body: axum::body::Body,
+    ) -> StatusCode {
+        broker_complete("release", state, body).await
     }
 
     async fn broker_complete_redirect(
@@ -1470,6 +1608,7 @@ mod tests {
             })
             .await
             .unwrap();
+        state.events.lock().unwrap().push(kind.to_string());
         state
             .completions
             .lock()
@@ -1482,6 +1621,7 @@ mod tests {
         State(state): State<Arc<BobsState>>,
     ) -> (StatusCode, axum::Json<serde_json::Value>) {
         state.calls.lock().unwrap().push("create".to_string());
+        state.events.lock().unwrap().push("create".to_string());
         (
             StatusCode::CREATED,
             axum::Json(serde_json::json!({
@@ -1506,6 +1646,10 @@ mod tests {
             .await
             .unwrap();
         state.calls.lock().unwrap().push("write".to_string());
+        state.events.lock().unwrap().push("write".to_string());
+        if state.fail_write {
+            return StatusCode::INTERNAL_SERVER_ERROR;
+        }
         state.writes.lock().unwrap().push(payload);
         StatusCode::OK
     }
@@ -1515,6 +1659,7 @@ mod tests {
         State(state): State<Arc<BobsState>>,
     ) -> StatusCode {
         state.calls.lock().unwrap().push("complete".to_string());
+        state.events.lock().unwrap().push("complete".to_string());
         StatusCode::OK
     }
 
@@ -1570,10 +1715,10 @@ mod tests {
     #[async_trait]
     impl Processor for DirectStreamProcessor {
         async fn process(&self, _work: WorkItem) -> ProcessResult {
-            let stream = futures::stream::iter(vec![Ok::<bytes::Bytes, std::io::Error>(
+            ProcessResult::success_bytes(
+                "application/octet-stream",
                 bytes::Bytes::from(vec![1u8, 2, 3]),
-            )]);
-            ProcessResult::success("application/octet-stream", Box::new(stream))
+            )
         }
     }
 
@@ -1659,6 +1804,7 @@ mod tests {
         DeliveryConfig {
             delivery_type: delivery_config::DeliveryType::Direct,
             bobs_url: None,
+            bobs_early_release: true,
             s3_bucket: None,
             s3_region: None,
             s3_endpoint_url: None,
@@ -1773,6 +1919,7 @@ mod tests {
             delivery_config::DeliveryConfig {
                 delivery_type: delivery_config::DeliveryType::Direct,
                 bobs_url: None,
+                bobs_early_release: true,
                 s3_bucket: None,
                 s3_region: None,
                 s3_endpoint_url: None,
@@ -1839,6 +1986,7 @@ mod tests {
             delivery_config::DeliveryConfig {
                 delivery_type: delivery_config::DeliveryType::Direct,
                 bobs_url: None,
+                bobs_early_release: true,
 
                 s3_bucket: None,
                 s3_region: None,
@@ -1874,10 +2022,13 @@ mod tests {
         // both rooted at "{bobs_url}/api/v1".  Mirror that in the mock.
         let bobs_api_base = format!("{bobs_url}/api/v1");
 
+        let events = Arc::new(Mutex::new(Vec::new()));
         let bobs_state = Arc::new(BobsState {
             write_base_url: bobs_api_base.clone(),
             calls: Mutex::new(vec![]),
             writes: Mutex::new(vec![]),
+            events: events.clone(),
+            fail_write: false,
         });
         let bobs_app = Router::new()
             .route("/api/v1/create", put(bobs_create))
@@ -1886,11 +2037,15 @@ mod tests {
             .with_state(bobs_state.clone());
         tokio::spawn(async move { axum::serve(bobs_listener, bobs_app).await.unwrap() });
 
-        let broker_state = Arc::new(BrokerState::default());
+        let broker_state = Arc::new(BrokerState {
+            events: events.clone(),
+            ..BrokerState::default()
+        });
         let broker_app = Router::new()
             .route("/work", get(broker_work))
             .route("/heartbeat/{job_id}", post(broker_heartbeat))
             .route("/complete/data/{job_id}", post(broker_complete_data))
+            .route("/release/redirect/{job_id}", post(broker_release_redirect))
             .route(
                 "/complete/redirect/{job_id}",
                 post(broker_complete_redirect),
@@ -1918,6 +2073,7 @@ mod tests {
             delivery_config::DeliveryConfig {
                 delivery_type: delivery_config::DeliveryType::Bobs,
                 bobs_url: Some(bobs_url.clone()),
+                bobs_early_release: true,
 
                 s3_bucket: None,
                 s3_region: None,
@@ -1932,7 +2088,7 @@ mod tests {
             DirectStreamProcessor,
         ));
         for _ in 0..40 {
-            if !broker_state.completions.lock().unwrap().is_empty() {
+            if broker_state.completions.lock().unwrap().len() >= 2 {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -1940,8 +2096,9 @@ mod tests {
         run.abort();
 
         let completions = broker_state.completions.lock().unwrap();
-        assert_eq!(completions.len(), 1);
-        assert_eq!(completions[0].0, "redirect");
+        assert_eq!(completions.len(), 2);
+        assert_eq!(completions[0].0, "release");
+        assert_eq!(completions[1].0, "redirect");
         let body: serde_json::Value = serde_json::from_slice(&completions[0].1).unwrap();
         assert_eq!(
             body["location"].as_str().unwrap(),
@@ -1955,6 +2112,10 @@ mod tests {
         drop(completions);
         let calls = bobs_state.calls.lock().unwrap();
         assert_eq!(&*calls, &["create", "write", "complete"]);
+        assert_eq!(
+            &*events.lock().unwrap(),
+            &["create", "release", "write", "complete", "redirect"]
+        );
         drop(calls);
         let writes = bobs_state.writes.lock().unwrap();
         assert_eq!(writes.len(), 1);
@@ -1972,6 +2133,8 @@ mod tests {
             write_base_url: bobs_api_base.clone(),
             calls: Mutex::new(vec![]),
             writes: Mutex::new(vec![]),
+            events: Arc::new(Mutex::new(Vec::new())),
+            fail_write: false,
         });
         let bobs_app = Router::new()
             .route("/api/v1/create", put(bobs_create))
@@ -2012,6 +2175,7 @@ mod tests {
             delivery_config::DeliveryConfig {
                 delivery_type: delivery_config::DeliveryType::Bobs,
                 bobs_url: Some(bobs_url.clone()),
+                bobs_early_release: true,
 
                 s3_bucket: None,
                 s3_region: None,
@@ -2091,6 +2255,7 @@ mod tests {
             delivery_config::DeliveryConfig {
                 delivery_type: delivery_config::DeliveryType::Direct,
                 bobs_url: None,
+                bobs_early_release: true,
 
                 s3_bucket: None,
                 s3_region: None,
@@ -2152,6 +2317,7 @@ mod tests {
             delivery_config::DeliveryConfig {
                 delivery_type: delivery_config::DeliveryType::Direct,
                 bobs_url: None,
+                bobs_early_release: true,
 
                 s3_bucket: None,
                 s3_region: None,
@@ -2213,6 +2379,7 @@ mod tests {
             delivery_config::DeliveryConfig {
                 delivery_type: delivery_config::DeliveryType::Direct,
                 bobs_url: None,
+                bobs_early_release: true,
 
                 s3_bucket: None,
                 s3_region: None,
@@ -2333,6 +2500,7 @@ mod tests {
             delivery_config::DeliveryConfig {
                 delivery_type: delivery_config::DeliveryType::Direct,
                 bobs_url: None,
+                bobs_early_release: true,
                 s3_bucket: None,
                 s3_region: None,
                 s3_endpoint_url: None,
@@ -2386,6 +2554,7 @@ mod tests {
             delivery_config::DeliveryConfig {
                 delivery_type: delivery_config::DeliveryType::Direct,
                 bobs_url: None,
+                bobs_early_release: true,
                 s3_bucket: None,
                 s3_region: None,
                 s3_endpoint_url: None,

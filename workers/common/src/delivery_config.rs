@@ -16,12 +16,20 @@ pub enum DeliveryType {
     S3,
 }
 
+fn default_true() -> bool {
+    true
+}
+
 /// Per-worker-pool delivery configuration, loaded from a YAML file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeliveryConfig {
     pub delivery_type: DeliveryType,
 
     pub bobs_url: Option<String>,
+    /// Release buffered octet-stream read URLs before the BOBS upload completes.
+    /// Defaults to true; structured/streaming legacy results remain late-released.
+    #[serde(default = "default_true")]
+    pub bobs_early_release: bool,
 
     /// S3 bucket name. Required when delivery_type = s3.
     pub s3_bucket: Option<String>,
@@ -104,6 +112,7 @@ s3_region: null
         let config: DeliveryConfig = serde_yml::from_str(yaml).unwrap();
         assert!(matches!(config.delivery_type, DeliveryType::Bobs));
         assert_eq!(config.bobs_url.as_deref(), Some("http://bobs.example.com"));
+        assert!(config.bobs_early_release);
         assert_eq!(config.s3_key_prefix, "");
     }
 
@@ -113,6 +122,7 @@ s3_region: null
         let config: DeliveryConfig = serde_yml::from_str(yaml).unwrap();
         assert!(matches!(config.delivery_type, DeliveryType::Direct));
         assert_eq!(config.s3_key_prefix, "");
+        assert!(config.bobs_early_release);
     }
 
     #[test]

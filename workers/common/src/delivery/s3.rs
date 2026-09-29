@@ -64,6 +64,7 @@ impl ResultDelivery for S3Push {
         content_type: &str,
         content_encoding: Option<&str>,
         body: reqwest::Body,
+        _buffered_length: Option<u64>,
         _metadata: &serde_json::Value,
         context: DeliveryContext<'_>,
     ) -> Completion {
@@ -338,6 +339,7 @@ mod tests {
                 "application/octet-stream",
                 Some("gzip"),
                 reqwest::Body::from(vec![1, 2, 3]),
+                None,
                 &serde_json::json!({}),
                 DeliveryContext {
                     job_id: "job-1",

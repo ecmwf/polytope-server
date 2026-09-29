@@ -5,12 +5,24 @@
 use async_trait::async_trait;
 
 use super::{DeliveryContext, ResultDelivery, enduser_fields};
-use crate::Completion;
+use crate::{Completion, DeferredDelivery};
 
 pub(super) struct BobsPush {
     pub(super) api_base: String,
     pub(super) create_client: reqwest::Client,
     pub(super) body_client: reqwest::Client,
+    pub(super) early_release: bool,
+}
+
+struct PreparedBobsUpload {
+    body_client: reqwest::Client,
+    write_base: String,
+    key: String,
+    read_url: String,
+    job_id: String,
+    content_length: Option<u64>,
+    enduser_id: Option<String>,
+    enduser_realm: Option<String>,
 }
 
 #[async_trait]
@@ -20,66 +32,94 @@ impl ResultDelivery for BobsPush {
         content_type: &str,
         content_encoding: Option<&str>,
         body: reqwest::Body,
+        buffered_length: Option<u64>,
         metadata: &serde_json::Value,
         context: DeliveryContext<'_>,
     ) -> Completion {
         let buffer_full =
             metadata.get("buffer_full_output").and_then(|v| v.as_bool()) == Some(true);
-        match self
-            .push(
+        let prepared = match self
+            .prepare(
                 content_type,
                 content_encoding,
-                body,
                 buffer_full,
+                buffered_length,
                 context.job_id,
                 context.user,
                 metadata,
             )
             .await
         {
+            Ok(prepared) => prepared,
+            Err(error) => return self.delivery_error(context, error),
+        };
+
+        let media_type = content_type.split(';').next().unwrap_or_default().trim();
+        let release_early = self.early_release
+            && !buffer_full
+            && buffered_length.is_some()
+            && context.source_error.is_none()
+            && media_type.eq_ignore_ascii_case("application/octet-stream");
+        let location = prepared.read_url.clone();
+        if release_early {
+            let content_length = buffered_length.expect("checked above");
+            return Completion::EarlyRedirect {
+                location,
+                message: "result available for download".to_string(),
+                content_type: Some(content_type.to_string()),
+                content_length,
+                upload: DeferredDelivery::new(
+                    async move { prepared.upload(body).await.map(|_| ()) },
+                ),
+            };
+        }
+
+        match prepared.upload(body).await {
             Ok(location) => Completion::Redirect {
                 location,
                 message: "result available for download".to_string(),
                 content_type: Some(content_type.to_string()),
-                content_length: None,
+                content_length: buffered_length,
             },
-            Err(e) => {
-                let (enduser_id, enduser_realm) = enduser_fields(context.user);
-                if let Some(source_error) = context.source_error_message() {
-                    if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
-                        tracing::error!("event.name" = "worker.delivery.failed", outcome = "error", request.id = %context.job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, source_error = %source_error, sink_error = %e, "result delivery failed after source stream error");
-                    } else {
-                        tracing::error!("event.name" = "worker.delivery.failed", outcome = "error", request.id = %context.job_id, source_error = %source_error, sink_error = %e, "result delivery failed after source stream error");
-                    }
-                    Completion::Error {
-                        message: source_error,
-                    }
-                } else {
-                    if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
-                        tracing::error!("event.name" = "worker.delivery.failed", outcome = "error", request.id = %context.job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, error = %e, "result delivery failed");
-                    } else {
-                        tracing::error!("event.name" = "worker.delivery.failed", outcome = "error", request.id = %context.job_id, error = %e, "result delivery failed");
-                    }
-                    Completion::Error {
-                        message: format!("delivery failed: {e}"),
-                    }
-                }
-            }
+            Err(error) => self.delivery_error(context, error),
         }
     }
 }
 
 impl BobsPush {
-    async fn push(
+    fn delivery_error(&self, context: DeliveryContext<'_>, error: String) -> Completion {
+        let (enduser_id, enduser_realm) = enduser_fields(context.user);
+        if let Some(source_error) = context.source_error_message() {
+            if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
+                tracing::error!("event.name" = "worker.delivery.failed", outcome = "error", request.id = %context.job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, source_error = %source_error, sink_error = %error, "result delivery failed after source stream error");
+            } else {
+                tracing::error!("event.name" = "worker.delivery.failed", outcome = "error", request.id = %context.job_id, source_error = %source_error, sink_error = %error, "result delivery failed after source stream error");
+            }
+            Completion::Error {
+                message: source_error,
+            }
+        } else {
+            if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
+                tracing::error!("event.name" = "worker.delivery.failed", outcome = "error", request.id = %context.job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, error = %error, "result delivery failed");
+            } else {
+                tracing::error!("event.name" = "worker.delivery.failed", outcome = "error", request.id = %context.job_id, error = %error, "result delivery failed");
+            }
+            Completion::Error {
+                message: format!("delivery failed: {error}"),
+            }
+        }
+    }
+
+    async fn prepare(
         &self,
         content_type: &str,
         content_encoding: Option<&str>,
-        body: reqwest::Body,
         write_locked: bool,
+        content_length: Option<u64>,
         job_id: &str,
         user: &serde_json::Value,
         metadata: &serde_json::Value,
-    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<PreparedBobsUpload, String> {
         let mut create_body = serde_json::json!({
             "content_type": content_type,
             "write_locked": write_locked,
@@ -87,7 +127,6 @@ impl BobsPush {
         if let Some(enc) = content_encoding {
             create_body["content_encoding"] = serde_json::json!(enc);
         }
-        // Propagate collection label for per-collection download metrics in bobs.
         if let Some(collection) = metadata.get("collection").and_then(|v| v.as_str()) {
             create_body["labels"] = serde_json::json!({"collection": collection});
         }
@@ -97,11 +136,15 @@ impl BobsPush {
             .header("X-Polytope-Job-Id", job_id)
             .json(&create_body)
             .send()
-            .await?;
+            .await
+            .map_err(|error| error.to_string())?;
         if !create_resp.status().is_success() {
-            return Err(format!("create failed: {}", create_resp.status()).into());
+            return Err(format!("create failed: {}", create_resp.status()));
         }
-        let create_json: serde_json::Value = create_resp.json().await?;
+        let create_json: serde_json::Value = create_resp
+            .json()
+            .await
+            .map_err(|error| error.to_string())?;
         let key = create_json["key"]
             .as_str()
             .ok_or("missing key in response")?
@@ -112,42 +155,75 @@ impl BobsPush {
                 "missing write_url in create response: BOBS server does not support write routing",
             )?
             .to_string();
-
-        // Stream the entire response body to BOBS as a single chunked HTTP/2
-        // request at offset 0. BOBS appends page-by-page as the body arrives;
-        // the worker no longer pays one round-trip per producer chunk.
-        let write_resp = self
-            .body_client
-            .post(format!("{}/write/{}/0", write_base, key))
-            .header("X-Polytope-Job-Id", job_id)
-            .body(body)
-            .send()
-            .await?;
-        if !write_resp.status().is_success() {
-            return Err(format!("write failed: {}", write_resp.status()).into());
-        }
-
-        let complete_resp = self
-            .body_client
-            .post(format!("{}/complete/{}", write_base, key))
-            .header("X-Polytope-Job-Id", job_id)
-            .send()
-            .await?;
-        if !complete_resp.status().is_success() {
-            return Err(format!("complete failed: {}", complete_resp.status()).into());
-        }
-
         let read_url = create_json["read_url"]
             .as_str()
             .ok_or("missing read_url in response")?
             .to_string();
         let (enduser_id, enduser_realm) = enduser_fields(user);
-        if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
-            tracing::debug!("event.name" = "worker.delivery.completed", outcome = "success", request.id = %job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, bobs.key = %key, read_url = %read_url, "result pushed to BOBS");
-        } else {
-            tracing::debug!("event.name" = "worker.delivery.completed", outcome = "success", request.id = %job_id, bobs.key = %key, read_url = %read_url, "result pushed to BOBS");
+        Ok(PreparedBobsUpload {
+            body_client: self.body_client.clone(),
+            write_base,
+            key,
+            read_url,
+            job_id: job_id.to_string(),
+            content_length,
+            enduser_id: enduser_id.map(str::to_string),
+            enduser_realm: enduser_realm.map(str::to_string),
+        })
+    }
+}
+
+impl PreparedBobsUpload {
+    async fn upload(self, body: reqwest::Body) -> Result<String, String> {
+        let result = self.upload_inner(body).await;
+        if result.is_err() {
+            let _ = self
+                .body_client
+                .delete(format!("{}/delete/{}", self.write_base, self.key))
+                .header("X-Polytope-Job-Id", &self.job_id)
+                .send()
+                .await;
         }
-        Ok(read_url)
+        result.map(|_| self.read_url)
+    }
+
+    async fn upload_inner(&self, body: reqwest::Body) -> Result<(), String> {
+        let mut write = self
+            .body_client
+            .post(format!("{}/write/{}/0", self.write_base, self.key))
+            .header("X-Polytope-Job-Id", &self.job_id);
+        if let Some(content_length) = self.content_length {
+            write = write.header(reqwest::header::CONTENT_LENGTH, content_length);
+        }
+        let write_resp = write
+            .body(body)
+            .send()
+            .await
+            .map_err(|error| error.to_string())?;
+        if !write_resp.status().is_success() {
+            return Err(format!("write failed: {}", write_resp.status()));
+        }
+
+        let mut complete = self
+            .body_client
+            .post(format!("{}/complete/{}", self.write_base, self.key))
+            .header("X-Polytope-Job-Id", &self.job_id);
+        if let Some(content_length) = self.content_length {
+            complete = complete.json(&serde_json::json!({"expected_size": content_length}));
+        }
+        let complete_resp = complete.send().await.map_err(|error| error.to_string())?;
+        if !complete_resp.status().is_success() {
+            return Err(format!("complete failed: {}", complete_resp.status()));
+        }
+
+        if let (Some(enduser_id), Some(enduser_realm)) =
+            (self.enduser_id.as_deref(), self.enduser_realm.as_deref())
+        {
+            tracing::debug!("event.name" = "worker.delivery.completed", outcome = "success", request.id = %self.job_id, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, bobs.key = %self.key, read_url = %self.read_url, "result pushed to BOBS");
+        } else {
+            tracing::debug!("event.name" = "worker.delivery.completed", outcome = "success", request.id = %self.job_id, bobs.key = %self.key, read_url = %self.read_url, "result pushed to BOBS");
+        }
+        Ok(())
     }
 }
 
@@ -250,6 +326,7 @@ mod tests {
             api_base: bobs_url.clone(),
             create_client: h2_client.clone(),
             body_client: h2_client,
+            early_release: false,
         };
         let data = b"hello bobs".to_vec();
         let result = push
@@ -257,6 +334,7 @@ mod tests {
                 "application/octet-stream",
                 None,
                 reqwest::Body::from(data.clone()),
+                None,
                 &serde_json::json!({}),
                 DeliveryContext {
                     job_id: "job-1",
@@ -321,6 +399,15 @@ mod tests {
         StatusCode::OK
     }
 
+    async fn failing_streaming_write(
+        path: Path<(String, u64)>,
+        state: State<Arc<StreamingBobsState>>,
+        body: axum::body::Body,
+    ) -> StatusCode {
+        let _ = streaming_write(path, state, body).await;
+        StatusCode::INTERNAL_SERVER_ERROR
+    }
+
     async fn streaming_complete(
         Path(_key): Path<String>,
         State(state): State<Arc<StreamingBobsState>>,
@@ -357,6 +444,7 @@ mod tests {
             api_base: bobs_url.clone(),
             create_client: h2_client.clone(),
             body_client: h2_client,
+            early_release: false,
         };
 
         // Build a body from a multi-chunk producer stream. The delivery layer
@@ -373,6 +461,7 @@ mod tests {
                 "application/octet-stream",
                 None,
                 body,
+                None,
                 &serde_json::json!({}),
                 DeliveryContext {
                     job_id: "job-1",
@@ -398,6 +487,69 @@ mod tests {
         );
         assert_eq!(writes[0].0, 0, "write must start at offset 0");
         assert_eq!(writes[0].1, b"abcdefg");
+    }
+
+    #[tokio::test]
+    async fn early_release_returns_before_upload_and_surfaces_write_failure() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let bobs_url = format!("http://{addr}");
+        let state = Arc::new(StreamingBobsState {
+            base_url: bobs_url.clone(),
+            created_keys: Mutex::new(vec![]),
+            writes: Mutex::new(vec![]),
+            completed: Mutex::new(false),
+        });
+        let app = Router::new()
+            .route("/create", put(streaming_create))
+            .route("/write/{key}/{offset}", post(failing_streaming_write))
+            .route(
+                "/delete/{key}",
+                axum::routing::delete(|| async { StatusCode::OK }),
+            )
+            .with_state(state.clone());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+        let h2_client = reqwest::Client::builder()
+            .http2_prior_knowledge()
+            .build()
+            .unwrap();
+        let push = BobsPush {
+            api_base: bobs_url,
+            create_client: h2_client.clone(),
+            body_client: h2_client,
+            early_release: true,
+        };
+        let result = push
+            .deliver(
+                "application/octet-stream",
+                None,
+                reqwest::Body::from("abc"),
+                Some(3),
+                &serde_json::json!({}),
+                DeliveryContext {
+                    job_id: "job-early",
+                    user: &serde_json::json!({}),
+                    source_error: None,
+                },
+            )
+            .await;
+
+        let upload = match result {
+            Completion::EarlyRedirect {
+                location, upload, ..
+            } => {
+                assert_eq!(location, "http://public.example.com/download-0/stream-key");
+                upload
+            }
+            other => panic!("expected EarlyRedirect, got {other:?}"),
+        };
+        assert!(state.writes.lock().unwrap().is_empty());
+
+        let error = upload.finish().await.unwrap_err();
+        assert!(error.contains("write failed"));
+        assert_eq!(state.writes.lock().unwrap().len(), 1);
+        assert!(!*state.completed.lock().unwrap());
     }
 
     #[tokio::test]
@@ -428,6 +580,7 @@ mod tests {
             api_base: bobs_url.clone(),
             create_client: h2_client.clone(),
             body_client: h2_client,
+            early_release: false,
         };
 
         let source_error = crate::SourceError::new();
@@ -447,6 +600,7 @@ mod tests {
                 "application/octet-stream",
                 None,
                 body,
+                None,
                 &serde_json::json!({}),
                 DeliveryContext {
                     job_id: "job-1",
@@ -483,12 +637,14 @@ mod tests {
             api_base: "http://127.0.0.1:1".to_string(),
             create_client: h2_client.clone(),
             body_client: h2_client,
+            early_release: false,
         };
         let result = push
             .deliver(
                 "application/octet-stream",
                 None,
                 reqwest::Body::from(vec![]),
+                None,
                 &serde_json::json!({}),
                 DeliveryContext {
                     job_id: "job-1",
@@ -533,12 +689,14 @@ mod tests {
             api_base: format!("http://{addr}"),
             create_client: h2_client.clone(),
             body_client: h2_client,
+            early_release: false,
         };
         let result = push
             .deliver(
                 "application/octet-stream",
                 None,
                 reqwest::Body::from(vec![]),
+                None,
                 &serde_json::json!({}),
                 DeliveryContext {
                     job_id: "job-1",
