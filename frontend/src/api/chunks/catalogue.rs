@@ -182,7 +182,9 @@ pub struct HttpCatalogueSource {
 impl HttpCatalogueSource {
     pub fn new(url: String) -> Self {
         let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
+            // Cross-site catalogue responses are several MiB and can be slow over
+            // the inter-site route; keep the bounded fetch but allow enough time.
+            .timeout(Duration::from_secs(120))
             .build()
             .unwrap_or_default();
         Self { url, client }
