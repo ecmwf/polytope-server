@@ -208,6 +208,24 @@ chunks:
     )
 }
 
+fn split_feature_chunks_section() -> &'static str {
+    r#"
+chunks:
+  max_chunk_cost: 30000000
+  max_feature_points: 100
+  grids:
+    - collection: destination-earth
+      match: { class: d1, dataset: climate-dt, resolution: high }
+      count_values: 12
+      nside: 1
+      md5_grid_section: "f78d9d2d6f6f1b4c8f0b3a6d1b1e2c3d"
+    - collection: destination-earth
+      match: { class: d1, dataset: climate-dt, resolution: standard, generation: 2 }
+      count_values: 48
+      nside: 2
+"#
+}
+
 // ---------------------------------------------------------------------------
 // Arena-JSON fixtures (crafted to reproduce real-world cases)
 // ---------------------------------------------------------------------------
@@ -253,6 +271,16 @@ fn arena_two_grids() -> Value {
         {"dim": "param", "coords": {"strings": ["167"]}, "parent": 1, "children": []},
         {"dim": "resolution", "coords": {"strings": ["standard"]}, "parent": 0, "children": [4]},
         {"dim": "param", "coords": {"strings": ["167"]}, "parent": 3, "children": []},
+    ]})
+}
+
+/// A single dense cube spanning resolutions, as emitted when the catalogue
+/// structure is identical for every resolution.
+fn arena_unsplit_grids(resolutions: &[&str]) -> Value {
+    json!({"version": "1", "qube": [
+        {"dim": "root", "coords": null, "parent": null, "children": [1]},
+        {"dim": "resolution", "coords": {"strings": resolutions}, "parent": 0, "children": [2]},
+        {"dim": "param", "coords": {"strings": ["167"]}, "parent": 1, "children": []},
     ]})
 }
 
@@ -560,6 +588,83 @@ async fn metadata_two_cubes_resolve_different_grids() {
     // Each pins its own resolution.
     assert_eq!(children[0]["base_request"]["resolution"], "high");
     assert_eq!(children[1]["base_request"]["resolution"], "standard");
+}
+
+#[tokio::test]
+async fn metadata_unsplit_cube_is_split_across_grid_registry_entries() {
+    // Deliberately omit resolution: the qube supplies one cube containing both.
+    let request = json!({
+        "class": "d1", "dataset": "climate-dt", "levtype": "sfc",
+        "generation": "2", "param": "167",
+    });
+    let (status, _, body) = post_json(
+        app_with_qube(arena_unsplit_grids(&["standard", "high"])),
+        "/chunks/v1/destination-earth/metadata",
+        &json!({"request": request}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let value: Value = serde_json::from_slice(&body).unwrap();
+    let tree = &value["tree"];
+    assert_eq!(tree["type"], "group");
+    let children = tree["children"].as_array().unwrap();
+    assert_eq!(children.len(), 2);
+    assert_eq!(children[0]["name"], "resolution-high");
+    assert_eq!(children[0]["base_request"]["resolution"], "high");
+    assert_eq!(children[0]["grid"]["count_values"], 12_582_912);
+    assert_eq!(children[0]["grid"]["nside"], 1024);
+    assert_eq!(children[1]["name"], "resolution-standard");
+    assert_eq!(children[1]["base_request"]["resolution"], "standard");
+    assert_eq!(children[1]["grid"]["count_values"], 196_608);
+    assert_eq!(children[1]["grid"]["nside"], Value::Null);
+}
+
+#[tokio::test]
+async fn metadata_feature_is_resolved_per_grid_split_leaf() {
+    let request = json!({
+        "class": "d1", "dataset": "climate-dt", "levtype": "sfc",
+        "generation": "2", "param": "167",
+    });
+    let (status, _, body) = post_json(
+        app_with_qube_and_config(
+            arena_unsplit_grids(&["high", "standard"]),
+            split_feature_chunks_section(),
+        ),
+        "/chunks/v1/destination-earth/metadata",
+        &json!({
+            "request": request,
+            "feature": {
+                "type": "polygon",
+                "shape": [[-20, -20], [20, -20], [20, 20], [-20, 20]],
+            },
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let value: Value = serde_json::from_slice(&body).unwrap();
+    let children = value["tree"]["children"].as_array().unwrap();
+    assert_eq!(children[0]["grid"]["nside"], 1);
+    assert_eq!(children[1]["grid"]["nside"], 2);
+    let high_points = children[0]["feature"]["n_points"].as_u64().unwrap();
+    let standard_points = children[1]["feature"]["n_points"].as_u64().unwrap();
+    assert_ne!(high_points, standard_points);
+    assert!(high_points > 0);
+    assert!(standard_points > 0);
+}
+
+#[tokio::test]
+async fn metadata_unsplit_cube_with_unregistered_value_still_names_original_cube() {
+    let request = json!({
+        "class": "d1", "dataset": "climate-dt", "levtype": "sfc",
+        "generation": "2", "param": "167",
+    });
+    assert_metadata_status(
+        app_with_qube(arena_unsplit_grids(&["standard", "experimental", "high"])),
+        json!({"request": request}),
+        StatusCode::BAD_REQUEST,
+        "resolution=[3 values]",
+    )
+    .await;
 }
 
 #[tokio::test]

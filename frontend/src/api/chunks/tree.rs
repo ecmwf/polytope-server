@@ -83,7 +83,7 @@ fn build_subtree(
     gaps: Gaps,
 ) -> Result<Node, String> {
     if cubes.len() == 1 {
-        return build_array_set(&cubes[0], config, collection, gaps);
+        return build_cube(&cubes[0], config, collection, gaps);
     }
 
     // Divergence point: the first key (canonical order) on which the cubes
@@ -96,7 +96,7 @@ fn build_subtree(
     let Some(split_key) = split_key else {
         // All cubes agree on every key yet there is more than one: identical
         // duplicates. Collapse to one array_set.
-        return build_array_set(&cubes[0], config, collection, gaps);
+        return build_cube(&cubes[0], config, collection, gaps);
     };
 
     // Partition cubes by their value-set for the split key (deterministic via
@@ -127,6 +127,89 @@ fn build_subtree(
     })
 }
 
+/// Build one catalogue cube. If it spans grid-registry boundaries, split only
+/// on multi-valued keys used by this collection's registry. The resulting
+/// leaves are fed back through the normal divergence builder so grouping and
+/// naming are identical to a naturally branched qube.
+fn build_cube(
+    cube: &Cube,
+    config: &ChunksConfig,
+    collection: &str,
+    gaps: Gaps,
+) -> Result<Node, String> {
+    if find_grid_for_cube(cube, config, collection).is_some() {
+        return build_array_set(cube, config, collection, gaps);
+    }
+
+    let split_keys: Vec<String> = ordered_dims(cube)
+        .into_iter()
+        .filter(|key| {
+            cube[key].len() > 1
+                && config
+                    .grids
+                    .iter()
+                    .any(|grid| grid.collection == collection && grid.match_keys.contains_key(key))
+        })
+        .collect();
+
+    if let Some(cubes) = split_cube_for_grids(cube, &split_keys, config, collection) {
+        let keys = super::qube::canonical_key_order(&cubes);
+        return build_subtree(&cubes, &keys, config, collection, gaps);
+    }
+
+    // Preserve the existing error, including the original unsplit cube.
+    build_array_set(cube, config, collection, gaps)
+}
+
+/// Recursively split in canonical key order. A branch stops as soon as its
+/// complete cube matches a registry entry; failure of any branch rejects the
+/// entire split so callers report the original cube.
+fn split_cube_for_grids(
+    cube: &Cube,
+    split_keys: &[String],
+    config: &ChunksConfig,
+    collection: &str,
+) -> Option<Vec<Cube>> {
+    if find_grid_for_cube(cube, config, collection).is_some() {
+        return Some(vec![cube.clone()]);
+    }
+
+    let (key, remaining_keys) = split_keys.split_first()?;
+    let mut values = cube.get(key)?.clone();
+    values.sort();
+    values.dedup();
+    if values.len() <= 1 {
+        return split_cube_for_grids(cube, remaining_keys, config, collection);
+    }
+
+    let mut leaves = Vec::new();
+    for value in values {
+        let mut child = cube.clone();
+        child.insert(key.clone(), vec![value]);
+        leaves.extend(split_cube_for_grids(
+            &child,
+            remaining_keys,
+            config,
+            collection,
+        )?);
+    }
+    Some(leaves)
+}
+
+fn find_grid_for_cube<'a>(
+    cube: &Cube,
+    config: &'a ChunksConfig,
+    collection: &str,
+) -> Option<&'a crate::config::ChunksGridConfig> {
+    let canonical = CanonicalRequest {
+        entries: ordered_dims(cube)
+            .into_iter()
+            .map(|dim| (dim.clone(), cube[&dim].clone()))
+            .collect(),
+    };
+    find_grid(config, collection, &canonical)
+}
+
 fn build_array_set(
     cube: &Cube,
     config: &ChunksConfig,
@@ -142,10 +225,7 @@ fn build_array_set(
         .ok_or_else(|| format!("cube {} has no 'param' value", describe(cube, &dims)))?;
 
     // Grid registry match, applied to the cube's full canonical request.
-    let canonical = CanonicalRequest {
-        entries: dims.iter().map(|d| (d.clone(), cube[d].clone())).collect(),
-    };
-    let grid = find_grid(config, collection, &canonical).ok_or_else(|| {
+    let grid = find_grid_for_cube(cube, config, collection).ok_or_else(|| {
         format!(
             "no grid is registered for cube {} in collection '{collection}' (chunks.grids)",
             describe(cube, &dims)
