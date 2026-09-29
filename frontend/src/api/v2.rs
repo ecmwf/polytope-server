@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::{
     Extension, Json,
@@ -211,84 +211,132 @@ pub async fn public_poll(
     poll_job_v2(&state, id, timeout).await
 }
 
+fn ready_status(result: &JobResult) -> &'static str {
+    match result {
+        JobResult::Success { .. } => "success",
+        JobResult::Redirect { .. } => "redirect",
+        JobResult::Error { .. } => "error",
+        JobResult::Failed { .. } => "failed",
+        JobResult::Overloaded { .. } => "overloaded",
+        JobResult::RateLimited { .. } => "rate_limited",
+        JobResult::ClientGone => "client_gone",
+        JobResult::Cancelled => "cancelled",
+    }
+}
+
 /// Poll a job and convert the outcome to a v2 HTTP response.
 ///
 /// Shared by `submit_collection` (inline poll on submit), `poll` (internal
 /// long-poll endpoint), and `public_poll` (user-facing long-poll endpoint).
 async fn poll_job_v2(state: &Arc<AppState>, id: String, timeout: Duration) -> Response {
+    let poll_started = Instant::now();
     match state.bits.poll(&id, Some(timeout)).await {
         PollOutcome::Pending { id, .. } => {
             let status = local_pending_status(state, &id);
+            tracing::info!(
+                "event.name" = "api.job.poll",
+                outcome = "pending",
+                request.id = %id,
+                job.status = status,
+                wait_ms = poll_started.elapsed().as_millis() as u64,
+                "job poll completed"
+            );
             pending_redirect(&id, status)
         }
         PollOutcome::NotFound => {
+            tracing::info!(
+                "event.name" = "api.job.poll",
+                outcome = "not_found",
+                request.id = %id,
+                wait_ms = poll_started.elapsed().as_millis() as u64,
+                "job poll completed"
+            );
             (StatusCode::NOT_FOUND, Json(json!({"error": "not found"}))).into_response()
         }
-        PollOutcome::JobLost => (
-            StatusCode::GONE,
-            Json(json!({"error": "request state expired or was lost"})),
-        )
-            .into_response(),
-        PollOutcome::Ready(result) => match result {
-            JobResult::Success {
-                content_type,
-                size,
-                stream,
-            } => {
-                let disposition = super::download::content_disposition_for(&id, &content_type);
-                let mut builder = Response::builder()
-                    .status(StatusCode::OK)
-                    .header(header::CONTENT_TYPE, content_type)
-                    .header(header::CONTENT_DISPOSITION, disposition);
-                if size >= 0 {
-                    builder = builder.header(header::CONTENT_LENGTH, size);
-                }
-                builder.body(Body::from_stream(stream)).unwrap()
-            }
-            JobResult::Redirect {
-                location,
-                message,
-                content_type,
-                content_length,
-            } => {
-                let mut builder = Response::builder()
-                    .status(StatusCode::SEE_OTHER)
-                    .header(header::LOCATION, location);
-                // Carry content metadata so a proxying broker can rebuild the v1
-                // redirect body without an extra round-trip (see
-                // bits::runtime::recovery::try_proxy_with_lease).
-                if let Some(content_type) = content_type {
-                    builder = builder.header("x-polytope-content-type", content_type);
-                }
-                if let Some(content_length) = content_length {
-                    builder =
-                        builder.header("x-polytope-content-length", content_length.to_string());
-                }
-                builder.body(Body::from(message)).unwrap()
-            }
-            JobResult::Error { message } => {
-                (StatusCode::BAD_REQUEST, Json(json!({"error": message}))).into_response()
-            }
-            JobResult::Failed { reason } => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": reason})),
+        PollOutcome::JobLost => {
+            tracing::info!(
+                "event.name" = "api.job.poll",
+                outcome = "job_lost",
+                request.id = %id,
+                wait_ms = poll_started.elapsed().as_millis() as u64,
+                "job poll completed"
+            );
+            (
+                StatusCode::GONE,
+                Json(json!({"error": "request state expired or was lost"})),
             )
-                .into_response(),
-            JobResult::Overloaded { reason } => {
-                super::overloaded_response(json!({"error": reason, "retryable": true}))
+                .into_response()
+        }
+        PollOutcome::Ready(result) => {
+            tracing::info!(
+                "event.name" = "api.job.poll",
+                outcome = "ready",
+                request.id = %id,
+                job.status = ready_status(&result),
+                wait_ms = poll_started.elapsed().as_millis() as u64,
+                "job poll completed"
+            );
+            match result {
+                JobResult::Success {
+                    content_type,
+                    size,
+                    stream,
+                } => {
+                    let disposition = super::download::content_disposition_for(&id, &content_type);
+                    let mut builder = Response::builder()
+                        .status(StatusCode::OK)
+                        .header(header::CONTENT_TYPE, content_type)
+                        .header(header::CONTENT_DISPOSITION, disposition);
+                    if size >= 0 {
+                        builder = builder.header(header::CONTENT_LENGTH, size);
+                    }
+                    builder.body(Body::from_stream(stream)).unwrap()
+                }
+                JobResult::Redirect {
+                    location,
+                    message,
+                    content_type,
+                    content_length,
+                } => {
+                    let mut builder = Response::builder()
+                        .status(StatusCode::SEE_OTHER)
+                        .header(header::LOCATION, location);
+                    // Carry content metadata so a proxying broker can rebuild the v1
+                    // redirect body without an extra round-trip (see
+                    // bits::runtime::recovery::try_proxy_with_lease).
+                    if let Some(content_type) = content_type {
+                        builder = builder.header("x-polytope-content-type", content_type);
+                    }
+                    if let Some(content_length) = content_length {
+                        builder =
+                            builder.header("x-polytope-content-length", content_length.to_string());
+                    }
+                    builder.body(Body::from(message)).unwrap()
+                }
+                JobResult::Error { message } => {
+                    (StatusCode::BAD_REQUEST, Json(json!({"error": message}))).into_response()
+                }
+                JobResult::Failed { reason } => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": reason})),
+                )
+                    .into_response(),
+                JobResult::Overloaded { reason } => {
+                    super::overloaded_response(json!({"error": reason, "retryable": true}))
+                }
+                JobResult::RateLimited { reason } => {
+                    super::rate_limited_response(json!({"error": reason, "retryable": true}))
+                }
+                JobResult::ClientGone => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": "client disconnected before data could be delivered"})),
+                )
+                    .into_response(),
+                JobResult::Cancelled => {
+                    (StatusCode::OK, Json(json!({"status": "cancelled"}))).into_response()
+                }
             }
-            JobResult::RateLimited { reason } => {
-                super::rate_limited_response(json!({"error": reason, "retryable": true}))
-            }
-            JobResult::ClientGone => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "client disconnected before data could be delivered"})),
-            )
-                .into_response(),
-            JobResult::Cancelled => {
-                (StatusCode::OK, Json(json!({"status": "cancelled"}))).into_response()
-            }
-        },
+        }
     }
 }
 
