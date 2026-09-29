@@ -4,8 +4,8 @@
 
 use async_trait::async_trait;
 use clap::Parser;
-use polytope_worker_common::config::{DEFAULT_CONFIG_PATH, WorkerConfigFile};
-use polytope_worker_common::{ProcessResult, Processor, WorkItem, WorkerConfig, run_worker_loop};
+use polytope_worker_common::config::{WorkerConfigFile, DEFAULT_CONFIG_PATH};
+use polytope_worker_common::{run_worker_loop, ProcessResult, Processor, WorkItem, WorkerConfig};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyTuple};
 use serde_json::json;
@@ -295,6 +295,9 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
+    // These tests replace one process-global Python module and sys.path.
+    static PYTHON_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     fn temp_dir() -> PathBuf {
         let mut path = std::env::temp_dir();
         path.push(format!(
@@ -310,6 +313,7 @@ mod tests {
 
     #[tokio::test]
     async fn pyo3_round_trip() {
+        let _python_guard = PYTHON_TEST_LOCK.lock().await;
         let dir = temp_dir();
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
@@ -375,6 +379,7 @@ def process(payload_json):
 
     #[tokio::test]
     async fn pyo3_error_handling() {
+        let _python_guard = PYTHON_TEST_LOCK.lock().await;
         let dir = temp_dir();
         std::fs::create_dir_all(&dir).unwrap();
         // Use a different temp directory to ensure no module conflicts
@@ -438,6 +443,7 @@ def process(payload_json):
     }
     #[tokio::test]
     async fn pyo3_content_type_passthrough() {
+        let _python_guard = PYTHON_TEST_LOCK.lock().await;
         let dir = temp_dir();
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(

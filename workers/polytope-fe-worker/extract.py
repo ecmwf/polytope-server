@@ -33,6 +33,7 @@ import itertools
 import logging
 import os
 import re
+import threading
 import time
 from urllib.parse import parse_qs
 
@@ -211,60 +212,69 @@ def enumerate_fields(field_values, order):
 # gribjump / FDB location cache
 # ---------------------------------------------------------------------------
 
-_gribjump = None
-_fdb = None
+_thread_handles = threading.local()
 _location_cache = None
 _location_servermap = None
+_location_state_lock = threading.Lock()
+
 
 def _get_gribjump(pygribjump):
-    """Process-scoped GribJump handle (created after config is set)."""
-    global _gribjump
-    if _gribjump is None:
-        _gribjump = pygribjump.GribJump()
-    return _gribjump
+    """Return the calling thread's lazily-created GribJump handle."""
+    if not hasattr(_thread_handles, "gribjump"):
+        _thread_handles.gribjump = pygribjump.GribJump()
+    return _thread_handles.gribjump
 
 
 def _get_fdb(pyfdb):
-    """Process-scoped FDB handle (created after FDB5_CONFIG_FILE is set)."""
-    global _fdb
-    if _fdb is None:
-        _fdb = pyfdb.FDB()
-    return _fdb
+    """Return the calling thread's lazily-created FDB handle."""
+    if not hasattr(_thread_handles, "fdb"):
+        _thread_handles.fdb = pyfdb.FDB()
+    return _thread_handles.fdb
 
 
 def _get_location_cache():
+    """Return the process-global, internally locked location cache."""
     global _location_cache
     if _location_cache is None:
-        _location_cache = LocationCache()
+        with _location_state_lock:
+            if _location_cache is None:
+                _location_cache = LocationCache()
     return _location_cache
 
 
 def _get_location_servermap():
     global _location_servermap
     if _location_servermap is None:
-        _location_servermap = LocationServerMap.from_config()
+        with _location_state_lock:
+            if _location_servermap is None:
+                _location_servermap = LocationServerMap.from_config()
     return _location_servermap
 
 
 def _reset_gribjump():  # for tests
-    global _gribjump
-    _gribjump = None
+    if hasattr(_thread_handles, "gribjump"):
+        del _thread_handles.gribjump
 
 
 def _reset_location_state():  # for tests
-    global _fdb, _location_cache, _location_servermap
-    _fdb = None
-    _location_cache = None
-    _location_servermap = None
+    global _location_cache, _location_servermap
+    if hasattr(_thread_handles, "fdb"):
+        del _thread_handles.fdb
+    with _location_state_lock:
+        _location_cache = None
+        _location_servermap = None
 
 
 def warm_up(pygribjump=None):
-    """Process-level warm-up, called once after gribjump/FDB config is set."""
+    """Warm imports and process-global cache after native client config is set.
+
+    Native GribJump and FDB handles are intentionally not created here: each
+    blocking worker thread constructs its own handle lazily on its first job.
+    """
     import zstandard  # noqa: F401  # type: ignore[import-not-found]
 
     if pygribjump is None:
-        import pygribjump  # type: ignore[import-not-found]
-    _get_gribjump(pygribjump)
+        import pygribjump  # noqa: F401  # type: ignore[import-not-found]
     _get_location_cache()
 
 

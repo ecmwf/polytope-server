@@ -110,13 +110,23 @@ class _Request:
 
 
 def _load_config(path):
-    text = Path(path).read_text()
+    try:
+        text = Path(path).read_text()
+    except OSError as exc:
+        raise ValueError(f"cannot read worker config {path}: {exc}") from exc
+
     if path.endswith(".json"):
-        raw = json.loads(text)
+        try:
+            raw = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"invalid JSON worker config {path}: {exc}") from exc
     else:
         import yaml
 
-        raw = yaml.safe_load(text)
+        try:
+            raw = yaml.safe_load(text)
+        except yaml.YAMLError as exc:
+            raise ValueError(f"invalid YAML worker config {path}: {exc}") from exc
     if "polytope" in raw:
         return raw["polytope"]
     return raw
@@ -147,11 +157,22 @@ def _datasource_mime_type(datasource) -> str:
     return DEFAULT_CONTENT_TYPE
 
 
+def _result_bytes(chunk) -> bytes:
+    """Normalise a datasource result chunk or fail with a clear protocol error."""
+    if isinstance(chunk, str):
+        return chunk.encode("utf-8")
+    if isinstance(chunk, bytes):
+        return chunk
+    if isinstance(chunk, bytearray):
+        return bytes(chunk)
+    raise TypeError(f"datasource returned non-bytes result chunk: {type(chunk).__name__}")
+
+
 def _warm_extract_path():
     """Best-effort, once per process: import the /chunks/v1 extract path's
-    heavy deps (numpy, zstandard, pygribjump) and create the process-scoped
-    GribJump handle, so the first extract job served by this process does not
-    pay ~0.5-0.8 s of cold start (measured on mn5-dev). Must run after the
+    heavy deps (numpy, zstandard, pygribjump) and initialise its shared location
+    cache. Native GribJump/FDB handles remain lazy and thread-local so concurrent
+    blocking worker threads never share client handles. Must run after the
     datasource has exported GRIBJUMP_CONFIG_FILE. Failures are logged and
     otherwise ignored -- the job path retries lazily and reports errors per job.
     """
@@ -210,8 +231,11 @@ def process(payload_json: str) -> tuple:
 
     t0 = time.monotonic()
 
-    # Payload parsing may raise — let that propagate as a catastrophic error
-    payload = json.loads(payload_json)
+    # Payload parsing errors are catastrophic protocol errors, not job failures.
+    try:
+        payload = json.loads(payload_json)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid worker payload: {exc}") from exc
     datasource = _get_datasource(payload["config_path"])
     t_init = time.monotonic()
 
@@ -239,10 +263,7 @@ def process(payload_json: str) -> tuple:
             timings = datasource.retrieve(request)
             t_retrieve = time.monotonic()
 
-            output = b"".join(
-                chunk.encode("utf-8") if isinstance(chunk, str) else chunk
-                for chunk in datasource.result(request)
-            )
+            output = b"".join(_result_bytes(chunk) for chunk in datasource.result(request))
             t_result = time.monotonic()
             content_type = _datasource_mime_type(datasource)
 
@@ -266,10 +287,14 @@ def process(payload_json: str) -> tuple:
         }
         return (output, json.dumps(status))
 
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - job errors become protocol responses
         # Job-level exception: ok=false, clean message in error.message,
         # full traceback appended to logs as a synthetic ERROR record.
-        clean_message = getattr(exc, "message", None) or str(exc) or exc.__class__.__name__
+        clean_message = getattr(exc, "message", None)
+        if clean_message is None:
+            clean_message = str(exc)
+        if not clean_message:
+            clean_message = exc.__class__.__name__
         full_traceback = traceback.format_exc()
 
         # Append the traceback as a synthetic log record
@@ -299,7 +324,10 @@ def process(payload_json: str) -> tuple:
 
 
 def main():
-    payload = json.load(sys.stdin)
+    try:
+        payload = json.load(sys.stdin)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid worker payload: {exc}") from exc
     config = _load_config(payload["config_path"])
 
     from polytope import PolytopeDataSource
@@ -322,9 +350,7 @@ def main():
         else:
             datasource.retrieve(request)
             for chunk in datasource.result(request):
-                if isinstance(chunk, str):
-                    chunk = chunk.encode("utf-8")
-                sys.stdout.buffer.write(chunk)
+                sys.stdout.buffer.write(_result_bytes(chunk))
         sys.stdout.flush()
     except Exception as exc:
         print(str(exc), file=sys.stderr)

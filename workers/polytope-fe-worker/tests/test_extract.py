@@ -15,7 +15,9 @@ import json
 import logging
 import re
 import sys
+import threading
 import types
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -448,6 +450,62 @@ def single_field_request():
 def single_field(req):
     spec, values = extract.parse_extract(req)
     return next(extract.enumerate_fields(values, spec["order"]))
+
+
+def _in_two_threads(call):
+    barrier = threading.Barrier(2)
+
+    def run(_):
+        barrier.wait()
+        first = call()
+        return first, call()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        return list(executor.map(run, range(2)))
+
+
+def test_gribjump_handles_are_thread_local():
+    created = []
+
+    def create_handle():
+        handle = object()
+        created.append(handle)
+        return handle
+
+    module = types.SimpleNamespace(GribJump=create_handle)
+    results = _in_two_threads(lambda: extract._get_gribjump(module))
+
+    assert all(first is second for first, second in results)
+    assert results[0][0] is not results[1][0]
+    assert len(created) == 2
+
+
+def test_pyfdb_handles_are_thread_local():
+    created = []
+
+    def create_handle():
+        handle = object()
+        created.append(handle)
+        return handle
+
+    module = types.SimpleNamespace(FDB=create_handle)
+    results = _in_two_threads(lambda: extract._get_fdb(module))
+
+    assert all(first is second for first, second in results)
+    assert results[0][0] is not results[1][0]
+    assert len(created) == 2
+
+
+def test_location_cache_is_shared_across_threads(monkeypatch):
+    monkeypatch.setenv("POLYTOPE_CHUNKS_LOCCACHE_SIZE", "16")
+    extract._reset_location_state()
+    try:
+        results = _in_two_threads(extract._get_location_cache)
+        caches = [first for first, second in results if first is second]
+        assert len(caches) == 2
+        assert caches[0] is caches[1]
+    finally:
+        extract._reset_location_state()
 
 
 def test_path_only_fdb_uri_uses_internal_scheme():
@@ -942,7 +1000,7 @@ def test_dispatch_passes_job_id_and_emits_one_profile_log(fake_gj, recording_ds)
         assert k in status["timings"], k
 
 
-def test_warm_up_creates_handle_once_and_jobs_reuse_it(fake_gj, monkeypatch):
+def test_warm_up_defers_native_handle_until_job(fake_gj, monkeypatch):
     created = []
     orig = fake_gj.GribJump
 
@@ -953,7 +1011,9 @@ def test_warm_up_creates_handle_once_and_jobs_reuse_it(fake_gj, monkeypatch):
     monkeypatch.setattr(fake_gj, "GribJump", counting)
     extract.warm_up()
     extract.warm_up()
-    assert len(created) == 1
+    assert created == []
+
+    extract.run_extract(base_request())
     extract.run_extract(base_request())
     assert len(created) == 1
 
