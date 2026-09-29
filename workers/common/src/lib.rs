@@ -36,6 +36,18 @@ fn codec_from_accept_encoding(accept_encoding: Option<&str>) -> Codec {
     }
 }
 
+fn codec_for_response(content_type: &str, accept_encoding: Option<&str>) -> Codec {
+    let media_type = content_type.split(';').next().unwrap_or("").trim();
+    if media_type.eq_ignore_ascii_case("application/octet-stream") {
+        // Binary worker payloads (for example /chunks/v1 zstd frames) are
+        // already encoded at the application layer. Applying HTTP content
+        // encoding would waste CPU and make the payload no longer verbatim.
+        Codec::Identity
+    } else {
+        codec_from_accept_encoding(accept_encoding)
+    }
+}
+
 pub type RawStream = Box<dyn Stream<Item = Result<bytes::Bytes, std::io::Error>> + Send + Unpin>;
 
 #[derive(Debug, Default)]
@@ -738,8 +750,10 @@ async fn worker_task<P: Processor + 'static>(
                     source_error,
                 } => {
                     source_error_for_restart = source_error.clone();
-                    let codec =
-                        codec_from_accept_encoding(work.metadata["accept_encoding"].as_str());
+                    let codec = codec_for_response(
+                        &content_type,
+                        work.metadata["accept_encoding"].as_str(),
+                    );
                     let content_encoding = codec.content_encoding_header().map(str::to_string);
                     let (encoded, counter) = encode_stream_counted(body, &codec);
                     byte_counter = Some(counter);
@@ -1145,6 +1159,30 @@ async fn run_worker_loop_with_policy<P: Processor + 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn octet_stream_responses_are_not_content_encoded() {
+        assert_eq!(
+            codec_for_response("application/octet-stream", Some("gzip, zstd")),
+            Codec::Identity
+        );
+        assert_eq!(
+            codec_for_response("Application/Octet-Stream; charset=binary", Some("gzip")),
+            Codec::Identity
+        );
+    }
+
+    #[test]
+    fn structured_responses_still_honor_accept_encoding() {
+        assert_eq!(
+            codec_for_response("application/prs.coverage+json", Some("zstd, gzip")),
+            Codec::Zstd
+        );
+        assert_eq!(
+            codec_for_response("application/json", Some("gzip")),
+            Codec::Gzip
+        );
+    }
 
     #[test]
     fn poll_health_warns_only_after_sustained_failure() {
