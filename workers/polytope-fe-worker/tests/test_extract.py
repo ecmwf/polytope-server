@@ -450,7 +450,7 @@ def single_field(req):
 def test_path_only_fdb_uri_uses_internal_scheme():
     class LocalListElement:
         uri = FakeURI(
-            "/data/prod_6/fdb/archive.data",
+            "/data/prod_6/fdb/archive.mn5-prod-store6.novalocal.123.data",
             scheme="",
             host=None,
             port=None,
@@ -471,11 +471,11 @@ def test_path_only_fdb_uri_uses_internal_scheme():
 
     location = extract._location_from_element(LocalListElement())
     assert location == location_cache.FieldLocation(
-        path="/data/prod_6/fdb/archive.data",
+        path="/data/prod_6/fdb/archive.mn5-prod-store6.novalocal.123.data",
         scheme="file",
         offset=1234,
         length=5678,
-        host="",
+        host="mn5-prod-store6.novalocal",
         port=0,
     )
 

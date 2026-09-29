@@ -32,6 +32,7 @@ record).
 import itertools
 import logging
 import os
+import re
 import time
 from urllib.parse import parse_qs
 
@@ -293,15 +294,19 @@ def _location_from_element(element):
         scheme = values[0] if values else ""
     if not path or not scheme:
         raise ExtractError(f"FDB location lookup returned invalid URI {uri!r}")
-    # Preserve the outer FDB URI. For remote locations its host/port identify
-    # the FDB store endpoint, which gribjump maps to an extraction server via
-    # the configured servermap; they are not a direct gribjump endpoint.
+    # Preserve the outer FDB URI. Local mn5 FDB listings expose a path-only
+    # URI, but encode the store host in the archive filename; passing that host
+    # lets gribjump's servermap route the path instead of opening it locally.
+    host = uri.hostname() or ""
+    if not host:
+        match = re.search(r"\.([A-Za-z0-9-]+\.novalocal)\.", path)
+        host = match.group(1) if match else ""
     return FieldLocation(
         path=path,
         scheme=scheme,
         offset=_location_int(offset, "offset"),
         length=_location_int(length, "length"),
-        host=uri.hostname() or "",
+        host=host,
         port=_location_int(uri.port() or 0, "port"),
     )
 
