@@ -33,6 +33,7 @@ import itertools
 import logging
 import os
 import time
+from urllib.parse import parse_qs
 
 import numpy as np
 
@@ -285,6 +286,11 @@ def _location_from_element(element):
         raise ExtractError("FDB location lookup returned an incomplete location")
     path = uri.path()
     scheme = uri.scheme()
+    if not scheme:
+        # Local FDB list results are path-only URIs whose concrete storage
+        # scheme is carried in the query, e.g. /data/file?internalScheme=file.
+        values = parse_qs(str(uri.query() or "")).get("internalScheme", [])
+        scheme = values[0] if values else ""
     if not path or not scheme:
         raise ExtractError(f"FDB location lookup returned invalid URI {uri!r}")
     # Preserve the outer FDB URI. For remote locations its host/port identify

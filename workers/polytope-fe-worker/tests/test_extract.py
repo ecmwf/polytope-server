@@ -131,11 +131,19 @@ class FakePyGribJump:
 
 
 class FakeURI:
-    def __init__(self, path, scheme="fdb", host="store.example", port=9000):
+    def __init__(
+        self,
+        path: str,
+        scheme: str = "fdb",
+        host: str | None = "store.example",
+        port: int | None = 9000,
+        query: str = "",
+    ):
         self._path = path
         self._scheme = scheme
         self._host = host
         self._port = port
+        self._query = query
 
     def path(self):
         return self._path
@@ -148,6 +156,9 @@ class FakeURI:
 
     def port(self):
         return self._port
+
+    def query(self):
+        return self._query
 
 
 class FakeListElement:
@@ -434,6 +445,39 @@ def single_field_request():
 def single_field(req):
     spec, values = extract.parse_extract(req)
     return next(extract.enumerate_fields(values, spec["order"]))
+
+
+def test_path_only_fdb_uri_uses_internal_scheme():
+    class LocalListElement:
+        uri = FakeURI(
+            "/data/prod_6/fdb/archive.data",
+            scheme="",
+            host=None,
+            port=None,
+            query="internalScheme=file",
+        )
+
+        @staticmethod
+        def has_location():
+            return True
+
+        @staticmethod
+        def offset():
+            return 1234
+
+        @staticmethod
+        def length():
+            return 5678
+
+    location = extract._location_from_element(LocalListElement())
+    assert location == location_cache.FieldLocation(
+        path="/data/prod_6/fdb/archive.data",
+        scheme="file",
+        offset=1234,
+        length=5678,
+        host="",
+        port=0,
+    )
 
 
 def test_location_cache_hit_skips_pyfdb(fake_gj, fake_fdb, monkeypatch):
