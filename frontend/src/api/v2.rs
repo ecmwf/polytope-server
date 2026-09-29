@@ -19,6 +19,7 @@ use crate::auth::{AuthUser, MockRolesAudit};
 use crate::state::AppState;
 
 const PENDING_STATUS_HEADER: &str = "x-bits-pending-status";
+const MIN_POLL_REHOLD: Duration = Duration::from_millis(5);
 
 fn local_pending_status(state: &AppState, id: &str) -> &'static str {
     state
@@ -226,11 +227,52 @@ fn ready_status(result: &JobResult) -> &'static str {
 
 /// Poll a job and convert the outcome to a v2 HTTP response.
 ///
-/// Shared by `submit_collection` (inline poll on submit), `poll` (internal
-/// long-poll endpoint), and `public_poll` (user-facing long-poll endpoint).
+/// Shared by `submit_collection` (inline poll on submit), and `public_poll`
+/// (user-facing long-poll endpoint). Non-terminal wakes are re-held until the
+/// original timeout budget expires. The internal poll endpoint deliberately
+/// retains its single-wake lifecycle via `poll_job_v2_once`.
 async fn poll_job_v2(state: &Arc<AppState>, id: String, timeout: Duration) -> Response {
+    poll_job_v2_impl(state, id, timeout, true).await
+}
+
+async fn poll_job_v2_once(state: &Arc<AppState>, id: String, timeout: Duration) -> Response {
+    poll_job_v2_impl(state, id, timeout, false).await
+}
+
+async fn poll_job_v2_impl(
+    state: &Arc<AppState>,
+    id: String,
+    timeout: Duration,
+    rehold_pending: bool,
+) -> Response {
     let poll_started = Instant::now();
-    match state.bits.poll(&id, Some(timeout)).await {
+    let deadline = poll_started + timeout;
+    let outcome = loop {
+        let call_started = Instant::now();
+        let remaining = deadline.saturating_duration_since(call_started);
+        let outcome = state.bits.poll(&id, Some(remaining)).await;
+
+        if !rehold_pending || !matches!(outcome, PollOutcome::Pending { .. }) {
+            break outcome;
+        }
+
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break outcome;
+        }
+
+        // A remote/internal poll can report the same pending state immediately.
+        // Pace that path so re-holding cannot spin while preserving the deadline.
+        let call_elapsed = call_started.elapsed();
+        if call_elapsed < MIN_POLL_REHOLD {
+            tokio::time::sleep(remaining.min(MIN_POLL_REHOLD.saturating_sub(call_elapsed))).await;
+            if deadline.saturating_duration_since(Instant::now()).is_zero() {
+                break outcome;
+            }
+        }
+    };
+
+    match outcome {
         PollOutcome::Pending { id, .. } => {
             let status = local_pending_status(state, &id);
             tracing::info!(
@@ -342,7 +384,7 @@ async fn poll_job_v2(state: &Arc<AppState>, id: String, timeout: Duration) -> Re
 
 pub async fn poll(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> Response {
     let timeout = state.v2_poll_timeout;
-    poll_job_v2(&state, id, timeout).await
+    poll_job_v2_once(&state, id, timeout).await
 }
 
 pub async fn public_cancel(
@@ -405,6 +447,14 @@ targets:
     }
 
     fn build_v2_app(bits: bits::Bits, collections: HashMap<String, bits::RouteHandle>) -> Router {
+        build_v2_app_with_timeout(bits, collections, Duration::from_secs(30))
+    }
+
+    fn build_v2_app_with_timeout(
+        bits: bits::Bits,
+        collections: HashMap<String, bits::RouteHandle>,
+        v2_poll_timeout: Duration,
+    ) -> Router {
         let state = Arc::new(AppState {
             bits,
             auth_client: None,
@@ -415,7 +465,7 @@ targets:
             completed_redirects: std::sync::Mutex::new(std::collections::HashMap::new()),
             completed_redirect_ttl: std::time::Duration::from_secs(600),
             v1_poll_timeout: Duration::from_secs(30),
-            v2_poll_timeout: Duration::from_secs(30),
+            v2_poll_timeout,
         });
         Router::new()
             .route("/api/v2/collections", get(super::list_collections))
@@ -451,6 +501,66 @@ targets:
             None,
             std::time::Duration::from_secs(30),
         )
+    }
+
+    async fn make_remote_bits_with_route(route_name: &str) -> (bits::Bits, bits::RouteHandle, u16) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let yaml = format!(
+            r#"bits:
+  site: tst
+  env: tst
+  worker_server:
+    host: "127.0.0.1"
+    port: {port}
+targets:
+  test_pool:
+    type: remote
+    dispatcher:
+      executor:
+        type: remote_pool
+        heartbeat_timeout_secs: 60
+routes:
+  - unused:
+      - target::test_pool
+"#
+        );
+        let bits = bits::Bits::from_config(&yaml).unwrap();
+        let client = reqwest::Client::new();
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                if client
+                    .get(format!(
+                        "http://127.0.0.1:{port}/test_pool/work?timeout_ms=0"
+                    ))
+                    .send()
+                    .await
+                    .is_ok()
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("remote worker test server did not become ready");
+        let route_value = serde_json::json!([{"test_route": ["target::test_pool"]}]);
+        let handle = bits.add_route(route_name, &route_value).unwrap();
+        (bits, handle, port)
+    }
+
+    async fn claim_remote_job(port: u16) -> String {
+        let response = reqwest::Client::new()
+            .get(format!(
+                "http://127.0.0.1:{port}/test_pool/work?timeout_ms=5000"
+            ))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        let work: Value = response.json().await.unwrap();
+        work["job_id"].as_str().unwrap().to_string()
     }
 
     #[tokio::test]
@@ -635,6 +745,116 @@ targets:
             error_msg, "unknown collection 'ecmwf'",
             "collection 'ecmwf' should be found; got status {status}"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn submit_reholds_processing_job_until_terminal_result() {
+        let (bits, handle, port) = make_remote_bits_with_route("ecmwf").await;
+        let mut collections = HashMap::new();
+        collections.insert("ecmwf".to_string(), handle);
+        let app = build_v2_app_with_timeout(bits, collections, Duration::from_millis(500));
+
+        let worker = tokio::spawn(async move {
+            let id = claim_remote_job(port).await;
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let response = reqwest::Client::new()
+                .post(format!(
+                    "http://127.0.0.1:{port}/test_pool/complete/data/{id}"
+                ))
+                .header("content-type", "application/octet-stream")
+                .body("terminal-bytes")
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), reqwest::StatusCode::OK);
+        });
+
+        let response = app
+            .oneshot(
+                Request::post("/api/v2/ecmwf/requests")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        worker.await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            !response
+                .headers()
+                .contains_key(super::PENDING_STATUS_HEADER)
+        );
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(&body[..], b"terminal-bytes");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn processing_job_returns_pending_only_after_window_expires() {
+        let (bits, handle, port) = make_remote_bits_with_route("ecmwf").await;
+        let mut collections = HashMap::new();
+        collections.insert("ecmwf".to_string(), handle);
+        let app = build_v2_app_with_timeout(bits, collections, Duration::from_secs(5));
+
+        let claim = tokio::spawn(async move { claim_remote_job(port).await });
+        let started = std::time::Instant::now();
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v2/ecmwf/requests")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let elapsed = started.elapsed();
+        let id = claim.await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        assert_eq!(
+            response
+                .headers()
+                .get(super::PENDING_STATUS_HEADER)
+                .unwrap(),
+            "processing"
+        );
+        assert!(
+            elapsed >= Duration::from_millis(4_500),
+            "pending response returned before its window: {elapsed:?}"
+        );
+
+        // The same re-hold policy applies to the public GET poll handler.
+        let location = response.headers()[axum::http::header::LOCATION]
+            .to_str()
+            .unwrap()
+            .to_string();
+        let completion = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+            reqwest::Client::new()
+                .post(format!(
+                    "http://127.0.0.1:{port}/test_pool/complete/data/{id}"
+                ))
+                .header("content-type", "application/octet-stream")
+                .body("polled-terminal-bytes")
+                .send()
+                .await
+                .unwrap()
+        });
+        let poll_response = app
+            .oneshot(Request::get(location).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(completion.await.unwrap().status(), reqwest::StatusCode::OK);
+        assert_eq!(poll_response.status(), StatusCode::OK);
+        let body = poll_response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes();
+        assert_eq!(&body[..], b"polled-terminal-bytes");
     }
 
     #[tokio::test]
