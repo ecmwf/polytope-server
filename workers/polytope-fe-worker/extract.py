@@ -29,6 +29,7 @@ straight out of ``kubectl logs`` (inside the host's ``python worker logs``
 record).
 """
 
+import copy
 import itertools
 import logging
 import os
@@ -217,6 +218,40 @@ _location_cache = None
 _location_servermap = None
 _location_state_lock = threading.Lock()
 
+# Grid-hash variants already encoded in Polytope's gh68 change_hash logic, plus
+# the live-confirmed climate-dt generation-2 H512 variant. None is applied until
+# all non-wildcard request conditions match. Learned entries are exact identities.
+_HASH_IDENTITY_KEYS = (
+    "class",
+    "dataset",
+    "experiment",
+    "generation",
+    "model",
+    "realization",
+    "resolution",
+)
+_SEEDED_HASH_OVERRIDES = {
+    (None, "climate-dt", None, "1", "icon", None, "high"):
+        "9533855ee8e38314e19aaa0434c310da",
+    ("d1", "climate-dt", "cont", "2", "ifs-nemo", "3", "high"):
+        "47efaa0853e70948a41d5225e7653194",
+}
+_hash_overrides = copy.copy(_SEEDED_HASH_OVERRIDES)
+_learned_hash_identities = set()
+_hash_overrides_lock = threading.Lock()
+_GRID_HASH_MISMATCH_RE = re.compile(
+    r"Grid hash mismatch.*?Request specified:\s*([0-9a-f]{32}).*?"
+    r"JumpInfo contains:\s*([0-9a-f]{32})",
+    re.IGNORECASE | re.DOTALL,
+ )
+# Registry count_values for grids accepted by this worker. The hash identifies
+# the registry entry even though the v0 frontend-to-worker payload omits the count.
+_REGISTRY_COUNTS_BY_HASH = {
+    "cbda19e48d4d7e5e22641154878b9b22": 12582912,
+    "47efaa0853e70948a41d5225e7653194": 3145728,
+    "f3dfeb7a5bbbdd13a20d10fdb3797c71": 196608,
+}
+
 
 def _get_gribjump(pygribjump):
     """Return the calling thread's lazily-created GribJump handle."""
@@ -263,6 +298,13 @@ def _reset_location_state():  # for tests
     with _location_state_lock:
         _location_cache = None
         _location_servermap = None
+
+
+def _reset_hash_learning():  # for tests
+    global _hash_overrides, _learned_hash_identities
+    with _hash_overrides_lock:
+        _hash_overrides = copy.copy(_SEEDED_HASH_OVERRIDES)
+        _learned_hash_identities = set()
 
 
 def warm_up(pygribjump=None):
@@ -333,8 +375,8 @@ def _location_from_element(element):
     )
 
 
-def _lookup_field_location(field, pyfdb):
-    """Resolve exactly one FDB field to its path extraction location."""
+def _lookup_field_element(field, pyfdb):
+    """Resolve exactly one FDB list element for a field."""
     try:
         iterator = iter(_get_fdb(pyfdb).list(field))
         first = next(iterator)
@@ -345,11 +387,15 @@ def _lookup_field_location(field, pyfdb):
     try:
         next(iterator)
     except StopIteration:
-        pass
+        return first
     except Exception as exc:
         raise ExtractError(f"field {_describe(field)}: FDB location lookup failed: {exc}") from exc
-    else:
-        raise ExtractError(f"field {_describe(field)}: FDB location lookup returned multiple fields")
+    raise ExtractError(f"field {_describe(field)}: FDB location lookup returned multiple fields")
+
+
+def _lookup_field_location(field, pyfdb):
+    """Resolve exactly one FDB field to its path extraction location."""
+    first = _lookup_field_element(field, pyfdb)
     try:
         return _location_from_element(first)
     except ExtractError as exc:
@@ -358,6 +404,180 @@ def _lookup_field_location(field, pyfdb):
         raise ExtractError(
             f"field {_describe(field)}: FDB location lookup returned an invalid location: {exc}"
         ) from exc
+
+
+def _field_number_of_data_points(field, pyfdb):
+    """Read one field header through pyfdb and return numberOfDataPoints."""
+    element = _lookup_field_element(field, pyfdb)
+    # Lightweight test doubles can expose the decoded header directly.
+    if hasattr(element, "number_of_data_points"):
+        return _location_int(element.number_of_data_points(), "numberOfDataPoints")
+    try:
+        import eccodes  # type: ignore[import-not-found]
+
+        length = _location_int(element.length(), "length")
+        message = bytearray(length)
+        view = memoryview(message)
+        offset = 0
+        with element.data_handle as handle:
+            if handle is None:
+                raise ExtractError("FDB list element has no data handle")
+            while offset < length:
+                read = handle.readinto(view[offset:])
+                if read <= 0:
+                    raise ExtractError(
+                        f"short GRIB read while checking grid: wanted {length}, got {offset}"
+                    )
+                offset += read
+        gid = eccodes.codes_new_from_message(bytes(message))
+        try:
+            return _location_int(
+                eccodes.codes_get(gid, "numberOfDataPoints"), "numberOfDataPoints"
+            )
+        finally:
+            eccodes.codes_release(gid)
+    except ExtractError:
+        raise
+    except Exception as exc:
+        raise ExtractError(
+            f"field {_describe(field)}: could not read numberOfDataPoints: {exc}"
+        ) from exc
+
+
+def _hash_identity(field):
+    return tuple(field.get(key) for key in _HASH_IDENTITY_KEYS)
+
+
+def _matching_hash_override(identity):
+    with _hash_overrides_lock:
+        exact = _hash_overrides.get(identity)
+        if exact is not None:
+            source = "learned" if identity in _learned_hash_identities else "seed"
+            return exact, source
+        for pattern, grid_hash in _hash_overrides.items():
+            if all(want is None or want == got for want, got in zip(pattern, identity)):
+                return grid_hash, "seed"
+    return None, None
+
+
+def _apply_hash_override(field, spec):
+    identity = _hash_identity(field)
+    grid_hash, source = _matching_hash_override(identity)
+    if grid_hash is not None and grid_hash != spec["grid_hash"]:
+        logging.info(
+            "chunks-grid-hash registry-hit source=%s identity=%s registry=%s selected=%s",
+            source,
+            ",".join(
+                f"{key}={value or '-'}" for key, value in zip(_HASH_IDENTITY_KEYS, identity)
+            ),
+            spec["grid_hash"],
+            grid_hash,
+        )
+        spec["grid_hash"] = grid_hash
+
+
+def _hash_learning_enabled():
+    return os.environ.get("POLYTOPE_CHUNKS_HASH_LEARN", "1").strip() != "0"
+
+
+def _grid_mismatch_error(field, expected, found, job_id):
+    identity = ", ".join(
+        f"{key}={field.get(key, '-')}" for key in _HASH_IDENTITY_KEYS
+    )
+    request_id = job_id or "unknown"
+    return ExtractError(
+        f"Grid hash mismatch for {identity}: expected {expected}, found {found}; "
+        f"server-side grid-registry gap — report with your request ID: {request_id}"
+    )
+
+
+def _retry_learned_hash(operation, field, job_id, exception_type):
+    try:
+        return operation()
+    except Exception as retry_exc:
+        return _handle_learned_hash_retry_error(
+            retry_exc, field, job_id, exception_type
+        )
+
+
+def _handle_learned_hash_retry_error(retry_exc, field, job_id, exception_type):
+    retry_match = _GRID_HASH_MISMATCH_RE.search(str(retry_exc))
+    if retry_match and retry_exc.__class__ is exception_type:
+        retry_expected, retry_found = retry_match.groups()
+        logging.error(
+            "gribjump grid hash mismatch after learned-hash retry: %s", retry_exc
+        )
+        raise _grid_mismatch_error(
+            field, retry_expected, retry_found, job_id
+        ) from retry_exc
+    raise retry_exc
+
+
+def _learn_hash_and_retry(exc, operation, field, spec, pygribjump, pyfdb, job_id):
+    exception_type = getattr(pygribjump, "GribJumpException", None)
+    match = _GRID_HASH_MISMATCH_RE.search(str(exc))
+    if not match or exc.__class__ is not exception_type:
+        raise exc
+    expected, found = match.groups()
+    logging.error("gribjump grid hash mismatch (raw, request_id=%s): %s", job_id or "-", exc)
+    if not _hash_learning_enabled():
+        raise _grid_mismatch_error(field, expected, found, job_id) from exc
+
+    registry_hash = spec.get("registry_grid_hash") or expected
+    registry_count = _REGISTRY_COUNTS_BY_HASH.get(registry_hash)
+    if registry_count is None:
+        logging.error(
+            "cannot safety-learn grid hash for uncounted registry hash %s", registry_hash
+        )
+        raise _grid_mismatch_error(field, expected, found, job_id) from exc
+    if pyfdb is None:
+        import pyfdb as imported_pyfdb  # type: ignore[import-not-found]
+
+        pyfdb = imported_pyfdb
+    actual_count = _field_number_of_data_points(field, pyfdb)
+    if actual_count != registry_count:
+        logging.error(
+            "refusing grid hash learn: registry count_values=%d header numberOfDataPoints=%d",
+            registry_count,
+            actual_count,
+        )
+        raise _grid_mismatch_error(field, expected, found, job_id) from exc
+
+    identity = _hash_identity(field)
+    with _hash_overrides_lock:
+        prior = _hash_overrides.get(identity)
+        if prior is not None and prior != found:
+            logging.error(
+                "refusing conflicting grid hash learn for %s: cached=%s found=%s",
+                identity,
+                prior,
+                found,
+            )
+            raise _grid_mismatch_error(field, expected, found, job_id) from exc
+        _hash_overrides[identity] = found
+        _learned_hash_identities.add(identity)
+    logging.warning(
+        "chunks-grid-hash learned identity=%s expected=%s found=%s count_values=%d request_id=%s",
+        ",".join(
+            f"{key}={value or '-'}" for key, value in zip(_HASH_IDENTITY_KEYS, identity)
+        ),
+        expected,
+        found,
+        registry_count,
+        job_id or "-",
+    )
+    spec["grid_hash"] = found
+    return _retry_learned_hash(operation, field, job_id, exception_type)
+
+
+def _extract_with_hash_learning(operation, field, spec, pygribjump, pyfdb, job_id):
+    """Run a gribjump operation, safety-learn one mismatch, and retry once."""
+    try:
+        return operation()
+    except Exception as exc:
+        return _learn_hash_and_retry(
+            exc, operation, field, spec, pygribjump, pyfdb, job_id
+        )
 
 
 def _extract_locations(gj, pygribjump, locations, spec, ctx):
@@ -513,6 +733,7 @@ def run_extract(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
     t0 = time.monotonic()
     try:
         spec, field_values = parse_extract(request)
+        spec["registry_grid_hash"] = spec["grid_hash"]
         t_parse = time.monotonic()
         prof["parse_ms"] = _ms(t0, t_parse)
 
@@ -526,9 +747,9 @@ def run_extract(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
             ctx = {"user": f"{getattr(user, 'realm', '')}:{getattr(user, 'username', '')}"}
             if job_id:
                 ctx["job_id"] = job_id
+        _apply_hash_override(fields[0], spec)
         gj = _get_gribjump(pygribjump)
         cache = _get_location_cache()
-        requests = None if cache.enabled else build_requests(fields, spec, pygribjump)
         t_enum = time.monotonic()
         prof["enum_ms"] = _ms(t_parse, t_enum)
 
@@ -548,7 +769,18 @@ def run_extract(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
         try:
             prof["phase"] = "extract"
             if not cache.enabled:
-                results = gj.extract(requests, ctx=ctx) if ctx is not None else gj.extract(requests)
+                def extract_requests():
+                    requests = build_requests(fields, spec, pygribjump)
+                    iterator = (
+                        gj.extract(requests, ctx=ctx)
+                        if ctx is not None
+                        else gj.extract(requests)
+                    )
+                    return list(iterator)
+
+                results = _extract_with_hash_learning(
+                    extract_requests, fields[0], spec, pygribjump, pyfdb, job_id
+                )
                 t_extract = time.monotonic()
                 prof["extract_ms"] = _ms(t_enum, t_extract)
             else:
@@ -588,8 +820,15 @@ def run_extract(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
                     nonlocal extract_seconds
                     started = time.monotonic()
                     try:
-                        extracted = _extract_locations(
-                            gj, pygribjump, [item[2] for item in items], spec, ctx
+                        extracted = _extract_with_hash_learning(
+                            lambda: _extract_locations(
+                                gj, pygribjump, [item[2] for item in items], spec, ctx
+                            ),
+                            items[0][1],
+                            spec,
+                            pygribjump,
+                            pyfdb,
+                            job_id,
                         )
                     finally:
                         extract_seconds += time.monotonic() - started
@@ -599,6 +838,8 @@ def run_extract(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
                 if path_items:
                     try:
                         extract_paths(path_items)
+                    except ExtractError:
+                        raise
                     except Exception:
                         # Refresh every path candidate because the path API reports
                         # only a batch failure, then retry the routable subset once.
@@ -620,6 +861,8 @@ def run_extract(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
                         if fresh_items:
                             try:
                                 extract_paths(fresh_items)
+                            except ExtractError:
+                                raise
                             except Exception as retry_exc:
                                 logging.warning(
                                     "gribjump location extraction failed after refresh; "
@@ -637,13 +880,26 @@ def run_extract(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
                         len(ordered_indices),
                     )
                     fallback_fields = [fields[index] for index in ordered_indices]
-                    fallback_requests = build_requests(fallback_fields, spec, pygribjump)
                     started = time.monotonic()
                     try:
-                        fallback_results = list(
-                            gj.extract(fallback_requests, ctx=ctx)
-                            if ctx is not None
-                            else gj.extract(fallback_requests)
+                        def extract_fallback():
+                            fallback_requests = build_requests(
+                                fallback_fields, spec, pygribjump
+                            )
+                            iterator = (
+                                gj.extract(fallback_requests, ctx=ctx)
+                                if ctx is not None
+                                else gj.extract(fallback_requests)
+                            )
+                            return list(iterator)
+
+                        fallback_results = _extract_with_hash_learning(
+                            extract_fallback,
+                            fallback_fields[0],
+                            spec,
+                            pygribjump,
+                            pyfdb,
+                            job_id,
                         )
                     finally:
                         extract_seconds += time.monotonic() - started

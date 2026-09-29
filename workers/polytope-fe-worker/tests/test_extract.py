@@ -86,8 +86,12 @@ class FakeGribJump:
 
     def extract(self, requests, ctx=None):
         self.module.calls.append({"requests": requests, "ctx": ctx})
-        if self.module.raise_exc is not None:
-            raise self.module.raise_exc
+        if isinstance(self.module.raise_exc, list):
+            exc = self.module.raise_exc.pop(0) if self.module.raise_exc else None
+        else:
+            exc = self.module.raise_exc
+        if exc is not None:
+            raise exc
         for r in requests:
             if self.module.missing is not None and self.module.missing(r.req):
                 return
@@ -164,8 +168,9 @@ class FakeURI:
 
 
 class FakeListElement:
-    def __init__(self, location):
+    def __init__(self, location, number_of_data_points):
         self._location = location
+        self._number_of_data_points = number_of_data_points
         self.uri = FakeURI(
             location.path, location.scheme, location.host, location.port
         )
@@ -179,12 +184,16 @@ class FakeListElement:
     def length(self):
         return self._location.length
 
+    def number_of_data_points(self):
+        return self._number_of_data_points
+
 
 class FakePyFDB:
     def __init__(self, fake_gj):
         self.fake_gj = fake_gj
         self.calls = []
         self.sequences = {}
+        self.count_values = 12582912
 
     def FDB(self):  # noqa: N802 - mirrors pyfdb
         return self
@@ -202,7 +211,7 @@ class FakePyFDB:
         else:
             location = make_location(field)
         self.fake_gj.path_fields[location.path] = field
-        yield FakeListElement(location)
+        yield FakeListElement(location, self.count_values)
 
 
 def make_location(field, suffix=""):
@@ -223,9 +232,11 @@ def fake_gj(monkeypatch):
     monkeypatch.setenv("POLYTOPE_CHUNKS_LOCCACHE_SIZE", "0")
     extract._reset_gribjump()
     extract._reset_location_state()
+    extract._reset_hash_learning()
     yield mod
     extract._reset_gribjump()
     extract._reset_location_state()
+    extract._reset_hash_learning()
 
 
 @pytest.fixture
@@ -787,6 +798,65 @@ def test_gribjump_exception_fails_job(fake_gj):
     fake_gj.raise_exc = GribJumpException("grid hash mismatch for field")
     with pytest.raises(extract.ExtractError, match="gribjump extraction failed: grid hash mismatch"):
         extract.run_extract(base_request())
+
+
+def grid_mismatch(found="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"):
+    return GribJumpException(
+        "Bad value: Grid hash mismatch for extraction item 0. "
+        "Request specified: cbda19e48d4d7e5e22641154878b9b22, "
+        f"JumpInfo contains: {found}"
+    )
+
+
+def test_grid_hash_mismatch_learns_retries_and_caches(fake_gj, fake_fdb, caplog):
+    found = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    req = single_field_request()
+    req["extract"]["grid_hash"] = "cbda19e48d4d7e5e22641154878b9b22"
+    fake_gj.raise_exc = [grid_mismatch(found), None]
+    caplog.set_level(logging.WARNING)
+
+    first, _, _ = extract.run_extract(
+        req, pyfdb=fake_fdb, job_id="01hashlearnrequest0000000001"
+    )
+    second, _, _ = extract.run_extract(req, pyfdb=fake_fdb)
+
+    assert first == second
+    assert [call["requests"][0].gridHash for call in fake_gj.calls] == [
+        "cbda19e48d4d7e5e22641154878b9b22",
+        found,
+        found,
+    ]
+    assert len(fake_fdb.calls) == 1
+    assert any("chunks-grid-hash learned" in record.getMessage() for record in caplog.records)
+
+
+def test_grid_hash_mismatch_wrong_count_fails_without_retry(fake_gj, fake_fdb):
+    req = single_field_request()
+    req["extract"]["grid_hash"] = "cbda19e48d4d7e5e22641154878b9b22"
+    fake_fdb.count_values = 3145728
+    fake_gj.raise_exc = grid_mismatch()
+
+    with pytest.raises(
+        extract.ExtractError,
+        match=r"class=d1.*expected cbda19e.*found a{32}.*server-side grid-registry gap",
+    ):
+        extract.run_extract(req, pyfdb=fake_fdb, job_id="wrong-count-id")
+
+    assert len(fake_gj.calls) == 1
+    assert len(fake_fdb.calls) == 1
+
+
+def test_grid_hash_mismatch_learning_kill_switch(fake_gj, fake_fdb, monkeypatch):
+    req = single_field_request()
+    req["extract"]["grid_hash"] = "cbda19e48d4d7e5e22641154878b9b22"
+    fake_gj.raise_exc = grid_mismatch()
+    monkeypatch.setenv("POLYTOPE_CHUNKS_HASH_LEARN", "0")
+
+    with pytest.raises(extract.ExtractError, match=r"request ID: kill-switch-id"):
+        extract.run_extract(req, pyfdb=fake_fdb, job_id="kill-switch-id")
+
+    assert len(fake_gj.calls) == 1
+    assert fake_fdb.calls == []
 
 
 # ---------------------------------------------------------------------------
