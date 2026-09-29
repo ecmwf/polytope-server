@@ -188,14 +188,24 @@ class LocationCache:
             return location
 
     def put(self, field_request, location):
+        self.put_many(((field_request, location),))
+
+    def put_many(self, entries):
+        """Insert a group of field locations atomically under the cache lock."""
         if not self.enabled:
             return
-        key = canonical_field_key(field_request)
+        prepared = [
+            (canonical_field_key(field_request), location)
+            for field_request, location in entries
+        ]
+        if not prepared:
+            return
         expires_at = self._clock() + self.ttl_secs
         with self._lock:
-            if key in self._entries:
-                del self._entries[key]
-            self._entries[key] = (location, expires_at)
+            for key, location in prepared:
+                if key in self._entries:
+                    del self._entries[key]
+                self._entries[key] = (location, expires_at)
             while len(self._entries) > self.size:
                 self._entries.popitem(last=False)
                 self._stats["evictions"] += 1

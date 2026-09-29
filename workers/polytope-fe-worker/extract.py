@@ -20,9 +20,9 @@ materialises the worker's own ``gribjump_config`` (and optional
 ``fdb_config``) to /tmp and exports ``GRIBJUMP_CONFIG_FILE`` /
 ``FDB5_CONFIG_FILE``. The cache reads that same gribjump file once to map
 pyfdb's internal store aliases onto the configured FDB servermap endpoints.
-With the location cache enabled, a miss resolves one field with pyfdb and
-subsequent chunks use pygribjump's path-based API directly; size zero retains
-the original request-based extraction path exactly.
+With the location cache enabled, all misses in a multi-field job are resolved by
+one pyfdb list call; subsequent chunks use pygribjump's path-based API directly.
+Cache size zero retains the original request-based extraction path exactly.
 
 Profiling: every job emits exactly one ``chunks-profile`` INFO log line (see
 ``_log_profile``) with per-phase wall times, so worker-side cost can be read
@@ -45,6 +45,7 @@ from location_cache import (  # type: ignore[import-not-found]
     FieldLocation,
     LocationCache,
     LocationServerMap,
+    canonical_field_key,
 )
 
 CONTENT_TYPE = "application/octet-stream"
@@ -416,6 +417,56 @@ def _lookup_field_location(field, pyfdb):
         ) from exc
 
 
+def _lookup_field_locations(fields, batch_request, pyfdb):
+    """Resolve the requested fields from one FDB list operation.
+
+    FDB list order is not contractual, so each result is joined to its field by
+    the canonical metadata identity. Missing, duplicate, or malformed elements
+    are omitted; callers preserve the existing request-based per-field fallback.
+    """
+    wanted = {canonical_field_key(field): field for field in fields}
+    locations = {}
+    seen = set()
+    try:
+        iterator = iter(_get_fdb(pyfdb).list(batch_request))
+    except Exception as exc:
+        logging.warning("Batched FDB location lookup failed: %s", exc)
+        return locations
+
+    while True:
+        try:
+            element = next(iterator)
+        except StopIteration:
+            break
+        except Exception as exc:
+            logging.warning("Batched FDB location lookup failed: %s", exc)
+            break
+
+        try:
+            key = canonical_field_key(element.combined_key())
+        except Exception as exc:
+            logging.warning("Ignoring FDB list element with invalid metadata: %s", exc)
+            continue
+        field = wanted.get(key)
+        if field is None:
+            continue
+        if key in seen:
+            locations.pop(key, None)
+            logging.warning(
+                "field %s: FDB location lookup returned multiple fields",
+                _describe(field),
+            )
+            continue
+        seen.add(key)
+
+        try:
+            locations[key] = _location_from_element(element)
+        except Exception as exc:
+            logging.warning("field %s: %s", _describe(field), exc)
+
+    return locations
+
+
 def _field_number_of_data_points(field, pyfdb):
     """Read one field header through pyfdb and return numberOfDataPoints."""
     element = _lookup_field_element(field, pyfdb)
@@ -697,7 +748,7 @@ def _log_profile(prof):
     """Emit the single per-job ``chunks-profile`` line (key=value, grep-able)."""
     logging.info(
         "chunks-profile job=%s status=%s phase=%s fields=%d ranges=%d points=%d "
-        "dtype=%s shuffle=%d cache=%d/%d fallback=%d t_lookup=%.1fms "
+        "dtype=%s shuffle=%d cache=%d/%d fallback=%d lookup_mode=%s t_lookup=%.1fms "
         "t_parse=%.1fms t_enum=%.1fms t_extract=%.1fms t_assemble=%.1fms "
         "t_shuffle=%.1fms t_zstd=%.1fms t_total=%.1fms "
         "raw_bytes=%d bytes=%d zstd_level=%d",
@@ -712,6 +763,7 @@ def _log_profile(prof):
         prof["cache_hits"],
         prof["cache_misses"],
         prof["fallbacks"],
+        prof["lookup_mode"],
         prof["lookup_ms"],
         prof["parse_ms"],
         prof["enum_ms"],
@@ -744,6 +796,7 @@ def run_extract(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
         "cache_misses": 0,
         "fallbacks": 0,
         "lookup_ms": 0.0,
+        "lookup_mode": "none",
         "parse_ms": 0.0,
         "enum_ms": 0.0,
         "extract_ms": 0.0,
@@ -782,6 +835,8 @@ def run_extract(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
         def lookup(field):
             nonlocal pyfdb
             prof["phase"] = "lookup"
+            if prof["lookup_mode"] == "none":
+                prof["lookup_mode"] = "single"
             started = time.monotonic()
             try:
                 if pyfdb is None:
@@ -789,6 +844,21 @@ def run_extract(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
 
                     pyfdb = imported_pyfdb
                 return _lookup_field_location(field, pyfdb)
+            finally:
+                prof["lookup_ms"] += _ms(started, time.monotonic())
+
+        def lookup_batch(missing_fields):
+            nonlocal pyfdb
+            prof["phase"] = "lookup"
+            prof["lookup_mode"] = "batch"
+            started = time.monotonic()
+            try:
+                if pyfdb is None:
+                    import pyfdb as imported_pyfdb  # type: ignore[import-not-found]
+
+                    pyfdb = imported_pyfdb
+                batch_request = {key: list(values) for key, values in field_values.items()}
+                return _lookup_field_locations(missing_fields, batch_request, pyfdb)
             finally:
                 prof["lookup_ms"] += _ms(started, time.monotonic())
 
@@ -810,22 +880,38 @@ def run_extract(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
                 t_extract = time.monotonic()
                 prof["extract_ms"] = _ms(t_enum, t_extract)
             else:
-                locations = []
+                locations: list[FieldLocation | None] = [None] * len(fields)
                 fallback_indices = set()
+                missing = []
                 for index, field in enumerate(fields):
                     location = cache.get(field)
                     if location is None:
                         prof["cache_misses"] += 1
-                        try:
-                            location = lookup(field)
-                        except ExtractError:
-                            fallback_indices.add(index)
-                            location = None
-                        else:
-                            cache.put(field, location)
+                        missing.append((index, field))
                     else:
                         prof["cache_hits"] += 1
-                    locations.append(location)
+                        locations[index] = location
+
+                if len(missing) == 1:
+                    index, field = missing[0]
+                    try:
+                        location = lookup(field)
+                    except ExtractError:
+                        fallback_indices.add(index)
+                    else:
+                        cache.put(field, location)
+                        locations[index] = location
+                elif missing:
+                    batch_locations = lookup_batch([field for _, field in missing])
+                    inserts = []
+                    for index, field in missing:
+                        location = batch_locations.get(canonical_field_key(field))
+                        if location is None:
+                            fallback_indices.add(index)
+                        else:
+                            locations[index] = location
+                            inserts.append((field, location))
+                    cache.put_many(inserts)
 
                 servermap = _get_location_servermap()
                 results_by_index = [None] * len(fields)
@@ -969,6 +1055,7 @@ def run_extract(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
         "parse_ms": prof["parse_ms"],
         "enum_ms": prof["enum_ms"],
         "lookup_ms": prof["lookup_ms"],
+        "lookup_mode": prof["lookup_mode"],
         "extract_ms": prof["extract_ms"],
         "assemble_ms": prof["assemble_ms"],
         "shuffle_ms": prof["shuffle_ms"],

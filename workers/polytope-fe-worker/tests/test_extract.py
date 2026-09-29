@@ -168,7 +168,8 @@ class FakeURI:
 
 
 class FakeListElement:
-    def __init__(self, location, number_of_data_points):
+    def __init__(self, field, location, number_of_data_points):
+        self._field = dict(field)
         self._location = location
         self._number_of_data_points = number_of_data_points
         self.uri = FakeURI(
@@ -187,12 +188,17 @@ class FakeListElement:
     def number_of_data_points(self):
         return self._number_of_data_points
 
+    def combined_key(self):
+        return dict(self._field)
+
 
 class FakePyFDB:
     def __init__(self, fake_gj):
         self.fake_gj = fake_gj
         self.calls = []
         self.sequences = {}
+        self.omitted = set()
+        self.reverse = False
         self.count_values = 12582912
 
     def FDB(self):  # noqa: N802 - mirrors pyfdb
@@ -201,17 +207,35 @@ class FakePyFDB:
     def set_sequence(self, field, locations):
         self.sequences[location_cache.canonical_field_key(field)] = list(locations)
 
-    def list(self, field):
-        field = dict(field)
-        self.calls.append(field)
-        key = location_cache.canonical_field_key(field)
-        sequence = self.sequences.get(key)
-        if sequence:
-            location = sequence.pop(0) if len(sequence) > 1 else sequence[0]
-        else:
-            location = make_location(field)
-        self.fake_gj.path_fields[location.path] = field
-        yield FakeListElement(location, self.count_values)
+    def omit(self, field):
+        self.omitted.add(location_cache.canonical_field_key(field))
+
+    def list(self, selection):
+        selection = {
+            key: list(values) if isinstance(values, list) else values
+            for key, values in selection.items()
+        }
+        self.calls.append(selection)
+        keys = list(selection)
+        values = [
+            raw if isinstance(raw, list) else str(raw).split("/")
+            for raw in selection.values()
+        ]
+        combinations = list(itertools.product(*values))
+        if self.reverse:
+            combinations.reverse()
+        for combination in combinations:
+            field = dict(zip(keys, combination))
+            key = location_cache.canonical_field_key(field)
+            if key in self.omitted:
+                continue
+            sequence = self.sequences.get(key)
+            if sequence:
+                location = sequence.pop(0) if len(sequence) > 1 else sequence[0]
+            else:
+                location = make_location(field)
+            self.fake_gj.path_fields[location.path] = field
+            yield FakeListElement(field, location, self.count_values)
 
 
 def make_location(field, suffix=""):
@@ -622,7 +646,56 @@ def test_location_cache_miss_populates_then_hits(fake_gj, fake_fdb, monkeypatch)
     assert len(fake_fdb.calls) == 1
     assert first_timings["cache_misses"] == 1
     assert second_timings["cache_hits"] == 1
+    assert first_timings["lookup_mode"] == "single"
+    assert second_timings["lookup_mode"] == "none"
     assert len(fake_gj.path_calls) == 2
+
+
+def test_all_cache_misses_use_one_batched_lookup_and_preserve_order(
+    fake_gj, fake_fdb, monkeypatch, caplog
+):
+    enable_location_cache(monkeypatch)
+    caplog.set_level(logging.INFO)
+    fake_fdb.reverse = True
+    req = base_request(date="20200101/20200102", time="0000/0600")
+    spec, values = extract.parse_extract(req)
+    fields = list(extract.enumerate_fields(values, spec["order"]))
+
+    payload, _, timings = extract.run_extract(req, job_id="batch-profile")
+
+    expected = np.concatenate([default_values(field, 0, 4) for field in fields])
+    np.testing.assert_array_equal(decode(payload), expected)
+    assert len(fake_fdb.calls) == 1
+    assert fake_fdb.calls[0] == values
+    assert timings["lookup_mode"] == "batch"
+    cache = extract._get_location_cache()
+    assert [cache.get(field) for field in fields] == [
+        make_location(field) for field in fields
+    ]
+    (line,) = _profile_lines([record.getMessage() for record in caplog.records])
+    match = _PROFILE_RE.match(line)
+    assert match and match["lookup_mode"] == "batch"
+
+
+def test_batch_missing_field_uses_request_fallback(
+    fake_gj, fake_fdb, monkeypatch
+):
+    enable_location_cache(monkeypatch)
+    req = base_request(date="20200101/20200102", time="0000/0600")
+    spec, values = extract.parse_extract(req)
+    fields = list(extract.enumerate_fields(values, spec["order"]))
+    missing = fields[1]
+    fake_fdb.omit(missing)
+
+    payload, _, timings = extract.run_extract(req)
+
+    expected = np.concatenate([default_values(field, 0, 4) for field in fields])
+    np.testing.assert_array_equal(decode(payload), expected)
+    assert len(fake_fdb.calls) == 1
+    assert len(fake_gj.calls) == 1
+    assert [request.req for request in fake_gj.calls[0]["requests"]] == [missing]
+    assert timings["fallbacks"] == 1
+    assert timings["lookup_mode"] == "batch"
 
 
 def test_location_failure_invalidates_refreshes_and_retries_once(
@@ -754,8 +827,10 @@ def test_field_order_preserved_with_mixed_hits_and_misses(
     spec, values = extract.parse_extract(req)
     fields = list(extract.enumerate_fields(values, spec["order"]))
     cache = extract._get_location_cache()
+    cached = {}
     for field in (fields[0], fields[2]):
-        location = make_location(field)
+        location = make_location(field, "-cached")
+        cached[location_cache.canonical_field_key(field)] = location
         fake_gj.path_fields[location.path] = field
         cache.put(field, location)
 
@@ -764,9 +839,16 @@ def test_field_order_preserved_with_mixed_hits_and_misses(
     expected = np.concatenate([default_values(field, 0, 4) for field in fields])
     np.testing.assert_array_equal(decode(payload), expected)
     extracted_paths = [request.path for request in fake_gj.path_calls[0]["requests"]]
-    assert extracted_paths == [make_location(field).path for field in fields]
+    assert extracted_paths == [
+        cached.get(location_cache.canonical_field_key(field), make_location(field)).path
+        for field in fields
+    ]
     assert timings["cache_hits"] == 2 and timings["cache_misses"] == 2
-    assert len(fake_fdb.calls) == 2
+    assert timings["lookup_mode"] == "batch"
+    assert len(fake_fdb.calls) == 1
+    assert fake_fdb.calls[0] == values
+    assert cache.get(fields[0]) == cached[location_cache.canonical_field_key(fields[0])]
+    assert cache.get(fields[2]) == cached[location_cache.canonical_field_key(fields[2])]
     assert len(fake_gj.path_calls) == 1
 
 
@@ -996,7 +1078,7 @@ _PROFILE_RE = re.compile(
     r"fields=(?P<fields>\d+) ranges=(?P<ranges>\d+) points=(?P<points>\d+) "
     r"dtype=(?P<dtype>f32|f64) shuffle=(?P<shuffle>[01]) "
     r"cache=(?P<hits>\d+)/(?P<misses>\d+) fallback=(?P<fallback>\d+) "
-    r"t_lookup=(?P<t_lookup>[\d.]+)ms "
+    r"lookup_mode=(?P<lookup_mode>batch|single|none) t_lookup=(?P<t_lookup>[\d.]+)ms "
     r"t_parse=(?P<t_parse>[\d.]+)ms t_enum=(?P<t_enum>[\d.]+)ms "
     r"t_extract=(?P<t_extract>[\d.]+)ms t_assemble=(?P<t_assemble>[\d.]+)ms "
     r"t_shuffle=(?P<t_shuffle>[\d.]+)ms t_zstd=(?P<t_zstd>[\d.]+)ms "
@@ -1050,6 +1132,8 @@ def test_profile_line_and_phase_timings(fake_gj, caplog):
     assert as_int(m["fallback"]) == 0
     assert as_float(m["t_lookup"]) == 0.0
     assert timings["lookup_ms"] == 0.0
+    assert m["lookup_mode"] == "none"
+    assert timings["lookup_mode"] == "none"
 
 
 def test_profile_line_reports_cache_counts_and_lookup_time(
@@ -1064,6 +1148,7 @@ def test_profile_line_reports_cache_counts_and_lookup_time(
     assert as_int(match["hits"]) == 0 and as_int(match["misses"]) == 1
     assert as_int(match["fallback"]) == 0
     assert as_float(match["t_lookup"]) >= 0.0
+    assert match["lookup_mode"] == "single"
 
 
 def test_profile_line_on_failure_reports_phase(fake_gj, caplog, monkeypatch):

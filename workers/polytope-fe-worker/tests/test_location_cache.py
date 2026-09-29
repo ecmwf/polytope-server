@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import sys
 
@@ -43,6 +44,28 @@ def test_ttl_expiry_invalidates_entry():
     assert cache.get(field("a")) is None
     assert cache.stats()["invalidations"] == 1
     assert cache.stats()["misses"] == 1
+
+
+def test_batch_insert_is_thread_safe_under_worker_concurrency():
+    workers = 8
+    batch_size = 32
+    cache = location_cache.LocationCache(size=workers * batch_size, ttl_secs=60)
+
+    def insert_batch(worker):
+        entries = [
+            (field(f"{worker}-{index}"), location(f"{worker}-{index}"))
+            for index in range(batch_size)
+        ]
+        cache.put_many(entries)
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        list(executor.map(insert_batch, range(workers)))
+
+    assert cache.stats()["entries"] == workers * batch_size
+    for worker in range(workers):
+        for index in range(batch_size):
+            name = f"{worker}-{index}"
+            assert cache.get(field(name)) == location(name)
 
 
 def test_key_is_sorted_and_excludes_non_field_keys():
