@@ -2,13 +2,14 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""/chunks/v1 extract path for the fe-worker (design D17, wire contract v0 §2-§4).
+"""/chunks/v1 extract path for the fe-worker (wire contract v2.2).
 
 A job whose (metkit-expanded) request carries a top-level ``extract`` object is
 served here instead of by PolytopeMars: enumerate the fields of the request in
 FIELD_ORDER, extract the requested half-open grid-point ranges from every field
-with pygribjump, concatenate them into one little-endian float64 buffer and
-return it as a single zstd frame.
+with pygribjump, concatenate them into one little-endian float64 assembly buffer,
+cast to the requested wire dtype, optionally byte-shuffle, and return one zstd
+frame.
 
 No polytope-mars, no CoverageJSON. Any missing field, value-count mismatch,
 grid-hash mismatch or gribjump error fails the whole job (D5) -- this module
@@ -54,7 +55,7 @@ EXTRACT_KEY = "extract"
 # to gribjump in the per-field request string.
 _NON_FIELD_KEYS = {"verb", EXTRACT_KEY}
 
-_SUPPORTED_DTYPES = {"float64"}
+_SUPPORTED_DTYPES = {"float32", "float64"}
 
 
 def _zstd_level() -> int:
@@ -127,22 +128,25 @@ def _parse_int(value, what):
 def parse_extract(request):
     """Validate the job and return ``(spec, field_values)``.
 
-    ``spec`` = dict(ranges=[(lo, hi), ...], order=[...], grid_hash=str|None,
-    dtype="float64"); ``field_values`` = {key: [str, ...]} for every MARS key.
+    ``spec`` contains ranges, field order, grid hash, wire dtype and shuffle;
+    ``field_values`` maps every MARS key to its ordered string values.
     """
     if not is_extract_request(request):
         raise ExtractError("request has no 'extract' object")
     ext = request[EXTRACT_KEY]
 
-    unknown = set(ext) - {"ranges", "order", "grid_hash", "dtype"}
+    unknown = set(ext) - {"ranges", "order", "grid_hash", "dtype", "shuffle"}
     if unknown:
         raise ExtractError(f"extract: unknown field(s) {sorted(unknown)}")
 
-    dtype = ext.get("dtype", None)
-    if dtype not in _SUPPORTED_DTYPES:
+    dtype = ext.get("dtype", "float32")
+    if not isinstance(dtype, str) or dtype not in _SUPPORTED_DTYPES:
         raise ExtractError(
             f"extract.dtype must be one of {sorted(_SUPPORTED_DTYPES)}, got {dtype!r}"
         )
+    shuffle = ext.get("shuffle", True)
+    if not isinstance(shuffle, bool):
+        raise ExtractError(f"extract.shuffle must be a boolean, got {shuffle!r}")
 
     ranges_raw = ext.get("ranges")
     if not isinstance(ranges_raw, list) or not ranges_raw:
@@ -192,7 +196,13 @@ def parse_extract(request):
         if len(set(field_values[k])) != len(field_values[k]):
             raise ExtractError(f"request key '{k}' contains duplicate values")
 
-    spec = {"ranges": ranges, "order": list(order), "grid_hash": grid_hash, "dtype": dtype}
+    spec = {
+        "ranges": ranges,
+        "order": list(order),
+        "grid_hash": grid_hash,
+        "dtype": dtype,
+        "shuffle": shuffle,
+    }
     return spec, field_values
 
 
@@ -650,6 +660,13 @@ def assemble(results, field_requests, spec):
     return out
 
 
+def byte_shuffle(values) -> bytes:
+    """Regroup bytes by byte position across every element (Blosc semantics)."""
+    if not values.flags.c_contiguous:
+        values = np.ascontiguousarray(values)
+    return values.view(np.uint8).reshape(-1, values.dtype.itemsize).T.tobytes()
+
+
 def extract_raw(field_requests, spec, pygribjump=None, ctx=None):
     """Run gribjump and return the uncompressed little-endian float64 payload."""
     if pygribjump is None:
@@ -680,15 +697,18 @@ def _log_profile(prof):
     """Emit the single per-job ``chunks-profile`` line (key=value, grep-able)."""
     logging.info(
         "chunks-profile job=%s status=%s phase=%s fields=%d ranges=%d points=%d "
-        "cache=%d/%d fallback=%d t_lookup=%.1fms "
+        "dtype=%s shuffle=%d cache=%d/%d fallback=%d t_lookup=%.1fms "
         "t_parse=%.1fms t_enum=%.1fms t_extract=%.1fms t_assemble=%.1fms "
-        "t_zstd=%.1fms t_total=%.1fms raw_bytes=%d bytes=%d zstd_level=%d",
+        "t_shuffle=%.1fms t_zstd=%.1fms t_total=%.1fms "
+        "raw_bytes=%d bytes=%d zstd_level=%d",
         prof["job"],
         prof["status"],
         prof["phase"],
         prof["fields"],
         prof["ranges"],
         prof["points"],
+        prof["dtype"],
+        prof["shuffle"],
         prof["cache_hits"],
         prof["cache_misses"],
         prof["fallbacks"],
@@ -697,6 +717,7 @@ def _log_profile(prof):
         prof["enum_ms"],
         prof["extract_ms"],
         prof["assemble_ms"],
+        prof["shuffle_ms"],
         prof["compress_ms"],
         prof["total_ms"],
         prof["raw_bytes"],
@@ -717,6 +738,8 @@ def run_extract(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
         "fields": 0,
         "ranges": 0,
         "points": 0,
+        "dtype": "f32",
+        "shuffle": 1,
         "cache_hits": 0,
         "cache_misses": 0,
         "fallbacks": 0,
@@ -725,6 +748,7 @@ def run_extract(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
         "enum_ms": 0.0,
         "extract_ms": 0.0,
         "assemble_ms": 0.0,
+        "shuffle_ms": 0.0,
         "compress_ms": 0.0,
         "total_ms": 0.0,
         "raw_bytes": 0,
@@ -736,6 +760,8 @@ def run_extract(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
         spec["registry_grid_hash"] = spec["grid_hash"]
         t_parse = time.monotonic()
         prof["parse_ms"] = _ms(t0, t_parse)
+        prof["dtype"] = "f32" if spec["dtype"] == "float32" else "f64"
+        prof["shuffle"] = int(spec["shuffle"])
 
         prof["phase"] = "enum"
         fields = list(enumerate_fields(field_values, spec["order"]))
@@ -920,12 +946,18 @@ def run_extract(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
         except Exception as exc:  # GribJumpException and anything else -> job failure
             raise ExtractError(f"gribjump extraction failed: {exc}") from exc
 
+        prof["phase"] = "shuffle"
+        dtype = "<f4" if spec["dtype"] == "float32" else "<f8"
+        wire_values = out.astype(dtype, copy=False)
+        prof["raw_bytes"] = wire_values.nbytes
+        wire = byte_shuffle(wire_values) if spec["shuffle"] else wire_values
+        t_shuffle = time.monotonic()
+        prof["shuffle_ms"] = _ms(t_assemble, t_shuffle)
+
         prof["phase"] = "zstd"
-        prof["raw_bytes"] = out.nbytes
-        # Compress straight from the numpy buffer (no intermediate bytes copy).
-        payload = compress(out)
+        payload = compress(wire)
         t_zstd = time.monotonic()
-        prof["compress_ms"] = _ms(t_assemble, t_zstd)
+        prof["compress_ms"] = _ms(t_shuffle, t_zstd)
         prof["payload_bytes"] = len(payload)
         prof["status"] = "ok"
         prof["phase"] = "done"
@@ -939,6 +971,7 @@ def run_extract(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
         "lookup_ms": prof["lookup_ms"],
         "extract_ms": prof["extract_ms"],
         "assemble_ms": prof["assemble_ms"],
+        "shuffle_ms": prof["shuffle_ms"],
         "compress_ms": prof["compress_ms"],
         "retrieve_ms": prof["total_ms"],
         "fields": prof["fields"],

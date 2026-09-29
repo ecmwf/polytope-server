@@ -11,7 +11,8 @@
 //! ```jsonc
 //! { "<mars key>": "v" | ["v1", ...], ...,
 //!   "extract": { "ranges": [[lo, hi], ...], "order": ["<key>", ...],
-//!                "grid_hash": "hex" | null, "dtype": "float64" } }
+//!                "grid_hash": "hex" | null, "dtype": "float32" | "float64",
+//!                "shuffle": true | false } }
 //! ```
 //!
 //! `transform::metkit_expansion` sets aside every object-valued top-level key
@@ -20,14 +21,15 @@
 
 use std::collections::HashSet;
 
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 
 use super::metadata::{feature_unsupported, parse_flat_request};
 
 pub const EXTRACT_KEY: &str = "extract";
-pub const SUPPORTED_DTYPE: &str = "float64";
+pub const DEFAULT_DTYPE: &str = "float32";
+pub const SUPPORTED_DTYPES: &[&str] = &["float32", "float64"];
 
-const EXTRACT_FIELDS: &[&str] = &["ranges", "order", "grid_hash", "dtype"];
+const EXTRACT_FIELDS: &[&str] = &["ranges", "order", "grid_hash", "dtype", "shuffle"];
 
 /// Number of values a request value denotes (MARS `a/to/b` ranges are
 /// rejected: extract requests must enumerate canonical values).
@@ -135,10 +137,25 @@ pub fn build_extract_job(body: &Value, max_chunk_cost: u64) -> Result<Value, Str
 
     let ranges = parse_ranges(extract.get("ranges"))?;
     let order = parse_order(extract.get("order"))?;
-    match extract.get("dtype").and_then(Value::as_str) {
-        Some(SUPPORTED_DTYPE) => {}
-        _ => return Err(format!("extract.dtype must be \"{SUPPORTED_DTYPE}\"")),
-    }
+    let dtype = match extract.get("dtype") {
+        None => DEFAULT_DTYPE,
+        Some(Value::String(dtype)) if SUPPORTED_DTYPES.contains(&dtype.as_str()) => dtype,
+        _ => {
+            return Err(format!(
+                "extract.dtype must be one of {}",
+                SUPPORTED_DTYPES
+                    .iter()
+                    .map(|dtype| format!("\"{dtype}\""))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+    };
+    let shuffle = match extract.get("shuffle") {
+        None => true,
+        Some(Value::Bool(shuffle)) => *shuffle,
+        Some(_) => return Err("extract.shuffle must be a boolean".to_string()),
+    };
     let grid_hash = match extract.get("grid_hash") {
         None | Some(Value::Null) => Value::Null,
         Some(Value::String(s)) if !s.is_empty() => Value::String(s.clone()),
@@ -195,7 +212,8 @@ pub fn build_extract_job(body: &Value, max_chunk_cost: u64) -> Result<Value, Str
             "ranges": ranges.iter().map(|(lo, hi)| json!([lo, hi])).collect::<Vec<_>>(),
             "order": order,
             "grid_hash": grid_hash,
-            "dtype": SUPPORTED_DTYPE,
+            "dtype": dtype,
+            "shuffle": shuffle,
         }),
     );
     Ok(Value::Object(request))
@@ -239,21 +257,29 @@ mod tests {
                     "order": ["date", "time"],
                     "grid_hash": "abc123",
                     "dtype": "float64",
+                    "shuffle": true,
                 }
             })
         );
     }
 
     #[test]
-    fn grid_hash_may_be_absent_or_null_and_order_empty_for_single_field() {
+    fn defaults_dtype_shuffle_and_allows_legacy_options() {
         let mut b = json!({
             "request": {"class": "d1", "param": ["167"]},
-            "extract": {"ranges": [[0, 5]], "order": [], "dtype": "float64"}
+            "extract": {"ranges": [[0, 5]], "order": []}
         });
         let job = build_extract_job(&b, 100).unwrap();
         assert_eq!(job["extract"]["grid_hash"], Value::Null);
+        assert_eq!(job["extract"]["dtype"], "float32");
+        assert_eq!(job["extract"]["shuffle"], true);
+
         b["extract"]["grid_hash"] = Value::Null;
-        assert!(build_extract_job(&b, 100).is_ok());
+        b["extract"]["dtype"] = json!("float64");
+        b["extract"]["shuffle"] = json!(false);
+        let job = build_extract_job(&b, 100).unwrap();
+        assert_eq!(job["extract"]["dtype"], "float64");
+        assert_eq!(job["extract"]["shuffle"], false);
     }
 
     #[test]
@@ -344,14 +370,16 @@ mod tests {
                 Box::new(|b| b["extract"]["order"] = json!(["date", "time", "param"])),
             ),
             (
-                "dtype float32",
-                Box::new(|b| b["extract"]["dtype"] = json!("float32")),
+                "unsupported dtype",
+                Box::new(|b| b["extract"]["dtype"] = json!("float16")),
             ),
             (
-                "dtype missing",
-                Box::new(|b| {
-                    b["extract"].as_object_mut().unwrap().remove("dtype");
-                }),
+                "dtype not string",
+                Box::new(|b| b["extract"]["dtype"] = json!(32)),
+            ),
+            (
+                "shuffle not boolean",
+                Box::new(|b| b["extract"]["shuffle"] = json!("true")),
             ),
             (
                 "grid_hash number",

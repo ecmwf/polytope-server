@@ -279,6 +279,7 @@ def base_request(**overrides):
             "order": ["date", "time"],
             "grid_hash": "abcdef0123456789",
             "dtype": "float64",
+            "shuffle": False,
         },
     }
     for k, v in overrides.items():
@@ -292,6 +293,11 @@ def base_request(**overrides):
 def decode(payload):
     raw = zstandard.ZstdDecompressor().decompress(payload)
     return np.frombuffer(raw, dtype="<f8")
+
+
+def inverse_shuffle(raw, itemsize):
+    """Inverse the contract's whole-payload byte shuffle."""
+    return np.frombuffer(raw, dtype=np.uint8).reshape(itemsize, -1).T.tobytes()
 
 
 def parse_json(raw):
@@ -371,12 +377,21 @@ def test_list_and_scalar_values_accepted():
     assert values["realization"] == ["1"]
 
 
+def test_wire_options_default_to_float32_and_shuffle():
+    req = base_request()
+    req["extract"].pop("dtype")
+    req["extract"].pop("shuffle")
+    spec, _ = extract.parse_extract(req)
+    assert spec["dtype"] == "float32"
+    assert spec["shuffle"]
+
+
 # ---------------------------------------------------------------------------
 # Assembly / byte layout
 # ---------------------------------------------------------------------------
 
 
-def test_assembly_byte_layout_single_range(fake_gj):
+def test_float64_unshuffled_payload_is_byte_identical_legacy(fake_gj):
     req = base_request()
     payload, content_type, timings = extract.run_extract(req)
     assert content_type == "application/octet-stream"
@@ -411,6 +426,30 @@ def test_assembly_byte_layout_single_range(fake_gj):
         assert all("/" not in v for v in r.req.values())
 
 
+@pytest.mark.parametrize("dtype", ["<f4", "<f8"])
+def test_byte_shuffle_inverse_property(dtype):
+    values = np.array([0.0, 1.0, -2.5, 3.25, np.nan, np.inf], dtype=dtype)
+    shuffled = extract.byte_shuffle(values)
+    assert inverse_shuffle(shuffled, values.dtype.itemsize) == values.tobytes()
+
+
+def test_float32_shuffled_payload_exact_bytes(fake_gj):
+    known = np.array([0.0, 1.0, -2.5, 3.25], dtype="<f8")
+    fake_gj.values_fn = lambda _field, lo, hi: known[lo:hi]
+    req = base_request(date="20200101", time="0000")
+    req["extract"].update(order=[], dtype="float32", shuffle=True)
+
+    payload, content_type, timings = extract.run_extract(req)
+
+    assert content_type == "application/octet-stream"
+    compressed_input = zstandard.ZstdDecompressor().decompress(payload)
+    expected = known.astype("<f4")
+    assert compressed_input == extract.byte_shuffle(expected)
+    unshuffled = inverse_shuffle(compressed_input, expected.dtype.itemsize)
+    np.testing.assert_array_equal(np.frombuffer(unshuffled, dtype="<f4"), expected)
+    assert timings["raw_bytes"] == expected.nbytes
+
+
 def test_multi_range_concatenation_within_field(fake_gj):
     req = base_request(date="20200101/20200102", time="0000")
     req["extract"] = {
@@ -418,6 +457,7 @@ def test_multi_range_concatenation_within_field(fake_gj):
         "order": ["date"],
         "grid_hash": None,
         "dtype": "float64",
+        "shuffle": False,
     }
     payload, _, _ = extract.run_extract(req)
     got = decode(payload)
@@ -738,8 +778,9 @@ def test_field_order_preserved_with_mixed_hits_and_misses(
 @pytest.mark.parametrize(
     "mutate, match",
     [
-        (lambda r: r["extract"].update(dtype="float32"), "dtype"),
-        (lambda r: r["extract"].pop("dtype"), "dtype"),
+        (lambda r: r["extract"].update(dtype="float16"), "dtype"),
+        (lambda r: r["extract"].update(dtype=32), "dtype"),
+        (lambda r: r["extract"].update(shuffle="true"), "shuffle"),
         (lambda r: r["extract"].update(ranges=[]), "ranges"),
         (lambda r: r["extract"].update(ranges=[[5, 5]]), "lo < hi"),
         (lambda r: r["extract"].update(ranges=[[6, 5]]), "lo < hi"),
@@ -936,7 +977,7 @@ def test_dispatch_non_object_extract_key_is_legacy(fake_gj, recording_ds):
 
 def test_dispatch_extract_error_reports_job_failure(fake_gj, recording_ds):
     req = base_request()
-    req["extract"]["dtype"] = "float32"
+    req["extract"]["dtype"] = "float16"
     body, status_json = run_polytope_worker.process(_payload(req))
     status = parse_json(status_json)
     assert not status["ok"]
@@ -953,12 +994,14 @@ def test_dispatch_extract_error_reports_job_failure(fake_gj, recording_ds):
 _PROFILE_RE = re.compile(
     r"^chunks-profile job=(?P<job>\S+) status=(?P<status>\w+) phase=(?P<phase>\w+) "
     r"fields=(?P<fields>\d+) ranges=(?P<ranges>\d+) points=(?P<points>\d+) "
+    r"dtype=(?P<dtype>f32|f64) shuffle=(?P<shuffle>[01]) "
     r"cache=(?P<hits>\d+)/(?P<misses>\d+) fallback=(?P<fallback>\d+) "
     r"t_lookup=(?P<t_lookup>[\d.]+)ms "
     r"t_parse=(?P<t_parse>[\d.]+)ms t_enum=(?P<t_enum>[\d.]+)ms "
     r"t_extract=(?P<t_extract>[\d.]+)ms t_assemble=(?P<t_assemble>[\d.]+)ms "
-    r"t_zstd=(?P<t_zstd>[\d.]+)ms t_total=(?P<t_total>[\d.]+)ms "
-    r"raw_bytes=(?P<raw_bytes>\d+) bytes=(?P<bytes>\d+) zstd_level=(?P<level>\d+)$"
+    r"t_shuffle=(?P<t_shuffle>[\d.]+)ms t_zstd=(?P<t_zstd>[\d.]+)ms "
+    r"t_total=(?P<t_total>[\d.]+)ms raw_bytes=(?P<raw_bytes>\d+) "
+    r"bytes=(?P<bytes>\d+) zstd_level=(?P<level>\d+)$"
 )
 
 
@@ -968,7 +1011,14 @@ def _profile_lines(messages):
 
 def test_profile_line_and_phase_timings(fake_gj, caplog):
     caplog.set_level(logging.INFO)
-    req = base_request(extract={**base_request()["extract"], "ranges": [[0, 4], [10, 13]]})
+    req = base_request(
+        extract={
+            **base_request()["extract"],
+            "ranges": [[0, 4], [10, 13]],
+            "dtype": "float32",
+            "shuffle": True,
+        }
+    )
     payload, _, timings = extract.run_extract(req, job_id="job-xyz")
 
     (line,) = _profile_lines([r.getMessage() for r in caplog.records])
@@ -978,14 +1028,24 @@ def test_profile_line_and_phase_timings(fake_gj, caplog):
     assert m["status"] == "ok" and m["phase"] == "done"
     assert as_int(m["fields"]) == 6 and as_int(m["ranges"]) == 2
     assert as_int(m["points"]) == 6 * 7
-    assert as_int(m["raw_bytes"]) == 6 * 7 * 8
+    assert m["dtype"] == "f32" and as_int(m["shuffle"]) == 1
+    assert as_float(m["t_shuffle"]) >= 0.0
+    assert as_int(m["raw_bytes"]) == 6 * 7 * 4
     assert as_int(m["bytes"]) == len(payload)
     assert as_int(m["level"]) == extract.ZSTD_LEVEL
 
-    for k in ("parse_ms", "enum_ms", "extract_ms", "assemble_ms", "compress_ms", "retrieve_ms"):
+    for k in (
+        "parse_ms",
+        "enum_ms",
+        "extract_ms",
+        "assemble_ms",
+        "shuffle_ms",
+        "compress_ms",
+        "retrieve_ms",
+    ):
         assert isinstance(timings[k], float) and timings[k] >= 0.0, k
     assert timings["points"] == 42 and timings["fields"] == 6
-    assert timings["raw_bytes"] == 42 * 8 and timings["payload_bytes"] == len(payload)
+    assert timings["raw_bytes"] == 42 * 4 and timings["payload_bytes"] == len(payload)
     assert as_int(m["hits"]) == 0 and as_int(m["misses"]) == 0
     assert as_int(m["fallback"]) == 0
     assert as_float(m["t_lookup"]) == 0.0
@@ -1027,7 +1087,7 @@ def test_profile_line_on_failure_reports_phase(fake_gj, caplog, monkeypatch):
 def test_profile_line_on_validation_failure(fake_gj, caplog):
     caplog.set_level(logging.INFO)
     req = base_request()
-    req["extract"]["dtype"] = "float32"
+    req["extract"]["dtype"] = "float16"
     with pytest.raises(extract.ExtractError):
         extract.run_extract(req)
     (line,) = _profile_lines([r.getMessage() for r in caplog.records])
@@ -1066,7 +1126,15 @@ def test_dispatch_passes_job_id_and_emits_one_profile_log(fake_gj, recording_ds)
     lines = _profile_lines([rec["message"] for rec in status["logs"]])
     assert len(lines) == 1 and lines[0].startswith("chunks-profile job=01abc status=ok ")
     assert status["timings"]["payload_bytes"] == len(body)
-    for k in ("parse_ms", "enum_ms", "extract_ms", "assemble_ms", "compress_ms", "total_ms"):
+    for k in (
+        "parse_ms",
+        "enum_ms",
+        "extract_ms",
+        "assemble_ms",
+        "shuffle_ms",
+        "compress_ms",
+        "total_ms",
+    ):
         assert k in status["timings"], k
 
 

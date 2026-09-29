@@ -1173,6 +1173,7 @@ fn expected_job_body() -> Value {
             "order": ["date", "time"],
             "grid_hash": MD5,
             "dtype": "float64",
+            "shuffle": true,
         }
     })
 }
@@ -1296,8 +1297,11 @@ async fn extract_validation_errors_are_400_and_submit_nothing() {
     b["extract"]["ranges"] = json!([[10, 5]]);
     cases.push(("destination-earth", b, "lo < hi"));
     let mut b = extract_body();
-    b["extract"]["dtype"] = json!("float32");
-    cases.push(("destination-earth", b, "float64"));
+    b["extract"]["dtype"] = json!("float16");
+    cases.push(("destination-earth", b, "float32"));
+    let mut b = extract_body();
+    b["extract"]["shuffle"] = json!("true");
+    cases.push(("destination-earth", b, "shuffle"));
     let mut b = extract_body();
     b["extract"]["order"] = json!("date");
     cases.push(("destination-earth", b, "order"));
