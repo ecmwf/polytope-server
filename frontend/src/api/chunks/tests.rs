@@ -368,7 +368,7 @@ async fn metadata_single_cube_is_root_array_set() {
     assert_eq!(
         tree["grid"],
         json!({
-            "kind": "unstructured", "count_values": 12582912, "nside": 1024,
+            "kind": "healpix", "ordering": "nested", "count_values": 12582912, "nside": 1024,
             "md5GridSection": MD5
         })
     );
@@ -554,6 +554,47 @@ async fn metadata_pins_qube_only_single_valued_keys_the_user_omitted() {
 }
 
 #[tokio::test]
+async fn metadata_strips_non_mars_catalogue_dimensions_from_everywhere() {
+    let arena = json!({"version": "1", "qube": [
+        {"dim": "root", "coords": null, "parent": null, "children": [1, 2]},
+        {"dim": "location", "coords": "mn5", "parent": 0, "children": [3]},
+        {"dim": "location", "coords": "lumi", "parent": 0, "children": [4]},
+        {"dim": "date", "coords": "20250101", "parent": 1, "children": [5]},
+        {"dim": "date", "coords": "20250101", "parent": 2, "children": [6]},
+        {"dim": "param", "coords": "167", "parent": 3, "children": []},
+        {"dim": "param", "coords": "165", "parent": 4, "children": []},
+    ]});
+    let config = r#"
+chunks:
+  catalogue_strip_keys: [location]
+  grids:
+    - collection: destination-earth
+      match: {class: d1, dataset: climate-dt, resolution: high}
+      count_values: 12
+      nside: 1
+"#;
+    let (status, _, body) = post_json(
+        app_with_qube_and_config(arena, config),
+        "/chunks/v1/destination-earth/metadata",
+        &json!({"request": {
+            "class": "d1", "dataset": "climate-dt", "resolution": "high"
+        }}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let text = String::from_utf8(body.to_vec()).unwrap();
+    assert!(!text.contains("\"location\""), "{text}");
+    let value: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(value["tree"]["axes"], json!([]));
+    assert!(value["tree"]["base_request"].get("location").is_none());
+    assert_eq!(
+        value["tree"]["variables"],
+        json!([{"name": "165", "param": "165"}, {"name": "167", "param": "167"}])
+    );
+}
+
+
+#[tokio::test]
 async fn metadata_two_cubes_resolve_different_grids() {
     let request = json!({
         "class": "d1", "dataset": "climate-dt", "levtype": "sfc",
@@ -718,7 +759,8 @@ async fn metadata_feature_has_exact_contract_json_and_points_dimension() {
                 {"name": "167", "param": "167"},
             ],
             "grid": {
-                "kind": "unstructured",
+                "kind": "healpix",
+                "ordering": "nested",
                 "count_values": 12,
                 "nside": 1,
                 "md5GridSection": MD5,
@@ -1098,14 +1140,19 @@ fn chunks_config_defaults_and_validation() {
     // Contract v2 catalogue defaults.
     assert!(chunks.catalogue_url.is_none());
     assert_eq!(chunks.catalogue_ttl_secs, 300);
+    assert!(chunks.catalogue_strip_keys.is_empty());
     chunks.validate().unwrap();
 
     let cfg = server_config(
         "http://127.0.0.1:1/",
-        "chunks:\n  catalogue_url: \"https://x/api/v2/\"\n  catalogue_ttl_secs: 60\n",
+        "chunks:\n  catalogue_url: \"https://x/api/v2/?location=mn5\"\n  catalogue_strip_keys: [location]\n  catalogue_ttl_secs: 60\n",
     );
     let chunks = cfg.chunks.unwrap();
-    assert_eq!(chunks.catalogue_url.as_deref(), Some("https://x/api/v2/"));
+    assert_eq!(
+        chunks.catalogue_url.as_deref(),
+        Some("https://x/api/v2/?location=mn5")
+    );
+    assert_eq!(chunks.catalogue_strip_keys, ["location"]);
     assert_eq!(chunks.catalogue_ttl_secs, 60);
 
     let bad: crate::config::ChunksConfig =

@@ -18,6 +18,7 @@
 //! is moved off the hot path onto a blocking thread. The [`CatalogueSource`]
 //! trait lets tests inject a qube without any HTTP.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -73,14 +74,20 @@ pub struct CatalogueCache {
     source: Arc<dyn CatalogueSource>,
     ttl: Duration,
     state: Mutex<Option<Cached>>,
+    strip_keys: BTreeSet<String>,
 }
 
 impl CatalogueCache {
-    pub fn new(source: Arc<dyn CatalogueSource>, ttl: Duration) -> Self {
+    pub fn new(
+        source: Arc<dyn CatalogueSource>,
+        ttl: Duration,
+        strip_keys: BTreeSet<String>,
+    ) -> Self {
         Self {
             source,
             ttl,
             state: Mutex::new(None),
+            strip_keys,
         }
     }
 
@@ -104,9 +111,12 @@ impl CatalogueCache {
                 }
                 Ok(Fetched::Modified { body, etag }) => {
                     // Parse off the hot path (the body may be several MB).
-                    let parsed =
-                        tokio::task::spawn_blocking(move || Qube::from_arena_json_bytes(&body))
-                            .await;
+                    let strip_keys = self.strip_keys.clone();
+                    let parsed = tokio::task::spawn_blocking(move || {
+                        Qube::from_arena_json_bytes(&body)
+                            .map(|qube| qube.strip_dimensions(&strip_keys))
+                    })
+                    .await;
                     match parsed {
                         Ok(Ok(qube)) => {
                             *guard = Some(Cached {
@@ -215,5 +225,33 @@ impl CatalogueSource for HttpCatalogueSource {
 
     fn source_url(&self) -> &str {
         &self.url
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn http_source_preserves_catalogue_query_string() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/api/v2/")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "location".to_string(),
+                "mn5".to_string(),
+            ))
+            .with_status(200)
+            .with_body(br#"{"qube":[]}"#)
+            .create_async()
+            .await;
+        let source = HttpCatalogueSource::new(format!(
+            "{}/api/v2/?location=mn5",
+            server.url()
+        ));
+
+        let fetched = source.fetch(None).await.unwrap();
+        assert!(matches!(fetched, Fetched::Modified { .. }));
+        mock.assert_async().await;
     }
 }

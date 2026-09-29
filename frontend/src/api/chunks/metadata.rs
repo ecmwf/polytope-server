@@ -130,6 +130,8 @@ pub struct Axis {
 #[derive(Debug, Serialize)]
 pub struct Grid {
     pub kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ordering: Option<&'static str>,
     pub count_values: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nside: Option<u32>,

@@ -282,7 +282,12 @@ fn build_array_set(
         axes,
         variables,
         grid: Grid {
-            kind: "unstructured",
+            kind: if grid.nside.is_some() {
+                "healpix"
+            } else {
+                "unstructured"
+            },
+            ordering: grid.nside.map(|_| "nested"),
             count_values: grid.count_values,
             nside: grid.nside,
             md5_grid_section: grid.md5_grid_section.clone(),

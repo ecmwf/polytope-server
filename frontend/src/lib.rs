@@ -183,14 +183,19 @@ fn build_app_full(
                 }
             }
             let ttl = std::time::Duration::from_secs(chunks_cfg.catalogue_ttl_secs);
+            let strip_keys = chunks_cfg.catalogue_strip_keys.iter().cloned().collect();
             let catalogue = match catalogue_source {
-                Some(source) => {
-                    Some(Arc::new(api::chunks::catalogue::CatalogueCache::new(source, ttl)))
-                }
+                Some(source) => Some(Arc::new(
+                    api::chunks::catalogue::CatalogueCache::new(source, ttl, strip_keys),
+                )),
                 None => chunks_cfg.catalogue_url.clone().map(|url| {
                     let source = Arc::new(api::chunks::catalogue::HttpCatalogueSource::new(url))
                         as Arc<dyn api::chunks::catalogue::CatalogueSource>;
-                    Arc::new(api::chunks::catalogue::CatalogueCache::new(source, ttl))
+                    Arc::new(api::chunks::catalogue::CatalogueCache::new(
+                        source,
+                        ttl,
+                        strip_keys,
+                    ))
                 }),
             };
             Some(api::chunks::router::<()>(

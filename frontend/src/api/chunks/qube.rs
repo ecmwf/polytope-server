@@ -260,6 +260,99 @@ impl Qube {
     }
 }
 
+impl Qube {
+    /// Remove non-MARS catalogue dimensions while preserving the exact union of
+    /// the represented datacubes.
+    ///
+    /// Each root-to-leaf rectangle is projected by dropping the configured keys.
+    /// Projected rectangles are then deterministically unioned whenever they differ
+    /// in only one dimension, and inserted into a fresh tree. This merges branches
+    /// exposed by stripping (including multi-valued stripped nodes) without creating
+    /// cartesian products that were not present in the source qube.
+    pub fn strip_dimensions(&self, strip_keys: &BTreeSet<String>) -> Qube {
+        if strip_keys.is_empty() {
+            return self.clone();
+        }
+
+        let mut cubes = self.select_datacubes(&BTreeMap::new());
+        for cube in &mut cubes {
+            cube.retain(|dim, _| !strip_keys.contains(dim));
+        }
+        Qube::from_cubes(union_cubes(cubes))
+    }
+
+    fn from_cubes(mut cubes: Vec<Cube>) -> Qube {
+        cubes.sort();
+        cubes.dedup();
+
+        let mut nodes = vec![Node {
+            dim: "root".to_string(),
+            values: Vec::new(),
+            children: Vec::new(),
+        }];
+        for cube in &cubes {
+            let dims = canonical_key_order(std::slice::from_ref(cube));
+            let mut parent = 0;
+            for dim in dims {
+                let child = nodes.len();
+                nodes.push(Node {
+                    values: cube[&dim].clone(),
+                    dim,
+                    children: Vec::new(),
+                });
+                nodes[parent].children.push(child);
+                parent = child;
+            }
+        }
+        Qube { nodes, root: 0 }
+    }
+}
+
+/// Deterministically simplify a union of dense rectangles. Combining rectangles
+/// is sound iff their key sets match and all dimensions except at most one have
+/// identical value sets; the differing dimension can then be replaced by its union.
+fn union_cubes(mut cubes: Vec<Cube>) -> Vec<Cube> {
+    for cube in &mut cubes {
+        for values in cube.values_mut() {
+            values.sort();
+            values.dedup();
+        }
+    }
+
+    loop {
+        cubes.sort();
+        cubes.dedup();
+        let mut merged = None;
+        'pairs: for left in 0..cubes.len() {
+            for right in (left + 1)..cubes.len() {
+                if cubes[left].keys().ne(cubes[right].keys()) {
+                    continue;
+                }
+                let differing: Vec<&String> = cubes[left]
+                    .keys()
+                    .filter(|key| cubes[left][*key] != cubes[right][*key])
+                    .collect();
+                if differing.len() == 1 {
+                    let key = differing[0];
+                    let mut cube = cubes[left].clone();
+                    let mut values = cube[key].clone();
+                    values.extend(cubes[right][key].iter().cloned());
+                    cube.insert(key.clone(), dedup_sorted(values));
+                    merged = Some((left, right, cube));
+                    break 'pairs;
+                }
+            }
+        }
+
+        let Some((left, right, cube)) = merged else {
+            return cubes;
+        };
+        cubes.remove(right);
+        cubes.remove(left);
+        cubes.push(cube);
+    }
+}
+
 /// Sort ascending (canonical string order) and de-duplicate.
 fn dedup_sorted(mut values: Vec<String>) -> Vec<String> {
     values.sort();
@@ -324,6 +417,58 @@ mod tests {
         let cubes = q.select_datacubes(&req);
         // Two surviving branches: {20200101/167} and {20200103/228}.
         assert_eq!(cubes.len(), 2);
+    }
+
+    #[test]
+    fn strips_single_and_multi_valued_dimensions_and_merges_exposed_branches() {
+        let single = json!({
+            "qube": [
+                {"dim": "root", "coords": null, "parent": null, "children": [1]},
+                {"dim": "location", "coords": "mn5/lumi", "parent": 0, "children": [2]},
+                {"dim": "date", "coords": "20250101/20250102", "parent": 1, "children": [3]},
+                {"dim": "param", "coords": "167", "parent": 2, "children": []},
+            ]
+        });
+        let strip = set(&["location"]);
+        let stripped = Qube::from_arena_json(single)
+            .unwrap()
+            .strip_dimensions(&strip);
+        assert!(!stripped.dimensions().contains("location"));
+        assert_eq!(
+            stripped.select_datacubes(&BTreeMap::new()),
+            vec![BTreeMap::from([
+                (
+                    "date".to_string(),
+                    vec!["20250101".to_string(), "20250102".to_string()]
+                ),
+                ("param".to_string(), vec!["167".to_string()]),
+            ])]
+        );
+
+        let branched = json!({
+            "qube": [
+                {"dim": "root", "coords": null, "parent": null, "children": [1, 2]},
+                {"dim": "location", "coords": "mn5", "parent": 0, "children": [3]},
+                {"dim": "location", "coords": "lumi", "parent": 0, "children": [4]},
+                {"dim": "date", "coords": "20250101", "parent": 1, "children": [5]},
+                {"dim": "date", "coords": "20250101", "parent": 2, "children": [6]},
+                {"dim": "param", "coords": "167", "parent": 3, "children": []},
+                {"dim": "param", "coords": "228", "parent": 4, "children": []},
+            ]
+        });
+        let stripped = Qube::from_arena_json(branched)
+            .unwrap()
+            .strip_dimensions(&strip);
+        assert_eq!(
+            stripped.select_datacubes(&BTreeMap::new()),
+            vec![BTreeMap::from([
+                ("date".to_string(), vec!["20250101".to_string()]),
+                (
+                    "param".to_string(),
+                    vec!["167".to_string(), "228".to_string()]
+                ),
+            ])]
+        );
     }
 
 }

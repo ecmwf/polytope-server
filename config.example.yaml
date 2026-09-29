@@ -36,7 +36,8 @@ bits:
 #   # Contract v2 (qube-derived structure tree): catalogue qube URL, fetched as
 #   # full-collection arena JSON and ETag/TTL-cached in memory. When absent,
 #   # /metadata returns 501 (the extract path still works).
-#   catalogue_url: "https://catalogue.mn5.apps.dte.destination-earth.eu/api/v2/"
+#   catalogue_url: "https://catalogue.lumi.apps.dte.destination-earth.eu/api/v2/?location=mn5"
+#   catalogue_strip_keys: ["location"] # non-MARS catalogue dimensions removed after fetch
 #   catalogue_ttl_secs: 300        # lazy refresh once the cached qube is older (default 300)
 #   grids:                        # grid registry: first match wins, no match -> 400
 #     - collection: destination-earth

@@ -83,6 +83,10 @@ pub struct ChunksConfig {
     /// `polytope-zarr-contract.md` Contract v2 §V2.2.
     #[serde(default)]
     pub catalogue_url: Option<String>,
+    /// Catalogue dimensions that are transport/routing metadata rather than MARS
+    /// request keys. They are projected out of the qube after every successful fetch.
+    #[serde(default)]
+    pub catalogue_strip_keys: Vec<String>,
     /// In-memory catalogue cache TTL in seconds (default 300). The qube is
     /// refreshed lazily on access once older than this.
     #[serde(default = "default_catalogue_ttl_secs")]
@@ -97,6 +101,7 @@ impl Default for ChunksConfig {
             max_feature_points: default_max_feature_points(),
             grids: Vec::new(),
             catalogue_url: None,
+            catalogue_strip_keys: Vec::new(),
             catalogue_ttl_secs: default_catalogue_ttl_secs(),
         }
     }
