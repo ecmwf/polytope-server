@@ -29,10 +29,7 @@ use super::qube::Qube;
 /// Outcome of a single upstream fetch attempt.
 pub enum Fetched {
     /// `200` — new body (with its `ETag`, if any).
-    Modified {
-        body: Vec<u8>,
-        etag: Option<String>,
-    },
+    Modified { body: Vec<u8>, etag: Option<String> },
     /// `304 Not Modified` — the cached body is still current.
     NotModified,
 }
@@ -75,6 +72,7 @@ pub struct CatalogueCache {
     ttl: Duration,
     state: Mutex<Option<Cached>>,
     strip_keys: BTreeSet<String>,
+    location: Option<String>,
 }
 
 impl CatalogueCache {
@@ -82,12 +80,14 @@ impl CatalogueCache {
         source: Arc<dyn CatalogueSource>,
         ttl: Duration,
         strip_keys: BTreeSet<String>,
+        location: Option<String>,
     ) -> Self {
         Self {
             source,
             ttl,
             state: Mutex::new(None),
             strip_keys,
+            location,
         }
     }
 
@@ -112,9 +112,29 @@ impl CatalogueCache {
                 Ok(Fetched::Modified { body, etag }) => {
                     // Parse off the hot path (the body may be several MB).
                     let strip_keys = self.strip_keys.clone();
+                    let location = self.location.clone();
                     let parsed = tokio::task::spawn_blocking(move || {
-                        Qube::from_arena_json_bytes(&body)
-                            .map(|qube| qube.strip_dimensions(&strip_keys))
+                        let mut qube = Qube::from_arena_json_bytes(&body)?;
+                        if let Some(location) = location {
+                            let (filtered, stats) = qube.filter_location(&location);
+                            tracing::info!(
+                                catalogue_location = %location,
+                                leaves_total = stats.leaves_total,
+                                leaves_kept = stats.leaves_kept,
+                                leaves_excluded = stats.leaves_excluded,
+                                leaves_unannotated = stats.leaves_unannotated,
+                                "filtered catalogue by inherited location metadata"
+                            );
+                            if stats.leaves_unannotated > 0 {
+                                tracing::warn!(
+                                    catalogue_location = %location,
+                                    leaves_unannotated = stats.leaves_unannotated,
+                                    "strict catalogue location filter excluded unannotated leaves"
+                                );
+                            }
+                            qube = filtered;
+                        }
+                        Ok::<Qube, String>(qube.strip_dimensions(&strip_keys))
                     })
                     .await;
                     match parsed {
@@ -247,10 +267,7 @@ mod tests {
             .with_body(br#"{"qube":[]}"#)
             .create_async()
             .await;
-        let source = HttpCatalogueSource::new(format!(
-            "{}/api/v2/?location=mn5",
-            server.url()
-        ));
+        let source = HttpCatalogueSource::new(format!("{}/api/v2/?location=mn5", server.url()));
 
         let fetched = source.fetch(None).await.unwrap();
         assert!(matches!(fetched, Fetched::Modified { .. }));

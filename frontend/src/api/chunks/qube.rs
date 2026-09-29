@@ -39,6 +39,17 @@ struct Node {
     /// Canonical string coordinates. Empty for the root node.
     values: Vec<String>,
     children: Vec<usize>,
+    /// Location metadata attached by qubed. Metadata is inherited by descendants.
+    locations: BTreeSet<String>,
+}
+
+/// Counts describing one metadata-location filter pass.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LocationFilterStats {
+    pub leaves_total: usize,
+    pub leaves_kept: usize,
+    pub leaves_excluded: usize,
+    pub leaves_unannotated: usize,
 }
 
 /// A parsed catalogue qube.
@@ -164,6 +175,12 @@ impl Qube {
                         .collect()
                 })
                 .unwrap_or_default();
+            let locations = obj
+                .get("metadata")
+                .and_then(Value::as_object)
+                .and_then(|metadata| metadata.get("location"))
+                .map(|location| coord_tokens(Some(location)).into_iter().collect())
+                .unwrap_or_default();
             let is_root = match obj.get("parent") {
                 None | Some(Value::Null) => true,
                 Some(_) => false,
@@ -175,6 +192,7 @@ impl Qube {
                 dim,
                 values,
                 children,
+                locations,
             });
         }
         // Validate children indices.
@@ -258,6 +276,77 @@ impl Qube {
             path.remove(&node.dim);
         }
     }
+
+    /// Keep only leaf datacubes whose inherited root-to-leaf location metadata
+    /// contains `location`. Annotations accumulate because qubed moves metadata
+    /// shared by a subtree to its nearest common ancestor.
+    ///
+    /// A fully unannotated leaf is excluded. The production multi-site catalogue
+    /// currently annotates every leaf, so strict filtering avoids advertising data
+    /// whose site cannot be established.
+    pub fn filter_location(&self, location: &str) -> (Qube, LocationFilterStats) {
+        let root = &self.nodes[self.root];
+        let inherited = root.locations.clone();
+        let root_children = root.children.clone();
+        let mut filtered_root = root.clone();
+        filtered_root.children.clear();
+        let mut nodes = vec![filtered_root];
+        let mut stats = LocationFilterStats::default();
+
+        for child in root_children {
+            if let Some(filtered_child) =
+                self.clone_location_subtree(child, location, &inherited, &mut nodes, &mut stats)
+            {
+                nodes[0].children.push(filtered_child);
+            }
+        }
+
+        (Qube { nodes, root: 0 }, stats)
+    }
+
+    fn clone_location_subtree(
+        &self,
+        idx: usize,
+        location: &str,
+        inherited: &BTreeSet<String>,
+        out: &mut Vec<Node>,
+        stats: &mut LocationFilterStats,
+    ) -> Option<usize> {
+        let node = &self.nodes[idx];
+        let mut locations = inherited.clone();
+        locations.extend(node.locations.iter().cloned());
+
+        if node.children.is_empty() {
+            stats.leaves_total += 1;
+            if !locations.contains(location) {
+                stats.leaves_excluded += 1;
+                if locations.is_empty() {
+                    stats.leaves_unannotated += 1;
+                }
+                return None;
+            }
+            stats.leaves_kept += 1;
+        }
+
+        let filtered_idx = out.len();
+        let mut filtered_node = node.clone();
+        filtered_node.children.clear();
+        out.push(filtered_node);
+        for &child in &node.children {
+            if let Some(filtered_child) =
+                self.clone_location_subtree(child, location, &locations, out, stats)
+            {
+                out[filtered_idx].children.push(filtered_child);
+            }
+        }
+
+        if !node.children.is_empty() && out[filtered_idx].children.is_empty() {
+            out.pop();
+            None
+        } else {
+            Some(filtered_idx)
+        }
+    }
 }
 
 impl Qube {
@@ -289,6 +378,7 @@ impl Qube {
             dim: "root".to_string(),
             values: Vec::new(),
             children: Vec::new(),
+            locations: BTreeSet::new(),
         }];
         for cube in &cubes {
             let dims = canonical_key_order(std::slice::from_ref(cube));
@@ -299,6 +389,7 @@ impl Qube {
                     values: cube[&dim].clone(),
                     dim,
                     children: Vec::new(),
+                    locations: BTreeSet::new(),
                 });
                 nodes[parent].children.push(child);
                 parent = child;
@@ -417,6 +508,79 @@ mod tests {
         let cubes = q.select_datacubes(&req);
         // Two surviving branches: {20200101/167} and {20200103/228}.
         assert_eq!(cubes.len(), 2);
+    }
+
+    fn location_arena() -> Value {
+        json!({
+            "qube": [
+                {"dim": "root", "coords": null, "parent": null, "children": [1, 2]},
+                {"dim": "activity", "coords": "baseline", "metadata": {"location": {"strings": ["mn5"]}}, "parent": 0, "children": [3]},
+                {"dim": "activity", "coords": "projections", "metadata": {"location": {"strings": ["lumi"]}}, "parent": 0, "children": [4]},
+                {"dim": "date", "coords": "20140101", "parent": 1, "children": []},
+                {"dim": "date", "coords": "20250101", "parent": 2, "children": []},
+            ]
+        })
+    }
+
+    #[test]
+    fn location_filter_uses_inherited_ancestor_metadata() {
+        let q = Qube::from_arena_json(location_arena()).unwrap();
+        let (filtered, stats) = q.filter_location("mn5");
+        assert_eq!(
+            filtered.select_datacubes(&BTreeMap::new()),
+            vec![BTreeMap::from([
+                ("activity".to_string(), vec!["baseline".to_string()]),
+                ("date".to_string(), vec!["20140101".to_string()]),
+            ])]
+        );
+        assert_eq!(
+            stats,
+            LocationFilterStats {
+                leaves_total: 2,
+                leaves_kept: 1,
+                leaves_excluded: 1,
+                leaves_unannotated: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn location_filter_keeps_multi_location_metadata_containing_target() {
+        let arena = json!({"qube": [
+            {"dim": "root", "coords": null, "parent": null, "children": [1]},
+            {"dim": "experiment", "coords": "hist", "metadata": {"location": {"strings": ["lumi"]}}, "parent": 0, "children": [2]},
+            {"dim": "generation", "coords": "2", "metadata": {"location": {"strings": ["lumi", "mn5"]}}, "parent": 1, "children": [3]},
+            {"dim": "date", "coords": "20250101", "parent": 2, "children": []},
+        ]});
+        let q = Qube::from_arena_json(arena).unwrap();
+        let (filtered, stats) = q.filter_location("mn5");
+        assert_eq!(filtered.select_datacubes(&BTreeMap::new()).len(), 1);
+        assert_eq!(stats.leaves_kept, 1);
+    }
+
+    #[test]
+    fn location_filter_strictly_excludes_unannotated_subtrees() {
+        let arena = json!({"qube": [
+            {"dim": "root", "coords": null, "parent": null, "children": [1]},
+            {"dim": "date", "coords": "20250101", "parent": 0, "children": []},
+        ]});
+        let q = Qube::from_arena_json(arena).unwrap();
+        let (filtered, stats) = q.filter_location("mn5");
+        assert!(filtered.select_datacubes(&BTreeMap::new()).is_empty());
+        assert_eq!(stats.leaves_unannotated, 1);
+        assert_eq!(stats.leaves_excluded, 1);
+    }
+
+    #[test]
+    fn arena_is_unfiltered_when_no_catalogue_location_is_applied() {
+        let q = Qube::from_arena_json(location_arena()).unwrap();
+        let cubes = q.select_datacubes(&BTreeMap::new());
+        assert_eq!(cubes.len(), 2);
+        let dates: BTreeSet<String> = cubes
+            .iter()
+            .flat_map(|cube| cube["date"].iter().cloned())
+            .collect();
+        assert_eq!(dates, set(&["20140101", "20250101"]));
     }
 
     #[test]

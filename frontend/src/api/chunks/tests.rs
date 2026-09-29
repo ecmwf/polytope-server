@@ -593,6 +593,42 @@ chunks:
     );
 }
 
+#[tokio::test]
+async fn metadata_location_filter_removes_lumi_only_axis_values() {
+    let arena = json!({"version": "1", "qube": [
+        {"dim": "root", "coords": null, "parent": null, "children": [1, 2]},
+        {"dim": "activity", "coords": "baseline", "metadata": {"location": {"strings": ["mn5"]}}, "parent": 0, "children": [3]},
+        {"dim": "activity", "coords": "baseline", "metadata": {"location": {"strings": ["lumi"]}}, "parent": 0, "children": [4]},
+        {"dim": "date", "coords": "20141230/20141231", "parent": 1, "children": [5]},
+        {"dim": "date", "coords": "20251231", "parent": 2, "children": [6]},
+        {"dim": "param", "coords": "167", "parent": 3, "children": []},
+        {"dim": "param", "coords": "167", "parent": 4, "children": []},
+    ]});
+    let config = r#"
+chunks:
+  catalogue_location: mn5
+  grids:
+    - collection: destination-earth
+      match: {class: d1, dataset: climate-dt, resolution: high}
+      count_values: 12
+      nside: 1
+"#;
+    let (status, _, body) = post_json(
+        app_with_qube_and_config(arena, config),
+        "/chunks/v1/destination-earth/metadata",
+        &json!({"request": {
+            "class": "d1", "dataset": "climate-dt", "resolution": "high"
+        }}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let value: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        value["tree"]["axes"],
+        json!([{"dim": "date", "key": "date", "values": ["20141230", "20141231"]}])
+    );
+    assert!(!String::from_utf8_lossy(&body).contains("20251231"));
+}
 
 #[tokio::test]
 async fn metadata_two_cubes_resolve_different_grids() {
@@ -1139,19 +1175,21 @@ fn chunks_config_defaults_and_validation() {
     assert!(chunks.grids.is_empty());
     // Contract v2 catalogue defaults.
     assert!(chunks.catalogue_url.is_none());
+    assert!(chunks.catalogue_location.is_none());
     assert_eq!(chunks.catalogue_ttl_secs, 300);
     assert!(chunks.catalogue_strip_keys.is_empty());
     chunks.validate().unwrap();
 
     let cfg = server_config(
         "http://127.0.0.1:1/",
-        "chunks:\n  catalogue_url: \"https://x/api/v2/?location=mn5\"\n  catalogue_strip_keys: [location]\n  catalogue_ttl_secs: 60\n",
+        "chunks:\n  catalogue_url: \"https://x/api/v2/select/\"\n  catalogue_location: mn5\n  catalogue_strip_keys: [location]\n  catalogue_ttl_secs: 60\n",
     );
     let chunks = cfg.chunks.unwrap();
     assert_eq!(
         chunks.catalogue_url.as_deref(),
-        Some("https://x/api/v2/?location=mn5")
+        Some("https://x/api/v2/select/")
     );
+    assert_eq!(chunks.catalogue_location.as_deref(), Some("mn5"));
     assert_eq!(chunks.catalogue_strip_keys, ["location"]);
     assert_eq!(chunks.catalogue_ttl_secs, 60);
 
