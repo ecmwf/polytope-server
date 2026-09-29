@@ -109,6 +109,7 @@ chunks:
     - collection: destination-earth
       match: { class: d1, dataset: climate-dt, resolution: high }
       count_values: 12582912
+      nside: 1024
       md5_grid_section: "f78d9d2d6f6f1b4c8f0b3a6d1b1e2c3d"
     - collection: destination-earth
       match: { class: d1, dataset: climate-dt, resolution: standard, generation: 2 }
@@ -125,7 +126,12 @@ fn app_with(
 }
 
 fn app() -> Router {
-    app_with("http://127.0.0.1:1/", chunks_section(), Arc::new(FakeExpander)).0
+    app_with(
+        "http://127.0.0.1:1/",
+        chunks_section(),
+        Arc::new(FakeExpander),
+    )
+    .0
 }
 
 // ---------------------------------------------------------------------------
@@ -174,6 +180,32 @@ fn app_with_catalogue(source: Option<Arc<dyn CatalogueSource>>) -> (Router, Arc<
 
 fn app_with_qube(arena: Value) -> Router {
     app_with_catalogue(Some(Arc::new(FixtureCatalogue { arena }))).0
+}
+
+fn app_with_qube_and_config(arena: Value, chunks_config: &str) -> Router {
+    crate::build_app_with_catalogue(
+        server_config("http://127.0.0.1:1/", chunks_config),
+        Arc::new(FakeExpander),
+        Some(Arc::new(FixtureCatalogue { arena })),
+    )
+    .expect("app builds")
+    .0
+}
+
+fn nside_one_chunks_section(max_feature_points: u64) -> String {
+    format!(
+        r#"
+chunks:
+  max_chunk_cost: 30000000
+  max_feature_points: {max_feature_points}
+  grids:
+    - collection: destination-earth
+      match: {{ class: d1, dataset: climate-dt, resolution: high }}
+      count_values: 12
+      nside: 1
+      md5_grid_section: "{MD5}"
+"#
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -307,10 +339,16 @@ async fn metadata_single_cube_is_root_array_set() {
     );
     assert_eq!(
         tree["grid"],
-        json!({"kind": "unstructured", "count_values": 12582912, "md5GridSection": MD5})
+        json!({
+            "kind": "unstructured", "count_values": 12582912, "nside": 1024,
+            "md5GridSection": MD5
+        })
     );
     assert_eq!(tree["fill_on_missing"], false);
-    assert_eq!(tree["extract"], json!({"grid_hash": MD5, "order": ["date", "time"]}));
+    assert_eq!(
+        tree["extract"],
+        json!({"grid_hash": MD5, "order": ["date", "time"]})
+    );
 
     // All single-valued keys are pinned into base_request (never param/axes).
     let base = &tree["base_request"];
@@ -319,7 +357,10 @@ async fn metadata_single_cube_is_root_array_set() {
     assert_eq!(base["resolution"], "high");
     assert_eq!(base["expver"], "0001");
     assert!(base.get("date").is_none(), "date is an axis, not pinned");
-    assert!(base.get("param").is_none(), "param is a variable, not pinned");
+    assert!(
+        base.get("param").is_none(),
+        "param is a variable, not pinned"
+    );
 
     // chunking + catalogue provenance.
     assert_eq!(
@@ -369,7 +410,10 @@ async fn metadata_heterogeneous_builds_two_named_array_sets() {
     // array_sets are {167,168,169} x {0000,0600,1200} and {228,229} x {0000}.
     // The group diverges on `time` (canonical order), so children are named by
     // their time value-set and ordered by it (BTreeMap: ["0000"] first).
-    let names: Vec<&str> = children.iter().map(|c| c["name"].as_str().unwrap()).collect();
+    let names: Vec<&str> = children
+        .iter()
+        .map(|c| c["name"].as_str().unwrap())
+        .collect();
     assert_eq!(names, ["time-0000", "time-0000_0600_1200"]);
 
     // child 0: the 2 special params, only at time 0000. time is single-valued
@@ -475,7 +519,10 @@ async fn metadata_pins_qube_only_single_valued_keys_the_user_omitted() {
     assert_eq!(v["tree"]["base_request"]["stream"], "clte");
     assert_eq!(v["tree"]["base_request"]["class"], "d1");
     assert_eq!(v["tree"]["axes"], json!([]));
-    assert_eq!(v["tree"]["variables"], json!([{"name": "167", "param": "167"}]));
+    assert_eq!(
+        v["tree"]["variables"],
+        json!([{"name": "167", "param": "167"}])
+    );
 }
 
 #[tokio::test]
@@ -499,7 +546,10 @@ async fn metadata_two_cubes_resolve_different_grids() {
     assert_eq!(tree["type"], "group");
     let children = tree["children"].as_array().unwrap();
     assert_eq!(children.len(), 2);
-    let names: Vec<&str> = children.iter().map(|c| c["name"].as_str().unwrap()).collect();
+    let names: Vec<&str> = children
+        .iter()
+        .map(|c| c["name"].as_str().unwrap())
+        .collect();
     assert_eq!(names, ["resolution-high", "resolution-standard"]);
 
     // resolution=high -> grid 1 (12582912, MD5); resolution=standard+gen2 -> grid 2 (196608).
@@ -512,16 +562,208 @@ async fn metadata_two_cubes_resolve_different_grids() {
     assert_eq!(children[1]["base_request"]["resolution"], "standard");
 }
 
+#[tokio::test]
+async fn metadata_feature_has_exact_contract_json_and_points_dimension() {
+    let config = nside_one_chunks_section(12);
+    let body = json!({
+        "request": climate_dt_request(),
+        "feature": {
+            "type": "polygon",
+            "shape": [[-20, -20], [20, -20], [20, 20], [-20, 20]],
+        },
+    });
+    let (status, _, bytes) = post_json(
+        app_with_qube_and_config(arena_simple(), &config),
+        "/chunks/v1/destination-earth/metadata",
+        &body,
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&bytes)
+    );
+    let value: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        value["tree"],
+        json!({
+            "type": "array_set",
+            "name": "",
+            "base_request": {
+                "class": "d1",
+                "dataset": "climate-dt",
+                "activity": "scenariomip",
+                "experiment": "ssp3-7.0",
+                "generation": "1",
+                "model": "ifs-nemo",
+                "realization": "1",
+                "resolution": "high",
+                "expver": "0001",
+                "stream": "clte",
+                "type": "fc",
+                "levtype": "sfc",
+            },
+            "axes": [
+                {"dim": "date", "key": "date", "values": ["20200101", "20200102"]},
+                {"dim": "time", "key": "time", "values": ["0000", "1200"]},
+            ],
+            "variables": [
+                {"name": "165", "param": "165"},
+                {"name": "167", "param": "167"},
+            ],
+            "grid": {
+                "kind": "unstructured",
+                "count_values": 12,
+                "nside": 1,
+                "md5GridSection": MD5,
+            },
+            "feature": {
+                "type": "polygon",
+                "n_points": 1,
+                "ranges": [[4, 5]],
+                "coords": {"lat": [0.0], "lon": [0.0]},
+            },
+            "fill_on_missing": false,
+            "extract": {"grid_hash": MD5, "order": ["date", "time"]},
+        })
+    );
+    assert_eq!(
+        value["chunking"],
+        json!({
+            "default": {"date": 1, "time": 1, "points": 0},
+            "max_chunk_cost": 30_000_000,
+        })
+    );
+}
+
+#[tokio::test]
+async fn metadata_feature_is_attached_to_every_heterogeneous_array_set() {
+    let config = nside_one_chunks_section(12);
+    let request = json!({
+        "class": "d1", "dataset": "climate-dt", "resolution": "high",
+        "date": "20200101", "time": ["0", "600", "1200"],
+        "param": ["167", "168", "169", "228", "229"],
+    });
+    let (status, _, bytes) = post_json(
+        app_with_qube_and_config(arena_heterogeneous(), &config),
+        "/chunks/v1/destination-earth/metadata",
+        &json!({
+            "request": request,
+            "feature": {
+                "type": "polygon",
+                "shape": [[-20, -20], [20, -20], [20, 20], [-20, 20]],
+            },
+        }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&bytes)
+    );
+    let value: Value = serde_json::from_slice(&bytes).unwrap();
+    let children = value["tree"]["children"].as_array().unwrap();
+    assert_eq!(children.len(), 2);
+    for child in children {
+        assert_eq!(child["feature"]["n_points"], 1);
+        assert_eq!(child["feature"]["ranges"], json!([[4, 5]]));
+    }
+}
+
+#[tokio::test]
+async fn metadata_feature_and_span_are_orthogonal() {
+    let config = nside_one_chunks_section(12);
+    let request = json!({
+        "class": "d1", "dataset": "climate-dt", "resolution": "high",
+        "date": ["20200101", "20200103", "20200105"], "param": "167",
+    });
+    let (status, _, bytes) = post_json(
+        app_with_qube_and_config(arena_date_holes(), &config),
+        "/chunks/v1/destination-earth/metadata",
+        &json!({
+            "request": request,
+            "structure": {"gaps": "span"},
+            "feature": {
+                "type": "polygon",
+                "shape": [[-20, -20], [20, -20], [20, 20], [-20, 20]],
+            },
+        }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&bytes)
+    );
+    let value: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(value["tree"]["fill_on_missing"], true);
+    assert_eq!(
+        value["tree"]["axes"][0]["values"],
+        json!(["20200101", "20200102", "20200103", "20200104", "20200105"])
+    );
+    assert_eq!(value["tree"]["feature"]["ranges"], json!([[4, 5]]));
+    assert!(value["chunking"]["default"].get("values").is_none());
+    assert_eq!(value["chunking"]["default"]["points"], 0);
+}
+
+#[tokio::test]
+async fn metadata_feature_over_cap_is_400_with_exact_count() {
+    let config = nside_one_chunks_section(1);
+    assert_metadata_status(
+        app_with_qube_and_config(arena_simple(), &config),
+        json!({
+            "request": climate_dt_request(),
+            "feature": {
+                "type": "polygon",
+                "shape": [[-20, -20], [110, -20], [110, 20], [-20, 20]],
+            },
+        }),
+        StatusCode::BAD_REQUEST,
+        "selects 2 points",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn metadata_feature_rejects_non_healpix_set_by_name() {
+    let request = json!({
+        "class": "d1", "dataset": "climate-dt", "levtype": "sfc",
+        "resolution": ["high", "standard"], "generation": "2", "param": "167",
+    });
+    assert_metadata_status(
+        app_with_qube(arena_two_grids()),
+        json!({
+            "request": request,
+            "feature": {
+                "type": "polygon",
+                "shape": [[-0.1, -0.1], [0.1, -0.1], [0.1, 0.1], [-0.1, 0.1]],
+            },
+        }),
+        StatusCode::BAD_REQUEST,
+        "array_set 'resolution-standard'",
+    )
+    .await;
+}
+
 async fn assert_metadata_status(app: Router, body: Value, status: StatusCode, needle: &str) {
-    let (got, _, bytes) =
-        post_json(app, "/chunks/v1/destination-earth/metadata", &body).await;
+    let (got, _, bytes) = post_json(app, "/chunks/v1/destination-earth/metadata", &body).await;
     assert_eq!(got, status, "{}", String::from_utf8_lossy(&bytes));
     let v: Value = serde_json::from_slice(&bytes).unwrap();
     let err = v["error"]
         .as_str()
         .unwrap_or_else(|| panic!("no error field in {v}"));
-    assert!(err.contains(needle), "error '{err}' should contain '{needle}'");
-    assert_eq!(v.as_object().unwrap().len(), 1, "error body is exactly {{\"error\"}}: {v}");
+    assert!(
+        err.contains(needle),
+        "error '{err}' should contain '{needle}'"
+    );
+    assert_eq!(
+        v.as_object().unwrap().len(),
+        1,
+        "error body is exactly {{\"error\"}}: {v}"
+    );
 }
 
 #[tokio::test]
@@ -588,11 +830,16 @@ async fn metadata_rejects_unknown_collection() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     let v: Value = serde_json::from_slice(&bytes).unwrap();
-    assert!(v["error"].as_str().unwrap().contains("unknown collection 'nope'"));
+    assert!(
+        v["error"]
+            .as_str()
+            .unwrap()
+            .contains("unknown collection 'nope'")
+    );
 }
 
 #[tokio::test]
-async fn metadata_rejects_feature() {
+async fn metadata_rejects_malformed_unknown_or_misplaced_feature() {
     assert_metadata_status(
         app(),
         json!({"request": climate_dt_request(), "feature": {"type": "polygon", "shape": []}}),
@@ -600,10 +847,25 @@ async fn metadata_rejects_feature() {
         "feature",
     )
     .await;
+    assert_metadata_status(
+        app(),
+        json!({
+            "request": climate_dt_request(),
+            "feature": {"type": "bbox", "shape": [[0, 0], [1, 0], [0, 1]]},
+        }),
+        StatusCode::BAD_REQUEST,
+        "unsupported feature type 'bbox'",
+    )
+    .await;
     let mut request = climate_dt_request();
     request["feature"] = json!({"type": "polygon"});
-    assert_metadata_status(app(), json!({"request": request}), StatusCode::BAD_REQUEST, "feature")
-        .await;
+    assert_metadata_status(
+        app(),
+        json!({"request": request}),
+        StatusCode::BAD_REQUEST,
+        "feature",
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -644,8 +906,13 @@ async fn metadata_rejects_malformed_bodies() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_metadata_status(app(), json!({}), StatusCode::BAD_REQUEST, "'request'").await;
-    assert_metadata_status(app(), json!({"request": {}}), StatusCode::BAD_REQUEST, "must not be empty")
-        .await;
+    assert_metadata_status(
+        app(),
+        json!({"request": {}}),
+        StatusCode::BAD_REQUEST,
+        "must not be empty",
+    )
+    .await;
     assert_metadata_status(
         app(),
         json!({"request": climate_dt_request(), "structure": {"gaps": "wat"}}),
@@ -721,6 +988,7 @@ fn chunks_config_defaults_and_validation() {
     let chunks = cfg.chunks.unwrap();
     assert!(chunks.enabled);
     assert_eq!(chunks.max_chunk_cost, 20_000_000);
+    assert_eq!(chunks.max_feature_points, 1_000_000);
     assert!(chunks.grids.is_empty());
     // Contract v2 catalogue defaults.
     assert!(chunks.catalogue_url.is_none());
@@ -745,6 +1013,12 @@ fn chunks_config_defaults_and_validation() {
     let bad: crate::config::ChunksConfig =
         serde_yaml::from_str("grids: [{collection: c, count_values: 1, match: {a: {b: 1}}}]")
             .unwrap();
+    assert!(bad.validate().is_err());
+    let bad: crate::config::ChunksConfig =
+        serde_yaml::from_str("grids: [{collection: c, count_values: 48, nside: 3}]").unwrap();
+    assert!(bad.validate().is_err());
+    let bad: crate::config::ChunksConfig =
+        serde_yaml::from_str("grids: [{collection: c, count_values: 47, nside: 2}]").unwrap();
     assert!(bad.validate().is_err());
     assert!(
         serde_yaml::from_str::<crate::config::ChunksConfig>(
@@ -861,7 +1135,12 @@ async fn extract_pending_redirects_to_v2_poll_url() {
     )
     .await;
 
-    assert_eq!(status, StatusCode::SEE_OTHER, "{}", String::from_utf8_lossy(&body));
+    assert_eq!(
+        status,
+        StatusCode::SEE_OTHER,
+        "{}",
+        String::from_utf8_lossy(&body)
+    );
     let location = headers[header::LOCATION].to_str().unwrap().to_string();
     let id = location
         .strip_prefix("/api/v2/requests/")
@@ -940,11 +1219,17 @@ async fn extract_validation_errors_are_400_and_submit_nothing() {
         );
         let v: Value = serde_json::from_slice(&bytes).unwrap();
         let err = v["error"].as_str().unwrap();
-        assert!(err.contains(needle), "error '{err}' should contain '{needle}'");
+        assert!(
+            err.contains(needle),
+            "error '{err}' should contain '{needle}'"
+        );
     }
     let (status, _, _) = post_raw(app, "/chunks/v1/destination-earth/extract", b"{".to_vec()).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(state.bits.active_jobs().is_empty(), "no job may be submitted");
+    assert!(
+        state.bits.active_jobs().is_empty(),
+        "no job may be submitted"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1016,9 +1301,13 @@ chunks:
         &json!({"request": {"class": "od", "param": "not-a-param-xyz"}}),
     )
     .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{}", String::from_utf8_lossy(&body));
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "{}",
+        String::from_utf8_lossy(&body)
+    );
 }
-
 
 // ---------------------------------------------------------------------------
 // Regression: metkit defaults for UNSUPPLIED keys must not narrow the qube

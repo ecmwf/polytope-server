@@ -71,6 +71,9 @@ pub struct ChunksConfig {
     /// Upper bound on fields x points for a single extract (chunk) request.
     #[serde(default = "default_max_chunk_cost")]
     pub max_chunk_cost: u64,
+    /// Maximum HEALPix cells selected by a metadata polygon (default 1,000,000).
+    #[serde(default = "default_max_feature_points")]
+    pub max_feature_points: u64,
     /// Grid registry: first entry whose `collection` equals the request's
     /// collection and whose `match` is a subset of the canonical request wins.
     #[serde(default)]
@@ -91,6 +94,7 @@ impl Default for ChunksConfig {
         Self {
             enabled: default_chunks_enabled(),
             max_chunk_cost: default_max_chunk_cost(),
+            max_feature_points: default_max_feature_points(),
             grids: Vec::new(),
             catalogue_url: None,
             catalogue_ttl_secs: default_catalogue_ttl_secs(),
@@ -109,6 +113,9 @@ pub struct ChunksGridConfig {
     #[serde(default, rename = "match")]
     pub match_keys: std::collections::BTreeMap<String, serde_json::Value>,
     pub count_values: u64,
+    /// HEALPix NESTED nside. Its presence identifies a feature-capable grid.
+    #[serde(default)]
+    pub nside: Option<u32>,
     #[serde(default)]
     pub md5_grid_section: Option<String>,
 }
@@ -135,6 +142,9 @@ impl ChunksConfig {
         if self.max_chunk_cost == 0 {
             return Err("chunks.max_chunk_cost must be greater than 0".to_string());
         }
+        if self.max_feature_points == 0 {
+            return Err("chunks.max_feature_points must be greater than 0".to_string());
+        }
         for (i, grid) in self.grids.iter().enumerate() {
             if grid.collection.is_empty() {
                 return Err(format!("chunks.grids[{i}].collection must not be empty"));
@@ -143,6 +153,19 @@ impl ChunksConfig {
                 return Err(format!(
                     "chunks.grids[{i}].count_values must be greater than 0"
                 ));
+            }
+            if let Some(nside) = grid.nside {
+                if !cdshealpix::is_nside(nside) {
+                    return Err(format!(
+                        "chunks.grids[{i}].nside must be a non-zero power of two supported by HEALPix"
+                    ));
+                }
+                let expected = 12_u64 * u64::from(nside) * u64::from(nside);
+                if grid.count_values != expected {
+                    return Err(format!(
+                        "chunks.grids[{i}].count_values must equal 12*nside^2 ({expected}) when nside is {nside}"
+                    ));
+                }
             }
             for (key, value) in &grid.match_keys {
                 match ChunksGridConfig::allowed_values(value) {
@@ -173,6 +196,10 @@ const fn default_chunks_enabled() -> bool {
 
 const fn default_max_chunk_cost() -> u64 {
     20_000_000
+}
+
+const fn default_max_feature_points() -> u64 {
+    1_000_000
 }
 
 const fn default_catalogue_ttl_secs() -> u64 {

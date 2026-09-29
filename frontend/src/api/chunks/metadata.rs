@@ -14,6 +14,7 @@ use serde_json::{Map, Value};
 
 use super::catalogue::QubeHandle;
 use super::expand::CanonicalRequest;
+use super::feature::{PolygonRequest, ResolvedFeature};
 use super::qube::Cube;
 use super::tree;
 use crate::config::{ChunksConfig, ChunksGridConfig};
@@ -50,6 +51,7 @@ pub enum Gaps {
 pub struct MetadataBody {
     pub request: Map<String, Value>,
     pub gaps: Gaps,
+    pub feature: Option<PolygonRequest>,
 }
 
 // ---------------------------------------------------------------------------
@@ -79,6 +81,8 @@ pub enum Node {
         axes: Vec<Axis>,
         variables: Vec<Variable>,
         grid: Grid,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        feature: Option<Box<ResolvedFeature>>,
         fill_on_missing: bool,
         extract: ExtractInfo,
     },
@@ -127,6 +131,8 @@ pub struct Axis {
 pub struct Grid {
     pub kind: &'static str,
     pub count_values: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nside: Option<u32>,
     #[serde(rename = "md5GridSection")]
     pub md5_grid_section: Option<String>,
 }
@@ -160,15 +166,12 @@ pub struct CatalogueInfo {
 // Request parsing
 // ---------------------------------------------------------------------------
 
-/// Validate a metadata body (`{"request": {...}, "structure"?: {"gaps": ...}}`)
-/// and return the flat MARS request plus the gap policy. `verb` is dropped.
+/// Validate a Contract v2.1 metadata body and return the flat MARS request,
+/// gap policy, and optional polygon feature. `verb` is dropped.
 pub fn parse_metadata_body(body: &Value) -> Result<MetadataBody, String> {
     let obj = body
         .as_object()
         .ok_or("request body must be a JSON object")?;
-    if obj.contains_key("feature") {
-        return Err(feature_unsupported());
-    }
     let request = obj
         .get("request")
         .ok_or("request body must contain a 'request' object")?
@@ -176,7 +179,12 @@ pub fn parse_metadata_body(body: &Value) -> Result<MetadataBody, String> {
         .ok_or("'request' must be a JSON object")?;
     let request = parse_flat_request(request)?;
     let gaps = parse_gaps(obj.get("structure"))?;
-    Ok(MetadataBody { request, gaps })
+    let feature = super::feature::parse_feature(obj.get("feature"))?;
+    Ok(MetadataBody {
+        request,
+        gaps,
+        feature,
+    })
 }
 
 fn parse_gaps(structure: Option<&Value>) -> Result<Gaps, String> {
@@ -195,7 +203,7 @@ fn parse_gaps(structure: Option<&Value>) -> Result<Gaps, String> {
 }
 
 pub(crate) fn feature_unsupported() -> String {
-    "'feature' is not supported by /chunks/v1 (v0)".to_string()
+    "'feature' is supported only as a top-level metadata field".to_string()
 }
 
 /// Validate a flat MARS request object: non-empty, no `feature`, values are
@@ -278,6 +286,7 @@ pub fn build_metadata_v2(
     user_keys: &std::collections::BTreeSet<String>,
     handle: &QubeHandle,
     gaps: Gaps,
+    feature: Option<&PolygonRequest>,
 ) -> Result<MetadataResponse, String> {
     // metkit fills unsupplied keys with MARS defaults (e.g. a default `date`,
     // `time` or `param`). Those defaults must NOT narrow the catalogue
@@ -336,13 +345,24 @@ pub fn build_metadata_v2(
     // and grid boundaries that the catalogue deliberately keeps separate.
     // Determinism comes from the (qubed-canonical) qube plus ascending value
     // sorting and canonical-key-order tree divergence.
-    let tree = tree::build_tree(&datacubes, config, collection, gaps)?;
+    let mut tree = tree::build_tree(&datacubes, config, collection, gaps)?;
+    if let Some(polygon) = feature {
+        tree::attach_feature(&mut tree, polygon, config.max_feature_points)?;
+    }
 
-    // chunking.default: 1 per axis dim (canonical order), whole field on values.
+    // chunking.default: 1 per axis dim, whole spatial dimension in one chunk.
     let mut axis_dims = Vec::new();
     tree.collect_axis_dims(&mut axis_dims);
     let mut default_chunks: Vec<(String, u64)> = axis_dims.into_iter().map(|d| (d, 1)).collect();
-    default_chunks.push(("values".to_string(), 0));
+    default_chunks.push((
+        if feature.is_some() {
+            "points"
+        } else {
+            "values"
+        }
+        .to_string(),
+        0,
+    ));
 
     Ok(MetadataResponse {
         version: METADATA_VERSION,
@@ -449,6 +469,13 @@ grids:
             parse_metadata_body(&json!({"request": {"verb": "retrieve", "a": [1, "2"]}})).unwrap();
         assert_eq!(Value::Object(ok.request), json!({"a": [1, "2"]}));
         assert_eq!(ok.gaps, Gaps::Exact);
+        assert!(ok.feature.is_none());
+        let with_feature = parse_metadata_body(&json!({
+            "request": {"a": "1"},
+            "feature": {"type": "polygon", "shape": [[0, 0], [1, 0], [0, 1]]},
+        }))
+        .unwrap();
+        assert!(with_feature.feature.is_some());
     }
 
     #[test]

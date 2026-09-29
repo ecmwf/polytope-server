@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 server:
-  host: "0.0.0.0"   # optional, default 0.0.0.0
-  port: 3000         # optional, default 3000
+  host: "0.0.0.0" # optional, default 0.0.0.0
+  port: 3000 # optional, default 3000
 
 # Deployment identity used for opaque BITS request IDs.
 # Tags must be 1-3 lower-case alphanumeric characters.
@@ -23,7 +23,8 @@ bits:
   routes:
     - default:
         - target::http:
-            url: "http://your-backend/"   # replace with real target
+            url: "http://your-backend/" # replace with real target
+
 
 # Optional — /chunks/v1 chunk API (polytope-zarr). Omit the section to leave
 # the API unmounted. Metadata expansion needs the binary built with
@@ -31,6 +32,7 @@ bits:
 # chunks:
 #   enabled: true                 # default true when the section is present
 #   max_chunk_cost: 20000000      # max fields x points per extract (default 20M)
+#   max_feature_points: 1000000    # max cells selected by one polygon (default 1M)
 #   # Contract v2 (qube-derived structure tree): catalogue qube URL, fetched as
 #   # full-collection arena JSON and ETag/TTL-cached in memory. When absent,
 #   # /metadata returns 501 (the extract path still works).
@@ -43,4 +45,5 @@ bits:
 #         dataset: climate-dt
 #         resolution: high        # scalar or list of allowed canonical values
 #       count_values: 12582912
+#       nside: 1024                 # HEALPix NESTED; count_values must be 12*nside^2
 #       md5_grid_section: null    # or "<hex>"; echoed as extract.grid_hash

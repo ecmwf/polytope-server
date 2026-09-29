@@ -19,6 +19,7 @@
 pub mod catalogue;
 pub mod expand;
 pub mod extract;
+pub mod feature;
 pub mod metadata;
 pub mod qube;
 pub mod tree;
@@ -94,11 +95,14 @@ pub async fn metadata_handler(
     if !state.app.collections.contains_key(&collection) {
         return bad_request(EP, format!("unknown collection '{collection}'"));
     }
-    let metadata::MetadataBody { request, gaps } =
-        match parse_json(&body).and_then(|b| metadata::parse_metadata_body(&b)) {
-            Ok(parsed) => parsed,
-            Err(msg) => return bad_request(EP, msg),
-        };
+    let metadata::MetadataBody {
+        request,
+        gaps,
+        feature,
+    } = match parse_json(&body).and_then(|b| metadata::parse_metadata_body(&b)) {
+        Ok(parsed) => parsed,
+        Err(msg) => return bad_request(EP, msg),
+    };
 
     // The keys the USER actually supplied (before metkit fills unsupplied keys
     // with defaults). Only these may constrain the catalogue-qube intersection.
@@ -147,7 +151,15 @@ pub async fn metadata_handler(
         }
     };
 
-    match metadata::build_metadata_v2(&state.config, &collection, &canonical, &user_keys, &handle, gaps) {
+    match metadata::build_metadata_v2(
+        &state.config,
+        &collection,
+        &canonical,
+        &user_keys,
+        &handle,
+        gaps,
+        feature.as_ref(),
+    ) {
         Ok(md) => {
             tracing::info!("event.name" = "api.chunks.metadata", outcome = "success", collection = %collection, version = md.version as u64, "chunks metadata served");
             (StatusCode::OK, Json(md)).into_response()
