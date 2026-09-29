@@ -270,7 +270,7 @@ impl Qube {
     /// exposed by stripping (including multi-valued stripped nodes) without creating
     /// cartesian products that were not present in the source qube.
     pub fn strip_dimensions(&self, strip_keys: &BTreeSet<String>) -> Qube {
-        if strip_keys.is_empty() {
+        if strip_keys.is_empty() || strip_keys.is_disjoint(&self.dimensions()) {
             return self.clone();
         }
 
