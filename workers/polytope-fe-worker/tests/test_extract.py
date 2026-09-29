@@ -189,7 +189,10 @@ class FakeListElement:
         return self._number_of_data_points
 
     def combined_key(self):
-        return dict(self._field)
+        field = dict(self._field)
+        date = field.get("date", "")
+        field.update(year=date[:4], month=date[4:6].lstrip("0"))
+        return field
 
 
 class FakePyFDB:

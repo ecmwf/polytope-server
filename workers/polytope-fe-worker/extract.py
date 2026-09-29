@@ -425,6 +425,7 @@ def _lookup_field_locations(fields, batch_request, pyfdb):
     are omitted; callers preserve the existing request-based per-field fallback.
     """
     wanted = {canonical_field_key(field): field for field in fields}
+    identity_names = set().union(*(field.keys() for field in fields)) - _NON_FIELD_KEYS
     locations = {}
     seen = set()
     try:
@@ -443,7 +444,11 @@ def _lookup_field_locations(fields, batch_request, pyfdb):
             break
 
         try:
-            key = canonical_field_key(element.combined_key())
+            metadata = element.combined_key()
+            # FDB may add derived schema keys (for example year/month from date).
+            # Project onto the job field's identity before canonical comparison.
+            identity = {name: metadata[name] for name in identity_names if name in metadata}
+            key = canonical_field_key(identity)
         except Exception as exc:
             logging.warning("Ignoring FDB list element with invalid metadata: %s", exc)
             continue
