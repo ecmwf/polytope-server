@@ -657,11 +657,10 @@ routes:
     }
 
     #[tokio::test]
-    async fn post_that_fails_after_id_assignment_reports_the_id() {
-        // A POST that BITS accepts (so an ID is assigned) but that then fails
-        // downstream must surface that ID to the user, even though the client
-        // sent no `X-Request-Id`. This exercises the real `submit_collection`
-        // handler behind the support middleware end to end.
+    async fn post_accepted_async_target_returns_poll_redirect_with_assigned_id() {
+        // The target now executes asynchronously after BITS accepts the job. Until
+        // a worker publishes its delivery redirect, return the v2 poll URL and keep
+        // the generated request ID attached for correlation.
         let (bits, handle) = make_bits_with_route("ecmwf");
         let mut collections = HashMap::new();
         collections.insert("ecmwf".to_string(), handle);
@@ -698,10 +697,8 @@ routes:
             .await
             .unwrap();
 
-        // BITS accepted the job and assigned an ID; the request then failed.
-        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(resp.status(), StatusCode::SEE_OTHER);
 
-        // The assigned ID survives the error rewrite on the response extension...
         let id = resp
             .extensions()
             .get::<crate::support::RequestId>()
@@ -710,14 +707,13 @@ routes:
             .clone();
         assert!(!id.is_empty());
 
-        // ...and is quoted back to the user in the rewritten error message.
-        let body = resp.into_body().collect().await.unwrap().to_bytes();
-        let json: Value = serde_json::from_slice(&body).unwrap();
-        let msg = json["message"].as_str().expect("error body has a message");
-        assert!(
-            msg.contains(&format!("quote your request ID {id}")),
-            "error message should quote the assigned ID; got: {msg}"
-        );
+        let location = resp
+            .headers()
+            .get(axum::http::header::LOCATION)
+            .expect("pending response has a poll location")
+            .to_str()
+            .unwrap();
+        assert_eq!(location, format!("/api/v2/requests/{id}"));
     }
 
     #[tokio::test]
