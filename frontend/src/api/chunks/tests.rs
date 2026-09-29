@@ -1019,3 +1019,67 @@ chunks:
     assert_eq!(status, StatusCode::BAD_REQUEST, "{}", String::from_utf8_lossy(&body));
 }
 
+
+// ---------------------------------------------------------------------------
+// Regression: metkit defaults for UNSUPPLIED keys must not narrow the qube
+// ---------------------------------------------------------------------------
+
+/// Behaves like [`FakeExpander`] but, like real metkit, injects a DEFAULT
+/// `param` (a value absent from the catalogue) whenever the user did not supply
+/// `param`. This models metkit filling unsupplied keys with defaults that would
+/// wrongly collapse the qube intersection if they were allowed to constrain it.
+struct DefaultInjectingExpander;
+
+impl RequestExpander for DefaultInjectingExpander {
+    fn expand(
+        &self,
+        request: &Map<String, Value>,
+    ) -> Result<Vec<(String, Vec<String>)>, ExpandError> {
+        let mut entries = FakeExpander.expand(request)?;
+        if !request.contains_key("param") {
+            // A default param id that does NOT exist in the catalogue qube.
+            entries.push(("param".to_string(), vec!["99999".to_string()]));
+        }
+        Ok(entries)
+    }
+}
+
+fn app_with_qube_and_expander(arena: Value, expander: Arc<dyn RequestExpander>) -> Router {
+    crate::build_app_with_catalogue(
+        server_config("http://127.0.0.1:1/", chunks_section()),
+        expander,
+        Some(Arc::new(FixtureCatalogue { arena })),
+    )
+    .expect("app builds")
+    .0
+}
+
+#[tokio::test]
+async fn metadata_unsupplied_key_default_does_not_narrow_qube() {
+    // The user omits `param`; metkit injects a default param absent from the
+    // catalogue. That default must NOT prune the intersection: the qube supplies
+    // the real params (165, 167) as variables, and the phantom default must not
+    // leak into the echoed canonical_request.
+    let mut request = climate_dt_request();
+    request.as_object_mut().unwrap().remove("param");
+    let (status, _, body) = post_json(
+        app_with_qube_and_expander(arena_simple(), Arc::new(DefaultInjectingExpander)),
+        "/chunks/v1/destination-earth/metadata",
+        &json!({"request": request}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let v: Value = serde_json::from_slice(&body).unwrap();
+    let tree = &v["tree"];
+    assert_eq!(tree["type"], "array_set");
+    assert_eq!(
+        tree["variables"],
+        json!([{"name": "165", "param": "165"}, {"name": "167", "param": "167"}]),
+        "variables must come from the qube, not the injected default 99999"
+    );
+    assert!(
+        v["canonical_request"].get("param").is_none(),
+        "phantom default param leaked into canonical_request: {}",
+        v["canonical_request"]
+    );
+}

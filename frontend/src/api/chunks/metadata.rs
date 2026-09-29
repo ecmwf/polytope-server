@@ -275,12 +275,28 @@ pub fn build_metadata_v2(
     config: &ChunksConfig,
     collection: &str,
     canonical: &CanonicalRequest,
+    user_keys: &std::collections::BTreeSet<String>,
     handle: &QubeHandle,
     gaps: Gaps,
 ) -> Result<MetadataResponse, String> {
-    // Canonical request as dim -> allowed value set.
-    let request: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> = canonical
+    // metkit fills unsupplied keys with MARS defaults (e.g. a default `date`,
+    // `time` or `param`). Those defaults must NOT narrow the catalogue
+    // intersection: only keys the USER actually supplied may constrain the qube.
+    // So drop metkit-default values for any key the qube branches on that the
+    // user did not supply — the qube then contributes that key's full value set
+    // as an axis (or as `param` variables). Metkit defaults for keys the qube
+    // does NOT branch on are kept: they are genuine MARS pins needed for extract.
+    let qube_dims = handle.qube.dimensions();
+    let effective: Vec<(String, Vec<String>)> = canonical
         .entries
+        .iter()
+        .filter(|(k, _)| user_keys.contains(k.as_str()) || !qube_dims.contains(k.as_str()))
+        .cloned()
+        .collect();
+
+    // Effective request as dim -> allowed value set (user-supplied keys only
+    // constrain the qube; non-branch keys are ignored by select_datacubes).
+    let request: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> = effective
         .iter()
         .map(|(k, vs)| (k.clone(), vs.iter().cloned().collect()))
         .collect();
@@ -298,9 +314,7 @@ pub fn build_metadata_v2(
     // every cube with their canonical values (single-valued -> base_request,
     // multi-valued -> axis). This lets the catalogue carry MORE structure than
     // the request without dropping request-only pins.
-    let qube_dims = handle.qube.dimensions();
-    let request_only: Vec<(String, Vec<String>)> = canonical
-        .entries
+    let request_only: Vec<(String, Vec<String>)> = effective
         .iter()
         .filter(|(k, _)| !qube_dims.contains(k.as_str()))
         .map(|(k, vs)| {
@@ -332,7 +346,7 @@ pub fn build_metadata_v2(
 
     Ok(MetadataResponse {
         version: METADATA_VERSION,
-        canonical_request: OrderedMap(canonical.entries.clone()),
+        canonical_request: OrderedMap(effective.clone()),
         tree,
         chunking: Chunking {
             default: OrderedMap(default_chunks),

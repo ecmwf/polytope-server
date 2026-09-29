@@ -100,6 +100,10 @@ pub async fn metadata_handler(
             Err(msg) => return bad_request(EP, msg),
         };
 
+    // The keys the USER actually supplied (before metkit fills unsupplied keys
+    // with defaults). Only these may constrain the catalogue-qube intersection.
+    let user_keys: std::collections::BTreeSet<String> = request.keys().cloned().collect();
+
     // metkit is a blocking C++ call; keep it off the async workers.
     let expander = state.expander.clone();
     let expanded = match tokio::task::spawn_blocking(move || expander.expand(&request)).await {
@@ -143,7 +147,7 @@ pub async fn metadata_handler(
         }
     };
 
-    match metadata::build_metadata_v2(&state.config, &collection, &canonical, &handle, gaps) {
+    match metadata::build_metadata_v2(&state.config, &collection, &canonical, &user_keys, &handle, gaps) {
         Ok(md) => {
             tracing::info!("event.name" = "api.chunks.metadata", outcome = "success", collection = %collection, version = md.version as u64, "chunks metadata served");
             (StatusCode::OK, Json(md)).into_response()
