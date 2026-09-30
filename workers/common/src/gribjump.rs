@@ -10,7 +10,7 @@
 
 use libloading::Library;
 use serde::{Deserialize, Serialize};
-use std::ffi::{CStr, CString, c_char, c_int, c_ulong, c_void};
+use std::ffi::{c_char, c_int, c_ulong, c_void, CStr, CString};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -718,12 +718,10 @@ mod tests {
         };
         let mut input = plan("float64", false);
         input.ranges = vec![[3, 3]];
-        assert!(
-            extractor
-                .extract(&input)
-                .unwrap_err()
-                .contains("invalid extract range")
-        );
+        assert!(extractor
+            .extract(&input)
+            .unwrap_err()
+            .contains("invalid extract range"));
         assert!(calls.lock().unwrap().is_empty());
     }
 }
