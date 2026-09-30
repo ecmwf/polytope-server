@@ -1381,6 +1381,107 @@ def _fake_process_response(request):
     return response, fields, process_fdb
 
 
+def _path_trace_call(fake_gj):
+    request = single_field_request()
+    spec, field_values = extract.parse_extract(request)
+    field = next(extract.enumerate_fields(field_values, spec["order"]))
+    location = make_location(field)
+    fake_gj.path_fields[location.path] = field
+    return extract._extract_locations(
+        fake_gj.GribJump(),
+        fake_gj,
+        [location],
+        spec,
+        None,
+        trace_job="trace-test",
+        trace_sub=2,
+        trace_retry=0,
+    )
+
+
+def test_extract_trace_is_off_by_default(fake_gj, monkeypatch, capsys):
+    monkeypatch.delenv("POLYTOPE_CHUNKS_EXTRACT_TRACE", raising=False)
+    _path_trace_call(fake_gj)
+    assert "extract-trace" not in capsys.readouterr().err
+
+
+def test_extract_trace_line_format_and_watchdog(fake_gj, monkeypatch, capsys):
+    watchdog_calls = []
+    monkeypatch.setenv("POLYTOPE_CHUNKS_EXTRACT_TRACE", "1")
+    monkeypatch.setattr(
+        extract.faulthandler,
+        "dump_traceback_later",
+        lambda delay, repeat: watchdog_calls.append((delay, repeat)),
+    )
+    monkeypatch.setattr(
+        extract.faulthandler,
+        "cancel_dump_traceback_later",
+        lambda: watchdog_calls.append("cancel"),
+    )
+
+    _path_trace_call(fake_gj)
+
+    stderr = capsys.readouterr().err
+    line = next(line for line in stderr.splitlines() if line.startswith("extract-trace job="))
+    assert re.fullmatch(
+        r"extract-trace job=trace-test sub=2 "
+        r"build=\d+\.\d{6} call=\d+\.\d{6} consume=\d+\.\d{6} "
+        r"retry=0 status=ok",
+        line,
+    )
+    assert watchdog_calls[0][0] == 2
+    assert watchdog_calls[0][1]
+    assert watchdog_calls[1] == "cancel"
+    assert len(watchdog_calls) == 2
+
+
+def test_process_trace_counts_location_refresh_retry(
+    fake_gj, fake_fdb, monkeypatch, capsys
+):
+    monkeypatch.setenv("POLYTOPE_CHUNKS_EXTRACT_TRACE", "1")
+    monkeypatch.setattr(
+        extract.faulthandler,
+        "dump_traceback_later",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(extract.faulthandler, "cancel_dump_traceback_later", lambda: None)
+    request = single_field_request()
+    spec, field_values = extract.parse_extract(request)
+    spec["registry_grid_hash"] = spec["grid_hash"]
+    field = next(extract.enumerate_fields(field_values, spec["order"]))
+    stale = make_location(field, "-stale")
+    fresh = make_location(field, "-fresh")
+    fake_gj.path_fields[stale.path] = field
+    fake_gj.path_failures[stale.path] = 1
+    fake_fdb.set_sequence(field, [fresh])
+    servermap = location_cache.LocationServerMap([{"fdb": "store.example:9000"}])
+
+    extract._execute_process_job(
+        {
+            "fields": [field],
+            "field_values": field_values,
+            "spec": spec,
+            "locations": [stale],
+            "cache_enabled": True,
+            "ctx": None,
+            "job_id": "retry-test",
+        },
+        fake_gj,
+        fake_fdb,
+        fake_gj.GribJump(),
+        servermap,
+    )
+
+    trace_lines = [
+        line
+        for line in capsys.readouterr().err.splitlines()
+        if line.startswith("extract-trace job=retry-test")
+    ]
+    assert len(trace_lines) == 2
+    assert "retry=0 status=error" in trace_lines[0]
+    assert "retry=1 status=ok" in trace_lines[1]
+
+
 def test_process_worker_payload_is_bit_identical_to_fallback(
     fake_gj, fake_fdb
 ):

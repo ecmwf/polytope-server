@@ -34,12 +34,14 @@ record).
 from concurrent.futures import ThreadPoolExecutor
 import atexit
 import copy
+import faulthandler
 import itertools
 import logging
 import multiprocessing
 import os
 import queue
 import re
+import sys
 import threading
 import time
 from urllib.parse import parse_qs
@@ -880,26 +882,101 @@ def _extract_with_hash_learning(operation, field, spec, pygribjump, pyfdb, job_i
         )
 
 
-def _extract_locations(gj, pygribjump, locations, spec, ctx):
-    requests = [
-        pygribjump.PathExtractionRequest(
-            location.path,
-            location.scheme,
-            location.offset,
-            location.host,
-            location.port,
-            list(spec["ranges"]),
-            gridHash=spec["grid_hash"],
+def _extract_trace_enabled():
+    return os.environ.get("POLYTOPE_CHUNKS_EXTRACT_TRACE", "").strip() == "1"
+
+
+def _extract_locations(
+    gj,
+    pygribjump,
+    locations,
+    spec,
+    ctx,
+    *,
+    trace_job=None,
+    trace_sub=0,
+    trace_retry=0,
+):
+    trace = _extract_trace_enabled()
+    phase = "build"
+    status = "error"
+    build_started = time.monotonic()
+    build_finished = call_started = call_finished = consume_finished = None
+    watchdog_armed = False
+    try:
+        requests = [
+            pygribjump.PathExtractionRequest(
+                location.path,
+                location.scheme,
+                location.offset,
+                location.host,
+                location.port,
+                list(spec["ranges"]),
+                gridHash=spec["grid_hash"],
+            )
+            for location in locations
+        ]
+        build_finished = time.monotonic()
+        if trace:
+            print(
+                f"extract-watchdog arm job={trace_job or '-'} sub={trace_sub} "
+                f"retry={trace_retry}",
+                file=sys.stderr,
+                flush=True,
+            )
+            try:
+                faulthandler.dump_traceback_later(2, repeat=True)
+                watchdog_armed = True
+            except Exception as exc:  # diagnostics must never break extraction
+                print(
+                    f"extract-watchdog unavailable job={trace_job or '-'} "
+                    f"sub={trace_sub} retry={trace_retry} error={exc!r}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+
+        phase = "call"
+        call_started = time.monotonic()
+        iterator = (
+            gj.extract_from_paths(requests, ctx=ctx)
+            if ctx is not None
+            else gj.extract_from_paths(requests)
         )
-        for location in locations
-    ]
-    iterator = (
-        gj.extract_from_paths(requests, ctx=ctx)
-        if ctx is not None
-        else gj.extract_from_paths(requests)
-    )
-    # Materialise inside the retry boundary: the C iterator can also raise.
-    return list(iterator)
+        call_finished = time.monotonic()
+        phase = "consume"
+        # Materialise inside the retry boundary: the C iterator can also raise.
+        results = list(iterator)
+        consume_finished = time.monotonic()
+        status = "ok"
+        return results
+    finally:
+        finished = time.monotonic()
+        if watchdog_armed:
+            faulthandler.cancel_dump_traceback_later()
+        if trace:
+            if build_finished is None:
+                build_finished = finished
+            if call_started is None:
+                call_started = build_finished
+            if call_finished is None:
+                call_finished = finished if phase == "call" else call_started
+            if consume_finished is None:
+                consume_finished = finished if phase == "consume" else call_finished
+            print(
+                f"extract-trace job={trace_job or '-'} sub={trace_sub} "
+                f"build={build_finished - build_started:.6f} "
+                f"call={call_finished - call_started:.6f} "
+                f"consume={consume_finished - call_finished:.6f} "
+                f"retry={trace_retry} status={status}",
+                file=sys.stderr,
+                flush=True,
+            )
+            print(
+                f"extract-watchdog disarm job={trace_job or '-'} sub={trace_sub} "
+                f"retry={trace_retry}",
+                file=sys.stderr,
+                flush=True,
+            )
 
 def assemble(results, field_requests, spec):
     """Copy gribjump results into one contiguous little-endian float64 array.
@@ -1500,22 +1577,36 @@ def _execute_process_job(job, pygribjump, pyfdb, gj, servermap):
 
             extract_seconds = 0.0
 
-            def extract_paths(items):
+            def extract_paths(items, retry=0):
                 nonlocal extract_seconds
                 started = time.monotonic()
                 try:
                     size = GJ_SUBBATCH or len(items)
                     for start in range(0, len(items), size):
                         batch = items[start : start + size]
+                        sub = start // size
                         profile["gj_subbatches"] += 1
+                        trace_retry = retry
+
+                        def operation():
+                            nonlocal trace_retry
+                            current_retry = trace_retry
+                            try:
+                                return _extract_locations(
+                                    gj,
+                                    pygribjump,
+                                    [item[2] for item in batch],
+                                    spec,
+                                    ctx,
+                                    trace_job=job_id,
+                                    trace_sub=sub,
+                                    trace_retry=current_retry,
+                                )
+                            finally:
+                                trace_retry += 1
+
                         extracted = _extract_with_hash_learning(
-                            lambda: _extract_locations(
-                                gj,
-                                pygribjump,
-                                [item[2] for item in batch],
-                                spec,
-                                ctx,
-                            ),
+                            operation,
                             batch[0][1],
                             spec,
                             pygribjump,
@@ -1555,7 +1646,7 @@ def _execute_process_job(job, pygribjump, pyfdb, gj, servermap):
                     profile["lookup_subbatches"] += len(path_items)
                     if fresh_items:
                         try:
-                            extract_paths(fresh_items)
+                            extract_paths(fresh_items, retry=1)
                         except ExtractError:
                             raise
                         except Exception as retry_exc:
@@ -1638,6 +1729,7 @@ def _execute_process_job(job, pygribjump, pyfdb, gj, servermap):
 
 def _process_worker_main(connection, slot):
     """Spawn target: initialise native state once, then serve jobs sequentially."""
+    startup_started = time.monotonic()
     try:
         os.environ["GRIBJUMP_CONFIG_FILE"] = "/tmp/gribjump.yaml"
         import pyfdb  # type: ignore[import-not-found]
@@ -1649,6 +1741,18 @@ def _process_worker_main(connection, slot):
         servermap = LocationServerMap.from_config("/tmp/gribjump.yaml")
         warm_locations = _resolve_process_warm_locations(fdb_module, servermap)
         _warm_gribjump_handle(gj, pygribjump, warm_locations)
+        warm_seconds = time.monotonic() - startup_started
+        warm_endpoints = [
+            f"{location.scheme}://{location.host}:{location.port}"
+            for location in warm_locations
+        ]
+        if _extract_trace_enabled():
+            print(
+                f"extract-trace startup slot={slot} pid={os.getpid()} "
+                f"endpoints={','.join(warm_endpoints)} warm={warm_seconds:.6f}",
+                file=sys.stderr,
+                flush=True,
+            )
         connection.send(
             (
                 "ready",
@@ -1657,6 +1761,8 @@ def _process_worker_main(connection, slot):
                     "pid": os.getpid(),
                     "env": os.environ.get("GRIBJUMP_CONFIG_FILE"),
                     "warm_endpoints": len(warm_locations),
+                    "warm_endpoint_names": warm_endpoints,
+                    "warm_ms": round(warm_seconds * 1000, 1),
                 },
             )
         )
@@ -1794,11 +1900,14 @@ class ProcessExtractionPool:
             )
         worker["detail"] = detail
         logging.info(
-            "chunks extraction subprocess ready proc=%d pid=%s env=%s endpoints=%s",
+            "chunks extraction subprocess ready proc=%d pid=%s env=%s endpoints=%s "
+            "warm=%.1fms endpoint_names=%s",
             worker["slot"],
             detail.get("pid"),
             detail.get("env"),
             detail.get("warm_endpoints"),
+            detail.get("warm_ms", 0.0),
+            ",".join(detail.get("warm_endpoint_names", [])),
         )
 
     @staticmethod
