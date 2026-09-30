@@ -228,6 +228,10 @@ _thread_handles = threading.local()
 _location_cache = None
 _location_servermap = None
 _location_state_lock = threading.Lock()
+# pyfdb 5.22 is not safe to enter concurrently: parallel list operations can
+# deadlock inside its native FDBToolRequest/list iterator. Serialize each complete
+# list transaction, including ListElement access, across this Python process.
+_fdb_list_lock = threading.Lock()
 
 # Grid-hash variants already encoded in Polytope's gh68 change_hash logic, plus
 # the live-confirmed climate-dt generation-2 H512 variant. None is applied until
@@ -386,8 +390,8 @@ def _location_from_element(element):
     )
 
 
-def _lookup_field_element(field, pyfdb):
-    """Resolve exactly one FDB list element for a field."""
+def _lookup_field_element_unlocked(field, pyfdb):
+    """Resolve one FDB list element while the caller holds _fdb_list_lock."""
     try:
         iterator = iter(_get_fdb(pyfdb).list(field))
         first = next(iterator)
@@ -406,19 +410,26 @@ def _lookup_field_element(field, pyfdb):
 
 def _lookup_field_location(field, pyfdb):
     """Resolve exactly one FDB field to its path extraction location."""
-    first = _lookup_field_element(field, pyfdb)
-    try:
-        return _location_from_element(first)
-    except ExtractError as exc:
-        raise ExtractError(f"field {_describe(field)}: {exc}") from exc
-    except Exception as exc:
-        raise ExtractError(
-            f"field {_describe(field)}: FDB location lookup returned an invalid location: {exc}"
-        ) from exc
+    with _fdb_list_lock:
+        first = _lookup_field_element_unlocked(field, pyfdb)
+        try:
+            return _location_from_element(first)
+        except ExtractError as exc:
+            raise ExtractError(f"field {_describe(field)}: {exc}") from exc
+        except Exception as exc:
+            raise ExtractError(
+                f"field {_describe(field)}: FDB location lookup returned an invalid location: {exc}"
+            ) from exc
 
 
 def _lookup_field_locations(fields, batch_request, pyfdb):
-    """Resolve the requested fields from one FDB list operation.
+    """Resolve fields in one process-serialized FDB list transaction."""
+    with _fdb_list_lock:
+        return _lookup_field_locations_unlocked(fields, batch_request, pyfdb)
+
+
+def _lookup_field_locations_unlocked(fields, batch_request, pyfdb):
+    """Resolve requested fields while the caller holds _fdb_list_lock.
 
     FDB list order is not contractual, so each result is joined to its field by
     the canonical metadata identity. Missing, duplicate, or malformed elements
@@ -473,8 +484,14 @@ def _lookup_field_locations(fields, batch_request, pyfdb):
 
 
 def _field_number_of_data_points(field, pyfdb):
-    """Read one field header through pyfdb and return numberOfDataPoints."""
-    element = _lookup_field_element(field, pyfdb)
+    """Read one field header through a process-serialized pyfdb transaction."""
+    with _fdb_list_lock:
+        return _field_number_of_data_points_unlocked(field, pyfdb)
+
+
+def _field_number_of_data_points_unlocked(field, pyfdb):
+    """Read numberOfDataPoints while the caller holds _fdb_list_lock."""
+    element = _lookup_field_element_unlocked(field, pyfdb)
     # Lightweight test doubles can expose the decoded header directly.
     if hasattr(element, "number_of_data_points"):
         return _location_int(element.number_of_data_points(), "numberOfDataPoints")

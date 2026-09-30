@@ -16,6 +16,7 @@ import logging
 import re
 import sys
 import threading
+import time
 import types
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -678,6 +679,40 @@ def test_all_cache_misses_use_one_batched_lookup_and_preserve_order(
     (line,) = _profile_lines([record.getMessage() for record in caplog.records])
     match = _PROFILE_RE.match(line)
     assert match and match["lookup_mode"] == "batch"
+
+
+def test_concurrent_batch_lookups_are_serialized(fake_gj, fake_fdb):
+    req = base_request(date="20200101/20200102", time="0000/0600")
+    spec, values = extract.parse_extract(req)
+    fields = list(extract.enumerate_fields(values, spec["order"]))
+    original_list = fake_fdb.list
+    barrier = threading.Barrier(2)
+    state_lock = threading.Lock()
+    state = {"active": 0, "max_active": 0}
+
+    def slow_list(selection):
+        with state_lock:
+            state["active"] += 1
+            state["max_active"] = max(state["max_active"], state["active"])
+        try:
+            time.sleep(0.05)
+            elements = list(original_list(selection))
+        finally:
+            with state_lock:
+                state["active"] -= 1
+        return iter(elements)
+
+    fake_fdb.list = slow_list
+
+    def lookup():
+        barrier.wait()
+        return extract._lookup_field_locations(fields, values, fake_fdb)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _index: lookup(), range(2)))
+
+    assert state["max_active"] == 1
+    assert all(len(result) == len(fields) for result in results)
 
 
 def test_batch_missing_field_uses_request_fallback(
