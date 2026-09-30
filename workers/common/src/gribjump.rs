@@ -10,6 +10,7 @@
 
 use libloading::Library;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::ffi::{CStr, CString, c_char, c_int, c_ulong, c_void};
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -86,6 +87,61 @@ pub struct ExtractOutput {
 struct BatchOutput {
     fields: Vec<Vec<f64>>,
     assemble_time: Duration,
+}
+
+#[derive(Debug)]
+struct RequestBatch {
+    requests: Vec<PathRequest>,
+    original_indices: Vec<usize>,
+}
+
+/// Group requests by physical file and greedily pack whole files up to the
+/// target. Oversized files remain intact. The mapping back to the caller's
+/// order is carried alongside each reordered batch.
+fn file_aligned_batches(requests: &[PathRequest], target: usize) -> Vec<RequestBatch> {
+    let target = target.max(1);
+    let mut files: BTreeMap<(&str, c_int, &str), Vec<(usize, &PathRequest)>> = BTreeMap::new();
+    for (original_index, request) in requests.iter().enumerate() {
+        files
+            .entry((&request.host, request.port, &request.path))
+            .or_default()
+            .push((original_index, request));
+    }
+
+    let mut batches = Vec::new();
+    let mut current = RequestBatch {
+        requests: Vec::new(),
+        original_indices: Vec::new(),
+    };
+    for mut file in files.into_values() {
+        file.sort_by(|(left_index, left), (right_index, right)| {
+            left.offset
+                .cmp(&right.offset)
+                .then_with(|| left_index.cmp(right_index))
+        });
+        if !current.requests.is_empty() && current.requests.len() + file.len() > target {
+            batches.push(current);
+            current = RequestBatch {
+                requests: Vec::new(),
+                original_indices: Vec::new(),
+            };
+        }
+        for (original_index, request) in file {
+            current.requests.push(request.clone());
+            current.original_indices.push(original_index);
+        }
+        if current.requests.len() >= target {
+            batches.push(current);
+            current = RequestBatch {
+                requests: Vec::new(),
+                original_indices: Vec::new(),
+            };
+        }
+    }
+    if !current.requests.is_empty() {
+        batches.push(current);
+    }
+    batches
 }
 
 trait ExtractionBackend: Send {
@@ -237,7 +293,7 @@ impl GribJumpExtractor {
             .iter()
             .map(|[start, end]| end - start)
             .sum::<usize>();
-        let requests = plan.paths.chunks(self.subbatch).collect::<Vec<_>>();
+        let requests = file_aligned_batches(&plan.paths, self.subbatch);
         let worker_count = self.pool.size.min(requests.len());
         let next = AtomicUsize::new(0);
         let cancelled = AtomicBool::new(false);
@@ -257,11 +313,11 @@ impl GribJumpExtractor {
                             break;
                         }
                         let index = next.fetch_add(1, Ordering::AcqRel);
-                        let Some(batch_requests) = requests.get(index) else {
+                        let Some(batch) = requests.get(index) else {
                             break;
                         };
                         let result = self.pool.checkout().extract_batch(
-                            batch_requests,
+                            &batch.requests,
                             &plan.ranges,
                             &plan.grid_hash,
                             context,
@@ -304,31 +360,47 @@ impl GribJumpExtractor {
             extract_ms: milliseconds(extract_started.elapsed()),
             ..ExtractMetrics::default()
         };
-        let mut values = Vec::with_capacity(plan.paths.len() * expected_per_field);
+        let mut fields = std::iter::repeat_with(|| None)
+            .take(plan.paths.len())
+            .collect::<Vec<_>>();
         for (batch_index, batch) in batches.into_iter().enumerate() {
             let batch = batch.expect("all sub-batches checked above");
             metrics.assemble_ms += milliseconds(batch.assemble_time);
-            if batch.fields.len() != requests[batch_index].len() {
+            let request_batch = &requests[batch_index];
+            if batch.fields.len() != request_batch.requests.len() {
                 return Err(format!(
                     "gribjump returned {} of {} fields",
                     batch.fields.len(),
-                    requests[batch_index].len()
+                    request_batch.requests.len()
                 ));
             }
-            let flatten_started = Instant::now();
-            for (index, field) in batch.fields.into_iter().enumerate() {
+            let assemble_started = Instant::now();
+            for (original_index, field) in request_batch
+                .original_indices
+                .iter()
+                .copied()
+                .zip(batch.fields)
+            {
                 if field.len() != expected_per_field {
                     return Err(format!(
-                        "gribjump field {} returned {} values, expected {}",
-                        index,
+                        "gribjump field {original_index} returned {} values, expected {}",
                         field.len(),
                         expected_per_field
                     ));
                 }
-                values.extend(field);
+                fields[original_index] = Some(field);
             }
-            metrics.assemble_ms += milliseconds(flatten_started.elapsed());
+            metrics.assemble_ms += milliseconds(assemble_started.elapsed());
         }
+        if fields.iter().any(Option::is_none) {
+            return Err("GribJump did not return every requested field".to_string());
+        }
+        let flatten_started = Instant::now();
+        let mut values = Vec::with_capacity(plan.paths.len() * expected_per_field);
+        for field in fields {
+            values.extend(field.expect("all fields checked above"));
+        }
+        metrics.assemble_ms += milliseconds(flatten_started.elapsed());
 
         let shuffle_started = Instant::now();
         let item_size = if plan.dtype == "float32" { 4 } else { 8 };
@@ -854,6 +926,105 @@ mod tests {
             .chunks_exact(8)
             .map(|bytes| f64::from_le_bytes(bytes.try_into().unwrap()))
             .collect()
+    }
+
+    fn request(path: &str, offset: usize) -> PathRequest {
+        PathRequest {
+            path: path.to_string(),
+            offset,
+            host: "store".to_string(),
+            port: 9000,
+            scheme: "fdb".to_string(),
+        }
+    }
+
+    #[test]
+    fn file_aligned_batches_do_not_split_files_that_fit() {
+        let paths = vec![
+            request("/b", 2),
+            request("/a", 2),
+            request("/b", 1),
+            request("/a", 3),
+            request("/a", 1),
+        ];
+        let batches = file_aligned_batches(&paths, 3);
+        assert_eq!(batches.len(), 2);
+        assert_eq!(
+            batches[0]
+                .requests
+                .iter()
+                .map(|request| (request.path.as_str(), request.offset))
+                .collect::<Vec<_>>(),
+            vec![("/a", 1), ("/a", 2), ("/a", 3)]
+        );
+        assert_eq!(
+            batches[1]
+                .requests
+                .iter()
+                .map(|request| (request.path.as_str(), request.offset))
+                .collect::<Vec<_>>(),
+            vec![("/b", 1), ("/b", 2)]
+        );
+    }
+
+    #[test]
+    fn file_aligned_batches_keep_oversized_file_intact() {
+        let paths = (1..=4)
+            .rev()
+            .map(|offset| request("/oversized", offset))
+            .collect::<Vec<_>>();
+        let batches = file_aligned_batches(&paths, 2);
+        assert_eq!(batches.len(), 1);
+        assert_eq!(
+            batches[0]
+                .requests
+                .iter()
+                .map(|request| request.offset)
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3, 4]
+        );
+    }
+
+    #[test]
+    fn regrouping_preserves_payload_order_with_inflight_pool() {
+        let state = Arc::new(FakeState::default());
+        state.delay.store(true, Ordering::Release);
+        let grouped_extractor = extractor(&state, 2, 3);
+        let mut input = plan("float64", false);
+        input.paths = vec![
+            request("/b", 5),
+            request("/a", 1),
+            request("/b", 3),
+            request("/a", 2),
+            request("/b", 4),
+        ];
+        let output = grouped_extractor.extract(&input).unwrap();
+        assert_eq!(
+            decoded_f64(&output, 5),
+            vec![
+                50.0, 51.0, 52.0, 10.0, 11.0, 12.0, 30.0, 31.0, 32.0, 20.0, 21.0, 22.0, 40.0, 41.0,
+                42.0,
+            ]
+        );
+        let mut baseline = input.clone();
+        baseline.paths = input
+            .paths
+            .iter()
+            .enumerate()
+            .map(|(index, path_request)| {
+                request(&format!("/baseline-{index}"), path_request.offset)
+            })
+            .collect();
+        let baseline_state = Arc::new(FakeState::default());
+        let baseline_output = extractor(&baseline_state, 1, 3).extract(&baseline).unwrap();
+        assert_eq!(output.payload, baseline_output.payload);
+        assert_eq!(output.metrics.gj_subbatches, 2);
+        assert_eq!(output.metrics.inflight, 2);
+        assert_eq!(state.max_active.load(Ordering::Acquire), 2);
+        let calls = state.calls.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+        assert!(calls.iter().any(|call| call == &["/a", "/a"]));
+        assert!(calls.iter().any(|call| call == &["/b", "/b", "/b"]));
     }
 
     #[test]
