@@ -704,6 +704,7 @@ async fn bobs_delivery_pipeline() {
         delivery_type: polytope_worker_common::delivery_config::DeliveryType::Bobs,
         bobs_url: Some(bobs_url.clone()),
         bobs_early_release: true,
+        inline_max_bytes: 0,
         s3_bucket: None,
         s3_region: None,
         s3_endpoint_url: None,

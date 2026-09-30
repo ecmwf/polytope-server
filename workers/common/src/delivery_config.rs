@@ -20,6 +20,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_inline_max_bytes() -> u64 {
+    128 * 1024
+}
+
 /// Per-worker-pool delivery configuration, loaded from a YAML file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeliveryConfig {
@@ -30,6 +34,11 @@ pub struct DeliveryConfig {
     /// Defaults to true; structured/streaming legacy results remain late-released.
     #[serde(default = "default_true")]
     pub bobs_early_release: bool,
+
+    /// Maximum buffered octet-stream payload delivered inline through the broker.
+    /// Set to 0 to disable size-gated inline delivery.
+    #[serde(default = "default_inline_max_bytes")]
+    pub inline_max_bytes: u64,
 
     /// S3 bucket name. Required when delivery_type = s3.
     pub s3_bucket: Option<String>,
@@ -113,6 +122,7 @@ s3_region: null
         assert!(matches!(config.delivery_type, DeliveryType::Bobs));
         assert_eq!(config.bobs_url.as_deref(), Some("http://bobs.example.com"));
         assert!(config.bobs_early_release);
+        assert_eq!(config.inline_max_bytes, 128 * 1024);
         assert_eq!(config.s3_key_prefix, "");
     }
 
@@ -123,6 +133,7 @@ s3_region: null
         assert!(matches!(config.delivery_type, DeliveryType::Direct));
         assert_eq!(config.s3_key_prefix, "");
         assert!(config.bobs_early_release);
+        assert_eq!(config.inline_max_bytes, 128 * 1024);
     }
 
     #[test]

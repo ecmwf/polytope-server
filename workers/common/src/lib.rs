@@ -1805,6 +1805,7 @@ mod tests {
             delivery_type: delivery_config::DeliveryType::Direct,
             bobs_url: None,
             bobs_early_release: true,
+            inline_max_bytes: 0,
             s3_bucket: None,
             s3_region: None,
             s3_endpoint_url: None,
@@ -1920,6 +1921,7 @@ mod tests {
                 delivery_type: delivery_config::DeliveryType::Direct,
                 bobs_url: None,
                 bobs_early_release: true,
+                inline_max_bytes: 0,
                 s3_bucket: None,
                 s3_region: None,
                 s3_endpoint_url: None,
@@ -1987,6 +1989,7 @@ mod tests {
                 delivery_type: delivery_config::DeliveryType::Direct,
                 bobs_url: None,
                 bobs_early_release: true,
+                inline_max_bytes: 0,
 
                 s3_bucket: None,
                 s3_region: None,
@@ -2074,6 +2077,7 @@ mod tests {
                 delivery_type: delivery_config::DeliveryType::Bobs,
                 bobs_url: Some(bobs_url.clone()),
                 bobs_early_release: true,
+                inline_max_bytes: 2,
 
                 s3_bucket: None,
                 s3_region: None,
@@ -2176,6 +2180,7 @@ mod tests {
                 delivery_type: delivery_config::DeliveryType::Bobs,
                 bobs_url: Some(bobs_url.clone()),
                 bobs_early_release: true,
+                inline_max_bytes: 128 * 1024,
 
                 s3_bucket: None,
                 s3_region: None,
@@ -2256,6 +2261,7 @@ mod tests {
                 delivery_type: delivery_config::DeliveryType::Direct,
                 bobs_url: None,
                 bobs_early_release: true,
+                inline_max_bytes: 0,
 
                 s3_bucket: None,
                 s3_region: None,
@@ -2318,6 +2324,7 @@ mod tests {
                 delivery_type: delivery_config::DeliveryType::Direct,
                 bobs_url: None,
                 bobs_early_release: true,
+                inline_max_bytes: 0,
 
                 s3_bucket: None,
                 s3_region: None,
@@ -2380,6 +2387,7 @@ mod tests {
                 delivery_type: delivery_config::DeliveryType::Direct,
                 bobs_url: None,
                 bobs_early_release: true,
+                inline_max_bytes: 0,
 
                 s3_bucket: None,
                 s3_region: None,
@@ -2501,6 +2509,7 @@ mod tests {
                 delivery_type: delivery_config::DeliveryType::Direct,
                 bobs_url: None,
                 bobs_early_release: true,
+                inline_max_bytes: 0,
                 s3_bucket: None,
                 s3_region: None,
                 s3_endpoint_url: None,
@@ -2555,6 +2564,7 @@ mod tests {
                 delivery_type: delivery_config::DeliveryType::Direct,
                 bobs_url: None,
                 bobs_early_release: true,
+                inline_max_bytes: 0,
                 s3_bucket: None,
                 s3_region: None,
                 s3_endpoint_url: None,

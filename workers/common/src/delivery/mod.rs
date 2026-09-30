@@ -52,7 +52,7 @@ pub trait ResultDelivery: Send + Sync {
 }
 
 pub async fn make_delivery(config: &DeliveryConfig) -> Box<dyn ResultDelivery> {
-    match config.delivery_type {
+    let configured: Box<dyn ResultDelivery> = match &config.delivery_type {
         DeliveryType::Direct => Box::new(DirectDelivery),
         DeliveryType::Bobs => {
             let host = config
@@ -131,6 +131,84 @@ pub async fn make_delivery(config: &DeliveryConfig) -> Box<dyn ResultDelivery> {
                 s3_client: aws_sdk_s3::Client::from_conf(s3_config),
             })
         }
+    };
+
+    if config.inline_max_bytes == 0 || matches!(&config.delivery_type, DeliveryType::Direct) {
+        configured
+    } else {
+        Box::new(SizeGatedDelivery {
+            inline_max_bytes: config.inline_max_bytes,
+            fallback: configured,
+        })
+    }
+}
+
+struct SizeGatedDelivery {
+    inline_max_bytes: u64,
+    fallback: Box<dyn ResultDelivery>,
+}
+
+impl SizeGatedDelivery {
+    fn should_inline(
+        &self,
+        content_type: &str,
+        buffered_length: Option<u64>,
+        metadata: &serde_json::Value,
+    ) -> bool {
+        let media_type = content_type.split(';').next().unwrap_or_default().trim();
+        self.inline_max_bytes != 0
+            && buffered_length.is_some_and(|length| length <= self.inline_max_bytes)
+            && media_type.eq_ignore_ascii_case("application/octet-stream")
+            && metadata
+                .get("buffer_full_output")
+                .and_then(|value| value.as_bool())
+                != Some(true)
+    }
+}
+
+#[async_trait]
+impl ResultDelivery for SizeGatedDelivery {
+    async fn deliver(
+        &self,
+        content_type: &str,
+        content_encoding: Option<&str>,
+        body: reqwest::Body,
+        buffered_length: Option<u64>,
+        metadata: &serde_json::Value,
+        context: DeliveryContext<'_>,
+    ) -> Completion {
+        if self.should_inline(content_type, buffered_length, metadata) {
+            tracing::info!(
+                "event.name" = "worker.delivery.selected",
+                outcome = "success",
+                delivery = "inline",
+                request.id = %context.job_id,
+                payload_bytes = buffered_length.expect("inline delivery requires a length"),
+                inline_max_bytes = self.inline_max_bytes,
+                "selected inline result delivery"
+            );
+            DirectDelivery
+                .deliver(
+                    content_type,
+                    content_encoding,
+                    body,
+                    buffered_length,
+                    metadata,
+                    context,
+                )
+                .await
+        } else {
+            self.fallback
+                .deliver(
+                    content_type,
+                    content_encoding,
+                    body,
+                    buffered_length,
+                    metadata,
+                    context,
+                )
+                .await
+        }
     }
 }
 
@@ -158,6 +236,140 @@ impl ResultDelivery for DirectDelivery {
             content_length: buffered_length,
             body,
             source_error: context.source_error,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    struct CountingFallback {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl ResultDelivery for CountingFallback {
+        async fn deliver(
+            &self,
+            _content_type: &str,
+            _content_encoding: Option<&str>,
+            _body: reqwest::Body,
+            _buffered_length: Option<u64>,
+            _metadata: &serde_json::Value,
+            _context: DeliveryContext<'_>,
+        ) -> Completion {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Completion::Error {
+                message: "fallback called".to_string(),
+            }
+        }
+    }
+
+    fn delivery(limit: u64, calls: &Arc<AtomicUsize>) -> SizeGatedDelivery {
+        SizeGatedDelivery {
+            inline_max_bytes: limit,
+            fallback: Box::new(CountingFallback {
+                calls: Arc::clone(calls),
+            }),
+        }
+    }
+
+    async fn deliver(
+        delivery: &SizeGatedDelivery,
+        content_type: &str,
+        length: Option<u64>,
+    ) -> Completion {
+        let user = serde_json::json!({});
+        let metadata = serde_json::json!({});
+        delivery
+            .deliver(
+                content_type,
+                None,
+                reqwest::Body::from("payload"),
+                length,
+                &metadata,
+                DeliveryContext {
+                    job_id: "job-1",
+                    user: &user,
+                    source_error: None,
+                },
+            )
+            .await
+    }
+
+    #[tokio::test]
+    async fn small_octet_stream_is_inline_without_fallback_calls() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let result = deliver(
+            &delivery(128 * 1024, &calls),
+            "application/octet-stream",
+            Some(63 * 1024),
+        )
+        .await;
+
+        assert!(matches!(result, Completion::Complete { .. }));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn octet_stream_at_threshold_is_inline() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let result = deliver(
+            &delivery(128, &calls),
+            "application/octet-stream",
+            Some(128),
+        )
+        .await;
+
+        assert!(matches!(result, Completion::Complete { .. }));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn octet_stream_above_threshold_uses_configured_delivery() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let result = deliver(
+            &delivery(128, &calls),
+            "application/octet-stream",
+            Some(129),
+        )
+        .await;
+
+        assert!(matches!(result, Completion::Error { .. }));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn covjson_uses_configured_delivery_even_when_small() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let result = deliver(
+            &delivery(128, &calls),
+            "application/prs.coverage+json",
+            Some(64),
+        )
+        .await;
+
+        assert!(matches!(result, Completion::Error { .. }));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn zero_limit_and_unknown_lengths_preserve_fallback_failures() {
+        for (limit, length) in [(0, Some(1)), (128, None)] {
+            let calls = Arc::new(AtomicUsize::new(0));
+            let result =
+                deliver(&delivery(limit, &calls), "application/octet-stream", length).await;
+
+            match result {
+                Completion::Error { message } => assert_eq!(message, "fallback called"),
+                other => panic!("expected fallback error, got {other:?}"),
+            }
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
         }
     }
 }
