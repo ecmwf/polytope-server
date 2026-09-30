@@ -222,6 +222,8 @@ class FakePyFDB:
     def __init__(self, fake_gj):
         self.fake_gj = fake_gj
         self.calls = []
+        self.inspect_calls = []
+        self.inspect_error = None
         self.sequences = {}
         self.omitted = set()
         self.reverse = False
@@ -236,12 +238,14 @@ class FakePyFDB:
     def omit(self, field):
         self.omitted.add(location_cache.canonical_field_key(field))
 
-    def list(self, selection):
-        selection = {
+    @staticmethod
+    def _selection(selection):
+        return {
             key: list(values) if isinstance(values, list) else values
             for key, values in selection.items()
         }
-        self.calls.append(selection)
+
+    def _elements(self, selection):
         keys = list(selection)
         values = [
             raw if isinstance(raw, list) else str(raw).split("/")
@@ -262,6 +266,23 @@ class FakePyFDB:
                 location = make_location(field)
             self.fake_gj.path_fields[location.path] = field
             yield FakeListElement(field, location, self.count_values)
+
+    def list(self, selection):
+        selection = self._selection(selection)
+        self.calls.append(selection)
+        return self._elements(selection)
+
+    def inspect(self, selection):
+        selection = self._selection(selection)
+        self.inspect_calls.append(selection)
+        error = (
+            self.inspect_error(selection)
+            if callable(self.inspect_error)
+            else self.inspect_error
+        )
+        if error is not None:
+            raise error
+        return self._elements(selection)
 
 
 def make_location(field, suffix=""):
@@ -1238,7 +1259,8 @@ _PROFILE_RE = re.compile(
     r"proc=(?P<proc>\d+) fields=(?P<fields>\d+) ranges=(?P<ranges>\d+) points=(?P<points>\d+) "
     r"dtype=(?P<dtype>f32|f64) shuffle=(?P<shuffle>[01]) "
     r"cache=(?P<hits>\d+)/(?P<misses>\d+) fallback=(?P<fallback>\d+) "
-    r"lookup_mode=(?P<lookup_mode>batch|single|none) "
+    r"lookup_mode=(?P<lookup_mode>batch|single|none|inspect-parallel) "
+    r"lookup_fallbacks=(?P<lookup_fallbacks>\d+) "
     r"subbatches=(?P<lookup_subbatches>\d+)/(?P<gj_subbatches>\d+) "
     r"t_lookup=(?P<t_lookup>[\d.]+)ms "
     r"t_parse=(?P<t_parse>[\d.]+)ms t_enum=(?P<t_enum>[\d.]+)ms "
@@ -1482,6 +1504,45 @@ def test_process_trace_counts_location_refresh_retry(
     assert "retry=1 status=ok" in trace_lines[1]
 
 
+def test_process_lookup_uses_inspect_without_boolean_flags(fake_fdb):
+    request = base_request(date="20200101/20200102", time="0000/0600")
+    spec, field_values = extract.parse_extract(request)
+    fields = list(extract.enumerate_fields(field_values, spec["order"]))
+
+    locations, fallback_subbatches = extract._lookup_process_locations_with_stats(
+        fields, extract._batch_request_for_fields(fields), fake_fdb
+    )
+
+    assert len(locations) == len(fields)
+    assert fallback_subbatches == 0
+    assert fake_fdb.inspect_calls == [extract._batch_request_for_fields(fields)]
+    assert fake_fdb.calls == []
+
+
+def test_process_lookup_inspect_failure_falls_back_only_its_subbatch(
+    fake_fdb, monkeypatch
+):
+    monkeypatch.setattr(extract, "LOOKUP_SUBBATCH", 2)
+    request = base_request()
+    spec, field_values = extract.parse_extract(request)
+    fields = list(extract.enumerate_fields(field_values, spec["order"]))
+
+    def fail_second_inspect(_selection):
+        if len(fake_fdb.inspect_calls) == 2:
+            return RuntimeError("")
+        return None
+
+    fake_fdb.inspect_error = fail_second_inspect
+    locations, fallback_subbatches = extract._lookup_process_locations_with_stats(
+        fields, extract._batch_request_for_fields(fields), fake_fdb
+    )
+
+    assert len(locations) == len(fields)
+    assert len(fake_fdb.inspect_calls) == 3
+    assert fake_fdb.calls == [extract._batch_request_for_fields(fields[2:4])]
+    assert fallback_subbatches == 1
+
+
 def test_process_worker_payload_is_bit_identical_to_fallback(
     fake_gj, fake_fdb
 ):
@@ -1494,7 +1555,9 @@ def test_process_worker_payload_is_bit_identical_to_fallback(
 
     assert response["payload"] == fallback
     assert len(response["updates"]) == len(fields)
-    assert len(process_fdb.calls) == 1
+    assert process_fdb.calls == []
+    assert len(process_fdb.inspect_calls) == 1
+    assert response["profile"]["lookup_fallbacks"] == 0
     assert response["profile"]["lookup_subbatches"] == 1
     assert response["profile"]["gj_subbatches"] == 1
 
@@ -1512,8 +1575,11 @@ def test_isolated_parent_populates_location_cache_from_worker_misses(
         @staticmethod
         def lookup(_tasks):
             return {
-                location_cache.canonical_field_key(field): make_location(field)
-                for field in fields
+                "locations": {
+                    location_cache.canonical_field_key(field): make_location(field)
+                    for field in fields
+                },
+                "fallbacks": 0,
             }
 
         @staticmethod
@@ -1529,7 +1595,8 @@ def test_isolated_parent_populates_location_cache_from_worker_misses(
     assert payload == response["payload"]
     assert timings["proc"] == 3
     assert timings["cache_misses"] == len(fields)
-    assert timings["lookup_mode"] == "batch-parallel"
+    assert timings["lookup_mode"] == "inspect-parallel"
+    assert timings["lookup_fallbacks"] == 0
     cache = extract._get_location_cache()
     assert all(cache.get(field) == make_location(field) for field in fields)
 
@@ -1581,13 +1648,14 @@ def test_pool_lookup_distributes_and_collects_out_of_completion_order():
         for index, delay in enumerate((0.25, 0.02, 0.12))
     ]
     try:
-        locations = pool.lookup(tasks)
+        result = pool.lookup(tasks)
     finally:
         pool.close()
 
-    assert locations == {
+    assert result["locations"] == {
         f"key-{index}": f"location-{index}" for index in range(3)
     }
+    assert result["fallbacks"] == 0
     assert [key for key, _slot in completed] == ["key-1", "key-2", "key-0"]
     assert len({slot for _key, slot in completed}) == 3
 
@@ -1626,11 +1694,12 @@ def test_pool_lookup_parallel_one_is_sequential():
         for index in range(3)
     ]
     try:
-        locations = pool.lookup(tasks)
+        result = pool.lookup(tasks)
     finally:
         pool.close()
 
-    assert len(locations) == 3
+    assert len(result["locations"]) == 3
+    assert result["fallbacks"] == 0
     assert state["max_active"] == 1
 
 
@@ -1652,11 +1721,15 @@ def test_pool_lookup_keeps_successful_subbatches_when_one_fails(caplog):
         for index in range(3)
     ]
     try:
-        locations = pool.lookup(tasks)
+        result = pool.lookup(tasks)
     finally:
         pool.close()
 
-    assert locations == {"key-0": "location-0", "key-2": "location-2"}
+    assert result["locations"] == {
+        "key-0": "location-0",
+        "key-2": "location-2",
+    }
+    assert result["fallbacks"] == 0
     assert "falling back for 1 field(s)" in caplog.text
 
 
@@ -1688,7 +1761,7 @@ def test_parent_partial_lookup_failure_falls_back_and_caches_resolved_once(
                     location = make_location(field)
                     process_gj.path_fields[location.path] = field
                     resolved[location_cache.canonical_field_key(field)] = location
-            return resolved
+            return {"locations": resolved, "fallbacks": 0}
 
         @staticmethod
         def execute(job):
@@ -1719,7 +1792,8 @@ def test_parent_partial_lookup_failure_falls_back_and_caches_resolved_once(
     expected = np.concatenate([default_values(field, 0, 4) for field in fields])
     np.testing.assert_array_equal(decode(payload), expected)
     assert len(tasks_seen) == 3
-    assert timings["lookup_mode"] == "batch-parallel"
+    assert timings["lookup_mode"] == "inspect-parallel"
+    assert timings["lookup_fallbacks"] == 0
     assert timings["lookup_subbatches"] == 3
     assert timings["fallbacks"] == 2
     assert process_fdb.calls == []

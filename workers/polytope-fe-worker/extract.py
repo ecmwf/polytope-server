@@ -32,6 +32,7 @@ straight out of ``kubectl logs`` (inside the host's ``python worker logs``
 record).
 """
 
+from contextlib import suppress
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import atexit
 import copy
@@ -651,23 +652,12 @@ def _lookup_field_locations(fields, batch_request, pyfdb):
     return locations
 
 
-def _lookup_field_locations_unlocked(fields, batch_request, pyfdb):
-    """Resolve requested fields while the caller holds _fdb_list_lock.
-
-    FDB list order is not contractual, so each result is joined to its field by
-    the canonical metadata identity. Missing, duplicate, or malformed elements
-    are omitted; callers preserve the existing request-based per-field fallback.
-    """
+def _locations_from_elements(fields, iterator):
+    """Join FDB list/inspect elements to requested fields by canonical metadata."""
     wanted = {canonical_field_key(field): field for field in fields}
     identity_names = set().union(*(field.keys() for field in fields)) - _NON_FIELD_KEYS
     locations = {}
     seen = set()
-    try:
-        iterator = iter(_get_fdb(pyfdb).list(batch_request))
-    except Exception as exc:
-        logging.warning("Batched FDB location lookup failed: %s", exc)
-        return locations
-
     while True:
         try:
             element = next(iterator)
@@ -684,7 +674,7 @@ def _lookup_field_locations_unlocked(fields, batch_request, pyfdb):
             identity = {name: metadata[name] for name in identity_names if name in metadata}
             key = canonical_field_key(identity)
         except Exception as exc:
-            logging.warning("Ignoring FDB list element with invalid metadata: %s", exc)
+            logging.warning("Ignoring FDB lookup element with invalid metadata: %s", exc)
             continue
         field = wanted.get(key)
         if field is None:
@@ -702,8 +692,31 @@ def _lookup_field_locations_unlocked(fields, batch_request, pyfdb):
             locations[key] = _location_from_element(element)
         except Exception as exc:
             logging.warning("field %s: %s", _describe(field), exc)
-
     return locations
+
+
+def _lookup_field_locations_unlocked(fields, batch_request, pyfdb):
+    """Resolve fields through tolerant ``fdb.list(request)`` without a lock."""
+    try:
+        iterator = iter(_get_fdb(pyfdb).list(batch_request))
+    except Exception as exc:
+        logging.warning("Batched FDB location lookup failed: %s", exc)
+        return {}
+    return _locations_from_elements(fields, iterator)
+
+
+def _inspect_process_locations(fields, batch_request, pyfdb):
+    """Prefer strict inspect, retrying the whole sub-batch through tolerant list."""
+    try:
+        # Materialise before parsing: inspect can fail lazily when any field in the
+        # selection cannot be resolved strictly. A partial inspect result is unsafe.
+        elements = list(_get_fdb(pyfdb).inspect(batch_request))
+    except Exception as exc:
+        logging.warning(
+            "Batched FDB inspect failed; retrying sub-batch with list: %s", exc
+        )
+        return _lookup_field_locations_unlocked(fields, batch_request, pyfdb), 1
+    return _locations_from_elements(fields, iter(elements)), 0
 
 
 def _field_number_of_data_points(field, pyfdb):
@@ -928,16 +941,9 @@ def _extract_locations(
                 file=sys.stderr,
                 flush=True,
             )
-            try:
+            with suppress(RuntimeError):
                 faulthandler.dump_traceback_later(2, repeat=True)
                 watchdog_armed = True
-            except RuntimeError:  # diagnostics must never break extraction
-                print(
-                    f"extract-watchdog unavailable job={trace_job or '-'} "
-                    f"sub={trace_sub} retry={trace_retry}",
-                    file=sys.stderr,
-                    flush=True,
-                )
 
         phase = "call"
         call_started = time.monotonic()
@@ -1073,7 +1079,7 @@ def _log_profile(prof):
     logging.info(
         "chunks-profile job=%s status=%s phase=%s proc=%d fields=%d ranges=%d points=%d "
         "dtype=%s shuffle=%d cache=%d/%d fallback=%d lookup_mode=%s "
-        "subbatches=%d/%d t_lookup=%.1fms "
+        "lookup_fallbacks=%d subbatches=%d/%d t_lookup=%.1fms "
         "t_parse=%.1fms t_enum=%.1fms t_extract=%.1fms t_assemble=%.1fms "
         "t_shuffle=%.1fms t_zstd=%.1fms t_total=%.1fms "
         "raw_bytes=%d bytes=%d zstd_level=%d",
@@ -1090,6 +1096,7 @@ def _log_profile(prof):
         prof["cache_misses"],
         prof["fallbacks"],
         prof["lookup_mode"],
+        prof["lookup_fallbacks"],
         prof["lookup_subbatches"],
         prof["gj_subbatches"],
         prof["lookup_ms"],
@@ -1124,6 +1131,7 @@ def _run_extract_fallback(request, pygribjump=None, pyfdb=None, user=None, job_i
         "cache_hits": 0,
         "cache_misses": 0,
         "fallbacks": 0,
+        "lookup_fallbacks": 0,
         "lookup_subbatches": 0,
         "gj_subbatches": 0,
         "lookup_ms": 0.0,
@@ -1407,6 +1415,7 @@ def _run_extract_fallback(request, pygribjump=None, pyfdb=None, user=None, job_i
         "enum_ms": prof["enum_ms"],
         "lookup_ms": prof["lookup_ms"],
         "lookup_mode": prof["lookup_mode"],
+        "lookup_fallbacks": prof["lookup_fallbacks"],
         "extract_ms": prof["extract_ms"],
         "assemble_ms": prof["assemble_ms"],
         "shuffle_ms": prof["shuffle_ms"],
@@ -1435,9 +1444,10 @@ class _FDBHandleModule:
         return self.handle
 
 
-def _lookup_process_locations(fields, batch_request, pyfdb):
-    """Resolve process-worker misses in 256-field transactions without a lock."""
+def _lookup_process_locations_with_stats(fields, batch_request, pyfdb):
+    """Resolve process-worker misses via inspect-first sub-batches without a lock."""
     locations = {}
+    fallback_subbatches = 0
     for start in range(0, len(fields), LOOKUP_SUBBATCH):
         subset = fields[start : start + LOOKUP_SUBBATCH]
         request = (
@@ -1445,7 +1455,18 @@ def _lookup_process_locations(fields, batch_request, pyfdb):
             if len(fields) <= LOOKUP_SUBBATCH
             else _batch_request_for_fields(subset)
         )
-        locations.update(_lookup_field_locations_unlocked(subset, request, pyfdb))
+        batch_locations, fallback_count = _inspect_process_locations(
+            subset, request, pyfdb
+        )
+        locations.update(batch_locations)
+        fallback_subbatches += fallback_count
+    return locations, fallback_subbatches
+
+
+def _lookup_process_locations(fields, batch_request, pyfdb):
+    locations, _fallback_subbatches = _lookup_process_locations_with_stats(
+        fields, batch_request, pyfdb
+    )
     return locations
 
 
@@ -1496,6 +1517,7 @@ def _execute_process_job(job, pygribjump, pyfdb, gj, servermap):
         "lookup_ms": 0.0,
         "lookup_mode": "none",
         "lookup_subbatches": 0,
+        "lookup_fallbacks": 0,
         "gj_subbatches": 0,
         "extract_ms": 0.0,
         "assemble_ms": 0.0,
@@ -1552,11 +1574,12 @@ def _execute_process_job(job, pygribjump, pyfdb, gj, servermap):
                     profile["lookup_subbatches"] = max(
                         1, (len(missing) + LOOKUP_SUBBATCH - 1) // LOOKUP_SUBBATCH
                     )
-                    batch_locations = _lookup_process_locations(
+                    batch_locations, fallback_count = _lookup_process_locations_with_stats(
                         [field for _, field in missing],
                         {key: list(values) for key, values in field_values.items()},
                         pyfdb,
                     )
+                    profile["lookup_fallbacks"] += fallback_count
                     for index, field in missing:
                         location = batch_locations.get(canonical_field_key(field))
                         if location is None:
@@ -1790,10 +1813,12 @@ def _process_worker_main(connection, slot):
             break
         try:
             if command.get("task") == "lookup":
+                locations, fallback_count = _lookup_process_locations_with_stats(
+                    command["fields"], command["batch_request"], fdb_module
+                )
                 response = {
-                    "locations": _lookup_process_locations(
-                        command["fields"], command["batch_request"], fdb_module
-                    )
+                    "locations": locations,
+                    "fallbacks": fallback_count,
                 }
             else:
                 response = _execute_process_job(
@@ -1851,6 +1876,7 @@ def _pool_test_worker(connection, slot):
                         "slot": slot,
                         "pid": os.getpid(),
                         "locations": command.get("locations", {}),
+                        "fallbacks": command.get("fallbacks", 0),
                     },
                 )
             )
@@ -2033,6 +2059,7 @@ class ProcessExtractionPool:
             self._lookup_executor.submit(self.execute, task): task for task in tasks
         }
         locations = {}
+        fallback_subbatches = 0
         for future in as_completed(futures):
             task = futures[future]
             try:
@@ -2046,7 +2073,8 @@ class ProcessExtractionPool:
                 )
             else:
                 locations.update(response["locations"])
-        return locations
+                fallback_subbatches += response.get("fallbacks", 0)
+        return {"locations": locations, "fallbacks": fallback_subbatches}
 
     def close(self):
         if self.closed:
@@ -2090,6 +2118,7 @@ def _isolated_profile(job_id):
         "cache_misses": 0,
         "fallbacks": 0,
         "lookup_subbatches": 0,
+        "lookup_fallbacks": 0,
         "gj_subbatches": 0,
         "lookup_ms": 0.0,
         "lookup_mode": "none",
@@ -2122,6 +2151,7 @@ def _profile_timings(prof):
         "cache_misses": prof["cache_misses"],
         "fallbacks": prof["fallbacks"],
         "lookup_subbatches": prof["lookup_subbatches"],
+        "lookup_fallbacks": prof["lookup_fallbacks"],
         "gj_subbatches": prof["gj_subbatches"],
         "raw_bytes": prof["raw_bytes"],
         "payload_bytes": prof["payload_bytes"],
@@ -2191,9 +2221,11 @@ def _run_extract_isolated(request, user=None, job_id=None):
                         "batch_request": _batch_request_for_fields(subset),
                     }
                 )
-            prof["lookup_mode"] = "batch-parallel"
+            prof["lookup_mode"] = "inspect-parallel"
             prof["lookup_subbatches"] = len(lookup_tasks)
-            batch_locations = pool.lookup(lookup_tasks)
+            lookup_result = pool.lookup(lookup_tasks)
+            batch_locations = lookup_result["locations"]
+            prof["lookup_fallbacks"] = lookup_result["fallbacks"]
             inserts = []
             for index, field in missing:
                 location = batch_locations.get(canonical_field_key(field))
@@ -2206,6 +2238,7 @@ def _run_extract_isolated(request, user=None, job_id=None):
         parent_lookup_ms = prof["lookup_ms"]
         parent_lookup_mode = prof["lookup_mode"]
         parent_lookup_subbatches = prof["lookup_subbatches"]
+        parent_lookup_fallbacks = prof["lookup_fallbacks"]
         prof["phase"] = "subprocess"
         response = pool.execute(
             {
@@ -2232,6 +2265,10 @@ def _run_extract_isolated(request, user=None, job_id=None):
             prof["lookup_subbatches"] = (
                 parent_lookup_subbatches
                 + response["profile"]["lookup_subbatches"]
+            )
+            prof["lookup_fallbacks"] = (
+                parent_lookup_fallbacks
+                + response["profile"]["lookup_fallbacks"]
             )
         prof["proc"] = response["proc"]
         prof["status"] = "ok"
