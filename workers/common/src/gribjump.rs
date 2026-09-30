@@ -519,7 +519,11 @@ impl GribJumpExtractor {
                 let start = field_offset * per_field * 8;
                 let values = raw[start..start + per_field * 8]
                     .chunks_exact(8)
-                    .map(|bytes| f64::from_le_bytes(bytes.try_into().expect("eight bytes")))
+                    .map(|bytes| {
+                        let mut value = [0_u8; 8];
+                        value.copy_from_slice(bytes);
+                        f64::from_le_bytes(value)
+                    })
                     .collect();
                 extracted.insert((grid_hash.clone(), path_index), values);
             }
@@ -533,7 +537,9 @@ impl GribJumpExtractor {
                 results.push((1_u8, Vec::new()));
                 continue;
             }
-            let ranges = &group_ranges[&element.grid_hash];
+            let ranges = group_ranges
+                .get(&element.grid_hash)
+                .ok_or_else(|| "multi extract grid group is missing".to_string())?;
             let expected = element
                 .ranges
                 .iter()
@@ -541,7 +547,9 @@ impl GribJumpExtractor {
                 .sum::<usize>();
             let mut values = Vec::with_capacity(element.path_indices.len() * expected);
             for &path_index in &element.path_indices {
-                let field = &extracted[&(element.grid_hash.clone(), path_index)];
+                let field = extracted
+                    .get(&(element.grid_hash.clone(), path_index))
+                    .ok_or_else(|| "multi extract field is missing".to_string())?;
                 append_selected_ranges(&mut values, field, ranges, &element.ranges)?;
             }
             let payload = encode_values(

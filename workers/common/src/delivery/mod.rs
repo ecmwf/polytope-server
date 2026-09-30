@@ -158,7 +158,8 @@ impl SizeGatedDelivery {
         let media_type = content_type.split(';').next().unwrap_or_default().trim();
         self.inline_max_bytes != 0
             && buffered_length.is_some_and(|length| length <= self.inline_max_bytes)
-            && media_type.eq_ignore_ascii_case("application/octet-stream")
+            && (media_type.eq_ignore_ascii_case("application/octet-stream")
+                || media_type.eq_ignore_ascii_case("application/x-polytope-multichunk"))
             && metadata
                 .get("buffer_full_output")
                 .and_then(|value| value.as_bool())

@@ -2191,6 +2191,7 @@ class ProcessExtractionPool:
         }
         locations = {}
         fallback_subbatches = 0
+        errors = []
         for future in as_completed(futures):
             task = futures[future]
             try:
@@ -2202,10 +2203,15 @@ class ProcessExtractionPool:
                     len(task["fields"]),
                     exc,
                 )
+                errors.append(str(exc))
             else:
                 locations.update(response["locations"])
                 fallback_subbatches += response.get("fallbacks", 0)
-        return {"locations": locations, "fallbacks": fallback_subbatches}
+        return {
+            "locations": locations,
+            "fallbacks": fallback_subbatches,
+            "errors": errors,
+        }
 
     def close(self):
         if self.closed:
@@ -2337,7 +2343,8 @@ def _prepare_rust_multi_extract_plan(request, user=None, job_id=None):
     total_points = 0
 
     chunks = _multi_chunks(request)
-    assert chunks is not None
+    if chunks is None:
+        raise ExtractError("request is not a multi-chunk extract")
     for chunk in chunks:
         spec, field_values = parse_extract(chunk)
         spec["registry_grid_hash"] = spec["grid_hash"]
@@ -2399,6 +2406,13 @@ def _prepare_rust_multi_extract_plan(request, user=None, job_id=None):
         prof["lookup_subbatches"] = len(tasks)
         lookup_result = pool.lookup(tasks)
         prof["lookup_fallbacks"] = lookup_result["fallbacks"]
+        fatal_lookup_errors = [
+            error
+            for error in lookup_result.get("errors", [])
+            if not _is_data_not_found_error(error)
+        ]
+        if fatal_lookup_errors:
+            raise ExtractError(fatal_lookup_errors[0])
         inserts = []
         for index, field in missing:
             location = lookup_result["locations"].get(canonical_field_key(field))
@@ -2735,7 +2749,8 @@ def _run_multi_extract_fallback(
 ):
     results = []
     chunks = _multi_chunks(request)
-    assert chunks is not None
+    if chunks is None:
+        raise ExtractError("request is not a multi-chunk extract")
     for chunk in chunks:
         try:
             payload, _content_type, _timings = run_extract(

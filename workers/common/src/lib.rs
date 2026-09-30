@@ -39,7 +39,9 @@ fn codec_from_accept_encoding(accept_encoding: Option<&str>) -> Codec {
 
 fn codec_for_response(content_type: &str, accept_encoding: Option<&str>) -> Codec {
     let media_type = content_type.split(';').next().unwrap_or("").trim();
-    if media_type.eq_ignore_ascii_case("application/octet-stream") {
+    if media_type.eq_ignore_ascii_case("application/octet-stream")
+        || media_type.eq_ignore_ascii_case("application/x-polytope-multichunk")
+    {
         // Binary worker payloads (for example /chunks/v1 zstd frames) are
         // already encoded at the application layer. Applying HTTP content
         // encoding would waste CPU and make the payload no longer verbatim.
@@ -1295,6 +1297,13 @@ mod tests {
         );
         assert_eq!(
             codec_for_response("Application/Octet-Stream; charset=binary", Some("gzip")),
+            Codec::Identity
+        );
+        assert_eq!(
+            codec_for_response(
+                "application/x-polytope-multichunk",
+                Some("gzip, zstd"),
+            ),
             Codec::Identity
         );
     }

@@ -59,7 +59,8 @@ impl ResultDelivery for BobsPush {
             && !buffer_full
             && buffered_length.is_some()
             && context.source_error.is_none()
-            && media_type.eq_ignore_ascii_case("application/octet-stream");
+            && (media_type.eq_ignore_ascii_case("application/octet-stream")
+                || media_type.eq_ignore_ascii_case("application/x-polytope-multichunk"));
         let location = prepared.read_url.clone();
         if release_early {
             let content_length = buffered_length.expect("checked above");
