@@ -20,9 +20,10 @@ materialises the worker's own ``gribjump_config`` (and optional
 ``fdb_config``) to /tmp and exports ``GRIBJUMP_CONFIG_FILE`` /
 ``FDB5_CONFIG_FILE``. The cache reads that same gribjump file once to map
 pyfdb's internal store aliases onto the configured FDB servermap endpoints.
-By default, cache misses, native extraction, assembly, shuffle and compression run
-inside one of several long-lived spawn subprocesses. Each owns exactly one FDB and
-one warmed GribJump handle and serves jobs sequentially. Setting
+By default, location-cache misses are resolved by the parent across the extraction
+process pool, then native extraction, assembly, shuffle and compression run inside one
+of several long-lived spawn subprocesses. Each child owns exactly one FDB and one
+warmed GribJump handle and serves tasks sequentially. Setting
 ``POLYTOPE_CHUNKS_PROC_POOL=0`` retains the process-locked FDB/threaded-GJ fallback.
 
 Profiling: every job emits exactly one ``chunks-profile`` INFO log line (see
@@ -31,7 +32,7 @@ straight out of ``kubectl logs`` (inside the host's ``python worker logs``
 record).
 """
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import atexit
 import copy
 import faulthandler
@@ -88,6 +89,9 @@ ZSTD_LEVEL = _zstd_level()
 LOOKUP_SUBBATCH = _env_subbatch("POLYTOPE_CHUNKS_LOOKUP_SUBBATCH", 256)
 GJ_SUBBATCH = _env_subbatch("POLYTOPE_CHUNKS_GJ_SUBBATCH", 1024, allow_zero=True)
 PROC_POOL_SIZE = _env_subbatch("POLYTOPE_CHUNKS_PROC_POOL", 4, allow_zero=True)
+LOOKUP_PARALLEL = _env_subbatch(
+    "POLYTOPE_CHUNKS_LOOKUP_PARALLEL", PROC_POOL_SIZE or 1
+)
 
 
 def _proc_timeout():
@@ -927,10 +931,10 @@ def _extract_locations(
             try:
                 faulthandler.dump_traceback_later(2, repeat=True)
                 watchdog_armed = True
-            except Exception as exc:  # diagnostics must never break extraction
+            except RuntimeError:  # diagnostics must never break extraction
                 print(
                     f"extract-watchdog unavailable job={trace_job or '-'} "
-                    f"sub={trace_sub} retry={trace_retry} error={exc!r}",
+                    f"sub={trace_sub} retry={trace_retry}",
                     file=sys.stderr,
                     flush=True,
                 )
@@ -1530,7 +1534,7 @@ def _execute_process_job(job, pygribjump, pyfdb, gj, servermap):
                 if location is None
             ]
             fallback_indices = set()
-            if missing:
+            if missing and not job.get("locations_resolved", False):
                 started = time.monotonic()
                 if len(missing) == 1:
                     profile["lookup_mode"] = "single"
@@ -1563,6 +1567,10 @@ def _execute_process_job(job, pygribjump, pyfdb, gj, servermap):
                 profile["lookup_ms"] += round(
                     (time.monotonic() - started) * 1000, 1
                 )
+            elif missing:
+                # Parent-side pool lookup has already had its one attempt. Any field
+                # still unresolved follows the existing request-extraction fallback.
+                fallback_indices.update(index for index, _field in missing)
 
             results_by_index = [None] * len(fields)
             path_items = []
@@ -1781,9 +1789,16 @@ def _process_worker_main(connection, slot):
         if command is None:
             break
         try:
-            response = _execute_process_job(
-                command, pygribjump, fdb_module, gj, servermap
-            )
+            if command.get("task") == "lookup":
+                response = {
+                    "locations": _lookup_process_locations(
+                        command["fields"], command["batch_request"], fdb_module
+                    )
+                }
+            else:
+                response = _execute_process_job(
+                    command, pygribjump, fdb_module, gj, servermap
+                )
             connection.send(("ok", response))
         except BaseException as exc:
             connection.send(
@@ -1823,6 +1838,23 @@ def _pool_test_worker(connection, slot):
             threading.Event().wait(command.get("seconds", 1.0))
         elif mode == "exit":
             os._exit(17)
+        if command.get("task") == "lookup":
+            if command.get("fail"):
+                connection.send(
+                    ("error", {"type": "RuntimeError", "message": "lookup failed"})
+                )
+                continue
+            connection.send(
+                (
+                    "ok",
+                    {
+                        "slot": slot,
+                        "pid": os.getpid(),
+                        "locations": command.get("locations", {}),
+                    },
+                )
+            )
+            continue
         connection.send(
             (
                 "ok",
@@ -1845,6 +1877,7 @@ class ProcessExtractionPool:
         timeout=None,
         worker_target=_process_worker_main,
         python_executable="/opt/venv/bin/python",
+        lookup_parallel=None,
     ):
         if size <= 0:
             raise ValueError("process extraction pool size must be positive")
@@ -1853,6 +1886,9 @@ class ProcessExtractionPool:
         self.startup_timeout = max(self.timeout, 30.0)
         self.worker_target = worker_target
         self.closed = False
+        self.lookup_parallel = min(
+            size, LOOKUP_PARALLEL if lookup_parallel is None else max(1, lookup_parallel)
+        )
         self._available = queue.Queue(maxsize=size)
         self._workers = {}
         multiprocessing.set_executable(python_executable)
@@ -1867,6 +1903,9 @@ class ProcessExtractionPool:
             for worker in pending:
                 self._terminate(worker)
             raise
+        self._lookup_executor = ThreadPoolExecutor(
+            max_workers=self.lookup_parallel, thread_name_prefix="fdb-lookup"
+        )
 
     def _launch(self, slot):
         parent, child = self._context.Pipe(duplex=True)
@@ -1986,9 +2025,33 @@ class ProcessExtractionPool:
             if healthy:
                 self._available.put(worker)
 
+    def lookup(self, tasks):
+        """Run lookup-only sub-batches concurrently and merge successful results."""
+        if self.closed:
+            raise ExtractError("extraction subprocess pool is closed")
+        futures = {
+            self._lookup_executor.submit(self.execute, task): task for task in tasks
+        }
+        locations = {}
+        for future in as_completed(futures):
+            task = futures[future]
+            try:
+                response = future.result()
+            except ExtractError as exc:
+                logging.warning(
+                    "FDB location lookup sub-batch failed; falling back for %d "
+                    "field(s): %s",
+                    len(task["fields"]),
+                    exc,
+                )
+            else:
+                locations.update(response["locations"])
+        return locations
+
     def close(self):
         if self.closed:
             return
+        self._lookup_executor.shutdown(wait=True)
         self.closed = True
         workers = list(self._workers.values())
         self._workers.clear()
@@ -2087,12 +2150,14 @@ def _run_extract_isolated(request, user=None, job_id=None):
         _apply_hash_override(fields[0], spec)
         cache = _get_location_cache()
         locations = []
+        missing = []
         if cache.enabled:
-            for field in fields:
+            for index, field in enumerate(fields):
                 location = cache.get(field)
                 locations.append(location)
                 if location is None:
                     prof["cache_misses"] += 1
+                    missing.append((index, field))
                 else:
                     prof["cache_hits"] += 1
         else:
@@ -2108,16 +2173,47 @@ def _run_extract_isolated(request, user=None, job_id=None):
             if job_id:
                 ctx["job_id"] = job_id
 
-        prof["phase"] = "subprocess"
         pool = _get_process_pool()
         if pool is None:
             raise ExtractError("extraction subprocess pool is disabled")
+
+        if missing:
+            prof["phase"] = "lookup"
+            lookup_started = time.monotonic()
+            lookup_tasks = []
+            missing_fields = [field for _index, field in missing]
+            for start in range(0, len(missing_fields), LOOKUP_SUBBATCH):
+                subset = missing_fields[start : start + LOOKUP_SUBBATCH]
+                lookup_tasks.append(
+                    {
+                        "task": "lookup",
+                        "fields": subset,
+                        "batch_request": _batch_request_for_fields(subset),
+                    }
+                )
+            prof["lookup_mode"] = "batch-parallel"
+            prof["lookup_subbatches"] = len(lookup_tasks)
+            batch_locations = pool.lookup(lookup_tasks)
+            inserts = []
+            for index, field in missing:
+                location = batch_locations.get(canonical_field_key(field))
+                if location is not None:
+                    locations[index] = location
+                    inserts.append((field, location))
+            cache.put_many(inserts)
+            prof["lookup_ms"] = _ms(lookup_started, time.monotonic())
+
+        parent_lookup_ms = prof["lookup_ms"]
+        parent_lookup_mode = prof["lookup_mode"]
+        parent_lookup_subbatches = prof["lookup_subbatches"]
+        prof["phase"] = "subprocess"
         response = pool.execute(
             {
                 "fields": fields,
                 "field_values": field_values,
                 "spec": spec,
                 "locations": locations,
+                "locations_resolved": cache.enabled,
                 "cache_enabled": cache.enabled,
                 "ctx": ctx,
                 "job_id": job_id,
@@ -2128,6 +2224,15 @@ def _run_extract_isolated(request, user=None, job_id=None):
         cache.put_many(response["updates"])
         payload = response["payload"]
         prof.update(response["profile"])
+        if parent_lookup_subbatches:
+            prof["lookup_ms"] = round(
+                parent_lookup_ms + response["profile"]["lookup_ms"], 1
+            )
+            prof["lookup_mode"] = parent_lookup_mode
+            prof["lookup_subbatches"] = (
+                parent_lookup_subbatches
+                + response["profile"]["lookup_subbatches"]
+            )
         prof["proc"] = response["proc"]
         prof["status"] = "ok"
         prof["phase"] = "done"

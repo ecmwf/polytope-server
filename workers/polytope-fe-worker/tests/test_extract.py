@@ -1506,10 +1506,20 @@ def test_isolated_parent_populates_location_cache_from_worker_misses(
     request = base_request()
     response, fields, _process_fdb = _fake_process_response(request)
     response["proc"] = 3
+    response["updates"] = []
 
     class FakePool:
         @staticmethod
-        def execute(_job):
+        def lookup(_tasks):
+            return {
+                location_cache.canonical_field_key(field): make_location(field)
+                for field in fields
+            }
+
+        @staticmethod
+        def execute(job):
+            assert job["locations_resolved"]
+            assert all(job["locations"])
             return response
 
     monkeypatch.setattr(extract, "PROC_POOL_SIZE", 1)
@@ -1519,6 +1529,7 @@ def test_isolated_parent_populates_location_cache_from_worker_misses(
     assert payload == response["payload"]
     assert timings["proc"] == 3
     assert timings["cache_misses"] == len(fields)
+    assert timings["lookup_mode"] == "batch-parallel"
     cache = extract._get_location_cache()
     assert all(cache.get(field) == make_location(field) for field in fields)
 
@@ -1540,6 +1551,183 @@ def test_process_pool_acquires_releases_and_reuses_workers():
     assert [first["slot"], second["slot"], third["slot"]] == [1, 2, 1]
     assert first["pid"] == third["pid"]
     assert first["pid"] != second["pid"]
+
+
+def test_pool_lookup_distributes_and_collects_out_of_completion_order():
+    pool = extract.ProcessExtractionPool(
+        3,
+        timeout=5,
+        worker_target=extract._pool_test_worker,
+        python_executable=sys.executable,
+        lookup_parallel=3,
+    )
+    completed = []
+    original_execute = pool.execute
+
+    def recording_execute(job):
+        response = original_execute(job)
+        completed.append((next(iter(job["locations"])), response["proc"]))
+        return response
+
+    pool.execute = recording_execute
+    tasks = [
+        {
+            "task": "lookup",
+            "fields": [{}],
+            "locations": {f"key-{index}": f"location-{index}"},
+            "mode": "sleep",
+            "seconds": delay,
+        }
+        for index, delay in enumerate((0.25, 0.02, 0.12))
+    ]
+    try:
+        locations = pool.lookup(tasks)
+    finally:
+        pool.close()
+
+    assert locations == {
+        f"key-{index}": f"location-{index}" for index in range(3)
+    }
+    assert [key for key, _slot in completed] == ["key-1", "key-2", "key-0"]
+    assert len({slot for _key, slot in completed}) == 3
+
+
+def test_pool_lookup_parallel_one_is_sequential():
+    pool = extract.ProcessExtractionPool(
+        2,
+        timeout=5,
+        worker_target=extract._pool_test_worker,
+        python_executable=sys.executable,
+        lookup_parallel=1,
+    )
+    state = {"active": 0, "max_active": 0}
+    state_lock = threading.Lock()
+    original_execute = pool.execute
+
+    def recording_execute(job):
+        with state_lock:
+            state["active"] += 1
+            state["max_active"] = max(state["max_active"], state["active"])
+        try:
+            return original_execute(job)
+        finally:
+            with state_lock:
+                state["active"] -= 1
+
+    pool.execute = recording_execute
+    tasks = [
+        {
+            "task": "lookup",
+            "fields": [{}],
+            "locations": {f"key-{index}": f"location-{index}"},
+            "mode": "sleep",
+            "seconds": 0.02,
+        }
+        for index in range(3)
+    ]
+    try:
+        locations = pool.lookup(tasks)
+    finally:
+        pool.close()
+
+    assert len(locations) == 3
+    assert state["max_active"] == 1
+
+
+def test_pool_lookup_keeps_successful_subbatches_when_one_fails(caplog):
+    pool = extract.ProcessExtractionPool(
+        2,
+        timeout=5,
+        worker_target=extract._pool_test_worker,
+        python_executable=sys.executable,
+        lookup_parallel=2,
+    )
+    tasks = [
+        {
+            "task": "lookup",
+            "fields": [{"date": str(index)}],
+            "locations": {f"key-{index}": f"location-{index}"},
+            "fail": index == 1,
+        }
+        for index in range(3)
+    ]
+    try:
+        locations = pool.lookup(tasks)
+    finally:
+        pool.close()
+
+    assert locations == {"key-0": "location-0", "key-2": "location-2"}
+    assert "falling back for 1 field(s)" in caplog.text
+
+
+def test_parent_partial_lookup_failure_falls_back_and_caches_resolved_once(
+    fake_gj, monkeypatch
+):
+    enable_location_cache(monkeypatch)
+    monkeypatch.setattr(extract, "LOOKUP_SUBBATCH", 2)
+    request = base_request()
+    spec, field_values = extract.parse_extract(request)
+    spec["registry_grid_hash"] = spec["grid_hash"]
+    fields = list(extract.enumerate_fields(field_values, spec["order"]))
+    process_gj = FakePyGribJump()
+    process_fdb = FakePyFDB(process_gj)
+    servermap = location_cache.LocationServerMap(
+        [{"fdb": "store.example:9000"}]
+    )
+    tasks_seen = []
+
+    class FakePool:
+        @staticmethod
+        def lookup(tasks):
+            tasks_seen.extend(tasks)
+            resolved = {}
+            for task_index, task in enumerate(tasks):
+                if task_index == 1:
+                    continue
+                for field in task["fields"]:
+                    location = make_location(field)
+                    process_gj.path_fields[location.path] = field
+                    resolved[location_cache.canonical_field_key(field)] = location
+            return resolved
+
+        @staticmethod
+        def execute(job):
+            response = extract._execute_process_job(
+                job,
+                process_gj,
+                process_fdb,
+                process_gj.GribJump(),
+                servermap,
+            )
+            response["proc"] = 2
+            return response
+
+    cache = extract._get_location_cache()
+    inserted = []
+    original_put_many = cache.put_many
+
+    def recording_put_many(entries):
+        entries = list(entries)
+        inserted.extend(field for field, _location in entries)
+        original_put_many(entries)
+
+    cache.put_many = recording_put_many
+    monkeypatch.setattr(extract, "PROC_POOL_SIZE", 2)
+    monkeypatch.setattr(extract, "_get_process_pool", lambda: FakePool())
+    payload, _, timings = extract._run_extract_isolated(request)
+
+    expected = np.concatenate([default_values(field, 0, 4) for field in fields])
+    np.testing.assert_array_equal(decode(payload), expected)
+    assert len(tasks_seen) == 3
+    assert timings["lookup_mode"] == "batch-parallel"
+    assert timings["lookup_subbatches"] == 3
+    assert timings["fallbacks"] == 2
+    assert process_fdb.calls == []
+    assert [request.req for request in process_gj.calls[0]["requests"]] == fields[2:4]
+    assert len(inserted) == len(set(map(location_cache.canonical_field_key, inserted)))
+    assert len(inserted) == 4
+    assert all(cache.get(field) is not None for field in fields[:2] + fields[4:])
+    assert all(cache.get(field) is None for field in fields[2:4])
 
 
 def test_process_pool_timeout_respawns_and_fails_job_cleanly():
