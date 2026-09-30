@@ -316,6 +316,7 @@ def fake_gj(monkeypatch):
     # Most functional tests exercise the exact pre-executor path. Executor-specific
     # tests opt in explicitly below.
     monkeypatch.setenv("POLYTOPE_CHUNKS_GJ_THREADS", "0")
+    monkeypatch.setenv("POLYTOPE_CHUNKS_RUST_EXTRACT", "0")
     monkeypatch.setattr(extract, "PROC_POOL_SIZE", 0)
     extract._reset_gribjump()
     extract._reset_location_state()
@@ -1216,6 +1217,93 @@ def _payload(request):
             "config_path": "/tmp/unused.yaml",
         }
     )
+
+
+def test_prepare_rust_extract_plan_keeps_field_order(fake_gj, monkeypatch):
+    enable_location_cache(monkeypatch)
+    request = base_request(
+        extract={
+            **base_request()["extract"],
+            "ranges": [[1, 3], [8, 9]],
+            "dtype": "float32",
+            "shuffle": True,
+        }
+    )
+    fields = list(
+        extract.enumerate_fields(
+            {"date": DATES, "time": TIMES}, request["extract"]["order"]
+        )
+    )
+
+    class LookupPool:
+        @staticmethod
+        def lookup(tasks):
+            looked_up = [field for task in tasks for field in task["fields"]]
+            return {
+                "locations": {
+                    location_cache.canonical_field_key(field): make_location(field)
+                    for field in looked_up
+                },
+                "fallbacks": 0,
+            }
+
+    monkeypatch.setattr(extract, "PROC_POOL_SIZE", 1)
+    monkeypatch.setattr(extract, "_get_process_pool", lambda: LookupPool())
+    plan, content_type, timings = extract.prepare_rust_extract_plan(
+        request, user=run_polytope_worker._User({"realm": "ecmwf", "username": "tester"})
+    )
+
+    assert content_type == "application/octet-stream"
+    assert plan["kind"] == "rust_gribjump_extract_v1"
+    assert plan["ranges"] == [[1, 3], [8, 9]]
+    assert plan["dtype"] == "float32" and plan["shuffle"]
+    assert plan["context"] == {"user": "ecmwf:tester"}
+    assert [item["path"] for item in plan["paths"]] == [
+        make_location(field).path for field in fields
+    ]
+    assert timings["fields"] == len(fields)
+    assert plan["profile"]["lookup_mode"] == "inspect-parallel"
+
+
+def test_dispatch_native_extract_returns_plan(fake_gj, recording_ds, monkeypatch):
+    monkeypatch.setenv("POLYTOPE_CHUNKS_RUST_EXTRACT", "1")
+    expected_plan = {
+        "kind": "rust_gribjump_extract_v1",
+        "paths": [],
+        "ranges": [[0, 1]],
+    }
+    calls = []
+
+    def prepare(request, user=None, job_id=None):
+        calls.append(
+            {
+                "request": request,
+                "realm": getattr(user, "realm", None),
+                "username": getattr(user, "username", None),
+                "job_id": job_id,
+            }
+        )
+        return expected_plan, "application/octet-stream", {"lookup_ms": 2.5}
+
+    monkeypatch.setattr(extract, "prepare_rust_extract_plan", prepare)
+    payload = parse_json(_payload(base_request()))
+    payload["job_id"] = "native-job"
+    output, status_json = run_polytope_worker.process(json.dumps(payload))
+    status = parse_json(status_json)
+
+    assert output is expected_plan
+    assert status["ok"] and status["content_type"] == "application/octet-stream"
+    assert status["timings"]["lookup_ms"] == 2.5
+    assert calls == [
+        {
+            "request": base_request(),
+            "realm": "ecmwf",
+            "username": "tester",
+            "job_id": "native-job",
+        }
+    ]
+    assert recording_ds.retrieved == []
+    assert fake_gj.calls == []
 
 
 def test_dispatch_extract_path(fake_gj, recording_ds):

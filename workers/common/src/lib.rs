@@ -18,6 +18,7 @@ pub mod config;
 pub mod delivery;
 pub mod delivery_config;
 pub mod encoding;
+pub mod gribjump;
 pub mod management;
 pub mod metrics;
 

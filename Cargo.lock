@@ -4156,6 +4156,7 @@ dependencies = [
  "bytes",
  "futures",
  "http-body-util",
+ "libloading",
  "opentelemetry",
  "opentelemetry-prometheus",
  "opentelemetry_sdk",
@@ -4171,6 +4172,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "zstd",
 ]
 
 [[package]]

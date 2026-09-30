@@ -520,11 +520,38 @@ def _reset_hash_learning():  # for tests
         _learned_hash_identities = set()
 
 
+def rust_extract_enabled():
+    """Native extraction is the default; set exactly ``0`` for Python fallback."""
+    return os.environ.get("POLYTOPE_CHUNKS_RUST_EXTRACT", "1") != "0"
+
+
+def rust_warm_plan():
+    """Resolve one live path per configured endpoint for the Rust host handle."""
+    import pyfdb  # type: ignore[import-not-found]
+
+    locations = _resolve_gj_warm_locations(pyfdb)
+    return {
+        "paths": [
+            {
+                "path": location.path,
+                "offset": location.offset,
+                "host": location.host,
+                "port": location.port,
+                "scheme": location.scheme,
+            }
+            for location in locations
+        ],
+        "grid_hash": _GJ_WARM_GRID_HASH,
+    }
+
+
 def warm_up(pygribjump=None):
-    """Warm imports, the parent location cache, and the selected executor."""
+    """Warm imports, cache state, and the active extraction data plane."""
     import zstandard  # noqa: F401  # type: ignore[import-not-found]
 
     _get_location_cache()
+    if rust_extract_enabled() and pygribjump is None:
+        return
     if PROC_POOL_SIZE > 0 and pygribjump is None:
         _get_process_pool()
         return
@@ -1854,18 +1881,24 @@ def _execute_process_job(job, pygribjump, pyfdb, gj, servermap):
 
 
 def _process_worker_main(connection, slot):
-    """Spawn target: initialise native state once, then serve jobs sequentially."""
+    """Spawn target: own an FDB handle; Python fallback also owns GribJump."""
     startup_started = time.monotonic()
     try:
         os.environ["GRIBJUMP_CONFIG_FILE"] = "/tmp/gribjump.yaml"
         import pyfdb  # type: ignore[import-not-found]
-        import pygribjump  # type: ignore[import-not-found]
 
         fdb_module = _FDBHandleModule(pyfdb.FDB(), pyfdb.FDB)
-        gj = pygribjump.GribJump()
         servermap = LocationServerMap.from_config("/tmp/gribjump.yaml")
-        warm_locations = _resolve_process_warm_locations(fdb_module, servermap)
-        _warm_gribjump_handle(gj, pygribjump, warm_locations)
+        pygribjump = None
+        gj = None
+        warm_locations = []
+        if not rust_extract_enabled():
+            import pygribjump as imported_pygribjump  # type: ignore[import-not-found]
+
+            pygribjump = imported_pygribjump
+            gj = pygribjump.GribJump()
+            warm_locations = _resolve_process_warm_locations(fdb_module, servermap)
+            _warm_gribjump_handle(gj, pygribjump, warm_locations)
         warm_seconds = time.monotonic() - startup_started
         warm_endpoints = [
             f"{location.scheme}://{location.host}:{location.port}"
@@ -1914,10 +1947,12 @@ def _process_worker_main(connection, slot):
                     "locations": locations,
                     "fallbacks": fallback_count,
                 }
-            else:
+            elif pygribjump is not None and gj is not None:
                 response = _execute_process_job(
                     command, pygribjump, fdb_module, gj, servermap
                 )
+            else:
+                raise ExtractError("Rust-mode subprocess received an extraction job")
             connection.send(("ok", response))
         except BaseException as exc:
             connection.send(
@@ -2251,6 +2286,136 @@ def _profile_timings(prof):
         "payload_bytes": prof["payload_bytes"],
         "proc": prof["proc"],
     }
+
+
+def _path_plan(location):
+    return {
+        "path": location.path,
+        "offset": location.offset,
+        "host": location.host,
+        "port": location.port,
+        "scheme": location.scheme,
+    }
+
+
+def prepare_rust_extract_plan(request, user=None, job_id=None):
+    """Keep parsing/enumeration/FDB lookup in Python and return a compact Rust plan."""
+    prof = _isolated_profile(job_id)
+    started = time.monotonic()
+    spec, field_values = parse_extract(request)
+    spec["registry_grid_hash"] = spec["grid_hash"]
+    parsed = time.monotonic()
+    prof["parse_ms"] = _ms(started, parsed)
+    prof["dtype"] = "f32" if spec["dtype"] == "float32" else "f64"
+    prof["shuffle"] = 1 if spec["shuffle"] else 0
+
+    fields = list(enumerate_fields(field_values, spec["order"]))
+    if not fields:
+        raise ExtractError("extract request enumerated no fields")
+    prof["fields"] = len(fields)
+    prof["ranges"] = len(spec["ranges"])
+    prof["points"] = len(fields) * sum(hi - lo for lo, hi in spec["ranges"])
+    _apply_hash_override(fields[0], spec)
+
+    cache = _get_location_cache()
+    locations = []
+    missing = []
+    for index, field in enumerate(fields):
+        location = cache.get(field) if cache.enabled else None
+        locations.append(location)
+        if location is None:
+            prof["cache_misses"] += 1
+            missing.append((index, field))
+        else:
+            prof["cache_hits"] += 1
+    enumerated = time.monotonic()
+    prof["enum_ms"] = _ms(parsed, enumerated)
+
+    pool = _get_process_pool()
+    if pool is None:
+        raise ExtractError("extraction subprocess pool is disabled")
+    if missing:
+        lookup_started = time.monotonic()
+        tasks = []
+        missing_fields = [field for _index, field in missing]
+        for start in range(0, len(missing_fields), LOOKUP_SUBBATCH):
+            subset = missing_fields[start : start + LOOKUP_SUBBATCH]
+            tasks.append(
+                {
+                    "task": "lookup",
+                    "fields": subset,
+                    "batch_request": _batch_request_for_fields(subset),
+                }
+            )
+        prof["lookup_mode"] = "inspect-parallel"
+        prof["lookup_subbatches"] = len(tasks)
+        lookup_result = pool.lookup(tasks)
+        prof["lookup_fallbacks"] = lookup_result["fallbacks"]
+        inserts = []
+        for index, field in missing:
+            location = lookup_result["locations"].get(canonical_field_key(field))
+            if location is None:
+                raise ExtractError(
+                    f"FDB lookup returned no location for field {_describe(field)}"
+                )
+            locations[index] = location
+            inserts.append((field, location))
+        if cache.enabled:
+            cache.put_many(inserts)
+        prof["lookup_ms"] = _ms(lookup_started, time.monotonic())
+
+    servermap = _get_location_servermap()
+    paths = []
+    for field, location in zip(fields, locations):
+        translated = servermap.translate(location)
+        if translated is None:
+            raise ExtractError(
+                f"FDB location is not routable for field {_describe(field)}"
+            )
+        paths.append(_path_plan(translated))
+
+    context = None
+    if user is not None:
+        context = {
+            "user": f"{getattr(user, 'realm', '')}:{getattr(user, 'username', '')}"
+        }
+        if job_id:
+            context["job_id"] = job_id
+
+    prof["python_ms"] = _ms(started, time.monotonic())
+    profile = {
+        key: prof[key]
+        for key in (
+            "job",
+            "fields",
+            "ranges",
+            "points",
+            "dtype",
+            "shuffle",
+            "cache_hits",
+            "cache_misses",
+            "fallbacks",
+            "lookup_mode",
+            "lookup_fallbacks",
+            "lookup_subbatches",
+            "lookup_ms",
+            "parse_ms",
+            "enum_ms",
+            "python_ms",
+        )
+    }
+    plan = {
+        "kind": "rust_gribjump_extract_v1",
+        "paths": paths,
+        "ranges": [list(item) for item in spec["ranges"]],
+        "grid_hash": spec["grid_hash"],
+        "dtype": spec["dtype"],
+        "shuffle": spec["shuffle"],
+        "zstd_level": ZSTD_LEVEL,
+        "context": context,
+        "profile": profile,
+    }
+    return plan, CONTENT_TYPE, _profile_timings(prof)
 
 
 def _run_extract_isolated(request, user=None, job_id=None):

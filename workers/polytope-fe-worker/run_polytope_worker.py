@@ -198,7 +198,7 @@ def _get_datasource(config_path):
 def process(payload_json: str) -> tuple:
     """Called from Rust via PyO3.
 
-    Returns: (body_bytes: bytes, status_json: str)
+    Returns ``(body_or_plan, status_json)``. ``body_or_plan`` is bytes for legacy
 
     status_json is json.dumps(...) of an object with:
       - ok (bool)
@@ -207,13 +207,14 @@ def process(payload_json: str) -> tuple:
         for every Python log record emitted during THIS call.
       - error — null when ok=true; when ok=false, {"message": str} with a
         clean message (never a traceback).
-      - content_type (str, ok=true only) — MIME type of body_bytes:
-        "application/prs.coverage+json" for PolytopeMars jobs,
-        "application/octet-stream" for /chunks/v1 extract jobs (zstd frame of
-        little-endian float64). The Rust host falls back to coverage+json when
-        absent.
+      - content_type (str, ok=true only) — MIME type of the eventual body.
 
-    On success: ok=true, body_bytes = output bytes, timings populated, error=null.
+    Native chunks jobs return a ``rust_gribjump_extract_v1`` dict containing paths,
+    shared ranges and wire-format flags. The Rust host turns that plan directly into
+    the payload. With ``POLYTOPE_CHUNKS_RUST_EXTRACT=0``, chunks jobs retain the
+    previous all-Python bytes path.
+
+    On success: ok=true, output is bytes or an extract plan, timings populated,
     On job-level exception: ok=false, body_bytes=b"", error.message = clean message,
       and the full traceback is appended to logs as a synthetic ERROR record.
 
@@ -246,17 +247,23 @@ def process(payload_json: str) -> tuple:
 
     try:
         if _is_extract_request(request.coerced_request):
-            # /chunks/v1 extract job (D17): straight pygribjump, no
-            # PolytopeMars. The datasource above is process-scoped (built once
-            # at host startup, cached in _datasource); it has already
-            # materialised the worker's gribjump/fdb config files and env vars.
+            # Python owns the chunks control plane. Native mode stops after FDB
+            # lookup and hands a compact plan to the Rust host; fallback mode keeps
+            # the complete historical pygribjump path.
             import extract
 
-            output, content_type, timings = extract.run_extract(
-                request.coerced_request,
-                user=request.user,
-                job_id=payload.get("job_id"),
-            )
+            if extract.rust_extract_enabled():
+                output, content_type, timings = extract.prepare_rust_extract_plan(
+                    request.coerced_request,
+                    user=request.user,
+                    job_id=payload.get("job_id"),
+                )
+            else:
+                output, content_type, timings = extract.run_extract(
+                    request.coerced_request,
+                    user=request.user,
+                    job_id=payload.get("job_id"),
+                )
             t_retrieve = t_result = time.monotonic()
         else:
             timings = datasource.retrieve(request)

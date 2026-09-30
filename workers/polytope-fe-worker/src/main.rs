@@ -4,11 +4,16 @@
 
 use async_trait::async_trait;
 use clap::Parser;
-use polytope_worker_common::config::{WorkerConfigFile, DEFAULT_CONFIG_PATH};
-use polytope_worker_common::{run_worker_loop, ProcessResult, Processor, WorkItem, WorkerConfig};
+use polytope_worker_common::config::{DEFAULT_CONFIG_PATH, WorkerConfigFile};
+use polytope_worker_common::gribjump::{
+    ExtractMetrics, ExtractPlan, GribJumpExtractor, PathRequest,
+};
+use polytope_worker_common::{ProcessResult, Processor, WorkItem, WorkerConfig, run_worker_loop};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyTuple};
 use serde_json::json;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use tracing::{debug, error, info, warn};
 
 #[derive(serde::Deserialize)]
@@ -38,6 +43,17 @@ struct PyLogRecord {
 #[derive(serde::Deserialize)]
 struct PyError {
     message: String,
+}
+
+enum PythonOutput {
+    Bytes(Vec<u8>),
+    ExtractPlan(Box<ExtractPlan>),
+}
+
+#[derive(serde::Deserialize)]
+struct WarmPlan {
+    paths: Vec<PathRequest>,
+    grid_hash: String,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -113,6 +129,7 @@ fn emit_python_logs(job_id: &str, logs: &[PyLogRecord]) {
 
 struct PolytopeProcessor {
     config_path: String,
+    extractor: Option<Arc<Mutex<GribJumpExtractor>>>,
 }
 
 #[async_trait]
@@ -138,29 +155,37 @@ impl Processor for PolytopeProcessor {
 
         let job_id = work.job_id.clone();
         let result = tokio::task::spawn_blocking(move || {
-            Python::with_gil(|py| -> PyResult<(Vec<u8>, String)> {
+            Python::with_gil(|py| -> PyResult<(PythonOutput, String)> {
                 let wrapper = py.import("run_polytope_worker")?;
                 let result = wrapper.call_method1("process", (&payload_str,))?;
                 let tuple = result.downcast::<PyTuple>().map_err(|e| {
                     pyo3::exceptions::PyTypeError::new_err(format!(
-                        "expected (bytes, str) from process(), got: {e}"
+                        "expected (bytes|dict, str) from process(), got: {e}"
                     ))
                 })?;
                 let item0 = tuple.get_item(0)?;
-                let py_bytes = item0.downcast::<PyBytes>().map_err(|e| {
-                    pyo3::exceptions::PyTypeError::new_err(format!(
-                        "expected bytes at index 0, got: {e}"
-                    ))
-                })?;
+                let output = if let Ok(py_bytes) = item0.downcast::<PyBytes>() {
+                    PythonOutput::Bytes(py_bytes.as_bytes().to_vec())
+                } else {
+                    let json_module = py.import("json")?;
+                    let plan_json: String =
+                        json_module.call_method1("dumps", (&item0,))?.extract()?;
+                    let plan = serde_json::from_str(&plan_json).map_err(|error| {
+                        pyo3::exceptions::PyTypeError::new_err(format!(
+                            "invalid Rust extract plan: {error}"
+                        ))
+                    })?;
+                    PythonOutput::ExtractPlan(Box::new(plan))
+                };
                 let status_json: String = tuple.get_item(1)?.extract()?;
-                Ok((py_bytes.as_bytes().to_vec(), status_json))
+                Ok((output, status_json))
             })
         })
         .await;
 
         match result {
-            Ok(Ok((bytes, status_json))) => {
-                let status: PyStatus = match serde_json::from_str(&status_json) {
+            Ok(Ok((output, status_json))) => {
+                let mut status: PyStatus = match serde_json::from_str(&status_json) {
                     Ok(s) => s,
                     Err(err) => {
                         error!(job_id = %job_id, error = %err, status_json = %status_json, "failed to parse status_json");
@@ -171,23 +196,61 @@ impl Processor for PolytopeProcessor {
                 };
 
                 emit_python_logs(&job_id, &status.logs);
-
-                if status.ok {
-                    let len = bytes.len() as u64;
-                    let timings = serde_json::to_string(&status.timings).unwrap_or_default();
-                    info!(job_id = %job_id, bytes = len, timings = %timings, "request completed");
-                    let bytes = bytes::Bytes::from(bytes);
-                    let content_type = status
-                        .content_type
-                        .filter(|ct| !ct.is_empty())
-                        .unwrap_or_else(|| DEFAULT_CONTENT_TYPE.to_string());
-                    ProcessResult::success_bytes(content_type, bytes)
-                } else {
+                if !status.ok {
                     let message = status.error.map(|e| e.message).unwrap_or_else(|| {
                         "python worker reported failure with no message".to_string()
                     });
-                    ProcessResult::error(message)
+                    return ProcessResult::error(message);
                 }
+
+                let (bytes, content_type) = match output {
+                    PythonOutput::Bytes(bytes) => {
+                        let content_type = status
+                            .content_type
+                            .filter(|ct| !ct.is_empty())
+                            .unwrap_or_else(|| DEFAULT_CONTENT_TYPE.to_string());
+                        (bytes, content_type)
+                    }
+                    PythonOutput::ExtractPlan(plan) => {
+                        let Some(extractor) = self.extractor.clone() else {
+                            return ProcessResult::error(
+                                "Python returned a Rust extract plan while native extraction is disabled",
+                            );
+                        };
+                        let extraction_started = Instant::now();
+                        let plan_profile = plan.profile.clone();
+                        let native = tokio::task::spawn_blocking(move || {
+                            let mut guard = extractor
+                                .lock()
+                                .map_err(|_| "GribJump extractor mutex poisoned".to_string())?;
+                            guard.extract(&plan)
+                        })
+                        .await;
+                        let output = match native {
+                            Ok(Ok(output)) => output,
+                            Ok(Err(message)) => {
+                                error!(job_id = %job_id, error = %message, "native GribJump extraction failed");
+                                return ProcessResult::error(format!(
+                                    "gribjump extraction failed: {message}"
+                                ));
+                            }
+                            Err(error) => {
+                                return ProcessResult::error(format!(
+                                    "native extraction task join error: {error}"
+                                ));
+                            }
+                        };
+                        let rust_wall_ms = extraction_started.elapsed().as_secs_f64() * 1000.0;
+                        update_native_timings(&mut status.timings, &output.metrics, rust_wall_ms);
+                        emit_chunks_profile(&plan_profile, &output.metrics, rust_wall_ms);
+                        (output.payload, "application/octet-stream".to_string())
+                    }
+                };
+
+                let len = bytes.len() as u64;
+                let timings = serde_json::to_string(&status.timings).unwrap_or_default();
+                info!(job_id = %job_id, bytes = len, timings = %timings, "request completed");
+                ProcessResult::success_bytes(content_type, bytes::Bytes::from(bytes))
             }
             Ok(Err(py_err)) => {
                 error!(job_id = %job_id, error = %py_err, "python error");
@@ -199,6 +262,82 @@ impl Processor for PolytopeProcessor {
             }
         }
     }
+}
+
+fn update_native_timings(
+    timings: &mut serde_json::Value,
+    metrics: &ExtractMetrics,
+    rust_wall_ms: f64,
+) {
+    let Some(values) = timings.as_object_mut() else {
+        return;
+    };
+    values.insert("extract_ms".to_string(), json!(metrics.extract_ms));
+    values.insert("assemble_ms".to_string(), json!(metrics.assemble_ms));
+    values.insert("shuffle_ms".to_string(), json!(metrics.shuffle_ms));
+    values.insert("compress_ms".to_string(), json!(metrics.zstd_ms));
+    values.insert("gj_subbatches".to_string(), json!(metrics.gj_subbatches));
+    values.insert("raw_bytes".to_string(), json!(metrics.raw_bytes));
+    values.insert("payload_bytes".to_string(), json!(metrics.payload_bytes));
+    values.insert("proc".to_string(), json!("rust"));
+    let retrieve_ms = values
+        .get("retrieve_ms")
+        .and_then(serde_json::Value::as_f64)
+        .unwrap_or_default()
+        + rust_wall_ms;
+    values.insert(
+        "retrieve_ms".to_string(),
+        json!((retrieve_ms * 10.0).round() / 10.0),
+    );
+    let total_ms = values
+        .get("total_ms")
+        .and_then(serde_json::Value::as_f64)
+        .unwrap_or_default()
+        + rust_wall_ms;
+    values.insert(
+        "total_ms".to_string(),
+        json!((total_ms * 10.0).round() / 10.0),
+    );
+}
+
+fn emit_chunks_profile(
+    profile: &polytope_worker_common::gribjump::PlanProfile,
+    metrics: &ExtractMetrics,
+    rust_wall_ms: f64,
+) {
+    let total_ms = profile.python_ms + rust_wall_ms;
+    info!(
+        "chunks-profile job={} status=ok phase=done proc=rust fields={} ranges={} points={} \
+         dtype={} shuffle={} cache={}/{} fallback={} lookup_mode={} \
+         lookup_fallbacks={} subbatches={}/{} t_lookup={:.1}ms \
+         t_parse={:.1}ms t_enum={:.1}ms t_extract={:.1}ms t_assemble={:.1}ms \
+         t_shuffle={:.1}ms t_zstd={:.1}ms t_total={:.1}ms \
+         raw_bytes={} bytes={} zstd_level={}",
+        profile.job,
+        profile.fields,
+        profile.ranges,
+        profile.points,
+        profile.dtype,
+        profile.shuffle,
+        profile.cache_hits,
+        profile.cache_misses,
+        profile.fallbacks,
+        profile.lookup_mode,
+        profile.lookup_fallbacks,
+        profile.lookup_subbatches,
+        metrics.gj_subbatches,
+        profile.lookup_ms,
+        profile.parse_ms,
+        profile.enum_ms,
+        metrics.extract_ms,
+        metrics.assemble_ms,
+        metrics.shuffle_ms,
+        metrics.zstd_ms,
+        total_ms,
+        metrics.raw_bytes,
+        metrics.payload_bytes,
+        std::env::var("POLYTOPE_CHUNKS_ZSTD_LEVEL").unwrap_or_else(|_| "3".to_string()),
+    );
 }
 
 #[derive(Parser)]
@@ -232,6 +371,12 @@ fn resolved_worker_concurrency(cli_value: usize) -> usize {
             cli_value
         }
     }
+}
+
+fn native_extract_enabled() -> bool {
+    std::env::var("POLYTOPE_CHUNKS_RUST_EXTRACT")
+        .map(|value| value != "0")
+        .unwrap_or(true)
 }
 
 #[tokio::main]
@@ -270,6 +415,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     })?;
 
+    let extractor = if native_extract_enabled() {
+        let mut extractor = GribJumpExtractor::native().map_err(std::io::Error::other)?;
+        let warm_plan = Python::with_gil(|py| -> PyResult<WarmPlan> {
+            let extract = py.import("extract")?;
+            let plan = extract.call_method0("rust_warm_plan")?;
+            let json_module = py.import("json")?;
+            let plan_json: String = json_module.call_method1("dumps", (&plan,))?.extract()?;
+            serde_json::from_str(&plan_json).map_err(|error| {
+                pyo3::exceptions::PyValueError::new_err(format!("invalid Rust warm plan: {error}"))
+            })
+        });
+        match warm_plan {
+            Ok(plan) => match extractor.warm(&plan.paths, &plan.grid_hash) {
+                Ok(()) => info!(
+                    endpoints = plan.paths.len(),
+                    "native GribJump handle warmed"
+                ),
+                Err(error) => {
+                    warn!(error = %error, "native GribJump warm-up failed; first job will retry")
+                }
+            },
+            Err(error) => {
+                warn!(error = %error, "native GribJump warm-location lookup failed; first job will connect lazily")
+            }
+        }
+        Some(Arc::new(Mutex::new(extractor)))
+    } else {
+        info!("native GribJump extraction disabled; using Python fallback");
+        None
+    };
+
     info!(broker_url = %cli.broker_url, "connecting to broker");
 
     run_worker_loop(
@@ -284,6 +460,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.delivery,
         PolytopeProcessor {
             config_path: cli.config_path,
+            extractor,
         },
     )
     .await?;
@@ -354,6 +531,7 @@ def process(payload_json):
 
         let processor = PolytopeProcessor {
             config_path: "/tmp/unused.yaml".into(),
+            extractor: None,
         };
 
         let result = processor
@@ -419,6 +597,7 @@ def process(payload_json):
 
         let processor = PolytopeProcessor {
             config_path: "/tmp/unused.yaml".into(),
+            extractor: None,
         };
 
         let result = processor
@@ -482,6 +661,7 @@ def process(payload_json):
 
         let processor = PolytopeProcessor {
             config_path: "/tmp/unused.yaml".into(),
+            extractor: None,
         };
 
         let result = processor
