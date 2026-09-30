@@ -1432,6 +1432,40 @@ def test_executor_warms_each_handle_once_at_startup(fake_gj, monkeypatch):
     assert len(fake_gj.path_calls) == 3
 
 
+def test_executor_warms_every_resolved_endpoint_on_each_handle(
+    fake_gj, monkeypatch
+):
+    warm_locations = [
+        location_cache.FieldLocation(
+            path=f"/archive/warm-{index}.grib",
+            scheme="fdb",
+            offset=index,
+            length=100,
+            host=f"store-{index}.example",
+            port=9000,
+        )
+        for index in range(3)
+    ]
+    for location in warm_locations:
+        fake_gj.path_fields[location.path] = {"date": "20200101", "time": "0000"}
+    monkeypatch.setattr(
+        extract, "_resolve_gj_warm_locations", lambda _pyfdb: warm_locations
+    )
+
+    enable_gj_executor(fake_gj, monkeypatch, 2)
+
+    assert len(fake_gj.handles) == 2
+    assert len(fake_gj.path_calls) == 2
+    assert {call["handle"] for call in fake_gj.path_calls} == set(fake_gj.handles)
+    assert [len(call["requests"]) for call in fake_gj.path_calls] == [3, 3]
+    warm_ranges = [
+        request.ranges
+        for call in fake_gj.path_calls
+        for request in call["requests"]
+    ]
+    assert [[ranges[0][0], ranges[0][1]] for ranges in warm_ranges] == [[0, 1]] * 6
+
+
 def test_executor_reuses_same_handle_across_jobs(fake_gj, monkeypatch):
     enable_gj_executor(fake_gj, monkeypatch, 1)
     fake_gj.calls.clear()

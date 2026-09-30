@@ -304,9 +304,20 @@ _GJ_WARM_FIELD = {
     "type": "fc",
     "levtype": "sfc",
     "param": "167",
-    "date": "19900101",
     "time": "0000",
 }
+# These live fields cover all seven mn5 climate-dt store endpoints. Warming only
+# 19900101 opened the store7 session; a new handle then paid the other six
+# connection/session setup costs in its first large job.
+_GJ_WARM_DATES = (
+    "19900101",
+    "19900103",
+    "19900105",
+    "19900106",
+    "19900109",
+    "19900112",
+    "19900115",
+)
 _GJ_WARM_GRID_HASH = "cbda19e48d4d7e5e22641154878b9b22"
 
 
@@ -314,35 +325,50 @@ def _gj_thread_count():
     return _env_subbatch("POLYTOPE_CHUNKS_GJ_THREADS", 4, allow_zero=True)
 
 
-def _resolve_gj_warm_location(pyfdb):
-    """Resolve one live field without retaining its data or location."""
-    location = _lookup_field_location(_GJ_WARM_FIELD, pyfdb)
-    translated = _get_location_servermap().translate(location)
-    if translated is None:
-        raise ExtractError("GribJump warm-up field location is not routable")
-    return translated
-
-
-def _warm_gribjump_handle(gj, pygribjump, location):
-    """Open the path client session with one discarded point, never cached."""
-    request = pygribjump.PathExtractionRequest(
-        location.path,
-        location.scheme,
-        location.offset,
-        location.host,
-        location.port,
-        [(0, 1)],
-        gridHash=_GJ_WARM_GRID_HASH,
+def _resolve_gj_warm_locations(pyfdb):
+    """Resolve one live field per GribJump endpoint without retaining it."""
+    fields = [{**_GJ_WARM_FIELD, "date": date} for date in _GJ_WARM_DATES]
+    locations_by_key = _lookup_field_locations(
+        fields, _batch_request_for_fields(fields), pyfdb
     )
-    list(gj.extract_from_paths([request]))
+    servermap = _get_location_servermap()
+    locations = {}
+    for field in fields:
+        location = locations_by_key.get(canonical_field_key(field))
+        if location is None:
+            continue
+        translated = servermap.translate(location)
+        if translated is not None:
+            endpoint = (translated.scheme, translated.host, translated.port)
+            locations.setdefault(endpoint, translated)
+    if not locations:
+        raise ExtractError("GribJump warm-up fields have no routable locations")
+    return list(locations.values())
 
 
-def _init_gj_executor_thread(pygribjump, warm_location):
+def _warm_gribjump_handle(gj, pygribjump, locations):
+    """Open every path client session with one discarded point, never cached."""
+    requests = [
+        pygribjump.PathExtractionRequest(
+            location.path,
+            location.scheme,
+            location.offset,
+            location.host,
+            location.port,
+            [(0, 1)],
+            gridHash=_GJ_WARM_GRID_HASH,
+        )
+        for location in locations
+    ]
+    list(gj.extract_from_paths(requests))
+
+
+def _init_gj_executor_thread(pygribjump, warm_locations):
     gj = _get_gribjump(pygribjump)
-    if warm_location is None:
+    if not warm_locations:
         return
     try:
-        _warm_gribjump_handle(gj, pygribjump, warm_location)
+        _warm_gribjump_handle(gj, pygribjump, warm_locations)
     except Exception as exc:  # best effort; keep the constructed handle usable
         logging.warning(
             "chunks GribJump executor thread warm-up failed (will retry on job): %s",
@@ -366,22 +392,22 @@ def _get_gj_executor(pygribjump):
                 try:
                     import pyfdb  # type: ignore[import-not-found]
 
-                    warm_location = _resolve_gj_warm_location(pyfdb)
+                    warm_locations = _resolve_gj_warm_locations(pyfdb)
                 except Exception as exc:
                     logging.warning(
                         "chunks GribJump warm-up field lookup failed "
                         "(handles will still be persistent): %s",
                         exc,
                     )
-                    warm_location = None
+                    warm_locations = []
                 executor = ThreadPoolExecutor(
                     max_workers=threads,
                     thread_name_prefix="polytope-gj",
                     initializer=_init_gj_executor_thread,
-                    initargs=(pygribjump, warm_location),
+                    initargs=(pygribjump, warm_locations),
                 )
                 # ThreadPoolExecutor starts workers lazily. A barrier makes all handles
-                # exist and complete their one-point session warm-up before startup ends.
+                # exist and open every endpoint session before startup ends.
                 barrier = threading.Barrier(threads)
                 futures = [
                     executor.submit(_executor_barrier, barrier) for _ in range(threads)
