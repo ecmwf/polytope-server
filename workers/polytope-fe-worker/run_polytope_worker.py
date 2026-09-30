@@ -170,11 +170,11 @@ def _result_bytes(chunk) -> bytes:
 
 def _warm_extract_path():
     """Best-effort, once per process: import the /chunks/v1 extract path's
-    heavy deps (numpy, zstandard, pygribjump) and initialise its shared location
-    cache. Native GribJump/FDB handles remain lazy and thread-local so concurrent
-    blocking worker threads never share client handles. Must run after the
-    datasource has exported GRIBJUMP_CONFIG_FILE. Failures are logged and
-    otherwise ignored -- the job path retries lazily and reports errors per job.
+    heavy deps, initialise its cache, and pre-start its bounded GribJump executor.
+    Each executor thread owns and warms one native handle; FDB handles remain lazy
+    and thread-local. Must run after the datasource has exported
+    GRIBJUMP_CONFIG_FILE. Failures are logged and otherwise ignored -- the job path
+    retries lazily and reports errors per job.
     """
     try:
         import extract

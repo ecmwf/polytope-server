@@ -40,7 +40,7 @@ import run_polytope_worker  # noqa: E402
 
 DATES = ["20200101", "20200102"]
 TIMES = ["0000", "0600", "1200"]
-DATE_BASES = {"20200101": 0.0, "20200102": 10.0}
+DATE_BASES = {"19900101": -10.0, "20200101": 0.0, "20200102": 10.0}
 TIME_BASES = {"0000": 1.0, "0600": 2.0, "1200": 3.0}
 
 
@@ -84,9 +84,20 @@ class FakeResult:
 class FakeGribJump:
     def __init__(self, module):
         self.module = module
+        self.handle_id = len(module.handles)
+        module.handles.append(self)
 
     def extract(self, requests, ctx=None):
-        self.module.calls.append({"requests": requests, "ctx": ctx})
+        self.module.calls.append(
+            {
+                "requests": requests,
+                "ctx": ctx,
+                "handle": self,
+                "thread": threading.get_ident(),
+            }
+        )
+        if self.module.delay:
+            time.sleep(self.module.delay)
         if isinstance(self.module.raise_exc, list):
             exc = self.module.raise_exc.pop(0) if self.module.raise_exc else None
         else:
@@ -101,7 +112,16 @@ class FakeGribJump:
             )
 
     def extract_from_paths(self, requests, ctx=None):
-        self.module.path_calls.append({"requests": requests, "ctx": ctx})
+        self.module.path_calls.append(
+            {
+                "requests": requests,
+                "ctx": ctx,
+                "handle": self,
+                "thread": threading.get_ident(),
+            }
+        )
+        if self.module.delay:
+            time.sleep(self.module.delay)
         for request in requests:
             failures = self.module.path_failures.get(request.path, 0)
             if failures:
@@ -132,6 +152,8 @@ class FakePyGribJump:
         self.raise_exc = None
         self.missing = None
         self.values_fn = default_values
+        self.delay = 0.0
+        self.handles = []
 
     def GribJump(self):  # noqa: N802 - mirrors the pygribjump class name
         return FakeGribJump(self)
@@ -258,6 +280,9 @@ def fake_gj(monkeypatch):
     mod = FakePyGribJump()
     monkeypatch.setitem(sys.modules, "pygribjump", mod)  # type: ignore[arg-type]
     monkeypatch.setenv("POLYTOPE_CHUNKS_LOCCACHE_SIZE", "0")
+    # Most functional tests exercise the exact pre-executor path. Executor-specific
+    # tests opt in explicitly below.
+    monkeypatch.setenv("POLYTOPE_CHUNKS_GJ_THREADS", "0")
     extract._reset_gribjump()
     extract._reset_location_state()
     extract._reset_hash_learning()
@@ -1362,7 +1387,18 @@ def test_dispatch_passes_job_id_and_emits_one_profile_log(fake_gj, recording_ds)
         assert k in status["timings"], k
 
 
-def test_warm_up_defers_native_handle_until_job(fake_gj, monkeypatch):
+def enable_gj_executor(fake_gj, monkeypatch, threads):
+    fake_fdb = FakePyFDB(fake_gj)
+    monkeypatch.setitem(sys.modules, "pyfdb", fake_fdb)  # type: ignore[arg-type]
+    monkeypatch.setenv("POLYTOPE_CHUNKS_GJ_THREADS", str(threads))
+    extract._location_servermap = location_cache.LocationServerMap(
+        [{"fdb": "store.example:9000"}]
+    )
+    extract._reset_gribjump()
+    extract.warm_up(fake_gj)
+
+
+def test_disabled_executor_retains_lazy_thread_local_path(fake_gj, monkeypatch):
     created = []
     orig = fake_gj.GribJump
 
@@ -1371,13 +1407,78 @@ def test_warm_up_defers_native_handle_until_job(fake_gj, monkeypatch):
         return orig()
 
     monkeypatch.setattr(fake_gj, "GribJump", counting)
-    extract.warm_up()
-    extract.warm_up()
+    extract.warm_up(fake_gj)
+    extract.warm_up(fake_gj)
     assert created == []
 
     extract.run_extract(base_request())
     extract.run_extract(base_request())
     assert len(created) == 1
+    assert extract._gj_executor is None
+
+
+def test_executor_warms_each_handle_once_at_startup(fake_gj, monkeypatch):
+    enable_gj_executor(fake_gj, monkeypatch, 3)
+
+    assert len(fake_gj.handles) == 3
+    assert len(fake_gj.path_calls) == 3
+    assert {call["handle"] for call in fake_gj.path_calls} == set(fake_gj.handles)
+    warm_ranges = [call["requests"][0].ranges for call in fake_gj.path_calls]
+    assert [ranges[0][0] for ranges in warm_ranges] == [0] * 3
+    assert [ranges[0][1] for ranges in warm_ranges] == [1] * 3
+
+    extract.warm_up(fake_gj)
+    assert len(fake_gj.handles) == 3
+    assert len(fake_gj.path_calls) == 3
+
+
+def test_executor_reuses_same_handle_across_jobs(fake_gj, monkeypatch):
+    enable_gj_executor(fake_gj, monkeypatch, 1)
+    fake_gj.calls.clear()
+
+    first, _, _ = extract.run_extract(base_request())
+    second, _, _ = extract.run_extract(base_request())
+
+    assert first == second
+    assert len(fake_gj.calls) == 2
+    assert {call["handle"] for call in fake_gj.calls} == {fake_gj.handles[0]}
+
+
+def test_concurrent_jobs_share_pool_and_preserve_placement(fake_gj, monkeypatch):
+    enable_gj_executor(fake_gj, monkeypatch, 2)
+    fake_gj.calls.clear()
+    fake_gj.delay = 0.02
+    requests = [
+        base_request(date="20200101/20200102", time="0000/0600"),
+        base_request(date="20200102/20200101", time="0600/0000"),
+        base_request(date="20200101/20200102", time="0600/0000"),
+        base_request(date="20200102/20200101", time="0000/0600"),
+    ]
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        payloads = list(pool.map(lambda req: extract.run_extract(req)[0], requests))
+
+    for request, payload in zip(requests, payloads):
+        spec, values = extract.parse_extract(request)
+        fields = list(extract.enumerate_fields(values, spec["order"]))
+        expected = np.concatenate([default_values(field, 0, 4) for field in fields])
+        np.testing.assert_array_equal(decode(payload), expected)
+    assert len(fake_gj.calls) == 4
+    assert {call["handle"] for call in fake_gj.calls} == set(fake_gj.handles)
+
+
+def test_failed_executor_call_does_not_poison_pool(fake_gj, monkeypatch):
+    enable_gj_executor(fake_gj, monkeypatch, 1)
+    fake_gj.calls.clear()
+    fake_gj.raise_exc = [GribJumpException("boom"), None]
+
+    with pytest.raises(extract.ExtractError, match="gribjump extraction failed: boom"):
+        extract.run_extract(base_request())
+    payload, _, _ = extract.run_extract(base_request())
+
+    assert decode(payload).size == 24
+    assert len(fake_gj.handles) == 1
+    assert {call["handle"] for call in fake_gj.calls} == {fake_gj.handles[0]}
 
 
 def test_get_datasource_warms_extract_path_once(fake_gj, monkeypatch, tmp_path):

@@ -30,6 +30,7 @@ straight out of ``kubectl logs`` (inside the host's ``python worker logs``
 record).
 """
 
+from concurrent.futures import ThreadPoolExecutor
 import copy
 import itertools
 import logging
@@ -236,6 +237,9 @@ def enumerate_fields(field_values, order):
 # ---------------------------------------------------------------------------
 
 _thread_handles = threading.local()
+_gj_executor = None
+_gj_executor_threads = 0
+_gj_executor_lock = threading.Lock()
 _location_cache = None
 _location_servermap = None
 _location_state_lock = threading.Lock()
@@ -286,6 +290,125 @@ def _get_gribjump(pygribjump):
     return _thread_handles.gribjump
 
 
+_GJ_WARM_FIELD = {
+    "class": "d1",
+    "dataset": "climate-dt",
+    "activity": "baseline",
+    "experiment": "hist",
+    "generation": "2",
+    "model": "ifs-nemo",
+    "realization": "1",
+    "resolution": "high",
+    "expver": "0001",
+    "stream": "clte",
+    "type": "fc",
+    "levtype": "sfc",
+    "param": "167",
+    "date": "19900101",
+    "time": "0000",
+}
+_GJ_WARM_GRID_HASH = "cbda19e48d4d7e5e22641154878b9b22"
+
+
+def _gj_thread_count():
+    return _env_subbatch("POLYTOPE_CHUNKS_GJ_THREADS", 4, allow_zero=True)
+
+
+def _resolve_gj_warm_location(pyfdb):
+    """Resolve one live field without retaining its data or location."""
+    location = _lookup_field_location(_GJ_WARM_FIELD, pyfdb)
+    translated = _get_location_servermap().translate(location)
+    if translated is None:
+        raise ExtractError("GribJump warm-up field location is not routable")
+    return translated
+
+
+def _warm_gribjump_handle(gj, pygribjump, location):
+    """Open the path client session with one discarded point, never cached."""
+    request = pygribjump.PathExtractionRequest(
+        location.path,
+        location.scheme,
+        location.offset,
+        location.host,
+        location.port,
+        [(0, 1)],
+        gridHash=_GJ_WARM_GRID_HASH,
+    )
+    list(gj.extract_from_paths([request]))
+
+
+def _init_gj_executor_thread(pygribjump, warm_location):
+    gj = _get_gribjump(pygribjump)
+    if warm_location is None:
+        return
+    try:
+        _warm_gribjump_handle(gj, pygribjump, warm_location)
+    except Exception as exc:  # best effort; keep the constructed handle usable
+        logging.warning(
+            "chunks GribJump executor thread warm-up failed (will retry on job): %s",
+            exc,
+        )
+
+
+def _executor_barrier(barrier):
+    barrier.wait()
+
+
+def _get_gj_executor(pygribjump):
+    """Create and fully start the bounded process-wide GribJump executor once."""
+    global _gj_executor, _gj_executor_threads
+    threads = _gj_thread_count()
+    if threads == 0:
+        return None
+    if _gj_executor is None:
+        with _gj_executor_lock:
+            if _gj_executor is None:
+                try:
+                    import pyfdb  # type: ignore[import-not-found]
+
+                    warm_location = _resolve_gj_warm_location(pyfdb)
+                except Exception as exc:
+                    logging.warning(
+                        "chunks GribJump warm-up field lookup failed "
+                        "(handles will still be persistent): %s",
+                        exc,
+                    )
+                    warm_location = None
+                executor = ThreadPoolExecutor(
+                    max_workers=threads,
+                    thread_name_prefix="polytope-gj",
+                    initializer=_init_gj_executor_thread,
+                    initargs=(pygribjump, warm_location),
+                )
+                # ThreadPoolExecutor starts workers lazily. A barrier makes all handles
+                # exist and complete their one-point session warm-up before startup ends.
+                barrier = threading.Barrier(threads)
+                futures = [
+                    executor.submit(_executor_barrier, barrier) for _ in range(threads)
+                ]
+                try:
+                    for future in futures:
+                        future.result()
+                except Exception:
+                    executor.shutdown(wait=True, cancel_futures=True)
+                    raise
+                _gj_executor = executor
+                _gj_executor_threads = threads
+    return _gj_executor
+
+
+def _invoke_gj(operation, pygribjump):
+    return operation(_get_gribjump(pygribjump))
+
+
+def _run_gribjump(operation, pygribjump):
+    """Run one native GJ call on a persistent warmed handle, or the old fallback."""
+    executor = _get_gj_executor(pygribjump)
+    if executor is None:
+        return operation(_get_gribjump(pygribjump))
+    return executor.submit(_invoke_gj, operation, pygribjump).result()
+
+
 def _get_fdb(pyfdb):
     """Return the calling thread's lazily-created FDB handle."""
     if not hasattr(_thread_handles, "fdb"):
@@ -313,6 +436,13 @@ def _get_location_servermap():
 
 
 def _reset_gribjump():  # for tests
+    global _gj_executor, _gj_executor_threads
+    with _gj_executor_lock:
+        executor = _gj_executor
+        _gj_executor = None
+        _gj_executor_threads = 0
+    if executor is not None:
+        executor.shutdown(wait=True, cancel_futures=True)
     if hasattr(_thread_handles, "gribjump"):
         del _thread_handles.gribjump
 
@@ -334,16 +464,13 @@ def _reset_hash_learning():  # for tests
 
 
 def warm_up(pygribjump=None):
-    """Warm imports and process-global cache after native client config is set.
-
-    Native GribJump and FDB handles are intentionally not created here: each
-    blocking worker thread constructs its own handle lazily on its first job.
-    """
+    """Warm imports, location cache, and every dedicated GribJump thread."""
     import zstandard  # noqa: F401  # type: ignore[import-not-found]
 
     if pygribjump is None:
-        import pygribjump  # noqa: F401  # type: ignore[import-not-found]
+        import pygribjump  # type: ignore[import-not-found]
     _get_location_cache()
+    _get_gj_executor(pygribjump)
 
 
 def _describe(field):
@@ -785,10 +912,14 @@ def extract_raw(field_requests, spec, pygribjump=None, ctx=None):
     if pygribjump is None:
         import pygribjump  # type: ignore[import-not-found]
     requests = build_requests(field_requests, spec, pygribjump)
-    gj = _get_gribjump(pygribjump)
     try:
-        results = gj.extract(requests, ctx=ctx) if ctx is not None else gj.extract(requests)
-        return assemble(results, field_requests, spec).tobytes()
+        def operation(gj):
+            results = (
+                gj.extract(requests, ctx=ctx) if ctx is not None else gj.extract(requests)
+            )
+            return assemble(results, field_requests, spec).tobytes()
+
+        return _run_gribjump(operation, pygribjump)
     except ExtractError:
         raise
     except Exception as exc:  # GribJumpException and anything else -> job failure
@@ -894,7 +1025,6 @@ def run_extract(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
             if job_id:
                 ctx["job_id"] = job_id
         _apply_hash_override(fields[0], spec)
-        gj = _get_gribjump(pygribjump)
         cache = _get_location_cache()
         t_enum = time.monotonic()
         prof["enum_ms"] = _ms(t_parse, t_enum)
@@ -936,18 +1066,20 @@ def run_extract(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
         try:
             prof["phase"] = "extract"
             if not cache.enabled:
-                def extract_requests():
-                    requests = build_requests(fields, spec, pygribjump)
-                    iterator = (
-                        gj.extract(requests, ctx=ctx)
-                        if ctx is not None
-                        else gj.extract(requests)
-                    )
-                    return list(iterator)
+                def extract_requests(gj):
+                    def operation():
+                        requests = build_requests(fields, spec, pygribjump)
+                        return list(
+                            gj.extract(requests, ctx=ctx)
+                            if ctx is not None
+                            else gj.extract(requests)
+                        )
 
-                results = _extract_with_hash_learning(
-                    extract_requests, fields[0], spec, pygribjump, pyfdb, job_id
-                )
+                    return _extract_with_hash_learning(
+                        operation, fields[0], spec, pygribjump, pyfdb, job_id
+                    )
+
+                results = _run_gribjump(extract_requests, pygribjump)
                 t_extract = time.monotonic()
                 prof["extract_ms"] = _ms(t_enum, t_extract)
             else:
@@ -1007,16 +1139,23 @@ def run_extract(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
                         for start in range(0, len(items), size):
                             batch = items[start : start + size]
                             prof["gj_subbatches"] += 1
-                            extracted = _extract_with_hash_learning(
-                                lambda: _extract_locations(
-                                    gj, pygribjump, [item[2] for item in batch], spec, ctx
-                                ),
-                                batch[0][1],
-                                spec,
-                                pygribjump,
-                                pyfdb,
-                                job_id,
-                            )
+                            def extract_batch(gj):
+                                return _extract_with_hash_learning(
+                                    lambda: _extract_locations(
+                                        gj,
+                                        pygribjump,
+                                        [item[2] for item in batch],
+                                        spec,
+                                        ctx,
+                                    ),
+                                    batch[0][1],
+                                    spec,
+                                    pygribjump,
+                                    pyfdb,
+                                    job_id,
+                                )
+
+                            extracted = _run_gribjump(extract_batch, pygribjump)
                             for item, result in zip(batch, extracted):
                                 results_by_index[item[0]] = result
                     finally:
@@ -1069,24 +1208,28 @@ def run_extract(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
                     fallback_fields = [fields[index] for index in ordered_indices]
                     started = time.monotonic()
                     try:
-                        def extract_fallback():
-                            fallback_requests = build_requests(
-                                fallback_fields, spec, pygribjump
-                            )
-                            iterator = (
-                                gj.extract(fallback_requests, ctx=ctx)
-                                if ctx is not None
-                                else gj.extract(fallback_requests)
-                            )
-                            return list(iterator)
+                        def extract_fallback(gj):
+                            def operation():
+                                fallback_requests = build_requests(
+                                    fallback_fields, spec, pygribjump
+                                )
+                                return list(
+                                    gj.extract(fallback_requests, ctx=ctx)
+                                    if ctx is not None
+                                    else gj.extract(fallback_requests)
+                                )
 
-                        fallback_results = _extract_with_hash_learning(
-                            extract_fallback,
-                            fallback_fields[0],
-                            spec,
-                            pygribjump,
-                            pyfdb,
-                            job_id,
+                            return _extract_with_hash_learning(
+                                operation,
+                                fallback_fields[0],
+                                spec,
+                                pygribjump,
+                                pyfdb,
+                                job_id,
+                            )
+
+                        fallback_results = _run_gribjump(
+                            extract_fallback, pygribjump
                         )
                     finally:
                         extract_seconds += time.monotonic() - started
