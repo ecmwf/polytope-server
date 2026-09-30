@@ -97,7 +97,7 @@ ENV VIRTUAL_ENV=/opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
 ENV PYTHONPATH=/app:/opt/venv/lib/python3.11/site-packages
 ENV GRIBJUMP_LIB_DIR=/opt/venv/lib/python3.11/site-packages/gribjumplib/lib64
-ENV LD_LIBRARY_PATH=/opt/venv/lib/python3.11/site-packages/gribjumplib/lib64
+ENV LD_LIBRARY_PATH=/opt/venv/lib/python3.11/site-packages/gribjumplib/lib64:/opt/venv/lib/python3.11/site-packages/fdb5lib/lib64:/opt/venv/lib/python3.11/site-packages/metkitlib/lib64:/opt/venv/lib/python3.11/site-packages/eccodeslib/lib64:/opt/venv/lib/python3.11/site-packages/eckitlib/lib64
 
 COPY --from=builder /ecmwf/polytope-server/target/release/${BIN_NAME} /app/polytope-fe-worker
 COPY workers/polytope-fe-worker/run_polytope_worker.py /app/
@@ -130,7 +130,7 @@ ENV VIRTUAL_ENV=/opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
 ENV PYTHONPATH=/app:/opt/venv/lib/python3.11/site-packages
 ENV GRIBJUMP_LIB_DIR=/opt/venv/lib/python3.11/site-packages/gribjumplib/lib64
-ENV LD_LIBRARY_PATH=/opt/venv/lib/python3.11/site-packages/gribjumplib/lib64
+ENV LD_LIBRARY_PATH=/opt/venv/lib/python3.11/site-packages/gribjumplib/lib64:/opt/venv/lib/python3.11/site-packages/fdb5lib/lib64:/opt/venv/lib/python3.11/site-packages/metkitlib/lib64:/opt/venv/lib/python3.11/site-packages/eccodeslib/lib64:/opt/venv/lib/python3.11/site-packages/eckitlib/lib64
 
 COPY --from=builder /ecmwf/polytope-server/target/release/${BIN_NAME} /app/polytope-fe-worker
 COPY workers/polytope-fe-worker/run_polytope_worker.py /app/
