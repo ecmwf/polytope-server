@@ -715,6 +715,105 @@ def test_concurrent_batch_lookups_are_serialized(fake_gj, fake_fdb):
     assert all(len(result) == len(fields) for result in results)
 
 
+def test_lookup_subbatch_boundaries(fake_gj, fake_fdb, monkeypatch):
+    monkeypatch.setattr(extract, "LOOKUP_SUBBATCH", 2)
+    req = base_request()
+    spec, values = extract.parse_extract(req)
+    fields = list(extract.enumerate_fields(values, spec["order"]))
+
+    locations = extract._lookup_field_locations(fields, values, fake_fdb)
+
+    assert len(fake_fdb.calls) == 3
+    assert len(locations) == len(fields)
+    assert all(
+        locations[location_cache.canonical_field_key(field)] == make_location(field)
+        for field in fields
+    )
+
+
+def test_lookup_releases_lock_between_subbatches(fake_gj, fake_fdb, monkeypatch):
+    monkeypatch.setattr(extract, "LOOKUP_SUBBATCH", 2)
+    req = base_request()
+    spec, values = extract.parse_extract(req)
+    fields = list(extract.enumerate_fields(values, spec["order"]))
+    small = {**fields[0], "date": "20300101"}
+    original_list = fake_fdb.list
+    yielded = threading.Event()
+    small_done = threading.Event()
+    order = []
+
+    def recording_list(selection):
+        dates = selection.get("date")
+        order.append("small" if "20300101" in dates else "big")
+        return original_list(selection)
+
+    def yield_to_waiter(seconds):
+        assert seconds == 0
+        yielded.set()
+        assert small_done.wait(timeout=2)
+
+    fake_fdb.list = recording_list
+    monkeypatch.setattr(extract.time, "sleep", yield_to_waiter)
+    thread = threading.Thread(
+        target=extract._lookup_field_locations, args=(fields, values, fake_fdb)
+    )
+    thread.start()
+    assert yielded.wait(timeout=2)
+    extract._lookup_field_location(small, fake_fdb)
+    small_done.set()
+    thread.join(timeout=2)
+
+    assert not thread.is_alive()
+    assert order[:2] == ["big", "small"]
+
+
+def test_failed_lookup_subbatch_falls_back_only_its_fields(
+    fake_gj, fake_fdb, monkeypatch
+):
+    enable_location_cache(monkeypatch)
+    monkeypatch.setattr(extract, "LOOKUP_SUBBATCH", 2)
+    original_list = fake_fdb.list
+    calls = 0
+
+    def flaky_list(selection):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("sub-list failed")
+        return original_list(selection)
+
+    fake_fdb.list = flaky_list
+    req = base_request()
+    spec, values = extract.parse_extract(req)
+    fields = list(extract.enumerate_fields(values, spec["order"]))
+    payload, _, timings = extract.run_extract(req)
+
+    expected = np.concatenate([default_values(field, 0, 4) for field in fields])
+    np.testing.assert_array_equal(decode(payload), expected)
+    assert calls == 3
+    assert timings["fallbacks"] == 2
+    assert [request.req for request in fake_gj.calls[0]["requests"]] == fields[2:4]
+
+
+def test_gj_subbatches_preserve_global_field_order(
+    fake_gj, fake_fdb, monkeypatch
+):
+    enable_location_cache(monkeypatch)
+    monkeypatch.setattr(extract, "GJ_SUBBATCH", 2)
+    fake_fdb.reverse = True
+    req = base_request()
+    spec, values = extract.parse_extract(req)
+    fields = list(extract.enumerate_fields(values, spec["order"]))
+
+    payload, _, timings = extract.run_extract(req)
+
+    expected = np.concatenate([default_values(field, 0, 4) for field in fields])
+    np.testing.assert_array_equal(decode(payload), expected)
+    assert [len(call["requests"]) for call in fake_gj.path_calls] == [2, 2, 2]
+    assert timings["gj_subbatches"] == 3
+    assert timings["lookup_subbatches"] == 1
+
+
 def test_batch_missing_field_uses_request_fallback(
     fake_gj, fake_fdb, monkeypatch
 ):
@@ -1116,7 +1215,9 @@ _PROFILE_RE = re.compile(
     r"fields=(?P<fields>\d+) ranges=(?P<ranges>\d+) points=(?P<points>\d+) "
     r"dtype=(?P<dtype>f32|f64) shuffle=(?P<shuffle>[01]) "
     r"cache=(?P<hits>\d+)/(?P<misses>\d+) fallback=(?P<fallback>\d+) "
-    r"lookup_mode=(?P<lookup_mode>batch|single|none) t_lookup=(?P<t_lookup>[\d.]+)ms "
+    r"lookup_mode=(?P<lookup_mode>batch|single|none) "
+    r"subbatches=(?P<lookup_subbatches>\d+)/(?P<gj_subbatches>\d+) "
+    r"t_lookup=(?P<t_lookup>[\d.]+)ms "
     r"t_parse=(?P<t_parse>[\d.]+)ms t_enum=(?P<t_enum>[\d.]+)ms "
     r"t_extract=(?P<t_extract>[\d.]+)ms t_assemble=(?P<t_assemble>[\d.]+)ms "
     r"t_shuffle=(?P<t_shuffle>[\d.]+)ms t_zstd=(?P<t_zstd>[\d.]+)ms "

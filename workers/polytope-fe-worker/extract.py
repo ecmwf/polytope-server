@@ -20,9 +20,9 @@ materialises the worker's own ``gribjump_config`` (and optional
 ``fdb_config``) to /tmp and exports ``GRIBJUMP_CONFIG_FILE`` /
 ``FDB5_CONFIG_FILE``. The cache reads that same gribjump file once to map
 pyfdb's internal store aliases onto the configured FDB servermap endpoints.
-With the location cache enabled, all misses in a multi-field job are resolved by
-one pyfdb list call; subsequent chunks use pygribjump's path-based API directly.
-Cache size zero retains the original request-based extraction path exactly.
+With the location cache enabled, misses are resolved through process-serialized,
+lock-fair FDB list sub-batches; subsequent chunks use pygribjump's path-based API
+directly. Cache size zero retains the original request-based extraction path exactly.
 
 Profiling: every job emits exactly one ``chunks-profile`` INFO log line (see
 ``_log_profile``) with per-phase wall times, so worker-side cost can be read
@@ -59,6 +59,15 @@ _NON_FIELD_KEYS = {"verb", EXTRACT_KEY}
 _SUPPORTED_DTYPES = {"float32", "float64"}
 
 
+def _env_subbatch(name, default, *, allow_zero=False):
+    raw = os.environ.get(name, "").strip()
+    try:
+        value = int(raw) if raw else default
+    except ValueError:
+        return default
+    return value if value > 0 or (allow_zero and value == 0) else default
+
+
 def _zstd_level() -> int:
     raw = os.environ.get("POLYTOPE_CHUNKS_ZSTD_LEVEL", "").strip()
     try:
@@ -69,6 +78,8 @@ def _zstd_level() -> int:
 
 # Read once per process; override via env for profiling experiments.
 ZSTD_LEVEL = _zstd_level()
+LOOKUP_SUBBATCH = _env_subbatch("POLYTOPE_CHUNKS_LOOKUP_SUBBATCH", 256)
+GJ_SUBBATCH = _env_subbatch("POLYTOPE_CHUNKS_GJ_SUBBATCH", 1024, allow_zero=True)
 
 
 class ExtractError(ValueError):
@@ -229,7 +240,7 @@ _location_cache = None
 _location_servermap = None
 _location_state_lock = threading.Lock()
 # pyfdb 5.22 is not safe to enter concurrently: parallel list operations can
-# deadlock inside its native FDBToolRequest/list iterator. Serialize each complete
+# deadlock inside its native FDBToolRequest/list iterator. Serialize every complete
 # list transaction, including ListElement access, across this Python process.
 _fdb_list_lock = threading.Lock()
 
@@ -422,10 +433,39 @@ def _lookup_field_location(field, pyfdb):
             ) from exc
 
 
+def _batch_request_for_fields(fields):
+    """Build the narrowest FDB selection representing a field sub-batch."""
+    values = {}
+    for field in fields:
+        for key, value in field.items():
+            if key in _NON_FIELD_KEYS:
+                continue
+            bucket = values.setdefault(key, [])
+            if value not in bucket:
+                bucket.append(value)
+    return values
+
+
 def _lookup_field_locations(fields, batch_request, pyfdb):
-    """Resolve fields in one process-serialized FDB list transaction."""
-    with _fdb_list_lock:
-        return _lookup_field_locations_unlocked(fields, batch_request, pyfdb)
+    """Resolve fields in serialized sub-batches, yielding the lock between each."""
+    if len(fields) <= LOOKUP_SUBBATCH:
+        batches = [(fields, batch_request)]
+    else:
+        batches = [
+            (subset, _batch_request_for_fields(subset))
+            for start in range(0, len(fields), LOOKUP_SUBBATCH)
+            for subset in [fields[start : start + LOOKUP_SUBBATCH]]
+        ]
+
+    locations = {}
+    for index, (subset, request) in enumerate(batches):
+        with _fdb_list_lock:
+            locations.update(_lookup_field_locations_unlocked(subset, request, pyfdb))
+        if index + 1 < len(batches):
+            # Let an already-waiting short job acquire the process lock before this
+            # large lookup queues its next transaction.
+            time.sleep(0)
+    return locations
 
 
 def _lookup_field_locations_unlocked(fields, batch_request, pyfdb):
@@ -770,7 +810,8 @@ def _log_profile(prof):
     """Emit the single per-job ``chunks-profile`` line (key=value, grep-able)."""
     logging.info(
         "chunks-profile job=%s status=%s phase=%s fields=%d ranges=%d points=%d "
-        "dtype=%s shuffle=%d cache=%d/%d fallback=%d lookup_mode=%s t_lookup=%.1fms "
+        "dtype=%s shuffle=%d cache=%d/%d fallback=%d lookup_mode=%s "
+        "subbatches=%d/%d t_lookup=%.1fms "
         "t_parse=%.1fms t_enum=%.1fms t_extract=%.1fms t_assemble=%.1fms "
         "t_shuffle=%.1fms t_zstd=%.1fms t_total=%.1fms "
         "raw_bytes=%d bytes=%d zstd_level=%d",
@@ -786,6 +827,8 @@ def _log_profile(prof):
         prof["cache_misses"],
         prof["fallbacks"],
         prof["lookup_mode"],
+        prof["lookup_subbatches"],
+        prof["gj_subbatches"],
         prof["lookup_ms"],
         prof["parse_ms"],
         prof["enum_ms"],
@@ -817,6 +860,8 @@ def run_extract(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
         "cache_hits": 0,
         "cache_misses": 0,
         "fallbacks": 0,
+        "lookup_subbatches": 0,
+        "gj_subbatches": 0,
         "lookup_ms": 0.0,
         "lookup_mode": "none",
         "parse_ms": 0.0,
@@ -859,6 +904,7 @@ def run_extract(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
             prof["phase"] = "lookup"
             if prof["lookup_mode"] == "none":
                 prof["lookup_mode"] = "single"
+            prof["lookup_subbatches"] += 1
             started = time.monotonic()
             try:
                 if pyfdb is None:
@@ -873,6 +919,9 @@ def run_extract(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
             nonlocal pyfdb
             prof["phase"] = "lookup"
             prof["lookup_mode"] = "batch"
+            prof["lookup_subbatches"] += max(
+                1, (len(missing_fields) + LOOKUP_SUBBATCH - 1) // LOOKUP_SUBBATCH
+            )
             started = time.monotonic()
             try:
                 if pyfdb is None:
@@ -954,20 +1003,24 @@ def run_extract(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
                     nonlocal extract_seconds
                     started = time.monotonic()
                     try:
-                        extracted = _extract_with_hash_learning(
-                            lambda: _extract_locations(
-                                gj, pygribjump, [item[2] for item in items], spec, ctx
-                            ),
-                            items[0][1],
-                            spec,
-                            pygribjump,
-                            pyfdb,
-                            job_id,
-                        )
+                        size = GJ_SUBBATCH or len(items)
+                        for start in range(0, len(items), size):
+                            batch = items[start : start + size]
+                            prof["gj_subbatches"] += 1
+                            extracted = _extract_with_hash_learning(
+                                lambda: _extract_locations(
+                                    gj, pygribjump, [item[2] for item in batch], spec, ctx
+                                ),
+                                batch[0][1],
+                                spec,
+                                pygribjump,
+                                pyfdb,
+                                job_id,
+                            )
+                            for item, result in zip(batch, extracted):
+                                results_by_index[item[0]] = result
                     finally:
                         extract_seconds += time.monotonic() - started
-                    for item, result in zip(items, extracted):
-                        results_by_index[item[0]] = result
 
                 if path_items:
                     try:
@@ -1088,6 +1141,8 @@ def run_extract(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
         "cache_hits": prof["cache_hits"],
         "cache_misses": prof["cache_misses"],
         "fallbacks": prof["fallbacks"],
+        "lookup_subbatches": prof["lookup_subbatches"],
+        "gj_subbatches": prof["gj_subbatches"],
         "raw_bytes": prof["raw_bytes"],
         "payload_bytes": prof["payload_bytes"],
     }
