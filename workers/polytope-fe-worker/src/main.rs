@@ -12,7 +12,7 @@ use polytope_worker_common::{ProcessResult, Processor, WorkItem, WorkerConfig, r
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyTuple};
 use serde_json::json;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, error, info, warn};
 
@@ -129,7 +129,7 @@ fn emit_python_logs(job_id: &str, logs: &[PyLogRecord]) {
 
 struct PolytopeProcessor {
     config_path: String,
-    extractor: Option<Arc<Mutex<GribJumpExtractor>>>,
+    extractor: Option<Arc<GribJumpExtractor>>,
 }
 
 #[async_trait]
@@ -219,13 +219,8 @@ impl Processor for PolytopeProcessor {
                         };
                         let extraction_started = Instant::now();
                         let plan_profile = plan.profile.clone();
-                        let native = tokio::task::spawn_blocking(move || {
-                            let mut guard = extractor
-                                .lock()
-                                .map_err(|_| "GribJump extractor mutex poisoned".to_string())?;
-                            guard.extract(&plan)
-                        })
-                        .await;
+                        let native =
+                            tokio::task::spawn_blocking(move || extractor.extract(&plan)).await;
                         let output = match native {
                             Ok(Ok(output)) => output,
                             Ok(Err(message)) => {
@@ -277,6 +272,7 @@ fn update_native_timings(
     values.insert("shuffle_ms".to_string(), json!(metrics.shuffle_ms));
     values.insert("compress_ms".to_string(), json!(metrics.zstd_ms));
     values.insert("gj_subbatches".to_string(), json!(metrics.gj_subbatches));
+    values.insert("gj_inflight".to_string(), json!(metrics.inflight));
     values.insert("raw_bytes".to_string(), json!(metrics.raw_bytes));
     values.insert("payload_bytes".to_string(), json!(metrics.payload_bytes));
     values.insert("proc".to_string(), json!("rust"));
@@ -309,7 +305,7 @@ fn emit_chunks_profile(
     info!(
         "chunks-profile job={} status=ok phase=done proc=rust fields={} ranges={} points={} \
          dtype={} shuffle={} cache={}/{} fallback={} lookup_mode={} \
-         lookup_fallbacks={} subbatches={}/{} t_lookup={:.1}ms \
+         lookup_fallbacks={} subbatches={}/{} inflight={} t_lookup={:.1}ms \
          t_parse={:.1}ms t_enum={:.1}ms t_extract={:.1}ms t_assemble={:.1}ms \
          t_shuffle={:.1}ms t_zstd={:.1}ms t_total={:.1}ms \
          raw_bytes={} bytes={} zstd_level={}",
@@ -326,6 +322,7 @@ fn emit_chunks_profile(
         profile.lookup_fallbacks,
         profile.lookup_subbatches,
         metrics.gj_subbatches,
+        metrics.inflight,
         profile.lookup_ms,
         profile.parse_ms,
         profile.enum_ms,
@@ -373,6 +370,24 @@ fn resolved_worker_concurrency(cli_value: usize) -> usize {
     }
 }
 
+fn resolved_gj_inflight() -> usize {
+    const DEFAULT: usize = 4;
+    match std::env::var("POLYTOPE_CHUNKS_GJ_INFLIGHT") {
+        Ok(value) => match value.parse::<usize>() {
+            Ok(parsed) if parsed >= 1 => parsed,
+            _ => {
+                warn!(value = %value, "ignoring invalid POLYTOPE_CHUNKS_GJ_INFLIGHT");
+                DEFAULT
+            }
+        },
+        Err(std::env::VarError::NotPresent) => DEFAULT,
+        Err(error) => {
+            warn!(%error, "ignoring invalid POLYTOPE_CHUNKS_GJ_INFLIGHT");
+            DEFAULT
+        }
+    }
+}
+
 fn native_extract_enabled() -> bool {
     std::env::var("POLYTOPE_CHUNKS_RUST_EXTRACT")
         .map(|value| value != "0")
@@ -416,7 +431,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
 
     let extractor = if native_extract_enabled() {
-        let mut extractor = GribJumpExtractor::native().map_err(std::io::Error::other)?;
+        let gj_inflight = resolved_gj_inflight();
+        let extractor = GribJumpExtractor::native(gj_inflight).map_err(std::io::Error::other)?;
         let warm_plan = Python::with_gil(|py| -> PyResult<WarmPlan> {
             let extract = py.import("extract")?;
             let plan = extract.call_method0("rust_warm_plan")?;
@@ -430,17 +446,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(plan) => match extractor.warm(&plan.paths, &plan.grid_hash) {
                 Ok(()) => info!(
                     endpoints = plan.paths.len(),
-                    "native GribJump handle warmed"
+                    handles = gj_inflight,
+                    "native GribJump handles warmed"
                 ),
                 Err(error) => {
-                    warn!(error = %error, "native GribJump warm-up failed; first job will retry")
+                    warn!(error = %error, handles = gj_inflight, "native GribJump warm-up failed; first job will retry")
                 }
             },
             Err(error) => {
                 warn!(error = %error, "native GribJump warm-location lookup failed; first job will connect lazily")
             }
         }
-        Some(Arc::new(Mutex::new(extractor)))
+        Some(Arc::new(extractor))
     } else {
         info!("native GribJump extraction disabled; using Python fallback");
         None

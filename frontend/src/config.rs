@@ -71,6 +71,11 @@ pub struct ChunksConfig {
     /// Upper bound on fields x points for a single extract (chunk) request.
     #[serde(default = "default_max_chunk_cost")]
     pub max_chunk_cost: u64,
+    /// Target upper bound on temporal fields in server-default chunks. Long
+    /// date/time series are packed up to this many fields per job; explicit
+    /// client chunking overrides are unaffected.
+    #[serde(default = "default_max_fields_per_job")]
+    pub default_max_fields_per_job: u64,
     /// Maximum HEALPix cells selected by a metadata polygon (default 1,000,000).
     #[serde(default = "default_max_feature_points")]
     pub max_feature_points: u64,
@@ -102,6 +107,7 @@ impl Default for ChunksConfig {
         Self {
             enabled: default_chunks_enabled(),
             max_chunk_cost: default_max_chunk_cost(),
+            default_max_fields_per_job: default_max_fields_per_job(),
             max_feature_points: default_max_feature_points(),
             grids: Vec::new(),
             catalogue_url: None,
@@ -151,6 +157,9 @@ impl ChunksConfig {
     pub fn validate(&self) -> Result<(), String> {
         if self.max_chunk_cost == 0 {
             return Err("chunks.max_chunk_cost must be greater than 0".to_string());
+        }
+        if self.default_max_fields_per_job == 0 {
+            return Err("chunks.default_max_fields_per_job must be greater than 0".to_string());
         }
         if self.max_feature_points == 0 {
             return Err("chunks.max_feature_points must be greater than 0".to_string());
@@ -206,6 +215,10 @@ const fn default_chunks_enabled() -> bool {
 
 const fn default_max_chunk_cost() -> u64 {
     20_000_000
+}
+
+const fn default_max_fields_per_job() -> u64 {
+    8_760
 }
 
 const fn default_max_feature_points() -> u64 {

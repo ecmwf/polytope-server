@@ -12,7 +12,7 @@
 //!   - `bobs` (`src/http/mod.rs::{sanitise_filename_stem, download_extension}`)
 //!     for the object-store redirect path, and
 //!   - the S3 delivery sink (`workers/common/src/delivery/s3.rs`).
-//! Keep the three in sync when adding new media types.
+//!     Keep the three in sync when adding new media types.
 
 /// Map a content type to a download file extension (without the dot).
 ///

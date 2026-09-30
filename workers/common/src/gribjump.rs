@@ -10,8 +10,12 @@
 
 use libloading::Library;
 use serde::{Deserialize, Serialize};
-use std::ffi::{c_char, c_int, c_ulong, c_void, CStr, CString};
+use std::ffi::{CStr, CString, c_char, c_int, c_ulong, c_void};
 use std::path::{Path, PathBuf};
+use std::sync::{
+    Condvar, Mutex,
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+};
 use std::time::{Duration, Instant};
 
 const DEFAULT_SUBBATCH: usize = 1024;
@@ -63,6 +67,7 @@ pub struct PlanProfile {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ExtractMetrics {
     pub gj_subbatches: usize,
+    pub inflight: usize,
     pub extract_ms: f64,
     pub assemble_ms: f64,
     pub shuffle_ms: f64,
@@ -80,7 +85,6 @@ pub struct ExtractOutput {
 #[derive(Debug)]
 struct BatchOutput {
     fields: Vec<Vec<f64>>,
-    extract_time: Duration,
     assemble_time: Duration,
 }
 
@@ -94,8 +98,99 @@ trait ExtractionBackend: Send {
     ) -> Result<BatchOutput, String>;
 }
 
+struct BackendPool {
+    available: Mutex<Vec<Box<dyn ExtractionBackend>>>,
+    ready: Condvar,
+    size: usize,
+}
+
+impl BackendPool {
+    fn new(backends: Vec<Box<dyn ExtractionBackend>>) -> Result<Self, String> {
+        if backends.is_empty() {
+            return Err("GribJump in-flight concurrency must be at least 1".to_string());
+        }
+        Ok(Self {
+            size: backends.len(),
+            available: Mutex::new(backends),
+            ready: Condvar::new(),
+        })
+    }
+
+    fn checkout(&self) -> BackendLease<'_> {
+        let mut available = self
+            .available
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        while available.is_empty() {
+            available = self
+                .ready
+                .wait(available)
+                .unwrap_or_else(|error| error.into_inner());
+        }
+        BackendLease {
+            pool: self,
+            backend: available.pop(),
+        }
+    }
+
+    fn warm_all(&self, requests: &[PathRequest], grid_hash: &str) -> Result<(), String> {
+        let mut available = self
+            .available
+            .lock()
+            .map_err(|_| "GribJump handle pool mutex poisoned".to_string())?;
+        if available.len() != self.size {
+            return Err("cannot warm GribJump handles while extraction is active".to_string());
+        }
+        let mut first_error = None;
+        for backend in available.iter_mut() {
+            if let Err(error) = backend
+                .extract_batch(requests, &[[0, 1]], grid_hash, None)
+                .map(|_| ())
+                && first_error.is_none()
+            {
+                first_error = Some(error);
+            }
+        }
+        first_error.map_or(Ok(()), Err)
+    }
+}
+
+struct BackendLease<'a> {
+    pool: &'a BackendPool,
+    backend: Option<Box<dyn ExtractionBackend>>,
+}
+
+impl BackendLease<'_> {
+    fn extract_batch(
+        &mut self,
+        requests: &[PathRequest],
+        ranges: &[[usize; 2]],
+        grid_hash: &str,
+        context: Option<&str>,
+    ) -> Result<BatchOutput, String> {
+        self.backend
+            .as_mut()
+            .expect("checked-out backend must be present")
+            .extract_batch(requests, ranges, grid_hash, context)
+    }
+}
+
+impl Drop for BackendLease<'_> {
+    fn drop(&mut self) {
+        if let Some(backend) = self.backend.take() {
+            let mut available = self
+                .pool
+                .available
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            available.push(backend);
+            self.pool.ready.notify_one();
+        }
+    }
+}
+
 pub struct GribJumpExtractor {
-    backend: Box<dyn ExtractionBackend>,
+    pool: BackendPool,
     subbatch: usize,
 }
 
@@ -104,28 +199,32 @@ impl std::fmt::Debug for GribJumpExtractor {
         formatter
             .debug_struct("GribJumpExtractor")
             .field("subbatch", &self.subbatch)
+            .field("inflight", &self.pool.size)
             .finish_non_exhaustive()
     }
 }
 
 impl GribJumpExtractor {
-    pub fn native() -> Result<Self, String> {
+    pub fn native(inflight: usize) -> Result<Self, String> {
+        let backends = (0..inflight)
+            .map(|_| {
+                NativeBackend::load().map(|backend| Box::new(backend) as Box<dyn ExtractionBackend>)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
-            backend: Box::new(NativeBackend::load()?),
+            pool: BackendPool::new(backends)?,
             subbatch: DEFAULT_SUBBATCH,
         })
     }
 
-    pub fn warm(&mut self, requests: &[PathRequest], grid_hash: &str) -> Result<(), String> {
+    pub fn warm(&self, requests: &[PathRequest], grid_hash: &str) -> Result<(), String> {
         if requests.is_empty() {
             return Ok(());
         }
-        self.backend
-            .extract_batch(requests, &[[0, 1]], grid_hash, None)
-            .map(|_| ())
+        self.pool.warm_all(requests, grid_hash)
     }
 
-    pub fn extract(&mut self, plan: &ExtractPlan) -> Result<ExtractOutput, String> {
+    pub fn extract(&self, plan: &ExtractPlan) -> Result<ExtractOutput, String> {
         validate_plan(plan)?;
         let context = plan
             .context
@@ -138,24 +237,82 @@ impl GribJumpExtractor {
             .iter()
             .map(|[start, end]| end - start)
             .sum::<usize>();
-        let mut values = Vec::with_capacity(plan.paths.len() * expected_per_field);
-        let mut metrics = ExtractMetrics::default();
+        let requests = plan.paths.chunks(self.subbatch).collect::<Vec<_>>();
+        let worker_count = self.pool.size.min(requests.len());
+        let next = AtomicUsize::new(0);
+        let cancelled = AtomicBool::new(false);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let extract_started = Instant::now();
 
-        for requests in plan.paths.chunks(self.subbatch) {
-            let batch = self.backend.extract_batch(
-                requests,
-                &plan.ranges,
-                &plan.grid_hash,
-                context.as_deref(),
-            )?;
-            metrics.gj_subbatches += 1;
-            metrics.extract_ms += milliseconds(batch.extract_time);
+        std::thread::scope(|scope| {
+            for _ in 0..worker_count {
+                let sender = sender.clone();
+                let next = &next;
+                let cancelled = &cancelled;
+                let requests = &requests;
+                let context = context.as_deref();
+                scope.spawn(move || {
+                    loop {
+                        if cancelled.load(Ordering::Acquire) {
+                            break;
+                        }
+                        let index = next.fetch_add(1, Ordering::AcqRel);
+                        let Some(batch_requests) = requests.get(index) else {
+                            break;
+                        };
+                        let result = self.pool.checkout().extract_batch(
+                            batch_requests,
+                            &plan.ranges,
+                            &plan.grid_hash,
+                            context,
+                        );
+                        let failed = result.is_err();
+                        if sender.send((index, result)).is_err() {
+                            break;
+                        }
+                        if failed {
+                            cancelled.store(true, Ordering::Release);
+                            break;
+                        }
+                    }
+                });
+            }
+            drop(sender);
+        });
+
+        let mut batches = std::iter::repeat_with(|| None)
+            .take(requests.len())
+            .collect::<Vec<_>>();
+        let mut first_error = None;
+        for (index, result) in receiver {
+            match result {
+                Ok(batch) => batches[index] = Some(batch),
+                Err(error) if first_error.is_none() => first_error = Some(error),
+                Err(_) => {}
+            }
+        }
+        if let Some(error) = first_error {
+            return Err(error);
+        }
+        if batches.iter().any(Option::is_none) {
+            return Err("GribJump extraction stopped before every sub-batch completed".to_string());
+        }
+
+        let mut metrics = ExtractMetrics {
+            gj_subbatches: batches.len(),
+            inflight: worker_count,
+            extract_ms: milliseconds(extract_started.elapsed()),
+            ..ExtractMetrics::default()
+        };
+        let mut values = Vec::with_capacity(plan.paths.len() * expected_per_field);
+        for (batch_index, batch) in batches.into_iter().enumerate() {
+            let batch = batch.expect("all sub-batches checked above");
             metrics.assemble_ms += milliseconds(batch.assemble_time);
-            if batch.fields.len() != requests.len() {
+            if batch.fields.len() != requests[batch_index].len() {
                 return Err(format!(
                     "gribjump returned {} of {} fields",
                     batch.fields.len(),
-                    requests.len()
+                    requests[batch_index].len()
                 ));
             }
             let flatten_started = Instant::now();
@@ -526,7 +683,6 @@ impl ExtractionBackend for NativeBackend {
         let context_pointer = context
             .as_ref()
             .map_or(std::ptr::null(), |value| value.as_ptr());
-        let started = Instant::now();
         let mut iterator = std::ptr::null_mut();
         // SAFETY: handle is exclusively borrowed; request pointers and output storage
         // are valid for the call.
@@ -568,7 +724,6 @@ impl ExtractionBackend for NativeBackend {
             unsafe { (self.api.delete_iterator)(iterator) },
             "gribjump_extractioniterator_delete",
         )?;
-        let extract_time = started.elapsed();
 
         let assemble_started = Instant::now();
         let mut fields = Vec::with_capacity(results.results.len());
@@ -584,7 +739,6 @@ impl ExtractionBackend for NativeBackend {
         }
         Ok(BatchOutput {
             fields,
-            extract_time,
             assemble_time: assemble_started.elapsed(),
         })
     }
@@ -593,11 +747,24 @@ impl ExtractionBackend for NativeBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    };
+
+    #[derive(Default)]
+    struct FakeState {
+        calls: Mutex<Vec<Vec<String>>>,
+        completions: Mutex<Vec<usize>>,
+        active: AtomicUsize,
+        max_active: AtomicUsize,
+        fail_offset_once: AtomicUsize,
+        delay: AtomicBool,
+    }
 
     #[derive(Clone)]
     struct FakeBackend {
-        calls: Arc<Mutex<Vec<Vec<String>>>>,
+        state: Arc<FakeState>,
     }
 
     impl ExtractionBackend for FakeBackend {
@@ -608,12 +775,28 @@ mod tests {
             _grid_hash: &str,
             _context: Option<&str>,
         ) -> Result<BatchOutput, String> {
-            self.calls.lock().unwrap().push(
+            self.state.calls.lock().unwrap().push(
                 requests
                     .iter()
                     .map(|request| request.path.clone())
                     .collect(),
             );
+            let active = self.state.active.fetch_add(1, Ordering::AcqRel) + 1;
+            self.state.max_active.fetch_max(active, Ordering::AcqRel);
+            let first_offset = requests[0].offset;
+            if self.state.delay.load(Ordering::Acquire) {
+                std::thread::sleep(Duration::from_millis((6 - first_offset.min(5)) as u64 * 5));
+            }
+            self.state.active.fetch_sub(1, Ordering::AcqRel);
+            self.state.completions.lock().unwrap().push(first_offset);
+            if self
+                .state
+                .fail_offset_once
+                .compare_exchange(first_offset, 0, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                return Err(format!("fake failure at offset {first_offset}"));
+            }
             let count = ranges.iter().map(|[lo, hi]| hi - lo).sum::<usize>();
             let fields = requests
                 .iter()
@@ -624,9 +807,22 @@ mod tests {
                 .collect();
             Ok(BatchOutput {
                 fields,
-                extract_time: Duration::from_micros(100),
                 assemble_time: Duration::from_micros(20),
             })
+        }
+    }
+
+    fn extractor(state: &Arc<FakeState>, inflight: usize, subbatch: usize) -> GribJumpExtractor {
+        let backends = (0..inflight)
+            .map(|_| {
+                Box::new(FakeBackend {
+                    state: Arc::clone(state),
+                }) as Box<dyn ExtractionBackend>
+            })
+            .collect();
+        GribJumpExtractor {
+            pool: BackendPool::new(backends).unwrap(),
+            subbatch,
         }
     }
 
@@ -652,46 +848,66 @@ mod tests {
         }
     }
 
-    #[test]
-    fn extraction_is_subbatched_and_ordered() {
-        let calls = Arc::new(Mutex::new(Vec::new()));
-        let mut extractor = GribJumpExtractor {
-            backend: Box::new(FakeBackend {
-                calls: Arc::clone(&calls),
-            }),
-            subbatch: 2,
-        };
-        let output = extractor.extract(&plan("float64", false)).unwrap();
-        let raw = zstd::bulk::decompress(&output.payload, 5 * 3 * 8).unwrap();
-        let values = raw
+    fn decoded_f64(output: &ExtractOutput, field_count: usize) -> Vec<f64> {
+        zstd::bulk::decompress(&output.payload, field_count * 3 * 8)
+            .unwrap()
             .chunks_exact(8)
             .map(|bytes| f64::from_le_bytes(bytes.try_into().unwrap()))
-            .collect::<Vec<_>>();
+            .collect()
+    }
+
+    #[test]
+    fn out_of_order_completion_preserves_assembly_order_and_bounds_concurrency() {
+        let state = Arc::new(FakeState::default());
+        state.delay.store(true, Ordering::Release);
+        let extractor = extractor(&state, 3, 1);
+        let output = extractor.extract(&plan("float64", false)).unwrap();
         assert_eq!(
-            values,
+            decoded_f64(&output, 5),
             vec![
                 10.0, 11.0, 12.0, 20.0, 21.0, 22.0, 30.0, 31.0, 32.0, 40.0, 41.0, 42.0, 50.0, 51.0,
                 52.0,
             ]
         );
+        assert_ne!(*state.completions.lock().unwrap(), vec![1, 2, 3, 4, 5]);
+        assert_eq!(state.max_active.load(Ordering::Acquire), 3);
+        assert_eq!(output.metrics.gj_subbatches, 5);
+        assert_eq!(output.metrics.inflight, 3);
+    }
+
+    #[test]
+    fn inflight_one_degenerates_to_sequential() {
+        let state = Arc::new(FakeState::default());
+        let extractor = extractor(&state, 1, 2);
+        let output = extractor.extract(&plan("float64", false)).unwrap();
         assert_eq!(
-            *calls.lock().unwrap(),
+            *state.calls.lock().unwrap(),
             vec![
                 vec!["/field-1".to_string(), "/field-2".to_string()],
                 vec!["/field-3".to_string(), "/field-4".to_string()],
                 vec!["/field-5".to_string()],
             ]
         );
-        assert_eq!(output.metrics.gj_subbatches, 3);
+        assert_eq!(state.max_active.load(Ordering::Acquire), 1);
+        assert_eq!(output.metrics.inflight, 1);
+    }
+
+    #[test]
+    fn failure_propagates_and_handle_returns_to_pool() {
+        let state = Arc::new(FakeState::default());
+        state.fail_offset_once.store(3, Ordering::Release);
+        let extractor = extractor(&state, 2, 1);
+        let error = extractor.extract(&plan("float64", false)).unwrap_err();
+        assert!(error.contains("fake failure at offset 3"), "{error}");
+        let output = extractor.extract(&plan("float64", false)).unwrap();
+        assert_eq!(decoded_f64(&output, 5).len(), 15);
+        assert_eq!(extractor.pool.available.lock().unwrap().len(), 2);
     }
 
     #[test]
     fn f32_shuffle_matches_python_golden_vector() {
-        let calls = Arc::new(Mutex::new(Vec::new()));
-        let mut extractor = GribJumpExtractor {
-            backend: Box::new(FakeBackend { calls }),
-            subbatch: DEFAULT_SUBBATCH,
-        };
+        let state = Arc::new(FakeState::default());
+        let extractor = extractor(&state, 1, DEFAULT_SUBBATCH);
         let mut input = plan("float32", true);
         input.paths.truncate(2);
         let output = extractor.extract(&input).unwrap();
@@ -709,19 +925,16 @@ mod tests {
 
     #[test]
     fn rejects_invalid_ranges_before_ffi() {
-        let calls = Arc::new(Mutex::new(Vec::new()));
-        let mut extractor = GribJumpExtractor {
-            backend: Box::new(FakeBackend {
-                calls: Arc::clone(&calls),
-            }),
-            subbatch: DEFAULT_SUBBATCH,
-        };
+        let state = Arc::new(FakeState::default());
+        let extractor = extractor(&state, 1, DEFAULT_SUBBATCH);
         let mut input = plan("float64", false);
         input.ranges = vec![[3, 3]];
-        assert!(extractor
-            .extract(&input)
-            .unwrap_err()
-            .contains("invalid extract range"));
-        assert!(calls.lock().unwrap().is_empty());
+        assert!(
+            extractor
+                .extract(&input)
+                .unwrap_err()
+                .contains("invalid extract range")
+        );
+        assert!(state.calls.lock().unwrap().is_empty());
     }
 }

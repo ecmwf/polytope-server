@@ -113,6 +113,29 @@ impl Node {
             }
         }
     }
+
+    fn max_axis_len(&self, dim: &str) -> Option<u64> {
+        match self {
+            Node::Group { children, .. } => children
+                .iter()
+                .filter_map(|child| child.max_axis_len(dim))
+                .max(),
+            Node::ArraySet { axes, .. } => axes
+                .iter()
+                .find(|axis| axis.dim == dim)
+                .map(|axis| axis.values.len() as u64),
+        }
+    }
+
+    fn max_feature_points(&self) -> Option<u64> {
+        match self {
+            Node::Group { children, .. } => children
+                .iter()
+                .filter_map(Node::max_feature_points)
+                .max(),
+            Node::ArraySet { feature, .. } => feature.as_ref().map(|value| value.n_points),
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -352,19 +375,11 @@ pub fn build_metadata_v2(
         tree::attach_feature(&mut tree, polygon, config.max_feature_points)?;
     }
 
-    // chunking.default: 1 per axis dim, whole spatial dimension in one chunk.
-    let mut axis_dims = Vec::new();
-    tree.collect_axis_dims(&mut axis_dims);
-    let mut default_chunks: Vec<(String, u64)> = axis_dims.into_iter().map(|d| (d, 1)).collect();
-    default_chunks.push((
-        if feature.is_some() {
-            "points"
-        } else {
-            "values"
-        }
-        .to_string(),
-        0,
-    ));
+    let default_chunks = default_chunking(
+        &tree,
+        config.default_max_fields_per_job,
+        config.max_chunk_cost,
+    );
 
     Ok(MetadataResponse {
         version: METADATA_VERSION,
@@ -380,6 +395,53 @@ pub fn build_metadata_v2(
             advisory: true,
         },
     })
+}
+
+fn default_chunking(
+    tree: &Node,
+    configured_max_fields: u64,
+    max_chunk_cost: u64,
+) -> Vec<(String, u64)> {
+    let mut axis_dims = Vec::new();
+    tree.collect_axis_dims(&mut axis_dims);
+    let date_len = tree.max_axis_len("date");
+    let time_len = tree.max_axis_len("time");
+    let temporal_fields = date_len.unwrap_or(1).saturating_mul(time_len.unwrap_or(1));
+    let feature_points = tree.max_feature_points();
+    let max_fields_per_job = feature_points
+        .map(|points| configured_max_fields.min((max_chunk_cost / points).max(1)));
+    let mut temporal_chunks = std::collections::BTreeMap::new();
+    if let Some(max_fields_per_job) = max_fields_per_job
+        && temporal_fields > max_fields_per_job
+    {
+        let mut remaining = max_fields_per_job;
+        if let Some(len) = time_len {
+            let chunk = len.min(remaining).max(1);
+            temporal_chunks.insert("time", chunk);
+            remaining = (remaining / chunk).max(1);
+        }
+        if let Some(len) = date_len {
+            temporal_chunks.insert("date", len.min(remaining).max(1));
+        }
+    }
+
+    let mut chunks = axis_dims
+        .into_iter()
+        .map(|dim| {
+            let size = temporal_chunks.get(dim.as_str()).copied().unwrap_or(1);
+            (dim, size)
+        })
+        .collect::<Vec<_>>();
+    chunks.push((
+        if feature_points.is_some() {
+            "points"
+        } else {
+            "values"
+        }
+        .to_string(),
+        0,
+    ));
+    chunks
 }
 
 #[cfg(test)]

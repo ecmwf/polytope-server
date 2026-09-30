@@ -408,6 +408,39 @@ async fn metadata_single_cube_is_root_array_set() {
 }
 
 #[tokio::test]
+async fn metadata_caps_long_temporal_default_chunks() {
+    let config = r#"
+chunks:
+  max_chunk_cost: 30000000
+  default_max_fields_per_job: 2
+  grids:
+    - collection: destination-earth
+      match: { class: d1, dataset: climate-dt, resolution: high }
+      count_values: 12
+      nside: 1
+      md5_grid_section: "f78d9d2d6f6f1b4c8f0b3a6d1b1e2c3d"
+"#;
+    let (status, _, body) = post_json(
+        app_with_qube_and_config(arena_simple(), config),
+        "/chunks/v1/destination-earth/metadata",
+        &json!({
+            "request": climate_dt_request(),
+            "feature": {
+                "type": "polygon",
+                "shape": [[-20, -20], [20, -20], [20, 20], [-20, 20]],
+            },
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let value: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        value["chunking"]["default"],
+        json!({"date": 1, "time": 2, "points": 0})
+    );
+}
+
+#[tokio::test]
 async fn metadata_heterogeneous_builds_two_named_array_sets() {
     let request = json!({
         "class": "d1", "dataset": "climate-dt", "resolution": "high",
@@ -1171,6 +1204,7 @@ fn chunks_config_defaults_and_validation() {
     let chunks = cfg.chunks.unwrap();
     assert!(chunks.enabled);
     assert_eq!(chunks.max_chunk_cost, 20_000_000);
+    assert_eq!(chunks.default_max_fields_per_job, 8_760);
     assert_eq!(chunks.max_feature_points, 1_000_000);
     assert!(chunks.grids.is_empty());
     // Contract v2 catalogue defaults.
@@ -1206,6 +1240,9 @@ fn chunks_config_defaults_and_validation() {
     assert!(bad.validate().is_err());
     let bad: crate::config::ChunksConfig =
         serde_yaml::from_str("grids: [{collection: c, count_values: 48, nside: 3}]").unwrap();
+    assert!(bad.validate().is_err());
+    let bad: crate::config::ChunksConfig =
+        serde_yaml::from_str("default_max_fields_per_job: 0").unwrap();
     assert!(bad.validate().is_err());
     let bad: crate::config::ChunksConfig =
         serde_yaml::from_str("grids: [{collection: c, count_values: 47, nside: 2}]").unwrap();

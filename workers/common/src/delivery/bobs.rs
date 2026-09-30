@@ -110,6 +110,7 @@ impl BobsPush {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn prepare(
         &self,
         content_type: &str,
