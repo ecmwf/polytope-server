@@ -283,6 +283,7 @@ def fake_gj(monkeypatch):
     # Most functional tests exercise the exact pre-executor path. Executor-specific
     # tests opt in explicitly below.
     monkeypatch.setenv("POLYTOPE_CHUNKS_GJ_THREADS", "0")
+    monkeypatch.setattr(extract, "PROC_POOL_SIZE", 0)
     extract._reset_gribjump()
     extract._reset_location_state()
     extract._reset_hash_learning()
@@ -772,23 +773,20 @@ def test_lookup_releases_lock_between_subbatches(fake_gj, fake_fdb, monkeypatch)
         order.append("small" if "20300101" in dates else "big")
         return original_list(selection)
 
-    def yield_to_waiter(seconds):
-        assert seconds == 0
+    def yield_to_waiter():
         yielded.set()
         assert small_done.wait(timeout=2)
 
     fake_fdb.list = recording_list
-    monkeypatch.setattr(extract.time, "sleep", yield_to_waiter)
-    thread = threading.Thread(
-        target=extract._lookup_field_locations, args=(fields, values, fake_fdb)
-    )
-    thread.start()
-    assert yielded.wait(timeout=2)
-    extract._lookup_field_location(small, fake_fdb)
-    small_done.set()
-    thread.join(timeout=2)
-
-    assert not thread.is_alive()
+    monkeypatch.setattr(extract.os, "sched_yield", yield_to_waiter)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(
+            extract._lookup_field_locations, fields, values, fake_fdb
+        )
+        assert yielded.wait(timeout=2)
+        extract._lookup_field_location(small, fake_fdb)
+        small_done.set()
+        future.result(timeout=2)
     assert order[:2] == ["big", "small"]
 
 
@@ -1237,7 +1235,7 @@ def test_dispatch_extract_error_reports_job_failure(fake_gj, recording_ds):
 
 _PROFILE_RE = re.compile(
     r"^chunks-profile job=(?P<job>\S+) status=(?P<status>\w+) phase=(?P<phase>\w+) "
-    r"fields=(?P<fields>\d+) ranges=(?P<ranges>\d+) points=(?P<points>\d+) "
+    r"proc=(?P<proc>\d+) fields=(?P<fields>\d+) ranges=(?P<ranges>\d+) points=(?P<points>\d+) "
     r"dtype=(?P<dtype>f32|f64) shuffle=(?P<shuffle>[01]) "
     r"cache=(?P<hits>\d+)/(?P<misses>\d+) fallback=(?P<fallback>\d+) "
     r"lookup_mode=(?P<lookup_mode>batch|single|none) "
@@ -1348,6 +1346,127 @@ def test_profile_line_on_validation_failure(fake_gj, caplog):
 def test_compress_accepts_numpy_buffer_without_copy():
     arr = np.arange(1000, dtype="<f8")
     assert zstandard.ZstdDecompressor().decompress(extract.compress(arr)) == arr.tobytes()
+
+
+# ---------------------------------------------------------------------------
+# Process-isolated extraction
+# ---------------------------------------------------------------------------
+
+
+def _fake_process_response(request):
+    process_gj = FakePyGribJump()
+    process_fdb = FakePyFDB(process_gj)
+    spec, field_values = extract.parse_extract(request)
+    spec["registry_grid_hash"] = spec["grid_hash"]
+    fields = list(extract.enumerate_fields(field_values, spec["order"]))
+    extract._apply_hash_override(fields[0], spec)
+    servermap = location_cache.LocationServerMap(
+        [{"fdb": "store.example:9000"}]
+    )
+    response = extract._execute_process_job(
+        {
+            "fields": fields,
+            "field_values": field_values,
+            "spec": spec,
+            "locations": [None] * len(fields),
+            "cache_enabled": True,
+            "ctx": None,
+            "job_id": "process-test",
+        },
+        process_gj,
+        process_fdb,
+        process_gj.GribJump(),
+        servermap,
+    )
+    return response, fields, process_fdb
+
+
+def test_process_worker_payload_is_bit_identical_to_fallback(
+    fake_gj, fake_fdb
+):
+    request = base_request()
+    fallback, _, _ = extract._run_extract_fallback(
+        request, pygribjump=fake_gj, pyfdb=fake_fdb
+    )
+    extract._reset_location_state()
+    response, fields, process_fdb = _fake_process_response(request)
+
+    assert response["payload"] == fallback
+    assert len(response["updates"]) == len(fields)
+    assert len(process_fdb.calls) == 1
+    assert response["profile"]["lookup_subbatches"] == 1
+    assert response["profile"]["gj_subbatches"] == 1
+
+
+def test_isolated_parent_populates_location_cache_from_worker_misses(
+    fake_gj, monkeypatch
+):
+    enable_location_cache(monkeypatch)
+    request = base_request()
+    response, fields, _process_fdb = _fake_process_response(request)
+    response["proc"] = 3
+
+    class FakePool:
+        @staticmethod
+        def execute(_job):
+            return response
+
+    monkeypatch.setattr(extract, "PROC_POOL_SIZE", 1)
+    monkeypatch.setattr(extract, "_get_process_pool", lambda: FakePool())
+    payload, _, timings = extract._run_extract_isolated(request)
+
+    assert payload == response["payload"]
+    assert timings["proc"] == 3
+    assert timings["cache_misses"] == len(fields)
+    cache = extract._get_location_cache()
+    assert all(cache.get(field) == make_location(field) for field in fields)
+
+
+def test_process_pool_acquires_releases_and_reuses_workers():
+    pool = extract.ProcessExtractionPool(
+        2,
+        timeout=5,
+        worker_target=extract._pool_test_worker,
+        python_executable=sys.executable,
+    )
+    try:
+        first = pool.execute({"value": "a"})
+        second = pool.execute({"value": "b"})
+        third = pool.execute({"value": "c"})
+    finally:
+        pool.close()
+
+    assert [first["slot"], second["slot"], third["slot"]] == [1, 2, 1]
+    assert first["pid"] == third["pid"]
+    assert first["pid"] != second["pid"]
+
+
+def test_process_pool_timeout_respawns_and_fails_job_cleanly():
+    pool = extract.ProcessExtractionPool(
+        1,
+        timeout=5,
+        worker_target=extract._pool_test_worker,
+        python_executable=sys.executable,
+    )
+    try:
+        original = pool.execute({"value": "before"})
+        pool.timeout = 0.1
+        with pytest.raises(extract.ExtractError, match="timed out"):
+            pool.execute({"mode": "sleep", "seconds": 0.5})
+        recovered = pool.execute({"value": "after"})
+    finally:
+        pool.close()
+
+    assert recovered["slot"] == original["slot"] == 1
+    assert recovered["pid"] != original["pid"]
+
+
+def test_process_pool_zero_keeps_fallback_dispatch(fake_gj, monkeypatch):
+    monkeypatch.setattr(extract, "PROC_POOL_SIZE", 0)
+    payload, _, timings = extract.run_extract(base_request())
+    assert decode(payload).size == 24
+    assert timings.get("proc", 0) == 0
+    assert len(fake_gj.calls) == 1
 
 
 def test_gribjump_handle_is_process_scoped(fake_gj, monkeypatch):
@@ -1529,7 +1648,7 @@ def test_get_datasource_warms_extract_path_once(fake_gj, monkeypatch, tmp_path):
     monkeypatch.setattr(run_polytope_worker, "_datasource", None)
     monkeypatch.setattr(run_polytope_worker, "_config_path", None)
     cfg = tmp_path / "c.json"
-    cfg.write_text(json.dumps({"polytope": {"type": "polytope"}}))
+    (tmp_path / "c.json").write_text(json.dumps({"polytope": {"type": "polytope"}}))
 
     ds1 = run_polytope_worker._get_datasource(str(cfg))
     ds2 = run_polytope_worker._get_datasource(str(cfg))

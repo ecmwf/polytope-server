@@ -20,9 +20,10 @@ materialises the worker's own ``gribjump_config`` (and optional
 ``fdb_config``) to /tmp and exports ``GRIBJUMP_CONFIG_FILE`` /
 ``FDB5_CONFIG_FILE``. The cache reads that same gribjump file once to map
 pyfdb's internal store aliases onto the configured FDB servermap endpoints.
-With the location cache enabled, misses are resolved through process-serialized,
-lock-fair FDB list sub-batches; subsequent chunks use pygribjump's path-based API
-directly. Cache size zero retains the original request-based extraction path exactly.
+By default, cache misses, native extraction, assembly, shuffle and compression run
+inside one of several long-lived spawn subprocesses. Each owns exactly one FDB and
+one warmed GribJump handle and serves jobs sequentially. Setting
+``POLYTOPE_CHUNKS_PROC_POOL=0`` retains the process-locked FDB/threaded-GJ fallback.
 
 Profiling: every job emits exactly one ``chunks-profile`` INFO log line (see
 ``_log_profile``) with per-phase wall times, so worker-side cost can be read
@@ -31,10 +32,13 @@ record).
 """
 
 from concurrent.futures import ThreadPoolExecutor
+import atexit
 import copy
 import itertools
 import logging
+import multiprocessing
 import os
+import queue
 import re
 import threading
 import time
@@ -81,6 +85,16 @@ def _zstd_level() -> int:
 ZSTD_LEVEL = _zstd_level()
 LOOKUP_SUBBATCH = _env_subbatch("POLYTOPE_CHUNKS_LOOKUP_SUBBATCH", 256)
 GJ_SUBBATCH = _env_subbatch("POLYTOPE_CHUNKS_GJ_SUBBATCH", 1024, allow_zero=True)
+PROC_POOL_SIZE = _env_subbatch("POLYTOPE_CHUNKS_PROC_POOL", 4, allow_zero=True)
+
+
+def _proc_timeout():
+    raw = os.environ.get("POLYTOPE_CHUNKS_PROC_TIMEOUT", "").strip()
+    try:
+        value = float(raw) if raw else 600.0
+    except ValueError:
+        return 600.0
+    return value if value > 0 else 600.0
 
 
 class ExtractError(ValueError):
@@ -240,12 +254,14 @@ _thread_handles = threading.local()
 _gj_executor = None
 _gj_executor_threads = 0
 _gj_executor_lock = threading.Lock()
+_process_pool = None
+_process_pool_lock = threading.Lock()
 _location_cache = None
 _location_servermap = None
 _location_state_lock = threading.Lock()
-# pyfdb 5.22 is not safe to enter concurrently: parallel list operations can
-# deadlock inside its native FDBToolRequest/list iterator. Serialize every complete
-# list transaction, including ListElement access, across this Python process.
+# pyfdb 5.22 is not safe to enter concurrently in one process. This lock is
+# retained exclusively for POLYTOPE_CHUNKS_PROC_POOL=0 fallback mode; each default
+# extraction subprocess owns one FDB handle and serves requests sequentially.
 _fdb_list_lock = threading.Lock()
 
 # Grid-hash variants already encoded in Polytope's gh68 change_hash logic, plus
@@ -462,13 +478,18 @@ def _get_location_servermap():
 
 
 def _reset_gribjump():  # for tests
-    global _gj_executor, _gj_executor_threads
+    global _gj_executor, _gj_executor_threads, _process_pool
     with _gj_executor_lock:
         executor = _gj_executor
         _gj_executor = None
         _gj_executor_threads = 0
     if executor is not None:
         executor.shutdown(wait=True, cancel_futures=True)
+    with _process_pool_lock:
+        process_pool = _process_pool
+        _process_pool = None
+    if process_pool is not None:
+        process_pool.close()
     if hasattr(_thread_handles, "gribjump"):
         del _thread_handles.gribjump
 
@@ -490,12 +511,15 @@ def _reset_hash_learning():  # for tests
 
 
 def warm_up(pygribjump=None):
-    """Warm imports, location cache, and every dedicated GribJump thread."""
+    """Warm imports, the parent location cache, and the selected executor."""
     import zstandard  # noqa: F401  # type: ignore[import-not-found]
 
+    _get_location_cache()
+    if PROC_POOL_SIZE > 0 and pygribjump is None:
+        _get_process_pool()
+        return
     if pygribjump is None:
         import pygribjump  # type: ignore[import-not-found]
-    _get_location_cache()
     _get_gj_executor(pygribjump)
 
 
@@ -617,7 +641,7 @@ def _lookup_field_locations(fields, batch_request, pyfdb):
         if index + 1 < len(batches):
             # Let an already-waiting short job acquire the process lock before this
             # large lookup queues its next transaction.
-            time.sleep(0)
+            os.sched_yield()
     return locations
 
 
@@ -966,7 +990,7 @@ def _ms(a, b):
 def _log_profile(prof):
     """Emit the single per-job ``chunks-profile`` line (key=value, grep-able)."""
     logging.info(
-        "chunks-profile job=%s status=%s phase=%s fields=%d ranges=%d points=%d "
+        "chunks-profile job=%s status=%s phase=%s proc=%d fields=%d ranges=%d points=%d "
         "dtype=%s shuffle=%d cache=%d/%d fallback=%d lookup_mode=%s "
         "subbatches=%d/%d t_lookup=%.1fms "
         "t_parse=%.1fms t_enum=%.1fms t_extract=%.1fms t_assemble=%.1fms "
@@ -975,6 +999,7 @@ def _log_profile(prof):
         prof["job"],
         prof["status"],
         prof["phase"],
+        prof.get("proc", 0),
         prof["fields"],
         prof["ranges"],
         prof["points"],
@@ -1000,7 +1025,7 @@ def _log_profile(prof):
     )
 
 
-def run_extract(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
+def _run_extract_fallback(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
     """Serve an extract job. Returns ``(payload_bytes, content_type, timings)``."""
     if pygribjump is None:
         import pygribjump  # type: ignore[import-not-found]
@@ -1009,6 +1034,7 @@ def run_extract(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
         "job": job_id or "-",
         "status": "error",
         "phase": "parse",
+        "proc": 0,
         "fields": 0,
         "ranges": 0,
         "points": 0,
@@ -1316,3 +1342,704 @@ def run_extract(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
         "payload_bytes": prof["payload_bytes"],
     }
     return payload, CONTENT_TYPE, timings
+
+
+class _FDBHandleModule:
+    """Minimal pyfdb-module facade that always returns one pre-created handle."""
+
+    def __init__(self, handle):
+        self.handle = handle
+
+    def FDB(self):  # noqa: N802 - mirrors pyfdb
+        return self.handle
+
+
+def _lookup_process_locations(fields, batch_request, pyfdb):
+    """Resolve process-worker misses in 256-field transactions without a lock."""
+    locations = {}
+    for start in range(0, len(fields), LOOKUP_SUBBATCH):
+        subset = fields[start : start + LOOKUP_SUBBATCH]
+        request = (
+            batch_request
+            if len(fields) <= LOOKUP_SUBBATCH
+            else _batch_request_for_fields(subset)
+        )
+        locations.update(_lookup_field_locations_unlocked(subset, request, pyfdb))
+    return locations
+
+
+def _lookup_process_location(field, pyfdb):
+    """Resolve one field on a subprocess-owned FDB handle without a lock."""
+    first = _lookup_field_element_unlocked(field, pyfdb)
+    try:
+        return _location_from_element(first)
+    except ExtractError as exc:
+        raise ExtractError(f"field {_describe(field)}: {exc}") from exc
+    except Exception as exc:
+        raise ExtractError(
+            f"field {_describe(field)}: FDB location lookup returned an invalid location: {exc}"
+        ) from exc
+
+
+def _resolve_process_warm_locations(pyfdb, servermap):
+    fields = [{**_GJ_WARM_FIELD, "date": date} for date in _GJ_WARM_DATES]
+    locations_by_key = _lookup_process_locations(
+        fields, _batch_request_for_fields(fields), pyfdb
+    )
+    locations = {}
+    for field in fields:
+        location = locations_by_key.get(canonical_field_key(field))
+        translated = servermap.translate(location) if location is not None else None
+        if translated is not None:
+            endpoint = (translated.scheme, translated.host, translated.port)
+            locations.setdefault(endpoint, translated)
+    if not locations:
+        raise ExtractError("GribJump warm-up fields have no routable locations")
+    return list(locations.values())
+
+
+def _execute_process_job(job, pygribjump, pyfdb, gj, servermap):
+    """Run one complete heavy extraction job on one subprocess-owned handle pair.
+
+    This function is intentionally importable and accepts fake modules/handles so its
+    payload can be compared directly with fallback mode in unit tests.
+    """
+    fields = job["fields"]
+    field_values = job["field_values"]
+    spec = job["spec"]
+    locations = list(job["locations"])
+    cache_enabled = job["cache_enabled"]
+    ctx = job.get("ctx")
+    job_id = job.get("job_id")
+    profile = {
+        "lookup_ms": 0.0,
+        "lookup_mode": "none",
+        "lookup_subbatches": 0,
+        "gj_subbatches": 0,
+        "extract_ms": 0.0,
+        "assemble_ms": 0.0,
+        "shuffle_ms": 0.0,
+        "compress_ms": 0.0,
+        "fallbacks": 0,
+        "raw_bytes": 0,
+        "payload_bytes": 0,
+    }
+    updates = []
+    invalidations = []
+
+    try:
+        if not cache_enabled:
+            started = time.monotonic()
+
+            def operation():
+                requests = build_requests(fields, spec, pygribjump)
+                iterator = (
+                    gj.extract(requests, ctx=ctx)
+                    if ctx is not None
+                    else gj.extract(requests)
+                )
+                return list(iterator)
+
+            results = _extract_with_hash_learning(
+                operation, fields[0], spec, pygribjump, pyfdb, job_id
+            )
+            profile["extract_ms"] = round(
+                (time.monotonic() - started) * 1000, 1
+            )
+        else:
+            missing = [
+                (index, field)
+                for index, (field, location) in enumerate(zip(fields, locations))
+                if location is None
+            ]
+            fallback_indices = set()
+            if missing:
+                started = time.monotonic()
+                if len(missing) == 1:
+                    profile["lookup_mode"] = "single"
+                    profile["lookup_subbatches"] = 1
+                    index, field = missing[0]
+                    try:
+                        location = _lookup_process_location(field, pyfdb)
+                    except ExtractError:
+                        fallback_indices.add(index)
+                    else:
+                        locations[index] = location
+                        updates.append((field, location))
+                else:
+                    profile["lookup_mode"] = "batch"
+                    profile["lookup_subbatches"] = max(
+                        1, (len(missing) + LOOKUP_SUBBATCH - 1) // LOOKUP_SUBBATCH
+                    )
+                    batch_locations = _lookup_process_locations(
+                        [field for _, field in missing],
+                        {key: list(values) for key, values in field_values.items()},
+                        pyfdb,
+                    )
+                    for index, field in missing:
+                        location = batch_locations.get(canonical_field_key(field))
+                        if location is None:
+                            fallback_indices.add(index)
+                        else:
+                            locations[index] = location
+                            updates.append((field, location))
+                profile["lookup_ms"] += round(
+                    (time.monotonic() - started) * 1000, 1
+                )
+
+            results_by_index = [None] * len(fields)
+            path_items = []
+            for index, (field, location) in enumerate(zip(fields, locations)):
+                if location is None:
+                    continue
+                translated = servermap.translate(location)
+                if translated is None:
+                    fallback_indices.add(index)
+                else:
+                    path_items.append((index, field, translated))
+
+            extract_seconds = 0.0
+
+            def extract_paths(items):
+                nonlocal extract_seconds
+                started = time.monotonic()
+                try:
+                    size = GJ_SUBBATCH or len(items)
+                    for start in range(0, len(items), size):
+                        batch = items[start : start + size]
+                        profile["gj_subbatches"] += 1
+                        extracted = _extract_with_hash_learning(
+                            lambda: _extract_locations(
+                                gj,
+                                pygribjump,
+                                [item[2] for item in batch],
+                                spec,
+                                ctx,
+                            ),
+                            batch[0][1],
+                            spec,
+                            pygribjump,
+                            pyfdb,
+                            job_id,
+                        )
+                        for item, result in zip(batch, extracted):
+                            results_by_index[item[0]] = result
+                finally:
+                    extract_seconds += time.monotonic() - started
+
+            if path_items:
+                try:
+                    extract_paths(path_items)
+                except ExtractError:
+                    raise
+                except Exception:
+                    fresh_items = []
+                    lookup_started = time.monotonic()
+                    for index, field, _location in path_items:
+                        invalidations.append(field)
+                        try:
+                            fresh_location = _lookup_process_location(field, pyfdb)
+                        except ExtractError:
+                            fallback_indices.add(index)
+                            continue
+                        locations[index] = fresh_location
+                        updates.append((field, fresh_location))
+                        translated = servermap.translate(fresh_location)
+                        if translated is None:
+                            fallback_indices.add(index)
+                        else:
+                            fresh_items.append((index, field, translated))
+                    profile["lookup_ms"] += round(
+                        (time.monotonic() - lookup_started) * 1000, 1
+                    )
+                    profile["lookup_subbatches"] += len(path_items)
+                    if fresh_items:
+                        try:
+                            extract_paths(fresh_items)
+                        except ExtractError:
+                            raise
+                        except Exception as retry_exc:
+                            logging.warning(
+                                "gribjump location extraction failed after refresh; "
+                                "falling back for %d field(s): %s",
+                                len(fresh_items),
+                                retry_exc,
+                            )
+                            fallback_indices.update(
+                                item[0] for item in fresh_items
+                            )
+
+            if fallback_indices:
+                ordered_indices = sorted(fallback_indices)
+                fallback_fields = [fields[index] for index in ordered_indices]
+                started = time.monotonic()
+
+                def fallback_operation():
+                    requests = build_requests(
+                        fallback_fields, spec, pygribjump
+                    )
+                    iterator = (
+                        gj.extract(requests, ctx=ctx)
+                        if ctx is not None
+                        else gj.extract(requests)
+                    )
+                    return list(iterator)
+
+                try:
+                    fallback_results = _extract_with_hash_learning(
+                        fallback_operation,
+                        fallback_fields[0],
+                        spec,
+                        pygribjump,
+                        pyfdb,
+                        job_id,
+                    )
+                finally:
+                    extract_seconds += time.monotonic() - started
+                for index, result in zip(ordered_indices, fallback_results):
+                    results_by_index[index] = result
+                profile["fallbacks"] = len(ordered_indices)
+
+            results = results_by_index
+            profile["extract_ms"] = round(extract_seconds * 1000, 1)
+
+        started = time.monotonic()
+        out = assemble(results, fields, spec)
+        profile["assemble_ms"] = round(
+            (time.monotonic() - started) * 1000, 1
+        )
+
+        started = time.monotonic()
+        dtype = "<f4" if spec["dtype"] == "float32" else "<f8"
+        wire_values = out.astype(dtype, copy=False)
+        profile["raw_bytes"] = wire_values.nbytes
+        wire = byte_shuffle(wire_values) if spec["shuffle"] else wire_values
+        profile["shuffle_ms"] = round(
+            (time.monotonic() - started) * 1000, 1
+        )
+
+        started = time.monotonic()
+        payload = compress(wire)
+        profile["compress_ms"] = round(
+            (time.monotonic() - started) * 1000, 1
+        )
+        profile["payload_bytes"] = len(payload)
+        return {
+            "payload": payload,
+            "profile": profile,
+            "updates": updates,
+            "invalidations": invalidations,
+        }
+    except ExtractError:
+        raise
+    except Exception as exc:
+        raise ExtractError(f"gribjump extraction failed: {exc}") from exc
+
+
+def _process_worker_main(connection, slot):
+    """Spawn target: initialise native state once, then serve jobs sequentially."""
+    try:
+        os.environ["GRIBJUMP_CONFIG_FILE"] = "/tmp/gribjump.yaml"
+        import pyfdb  # type: ignore[import-not-found]
+        import pygribjump  # type: ignore[import-not-found]
+
+        fdb = pyfdb.FDB()
+        gj = pygribjump.GribJump()
+        fdb_module = _FDBHandleModule(fdb)
+        servermap = LocationServerMap.from_config("/tmp/gribjump.yaml")
+        warm_locations = _resolve_process_warm_locations(fdb_module, servermap)
+        _warm_gribjump_handle(gj, pygribjump, warm_locations)
+        connection.send(
+            (
+                "ready",
+                {
+                    "slot": slot,
+                    "pid": os.getpid(),
+                    "env": os.environ.get("GRIBJUMP_CONFIG_FILE"),
+                    "warm_endpoints": len(warm_locations),
+                },
+            )
+        )
+    except BaseException as exc:
+        try:
+            connection.send(("startup_error", repr(exc)))
+        finally:
+            connection.close()
+        return
+
+    while True:
+        try:
+            command = connection.recv()
+        except EOFError:
+            break
+        if command is None:
+            break
+        try:
+            response = _execute_process_job(
+                command, pygribjump, fdb_module, gj, servermap
+            )
+            connection.send(("ok", response))
+        except BaseException as exc:
+            connection.send(
+                (
+                    "error",
+                    {
+                        "type": type(exc).__name__,
+                        "message": getattr(exc, "message", str(exc)),
+                    },
+                )
+            )
+    connection.close()
+
+
+def _pool_test_worker(connection, slot):
+    """Small spawn-safe protocol worker used by the multiprocessing tests."""
+    connection.send(
+        (
+            "ready",
+            {
+                "slot": slot,
+                "pid": os.getpid(),
+                "env": os.environ.get("GRIBJUMP_CONFIG_FILE"),
+                "warm_endpoints": 0,
+            },
+        )
+    )
+    while True:
+        try:
+            command = connection.recv()
+        except EOFError:
+            break
+        if command is None:
+            break
+        mode = command.get("mode", "echo")
+        if mode == "sleep":
+            threading.Event().wait(command.get("seconds", 1.0))
+        elif mode == "exit":
+            os._exit(17)
+        connection.send(
+            (
+                "ok",
+                {
+                    "slot": slot,
+                    "pid": os.getpid(),
+                    "value": command.get("value"),
+                },
+            )
+        )
+    connection.close()
+
+
+class ProcessExtractionPool:
+    """Fixed pool of long-lived, single-threaded spawn subprocesses."""
+
+    def __init__(
+        self,
+        size,
+        timeout=None,
+        worker_target=_process_worker_main,
+        python_executable="/opt/venv/bin/python",
+    ):
+        if size <= 0:
+            raise ValueError("process extraction pool size must be positive")
+        self.size = size
+        self.timeout = _proc_timeout() if timeout is None else timeout
+        self.startup_timeout = max(self.timeout, 30.0)
+        self.worker_target = worker_target
+        self.closed = False
+        self._available = queue.Queue(maxsize=size)
+        self._workers = {}
+        multiprocessing.set_executable(python_executable)
+        self._context = multiprocessing.get_context("spawn")
+        pending = [self._launch(slot) for slot in range(1, size + 1)]
+        try:
+            for worker in pending:
+                self._await_ready(worker)
+                self._workers[worker["slot"]] = worker
+                self._available.put(worker)
+        except Exception:
+            for worker in pending:
+                self._terminate(worker)
+            raise
+
+    def _launch(self, slot):
+        parent, child = self._context.Pipe(duplex=True)
+        process = self._context.Process(
+            target=self.worker_target,
+            args=(child, slot),
+            name=f"polytope-extract-{slot}",
+            daemon=True,
+        )
+        process.start()
+        child.close()
+        return {"slot": slot, "process": process, "connection": parent}
+
+    def _await_ready(self, worker):
+        connection = worker["connection"]
+        process = worker["process"]
+        if not connection.poll(self.startup_timeout):
+            raise ExtractError(
+                f"extraction subprocess {worker['slot']} startup timed out"
+            )
+        try:
+            status, detail = connection.recv()
+        except EOFError as exc:
+            raise ExtractError(
+                f"extraction subprocess {worker['slot']} died during startup "
+                f"(exitcode={process.exitcode})"
+            ) from exc
+        if status != "ready":
+            raise ExtractError(
+                f"extraction subprocess {worker['slot']} failed startup: {detail}"
+            )
+        worker["detail"] = detail
+        logging.info(
+            "chunks extraction subprocess ready proc=%d pid=%s env=%s endpoints=%s",
+            worker["slot"],
+            detail.get("pid"),
+            detail.get("env"),
+            detail.get("warm_endpoints"),
+        )
+
+    @staticmethod
+    def _terminate(worker):
+        try:
+            worker["connection"].close()
+        except OSError:
+            pass
+        process = worker["process"]
+        if process.is_alive():
+            process.kill()
+        process.join(timeout=5)
+
+    def _replace(self, worker):
+        slot = worker["slot"]
+        self._terminate(worker)
+        replacement = self._launch(slot)
+        self._await_ready(replacement)
+        self._workers[slot] = replacement
+        self._available.put(replacement)
+
+    def execute(self, job):
+        if self.closed:
+            raise ExtractError("extraction subprocess pool is closed")
+        try:
+            worker = self._available.get(timeout=self.timeout)
+        except queue.Empty as exc:
+            raise ExtractError(
+                "timed out waiting for an extraction subprocess"
+            ) from exc
+        healthy = False
+        try:
+            process = worker["process"]
+            connection = worker["connection"]
+            if not process.is_alive():
+                raise EOFError(
+                    f"subprocess exited with code {process.exitcode}"
+                )
+            connection.send(job)
+            if not connection.poll(self.timeout):
+                raise TimeoutError(
+                    f"extraction subprocess {worker['slot']} timed out after "
+                    f"{self.timeout:g}s"
+                )
+            status, response = connection.recv()
+            healthy = process.is_alive()
+            if status == "ok":
+                response["proc"] = worker["slot"]
+                return response
+            if status == "error":
+                raise ExtractError(response["message"])
+            raise RuntimeError(f"unknown extraction subprocess response {status!r}")
+        except ExtractError:
+            if healthy:
+                raise
+            try:
+                self._replace(worker)
+            except Exception as respawn_exc:
+                logging.error(
+                    "failed to respawn extraction subprocess %d: %s",
+                    worker["slot"],
+                    respawn_exc,
+                )
+            raise
+        except (EOFError, OSError, TimeoutError, BrokenPipeError) as exc:
+            try:
+                self._replace(worker)
+            except Exception as respawn_exc:
+                logging.error(
+                    "failed to respawn extraction subprocess %d: %s",
+                    worker["slot"],
+                    respawn_exc,
+                )
+            raise ExtractError(str(exc)) from exc
+        finally:
+            if healthy:
+                self._available.put(worker)
+
+    def close(self):
+        if self.closed:
+            return
+        self.closed = True
+        workers = list(self._workers.values())
+        self._workers.clear()
+        for worker in workers:
+            try:
+                worker["connection"].send(None)
+            except (BrokenPipeError, OSError):
+                pass
+        for worker in workers:
+            self._terminate(worker)
+
+
+def _get_process_pool():
+    global _process_pool
+    if PROC_POOL_SIZE == 0:
+        return None
+    if _process_pool is None:
+        with _process_pool_lock:
+            if _process_pool is None:
+                _process_pool = ProcessExtractionPool(PROC_POOL_SIZE)
+    return _process_pool
+
+
+def _isolated_profile(job_id):
+    return {
+        "job": job_id or "-",
+        "status": "error",
+        "phase": "parse",
+        "proc": 0,
+        "fields": 0,
+        "ranges": 0,
+        "points": 0,
+        "dtype": "f32",
+        "shuffle": 1,
+        "cache_hits": 0,
+        "cache_misses": 0,
+        "fallbacks": 0,
+        "lookup_subbatches": 0,
+        "gj_subbatches": 0,
+        "lookup_ms": 0.0,
+        "lookup_mode": "none",
+        "parse_ms": 0.0,
+        "enum_ms": 0.0,
+        "extract_ms": 0.0,
+        "assemble_ms": 0.0,
+        "shuffle_ms": 0.0,
+        "compress_ms": 0.0,
+        "total_ms": 0.0,
+        "raw_bytes": 0,
+        "payload_bytes": 0,
+    }
+
+
+def _profile_timings(prof):
+    return {
+        "parse_ms": prof["parse_ms"],
+        "enum_ms": prof["enum_ms"],
+        "lookup_ms": prof["lookup_ms"],
+        "lookup_mode": prof["lookup_mode"],
+        "extract_ms": prof["extract_ms"],
+        "assemble_ms": prof["assemble_ms"],
+        "shuffle_ms": prof["shuffle_ms"],
+        "compress_ms": prof["compress_ms"],
+        "retrieve_ms": prof["total_ms"],
+        "fields": prof["fields"],
+        "points": prof["points"],
+        "cache_hits": prof["cache_hits"],
+        "cache_misses": prof["cache_misses"],
+        "fallbacks": prof["fallbacks"],
+        "lookup_subbatches": prof["lookup_subbatches"],
+        "gj_subbatches": prof["gj_subbatches"],
+        "raw_bytes": prof["raw_bytes"],
+        "payload_bytes": prof["payload_bytes"],
+        "proc": prof["proc"],
+    }
+
+
+def _run_extract_isolated(request, user=None, job_id=None):
+    prof = _isolated_profile(job_id)
+    started = time.monotonic()
+    try:
+        spec, field_values = parse_extract(request)
+        spec["registry_grid_hash"] = spec["grid_hash"]
+        parsed = time.monotonic()
+        prof["parse_ms"] = _ms(started, parsed)
+        prof["dtype"] = "f32" if spec["dtype"] == "float32" else "f64"
+        prof["shuffle"] = int(spec["shuffle"])
+
+        prof["phase"] = "enum"
+        fields = list(enumerate_fields(field_values, spec["order"]))
+        prof["fields"] = len(fields)
+        prof["ranges"] = len(spec["ranges"])
+        prof["points"] = len(fields) * sum(
+            hi - lo for lo, hi in spec["ranges"]
+        )
+        _apply_hash_override(fields[0], spec)
+        cache = _get_location_cache()
+        locations = []
+        if cache.enabled:
+            for field in fields:
+                location = cache.get(field)
+                locations.append(location)
+                if location is None:
+                    prof["cache_misses"] += 1
+                else:
+                    prof["cache_hits"] += 1
+        else:
+            locations = [None] * len(fields)
+        enumerated = time.monotonic()
+        prof["enum_ms"] = _ms(parsed, enumerated)
+
+        ctx = None
+        if user is not None:
+            ctx = {
+                "user": f"{getattr(user, 'realm', '')}:{getattr(user, 'username', '')}"
+            }
+            if job_id:
+                ctx["job_id"] = job_id
+
+        prof["phase"] = "subprocess"
+        pool = _get_process_pool()
+        if pool is None:
+            raise ExtractError("extraction subprocess pool is disabled")
+        response = pool.execute(
+            {
+                "fields": fields,
+                "field_values": field_values,
+                "spec": spec,
+                "locations": locations,
+                "cache_enabled": cache.enabled,
+                "ctx": ctx,
+                "job_id": job_id,
+            }
+        )
+        for field in response["invalidations"]:
+            cache.invalidate(field)
+        cache.put_many(response["updates"])
+        payload = response["payload"]
+        prof.update(response["profile"])
+        prof["proc"] = response["proc"]
+        prof["status"] = "ok"
+        prof["phase"] = "done"
+    finally:
+        prof["total_ms"] = _ms(started, time.monotonic())
+        _log_profile(prof)
+
+    return payload, CONTENT_TYPE, _profile_timings(prof)
+
+
+def run_extract(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
+    """Serve an extract job through the process pool, or retained fallback mode."""
+    if PROC_POOL_SIZE > 0 and pygribjump is None and pyfdb is None:
+        return _run_extract_isolated(request, user=user, job_id=job_id)
+    return _run_extract_fallback(
+        request,
+        pygribjump=pygribjump,
+        pyfdb=pyfdb,
+        user=user,
+        job_id=job_id,
+    )
+
+
+atexit.register(lambda: _process_pool.close() if _process_pool is not None else None)
