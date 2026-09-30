@@ -28,6 +28,13 @@ impl TransformAction for MetkitExpansion {
             }
         }
 
+        // Contract v2.5 multi-chunk elements were individually validated and
+        // canonicalised by the chunks frontend. The envelope is not a MARS
+        // request and must reach the worker unchanged, without metkit defaults.
+        if obj.contains_key("chunks") {
+            return Ok(TransformResult::Continue);
+        }
+
         // Preserve fields metkit can't handle (e.g. "feature" objects)
         let non_mars_keys: Vec<String> = obj
             .iter()
@@ -567,6 +574,33 @@ mod tests {
         assert_eq!(job.request["param"], json!("167"));
         assert!(job.request.get("verb").is_none());
     }
+
+    #[tokio::test]
+    async fn execute_preserves_multi_chunk_envelope_verbatim() {
+        let chunks = json!([
+            {
+                "class": ["d1"], "date": ["20240101"], "param": ["167"],
+                "extract": {
+                    "ranges": [[0, 10]], "order": ["date"], "grid_hash": null,
+                    "dtype": "float32", "shuffle": true
+                }
+            },
+            {
+                "class": ["d1"], "date": ["20240101"], "param": ["168"],
+                "extract": {
+                    "ranges": [[0, 10]], "order": ["date"], "grid_hash": null,
+                    "dtype": "float32", "shuffle": true
+                }
+            }
+        ]);
+        let original = json!({"chunks": chunks});
+        let mut job = Job::new(original.clone());
+
+        let result = MetkitExpansion {}.execute(&mut job).await.unwrap();
+        assert!(matches!(result, TransformResult::Continue));
+        assert_eq!(job.request, original);
+    }
+
 
     #[test]
     fn chunks_expander_returns_canonical_values() {
