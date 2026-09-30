@@ -20,6 +20,7 @@ import time
 import types
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -223,7 +224,9 @@ class FakePyFDB:
         self.fake_gj = fake_gj
         self.calls = []
         self.inspect_calls = []
-        self.inspect_error = None
+        self.inspect_error: Any = None
+        self.list_error: BaseException | None = None
+        self.resets = 0
         self.sequences = {}
         self.omitted = set()
         self.reverse = False
@@ -267,9 +270,17 @@ class FakePyFDB:
             self.fake_gj.path_fields[location.path] = field
             yield FakeListElement(field, location, self.count_values)
 
+    def reset(self):
+        self.resets += 1
+        self.inspect_error = None
+        self.list_error = None
+
+
     def list(self, selection):
         selection = self._selection(selection)
         self.calls.append(selection)
+        if self.list_error is not None:
+            raise self.list_error
         return self._elements(selection)
 
     def inspect(self, selection):
@@ -281,6 +292,7 @@ class FakePyFDB:
             else self.inspect_error
         )
         if error is not None:
+            assert isinstance(error, BaseException)
             raise error
         return self._elements(selection)
 
@@ -1543,6 +1555,59 @@ def test_process_lookup_inspect_failure_falls_back_only_its_subbatch(
     assert fallback_subbatches == 1
 
 
+def test_inspect_failure_recreates_handle_before_list_fallback():
+    created = []
+
+    def factory():
+        handle = FakePyFDB(FakePyGribJump())
+        if not created:
+            handle.inspect_error = RuntimeError("")
+        created.append(handle)
+        return handle
+
+    facade = extract._FDBHandleModule(factory(), factory)
+    request = base_request(date="20200101/20200102", time="0000")
+    spec, field_values = extract.parse_extract(request)
+    fields = list(extract.enumerate_fields(field_values, spec["order"]))
+    locations, fallback_subbatches = extract._lookup_process_locations_with_stats(
+        fields, extract._batch_request_for_fields(fields), facade
+    )
+
+    assert len(created) == 2
+    assert facade.handle is created[1]
+    assert len(created[0].inspect_calls) == 1
+    assert created[0].calls == []
+    assert created[1].calls == [extract._batch_request_for_fields(fields)]
+    assert len(locations) == len(fields)
+    assert fallback_subbatches == 1
+
+
+def test_list_protocol_failure_recreates_handle_defensively():
+    created = []
+
+    def factory():
+        handle = FakePyFDB(FakePyGribJump())
+        if not created:
+            handle.inspect_error = RuntimeError("")
+        elif len(created) == 1:
+            handle.list_error = RuntimeError("broken connection")
+        created.append(handle)
+        return handle
+
+    facade = extract._FDBHandleModule(factory(), factory)
+    request = single_field_request()
+    spec, field_values = extract.parse_extract(request)
+    fields = list(extract.enumerate_fields(field_values, spec["order"]))
+    locations, fallback_subbatches = extract._lookup_process_locations_with_stats(
+        fields, extract._batch_request_for_fields(fields), facade
+    )
+
+    assert locations == {}
+    assert fallback_subbatches == 1
+    assert len(created) == 3
+    assert facade.handle is created[2]
+
+
 def test_process_worker_payload_is_bit_identical_to_fallback(
     fake_gj, fake_fdb
 ):
@@ -1560,6 +1625,27 @@ def test_process_worker_payload_is_bit_identical_to_fallback(
     assert response["profile"]["lookup_fallbacks"] == 0
     assert response["profile"]["lookup_subbatches"] == 1
     assert response["profile"]["gj_subbatches"] == 1
+
+
+def test_extract_echo_is_opt_in_and_does_not_change_results(
+    fake_gj, monkeypatch, caplog
+):
+    monkeypatch.delenv("POLYTOPE_CHUNKS_EXTRACT_ECHO", raising=False)
+    disabled, _fields, disabled_fdb = _fake_process_response(base_request())
+    assert len(disabled_fdb.fake_gj.path_calls) == 1
+    assert "extract-echo" not in caplog.text
+
+    extract._reset_location_state()
+    monkeypatch.setenv("POLYTOPE_CHUNKS_EXTRACT_ECHO", "1")
+    enabled, _fields, enabled_fdb = _fake_process_response(base_request())
+
+    assert enabled["payload"] == disabled["payload"]
+    assert len(enabled_fdb.fake_gj.path_calls) == 2
+    assert enabled_fdb.fake_gj.path_calls[1]["ctx"] is None
+    assert re.search(
+        r"extract-echo job=process-test first_ms=\d+\.\d echo_ms=\d+\.\d",
+        caplog.text,
+    )
 
 
 def test_isolated_parent_populates_location_cache_from_worker_misses(

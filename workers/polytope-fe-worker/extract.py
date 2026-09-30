@@ -36,6 +36,7 @@ from contextlib import suppress
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import atexit
 import copy
+import gc
 import faulthandler
 import itertools
 import logging
@@ -459,7 +460,9 @@ def _run_gribjump(operation, pygribjump):
 
 
 def _get_fdb(pyfdb):
-    """Return the calling thread's lazily-created FDB handle."""
+    """Return the current child facade handle or a thread-local fallback handle."""
+    if hasattr(pyfdb, "reset"):
+        return pyfdb.FDB()
     if not hasattr(_thread_handles, "fdb"):
         _thread_handles.fdb = pyfdb.FDB()
     return _thread_handles.fdb
@@ -705,17 +708,51 @@ def _lookup_field_locations_unlocked(fields, batch_request, pyfdb):
     return _locations_from_elements(fields, iterator)
 
 
+def _reset_process_fdb(pyfdb):
+    """Drop a poisoned child-local remote handle and create a fresh connection."""
+    reset = getattr(pyfdb, "reset", None)
+    if reset is None:
+        raise ExtractError("process FDB handle cannot be reset after remote failure")
+    reset()
+
+
+def _list_process_locations(fields, batch_request, pyfdb):
+    """Run tolerant list and defensively replace its handle on protocol failure."""
+    elements = None
+    error = None
+    try:
+        elements = list(_get_fdb(pyfdb).list(batch_request))
+    except Exception as exc:
+        error = str(exc)
+    if elements is None:
+        logging.warning(
+            "Batched FDB list failed; resetting child FDB handle: %s", error
+        )
+        # Reset outside the exception scope so its traceback cannot retain the old
+        # C++ handle while the replacement connection is constructed.
+        _reset_process_fdb(pyfdb)
+        return {}
+    return _locations_from_elements(fields, iter(elements))
+
+
 def _inspect_process_locations(fields, batch_request, pyfdb):
     """Prefer strict inspect, retrying the whole sub-batch through tolerant list."""
+    elements = None
+    error = None
     try:
         # Materialise before parsing: inspect can fail lazily when any field in the
         # selection cannot be resolved strictly. A partial inspect result is unsafe.
         elements = list(_get_fdb(pyfdb).inspect(batch_request))
     except Exception as exc:
+        error = str(exc)
+    if elements is None:
         logging.warning(
-            "Batched FDB inspect failed; retrying sub-batch with list: %s", exc
+            "Batched FDB inspect failed; resetting child FDB handle before list: %s",
+            error,
         )
-        return _lookup_field_locations_unlocked(fields, batch_request, pyfdb), 1
+        # See _list_process_locations: destroy after leaving the exception scope.
+        _reset_process_fdb(pyfdb)
+        return _list_process_locations(fields, batch_request, pyfdb), 1
     return _locations_from_elements(fields, iter(elements)), 0
 
 
@@ -901,6 +938,10 @@ def _extract_with_hash_learning(operation, field, spec, pygribjump, pyfdb, job_i
 
 def _extract_trace_enabled():
     return os.environ.get("POLYTOPE_CHUNKS_EXTRACT_TRACE", "").strip() == "1"
+
+
+def _extract_echo_enabled():
+    return os.environ.get("POLYTOPE_CHUNKS_EXTRACT_ECHO", "").strip() == "1"
 
 
 def _extract_locations(
@@ -1435,13 +1476,21 @@ def _run_extract_fallback(request, pygribjump=None, pyfdb=None, user=None, job_i
 
 
 class _FDBHandleModule:
-    """Minimal pyfdb-module facade that always returns one pre-created handle."""
+    """pyfdb facade owning one resettable, child-local remote FDB handle."""
 
-    def __init__(self, handle):
+    def __init__(self, handle, factory=None):
         self.handle = handle
+        self.factory = factory
 
     def FDB(self):  # noqa: N802 - mirrors pyfdb
         return self.handle
+
+    def reset(self):
+        if self.factory is None:
+            raise ExtractError("process FDB handle has no reset factory")
+        self.handle = None
+        gc.collect()
+        self.handle = self.factory()
 
 
 def _lookup_process_locations_with_stats(fields, batch_request, pyfdb):
@@ -1529,6 +1578,7 @@ def _execute_process_job(job, pygribjump, pyfdb, gj, servermap):
     }
     updates = []
     invalidations = []
+    echo_runner = lambda: None
 
     try:
         if not cache_enabled:
@@ -1549,6 +1599,12 @@ def _execute_process_job(job, pygribjump, pyfdb, gj, servermap):
             profile["extract_ms"] = round(
                 (time.monotonic() - started) * 1000, 1
             )
+
+            def echo_requests():
+                requests = build_requests(fields, spec, pygribjump)
+                return list(gj.extract(requests))
+
+            echo_runner = echo_requests
         else:
             missing = [
                 (index, field)
@@ -1556,6 +1612,7 @@ def _execute_process_job(job, pygribjump, pyfdb, gj, servermap):
                 if location is None
             ]
             fallback_indices = set()
+            fallback_fields = []
             if missing and not job.get("locations_resolved", False):
                 started = time.monotonic()
                 if len(missing) == 1:
@@ -1725,6 +1782,44 @@ def _execute_process_job(job, pygribjump, pyfdb, gj, servermap):
             results = results_by_index
             profile["extract_ms"] = round(extract_seconds * 1000, 1)
 
+            echo_locations = []
+            for index, location in enumerate(locations):
+                if location is None or index in fallback_indices:
+                    continue
+                translated = servermap.translate(location)
+                if translated is not None and results_by_index[index] is not None:
+                    echo_locations.append(translated)
+            echo_fallback_fields = list(fallback_fields)
+
+            def echo_locations_once():
+                size = GJ_SUBBATCH or len(echo_locations) or 1
+                for start in range(0, len(echo_locations), size):
+                    _extract_locations(
+                        gj,
+                        pygribjump,
+                        echo_locations[start : start + size],
+                        spec,
+                        None,
+                    )
+                if echo_fallback_fields:
+                    requests = build_requests(
+                        echo_fallback_fields, spec, pygribjump
+                    )
+                    list(gj.extract(requests))
+
+            echo_runner = echo_locations_once
+
+        if _extract_echo_enabled():
+            echo_started = time.monotonic()
+            echo_runner()
+            echo_ms = round((time.monotonic() - echo_started) * 1000, 1)
+            logging.info(
+                "extract-echo job=%s first_ms=%.1f echo_ms=%.1f",
+                job_id or "-",
+                profile["extract_ms"],
+                echo_ms,
+            )
+
         started = time.monotonic()
         out = assemble(results, fields, spec)
         profile["assemble_ms"] = round(
@@ -1766,9 +1861,8 @@ def _process_worker_main(connection, slot):
         import pyfdb  # type: ignore[import-not-found]
         import pygribjump  # type: ignore[import-not-found]
 
-        fdb = pyfdb.FDB()
+        fdb_module = _FDBHandleModule(pyfdb.FDB(), pyfdb.FDB)
         gj = pygribjump.GribJump()
-        fdb_module = _FDBHandleModule(fdb)
         servermap = LocationServerMap.from_config("/tmp/gribjump.yaml")
         warm_locations = _resolve_process_warm_locations(fdb_module, servermap)
         _warm_gribjump_handle(gj, pygribjump, warm_locations)
