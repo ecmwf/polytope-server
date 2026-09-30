@@ -34,15 +34,34 @@ pub struct PathRequest {
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct ExtractPlan {
     pub kind: String,
+    #[serde(default)]
     pub paths: Vec<PathRequest>,
+    #[serde(default)]
     pub ranges: Vec<[usize; 2]>,
+    #[serde(default)]
     pub grid_hash: String,
+    #[serde(default)]
     pub dtype: String,
+    #[serde(default)]
     pub shuffle: bool,
     pub zstd_level: i32,
     #[serde(default)]
     pub context: Option<serde_json::Value>,
+    #[serde(default)]
+    pub elements: Vec<ExtractElementPlan>,
     pub profile: PlanProfile,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct ExtractElementPlan {
+    #[serde(default)]
+    pub status: u8,
+    #[serde(default)]
+    pub path_indices: Vec<usize>,
+    pub ranges: Vec<[usize; 2]>,
+    pub grid_hash: String,
+    pub dtype: String,
+    pub shuffle: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
@@ -63,6 +82,14 @@ pub struct PlanProfile {
     pub parse_ms: f64,
     pub enum_ms: f64,
     pub python_ms: f64,
+    #[serde(default = "default_one")]
+    pub chunks: usize,
+    #[serde(default)]
+    pub files: usize,
+}
+
+const fn default_one() -> usize {
+    1
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -98,9 +125,11 @@ struct RequestBatch {
 /// Group requests by physical file and greedily pack whole files up to the
 /// target. Oversized files remain intact. The mapping back to the caller's
 /// order is carried alongside each reordered batch.
+type FileRequests<'a> = BTreeMap<(&'a str, c_int, &'a str), Vec<(usize, &'a PathRequest)>>;
+
 fn file_aligned_batches(requests: &[PathRequest], target: usize) -> Vec<RequestBatch> {
     let target = target.max(1);
-    let mut files: BTreeMap<(&str, c_int, &str), Vec<(usize, &PathRequest)>> = BTreeMap::new();
+    let mut files: FileRequests<'_> = BTreeMap::new();
     for (original_index, request) in requests.iter().enumerate() {
         files
             .entry((&request.host, request.port, &request.path))
@@ -282,6 +311,9 @@ impl GribJumpExtractor {
 
     pub fn extract(&self, plan: &ExtractPlan) -> Result<ExtractOutput, String> {
         validate_plan(plan)?;
+        if plan.kind == "rust_gribjump_extract_v2" {
+            return self.extract_multi(plan);
+        }
         let context = plan
             .context
             .as_ref()
@@ -430,27 +462,229 @@ impl GribJumpExtractor {
         metrics.zstd_ms = round_tenth(metrics.zstd_ms);
         Ok(ExtractOutput { payload, metrics })
     }
+
+    fn extract_multi(&self, plan: &ExtractPlan) -> Result<ExtractOutput, String> {
+        validate_plan(plan)?;
+        let mut groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        for element in &plan.elements {
+            if element.status == 1 {
+                continue;
+            }
+            let indices = groups.entry(element.grid_hash.clone()).or_default();
+            for &index in &element.path_indices {
+                if !indices.contains(&index) {
+                    indices.push(index);
+                }
+            }
+        }
+
+        let mut extracted: BTreeMap<(String, usize), Vec<f64>> = BTreeMap::new();
+        let mut group_ranges: BTreeMap<String, Vec<[usize; 2]>> = BTreeMap::new();
+        let mut metrics = ExtractMetrics::default();
+        for (grid_hash, indices) in groups {
+            let ranges = merged_ranges(
+                plan.elements
+                    .iter()
+                    .filter(|element| element.status == 0 && element.grid_hash == grid_hash)
+                    .flat_map(|element| element.ranges.iter().copied()),
+            );
+            let paths = indices
+                .iter()
+                .map(|&index| plan.paths[index].clone())
+                .collect::<Vec<_>>();
+            let subplan = ExtractPlan {
+                kind: "rust_gribjump_extract_v1".to_string(),
+                paths,
+                ranges: ranges.clone(),
+                grid_hash: grid_hash.clone(),
+                dtype: "float64".to_string(),
+                shuffle: false,
+                zstd_level: plan.zstd_level,
+                context: plan.context.clone(),
+                elements: Vec::new(),
+                profile: plan.profile.clone(),
+            };
+            let output = self.extract(&subplan)?;
+            metrics.gj_subbatches += output.metrics.gj_subbatches;
+            metrics.inflight = metrics.inflight.max(output.metrics.inflight);
+            metrics.extract_ms += output.metrics.extract_ms;
+            metrics.assemble_ms += output.metrics.assemble_ms;
+            let raw = zstd::decode_all(std::io::Cursor::new(&output.payload))
+                .map_err(|error| format!("cannot decode intermediate extract: {error}"))?;
+            let per_field = ranges.iter().map(|[lo, hi]| hi - lo).sum::<usize>();
+            if raw.len() != indices.len() * per_field * 8 {
+                return Err("intermediate extract length mismatch".to_string());
+            }
+            for (field_offset, &path_index) in indices.iter().enumerate() {
+                let start = field_offset * per_field * 8;
+                let values = raw[start..start + per_field * 8]
+                    .chunks_exact(8)
+                    .map(|bytes| f64::from_le_bytes(bytes.try_into().expect("eight bytes")))
+                    .collect();
+                extracted.insert((grid_hash.clone(), path_index), values);
+            }
+            group_ranges.insert(grid_hash, ranges);
+        }
+
+        let assemble_started = Instant::now();
+        let mut results = Vec::with_capacity(plan.elements.len());
+        for element in &plan.elements {
+            if element.status == 1 {
+                results.push((1_u8, Vec::new()));
+                continue;
+            }
+            let ranges = &group_ranges[&element.grid_hash];
+            let expected = element
+                .ranges
+                .iter()
+                .map(|[lo, hi]| hi - lo)
+                .sum::<usize>();
+            let mut values = Vec::with_capacity(element.path_indices.len() * expected);
+            for &path_index in &element.path_indices {
+                let field = &extracted[&(element.grid_hash.clone(), path_index)];
+                append_selected_ranges(&mut values, field, ranges, &element.ranges)?;
+            }
+            let payload = encode_values(
+                values,
+                &element.dtype,
+                element.shuffle,
+                plan.zstd_level,
+                &mut metrics,
+            )?;
+            results.push((0_u8, payload));
+        }
+        metrics.assemble_ms += milliseconds(assemble_started.elapsed());
+
+        let mut payload = Vec::new();
+        payload.extend_from_slice(b"PZMC");
+        payload.push(1);
+        payload.extend_from_slice(&(results.len() as u32).to_le_bytes());
+        for (status, bytes) in &results {
+            payload.push(*status);
+            payload.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
+        }
+        for (_status, bytes) in results {
+            payload.extend_from_slice(&bytes);
+        }
+        metrics.payload_bytes = payload.len();
+        metrics.assemble_ms = round_tenth(metrics.assemble_ms);
+        Ok(ExtractOutput { payload, metrics })
+    }
 }
 
 fn validate_plan(plan: &ExtractPlan) -> Result<(), String> {
+    if plan.kind == "rust_gribjump_extract_v2" {
+        if plan.elements.is_empty() {
+            return Err("multi extract plan has no elements".to_string());
+        }
+        for (element_index, element) in plan.elements.iter().enumerate() {
+            if element.status > 1 {
+                return Err(format!("invalid status for element {element_index}"));
+            }
+            if element.status == 0 && element.path_indices.is_empty() {
+                return Err(format!("element {element_index} has no paths"));
+            }
+            if element.path_indices.iter().any(|&index| index >= plan.paths.len()) {
+                return Err(format!("element {element_index} has an invalid path index"));
+            }
+            validate_wire(&element.ranges, &element.dtype)?;
+        }
+        return Ok(());
+    }
     if plan.kind != "rust_gribjump_extract_v1" {
         return Err(format!("unsupported extract plan kind {:?}", plan.kind));
     }
     if plan.paths.is_empty() {
         return Err("extract plan has no paths".to_string());
     }
-    if plan.ranges.is_empty() {
+    validate_wire(&plan.ranges, &plan.dtype)
+}
+
+fn validate_wire(ranges: &[[usize; 2]], dtype: &str) -> Result<(), String> {
+    if ranges.is_empty() {
         return Err("extract plan has no ranges".to_string());
     }
-    if plan.dtype != "float32" && plan.dtype != "float64" {
-        return Err(format!("unsupported extract dtype {:?}", plan.dtype));
+    if dtype != "float32" && dtype != "float64" {
+        return Err(format!("unsupported extract dtype {dtype:?}"));
     }
-    for [start, end] in &plan.ranges {
+    for [start, end] in ranges {
         if end <= start {
             return Err(format!("invalid extract range [{start}, {end}]"));
         }
     }
     Ok(())
+}
+
+fn merged_ranges(ranges: impl Iterator<Item = [usize; 2]>) -> Vec<[usize; 2]> {
+    let mut ranges = ranges.collect::<Vec<_>>();
+    ranges.sort_unstable();
+    let mut merged: Vec<[usize; 2]> = Vec::new();
+    for [lo, hi] in ranges {
+        if let Some(last) = merged.last_mut()
+            && lo <= last[1]
+        {
+            last[1] = last[1].max(hi);
+        } else {
+            merged.push([lo, hi]);
+        }
+    }
+    merged
+}
+
+fn append_selected_ranges(
+    output: &mut Vec<f64>,
+    field: &[f64],
+    union_ranges: &[[usize; 2]],
+    selected_ranges: &[[usize; 2]],
+) -> Result<(), String> {
+    for [selected_lo, selected_hi] in selected_ranges {
+        let mut base = 0;
+        let mut copied = 0;
+        for [union_lo, union_hi] in union_ranges {
+            let lo = (*selected_lo).max(*union_lo);
+            let hi = (*selected_hi).min(*union_hi);
+            if lo < hi {
+                let start = base + lo - union_lo;
+                output.extend_from_slice(&field[start..start + hi - lo]);
+                copied += hi - lo;
+            }
+            base += union_hi - union_lo;
+        }
+        if copied != selected_hi - selected_lo {
+            return Err("selected range is not covered by union extraction".to_string());
+        }
+    }
+    Ok(())
+}
+
+fn encode_values(
+    values: Vec<f64>,
+    dtype: &str,
+    shuffle: bool,
+    zstd_level: i32,
+    metrics: &mut ExtractMetrics,
+) -> Result<Vec<u8>, String> {
+    let shuffle_started = Instant::now();
+    let item_size = if dtype == "float32" { 4 } else { 8 };
+    let mut wire = Vec::with_capacity(values.len() * item_size);
+    if item_size == 4 {
+        for value in values {
+            wire.extend_from_slice(&(value as f32).to_le_bytes());
+        }
+    } else {
+        for value in values {
+            wire.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    metrics.raw_bytes += wire.len();
+    if shuffle {
+        wire = byte_shuffle(&wire, item_size);
+    }
+    metrics.shuffle_ms += milliseconds(shuffle_started.elapsed());
+    let zstd_started = Instant::now();
+    let payload = compress_python_compatible(&wire, zstd_level)?;
+    metrics.zstd_ms += milliseconds(zstd_started.elapsed());
+    Ok(payload)
 }
 
 fn byte_shuffle(wire: &[u8], item_size: usize) -> Vec<u8> {
@@ -916,6 +1150,7 @@ mod tests {
             shuffle,
             zstd_level: 3,
             context: None,
+            elements: Vec::new(),
             profile: PlanProfile::default(),
         }
     }
@@ -1093,6 +1328,80 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn multi_elements_match_single_payloads_and_share_file_call() {
+        let state = Arc::new(FakeState::default());
+        let extractor = extractor(&state, 1, DEFAULT_SUBBATCH);
+        let paths = (1..=3)
+            .map(|offset| PathRequest {
+                path: "/shared-file".to_string(),
+                offset,
+                host: "store".to_string(),
+                port: 9000,
+                scheme: "fdb".to_string(),
+            })
+            .collect::<Vec<_>>();
+        let single = |indices: &[usize], dtype: &str, shuffle: bool| ExtractPlan {
+            kind: "rust_gribjump_extract_v1".to_string(),
+            paths: indices.iter().map(|&index| paths[index].clone()).collect(),
+            ranges: vec![[0, 3]],
+            grid_hash: "hash".to_string(),
+            dtype: dtype.to_string(),
+            shuffle,
+            zstd_level: 3,
+            context: None,
+            elements: Vec::new(),
+            profile: PlanProfile::default(),
+        };
+        let expected0 = extractor.extract(&single(&[0, 1], "float32", true)).unwrap().payload;
+        let expected1 = extractor.extract(&single(&[2], "float64", false)).unwrap().payload;
+        state.calls.lock().unwrap().clear();
+
+        let multi = ExtractPlan {
+            kind: "rust_gribjump_extract_v2".to_string(),
+            paths,
+            ranges: Vec::new(),
+            grid_hash: String::new(),
+            dtype: String::new(),
+            shuffle: false,
+            zstd_level: 3,
+            context: None,
+            elements: vec![
+                ExtractElementPlan {
+                    status: 0, path_indices: vec![0, 1], ranges: vec![[0, 3]],
+                    grid_hash: "hash".to_string(), dtype: "float32".to_string(), shuffle: true,
+                },
+                ExtractElementPlan {
+                    status: 0, path_indices: vec![2], ranges: vec![[0, 3]],
+                    grid_hash: "hash".to_string(), dtype: "float64".to_string(), shuffle: false,
+                },
+                ExtractElementPlan {
+                    status: 1, path_indices: Vec::new(), ranges: vec![[0, 3]],
+                    grid_hash: "hash".to_string(), dtype: "float32".to_string(), shuffle: true,
+                },
+            ],
+            profile: PlanProfile::default(),
+        };
+        let output = extractor.extract(&multi).unwrap();
+        assert_eq!(*state.calls.lock().unwrap(), vec![vec![
+            "/shared-file".to_string(), "/shared-file".to_string(), "/shared-file".to_string(),
+        ]]);
+        assert_eq!(&output.payload[..9], b"PZMC\x01\x03\x00\x00\x00");
+        let mut cursor = 9;
+        let mut entries = Vec::new();
+        for _ in 0..3 {
+            let status = output.payload[cursor];
+            let length = u64::from_le_bytes(output.payload[cursor + 1..cursor + 9].try_into().unwrap()) as usize;
+            entries.push((status, length));
+            cursor += 9;
+        }
+        assert_eq!(entries, vec![(0, expected0.len()), (0, expected1.len()), (1, 0)]);
+        assert_eq!(&output.payload[cursor..cursor + expected0.len()], expected0);
+        cursor += expected0.len();
+        assert_eq!(&output.payload[cursor..], expected1);
+    }
+
 
     #[test]
     fn rejects_invalid_ranges_before_ffi() {

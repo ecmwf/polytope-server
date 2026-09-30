@@ -1265,6 +1265,63 @@ def test_prepare_rust_extract_plan_keeps_field_order(fake_gj, monkeypatch):
     assert plan["profile"]["lookup_mode"] == "inspect-parallel"
 
 
+def test_prepare_rust_multi_plan_deduplicates_union_and_marks_missing(fake_gj, monkeypatch):
+    enable_location_cache(monkeypatch)
+    first = base_request()
+    second = base_request(param="168")
+    calls = []
+
+    class LookupPool:
+        @staticmethod
+        def lookup(tasks):
+            calls.append(tasks)
+            looked_up = [field for task in tasks for field in task["fields"]]
+            found = [field for field in looked_up if field["param"] == "167"]
+            return {
+                "locations": {
+                    location_cache.canonical_field_key(field): make_location(field)
+                    for field in found
+                },
+                "fallbacks": 0,
+            }
+
+    monkeypatch.setattr(extract, "PROC_POOL_SIZE", 1)
+    monkeypatch.setattr(extract, "_get_process_pool", lambda: LookupPool())
+    plan, content_type, _timings = extract.prepare_rust_extract_plan(
+        {"chunks": [first, first.copy(), second]}
+    )
+
+    assert content_type == "application/x-polytope-multichunk"
+    assert plan["kind"] == "rust_gribjump_extract_v2"
+    assert len(calls) == 1
+    assert plan["profile"]["fields"] == 12  # duplicate first element is looked up once
+    assert [element["status"] for element in plan["elements"]] == [0, 0, 1]
+    assert plan["elements"][0]["path_indices"] == plan["elements"][1]["path_indices"]
+    assert plan["elements"][2]["path_indices"] == []
+
+
+def test_multi_fallback_frames_payloads_and_data_not_found(fake_gj, monkeypatch):
+    calls = []
+
+    def single(request, **_kwargs):
+        calls.append(request["param"])
+        if request["param"] == "168":
+            raise extract.ExtractError("DataNotFound: Matched 0 fields")
+        return b"single-zstd", "application/octet-stream", {}
+
+    monkeypatch.setattr(extract, "_run_extract_fallback", single)
+    payload, content_type, timings = extract.run_extract(
+        {"chunks": [base_request(), base_request(param="168")]}
+    )
+    assert calls == ["167", "168"]
+    assert content_type == "application/x-polytope-multichunk"
+    assert payload[:9] == b"PZMC\x01\x02\x00\x00\x00"
+    assert payload[9] == 0 and int.from_bytes(payload[10:18], "little") == len(b"single-zstd")
+    assert payload[18] == 1 and int.from_bytes(payload[19:27], "little") == 0
+    assert payload[27:] == b"single-zstd"
+    assert timings["chunks"] == 2
+
+
 def test_dispatch_native_extract_returns_plan(fake_gj, recording_ds, monkeypatch):
     monkeypatch.setenv("POLYTOPE_CHUNKS_RUST_EXTRACT", "1")
     expected_plan = {

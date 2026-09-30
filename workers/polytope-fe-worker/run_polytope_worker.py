@@ -12,6 +12,7 @@ import threading
 import time
 import traceback
 from pathlib import Path
+from typing import Any
 
 
 # Thread-local storage for per-call log capture.
@@ -139,12 +140,13 @@ DEFAULT_CONTENT_TYPE = "application/prs.coverage+json"
 
 
 def _is_extract_request(request_payload) -> bool:
-    """A job is a /chunks/v1 extract job iff its request has a top-level
-    ``extract`` object (wire contract v0 §2). Kept import-free so the legacy
-    path never imports extract.py or its deps."""
-    return isinstance(request_payload, dict) and isinstance(
-        request_payload.get("extract"), dict
-    )
+    """True for either Contract v2.5 extract body form."""
+    if not isinstance(request_payload, dict):
+        return False
+    if isinstance(request_payload.get("extract"), dict):
+        return True
+    chunks = request_payload.get("chunks")
+    return isinstance(chunks, list) and bool(chunks)
 
 
 def _datasource_mime_type(datasource) -> str:
@@ -245,6 +247,7 @@ def process(payload_json: str) -> tuple:
         payload.get("metadata", {})
     )
 
+    timings: dict[str, Any]
     try:
         if _is_extract_request(request.coerced_request):
             # Python owns the chunks control plane. Native mode stops after FDB

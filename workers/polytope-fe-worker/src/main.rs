@@ -219,6 +219,11 @@ impl Processor for PolytopeProcessor {
                         };
                         let extraction_started = Instant::now();
                         let plan_profile = plan.profile.clone();
+                        let content_type = if plan.kind == "rust_gribjump_extract_v2" {
+                            "application/x-polytope-multichunk"
+                        } else {
+                            "application/octet-stream"
+                        };
                         let native =
                             tokio::task::spawn_blocking(move || extractor.extract(&plan)).await;
                         let output = match native {
@@ -238,7 +243,7 @@ impl Processor for PolytopeProcessor {
                         let rust_wall_ms = extraction_started.elapsed().as_secs_f64() * 1000.0;
                         update_native_timings(&mut status.timings, &output.metrics, rust_wall_ms);
                         emit_chunks_profile(&plan_profile, &output.metrics, rust_wall_ms);
-                        (output.payload, "application/octet-stream".to_string())
+                        (output.payload, content_type.to_string())
                     }
                 };
 
@@ -303,7 +308,7 @@ fn emit_chunks_profile(
 ) {
     let total_ms = profile.python_ms + rust_wall_ms;
     info!(
-        "chunks-profile job={} status=ok phase=done proc=rust fields={} ranges={} points={} \
+        "chunks-profile job={} status=ok phase=done proc=rust fields={} chunks={} files={} ranges={} points={} \
          dtype={} shuffle={} cache={}/{} fallback={} lookup_mode={} \
          lookup_fallbacks={} subbatches={}/{} inflight={} t_lookup={:.1}ms \
          t_parse={:.1}ms t_enum={:.1}ms t_extract={:.1}ms t_assemble={:.1}ms \
@@ -311,6 +316,8 @@ fn emit_chunks_profile(
          raw_bytes={} bytes={} zstd_level={}",
         profile.job,
         profile.fields,
+        profile.chunks,
+        profile.files,
         profile.ranges,
         profile.points,
         profile.dtype,

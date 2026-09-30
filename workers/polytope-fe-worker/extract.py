@@ -47,6 +47,7 @@ import re
 import sys
 import threading
 import time
+import struct
 from urllib.parse import parse_qs
 
 import numpy as np
@@ -59,6 +60,7 @@ from location_cache import (  # type: ignore[import-not-found]
 )
 
 CONTENT_TYPE = "application/octet-stream"
+MULTI_CONTENT_TYPE = "application/x-polytope-multichunk"
 
 EXTRACT_KEY = "extract"
 
@@ -2298,8 +2300,197 @@ def _path_plan(location):
     }
 
 
+def _multi_chunks(request):
+    if not isinstance(request, dict) or not isinstance(request.get("chunks"), list):
+        return None
+    chunks = request["chunks"]
+    if not chunks:
+        raise ExtractError("multi-chunk request has no elements")
+    return chunks
+
+
+def _frame_multi(status_payloads):
+    header = bytearray(b"PZMC")
+    header.extend(struct.pack("<BI", 1, len(status_payloads)))
+    payloads = bytearray()
+    for status, payload in status_payloads:
+        if status not in (0, 1) or (status == 1 and payload):
+            raise ExtractError("invalid multi-chunk element result")
+        header.extend(struct.pack("<BQ", status, len(payload)))
+        payloads.extend(payload)
+    return bytes(header + payloads)
+
+
+def _is_data_not_found_error(exc):
+    text = str(getattr(exc, "message", exc))
+    return "DataNotFound" in text or "Matched 0 fields" in text
+
+
+def _prepare_rust_multi_extract_plan(request, user=None, job_id=None):
+    """Parse all elements, deduplicate fields and perform one union lookup."""
+    prof = _isolated_profile(job_id)
+    started = time.monotonic()
+    parsed_elements = []
+    union_fields = []
+    union_by_key = {}
+    total_ranges = 0
+    total_points = 0
+
+    chunks = _multi_chunks(request)
+    assert chunks is not None
+    for chunk in chunks:
+        spec, field_values = parse_extract(chunk)
+        spec["registry_grid_hash"] = spec["grid_hash"]
+        fields = list(enumerate_fields(field_values, spec["order"]))
+        if not fields:
+            raise ExtractError("extract request enumerated no fields")
+        _apply_hash_override(fields[0], spec)
+        indices = []
+        for field in fields:
+            key = canonical_field_key(field)
+            index = union_by_key.get(key)
+            if index is None:
+                index = len(union_fields)
+                union_by_key[key] = index
+                union_fields.append(field)
+            indices.append(index)
+        parsed_elements.append((spec, indices))
+        total_ranges += len(spec["ranges"])
+        total_points += len(fields) * sum(hi - lo for lo, hi in spec["ranges"])
+
+    parsed = time.monotonic()
+    prof["parse_ms"] = _ms(started, parsed)
+    prof["fields"] = len(union_fields)
+    prof["ranges"] = total_ranges
+    prof["points"] = total_points
+    prof["dtype"] = "mixed"
+    prof["shuffle"] = 0
+
+    cache = _get_location_cache()
+    locations = []
+    missing = []
+    for index, field in enumerate(union_fields):
+        location = cache.get(field) if cache.enabled else None
+        locations.append(location)
+        if location is None:
+            prof["cache_misses"] += 1
+            missing.append((index, field))
+        else:
+            prof["cache_hits"] += 1
+    prof["enum_ms"] = _ms(parsed, time.monotonic())
+
+    pool = _get_process_pool()
+    if pool is None:
+        raise ExtractError("extraction subprocess pool is disabled")
+    if missing:
+        lookup_started = time.monotonic()
+        tasks = []
+        missing_fields = [field for _index, field in missing]
+        for start in range(0, len(missing_fields), LOOKUP_SUBBATCH):
+            subset = missing_fields[start : start + LOOKUP_SUBBATCH]
+            tasks.append(
+                {
+                    "task": "lookup",
+                    "fields": subset,
+                    "batch_request": _batch_request_for_fields(subset),
+                }
+            )
+        prof["lookup_mode"] = "inspect-parallel"
+        prof["lookup_subbatches"] = len(tasks)
+        lookup_result = pool.lookup(tasks)
+        prof["lookup_fallbacks"] = lookup_result["fallbacks"]
+        inserts = []
+        for index, field in missing:
+            location = lookup_result["locations"].get(canonical_field_key(field))
+            locations[index] = location
+            if location is not None:
+                inserts.append((field, location))
+        if cache.enabled:
+            cache.put_many(inserts)
+        prof["lookup_ms"] = _ms(lookup_started, time.monotonic())
+
+    statuses = []
+    for _spec, indices in parsed_elements:
+        statuses.append(1 if any(locations[index] is None for index in indices) else 0)
+
+    servermap = _get_location_servermap()
+    paths = []
+    path_index = {}
+    for (_spec, indices), status in zip(parsed_elements, statuses):
+        if status:
+            continue
+        for union_index in indices:
+            if union_index in path_index:
+                continue
+            translated = servermap.translate(locations[union_index])
+            if translated is None:
+                raise ExtractError(
+                    "FDB location is not routable for field "
+                    f"{_describe(union_fields[union_index])}"
+                )
+            path_index[union_index] = len(paths)
+            paths.append(_path_plan(translated))
+
+    elements = []
+    for (spec, indices), status in zip(parsed_elements, statuses):
+        elements.append(
+            {
+                "status": status,
+                "path_indices": []
+                if status
+                else [path_index[index] for index in indices],
+                "ranges": [list(item) for item in spec["ranges"]],
+                "grid_hash": spec["grid_hash"],
+                "dtype": spec["dtype"],
+                "shuffle": spec["shuffle"],
+            }
+        )
+
+    context = None
+    if user is not None:
+        context = {
+            "user": f"{getattr(user, 'realm', '')}:{getattr(user, 'username', '')}"
+        }
+        if job_id:
+            context["job_id"] = job_id
+
+    prof["python_ms"] = _ms(started, time.monotonic())
+    files = len({(path["host"], path["port"], path["path"]) for path in paths})
+    profile_keys = (
+        "job",
+        "fields",
+        "ranges",
+        "points",
+        "dtype",
+        "shuffle",
+        "cache_hits",
+        "cache_misses",
+        "fallbacks",
+        "lookup_mode",
+        "lookup_fallbacks",
+        "lookup_subbatches",
+        "lookup_ms",
+        "parse_ms",
+        "enum_ms",
+        "python_ms",
+    )
+    profile = {key: prof[key] for key in profile_keys}
+    profile.update({"chunks": len(elements), "files": files})
+    plan = {
+        "kind": "rust_gribjump_extract_v2",
+        "paths": paths,
+        "elements": elements,
+        "zstd_level": ZSTD_LEVEL,
+        "context": context,
+        "profile": profile,
+    }
+    return plan, MULTI_CONTENT_TYPE, _profile_timings(prof)
+
+
 def prepare_rust_extract_plan(request, user=None, job_id=None):
     """Keep parsing/enumeration/FDB lookup in Python and return a compact Rust plan."""
+    if _multi_chunks(request) is not None:
+        return _prepare_rust_multi_extract_plan(request, user=user, job_id=job_id)
     prof = _isolated_profile(job_id)
     started = time.monotonic()
     spec, field_values = parse_extract(request)
@@ -2539,8 +2730,40 @@ def _run_extract_isolated(request, user=None, job_id=None):
     return payload, CONTENT_TYPE, _profile_timings(prof)
 
 
+def _run_multi_extract_fallback(
+    request, pygribjump=None, pyfdb=None, user=None, job_id=None
+):
+    results = []
+    chunks = _multi_chunks(request)
+    assert chunks is not None
+    for chunk in chunks:
+        try:
+            payload, _content_type, _timings = run_extract(
+                chunk,
+                pygribjump=pygribjump,
+                pyfdb=pyfdb,
+                user=user,
+                job_id=job_id,
+            )
+            results.append((0, payload))
+        except Exception as exc:
+            if not _is_data_not_found_error(exc):
+                raise
+            results.append((1, b""))
+    payload = _frame_multi(results)
+    return payload, MULTI_CONTENT_TYPE, {"payload_bytes": len(payload), "chunks": len(results)}
+
+
 def run_extract(request, pygribjump=None, pyfdb=None, user=None, job_id=None):
     """Serve an extract job through the process pool, or retained fallback mode."""
+    if _multi_chunks(request) is not None:
+        return _run_multi_extract_fallback(
+            request,
+            pygribjump=pygribjump,
+            pyfdb=pyfdb,
+            user=user,
+            job_id=job_id,
+        )
     if PROC_POOL_SIZE > 0 and pygribjump is None and pyfdb is None:
         return _run_extract_isolated(request, user=user, job_id=job_id)
     return _run_extract_fallback(
