@@ -1456,6 +1456,7 @@ async fn extract_pending_redirects_to_v2_poll_url() {
     assert_eq!(job.request, expected_job_body());
     assert_eq!(job.metadata["api"], "chunks");
     assert_eq!(job.metadata["collection"], COLLECTION);
+    assert_eq!(job.metadata["buffer_full_output"], true);
 
     // Polling the Location on the existing v2 endpoint works (still pending).
     let resp = app

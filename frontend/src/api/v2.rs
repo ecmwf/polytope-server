@@ -160,6 +160,12 @@ pub(crate) async fn submit_and_poll(
     job.metadata_mut()["collection"] = serde_json::json!(collection);
     if let Some(api) = api {
         job.metadata_mut()["api"] = serde_json::json!(api);
+        if api == "chunks" {
+            // A terminal poll consumes the BITS result. Keep chunk payloads in BOBS
+            // so the terminal response is a repeatable redirect, rather than a
+            // one-shot inline body that becomes a 404 when a client retries the GET.
+            job.metadata_mut()["buffer_full_output"] = serde_json::json!(true);
+        }
     }
     super::set_job_mock_time_metadata(&mut job, mock_time_extensions.mock_time.as_ref());
     tracing::debug!(
