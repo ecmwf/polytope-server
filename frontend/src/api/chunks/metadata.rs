@@ -406,14 +406,16 @@ fn default_chunking(
     tree.collect_axis_dims(&mut axis_dims);
     let date_len = tree.max_axis_len("date");
     let time_len = tree.max_axis_len("time");
-    let temporal_fields = date_len.unwrap_or(1).saturating_mul(time_len.unwrap_or(1));
     let feature_points = tree.max_feature_points();
     let max_fields_per_job = feature_points
         .map(|points| configured_max_fields.min((max_chunk_cost / points).max(1)));
     let mut temporal_chunks = std::collections::BTreeMap::new();
-    if let Some(max_fields_per_job) = max_fields_per_job
-        && temporal_fields > max_fields_per_job
-    {
+    // Feature series pack the temporal axes up to the per-job field target, whether
+    // or not the series exceeds it: a short series becomes one job, not one job per
+    // field (a 90-day hourly point series was 2,160 jobs, enough to exhaust the
+    // ingress's per-connection request limit). Field-shaped arrays (no feature) keep
+    // one field per chunk.
+    if let Some(max_fields_per_job) = max_fields_per_job {
         let mut remaining = max_fields_per_job;
         if let Some(len) = time_len {
             let chunk = len.min(remaining).max(1);

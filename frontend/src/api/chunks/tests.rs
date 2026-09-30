@@ -441,6 +441,40 @@ chunks:
 }
 
 #[tokio::test]
+async fn metadata_packs_short_temporal_feature_series_into_one_default_chunk() {
+    let config = r#"
+chunks:
+  max_chunk_cost: 30000000
+  default_max_fields_per_job: 1000
+  grids:
+    - collection: destination-earth
+      match: { class: d1, dataset: climate-dt, resolution: high }
+      count_values: 12
+      nside: 1
+      md5_grid_section: "f78d9d2d6f6f1b4c8f0b3a6d1b1e2c3d"
+"#;
+    let (status, _, body) = post_json(
+        app_with_qube_and_config(arena_simple(), config),
+        "/chunks/v1/destination-earth/metadata",
+        &json!({
+            "request": climate_dt_request(),
+            "feature": {
+                "type": "polygon",
+                "shape": [[-20, -20], [20, -20], [20, 20], [-20, 20]],
+            },
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let value: Value = serde_json::from_slice(&body).unwrap();
+    // 2 dates x 2 times = 4 fields, under the target: one chunk, not four.
+    assert_eq!(
+        value["chunking"]["default"],
+        json!({"date": 2, "time": 2, "points": 0})
+    );
+}
+
+#[tokio::test]
 async fn metadata_heterogeneous_builds_two_named_array_sets() {
     let request = json!({
         "class": "d1", "dataset": "climate-dt", "resolution": "high",
@@ -844,10 +878,12 @@ async fn metadata_feature_has_exact_contract_json_and_points_dimension() {
             "extract": {"grid_hash": MD5, "order": ["date", "time"]},
         })
     );
+    // Feature series pack their temporal axes into one default chunk while under
+    // chunks.default_max_fields_per_job (here 2 dates x 2 times = 4 fields).
     assert_eq!(
         value["chunking"],
         json!({
-            "default": {"date": 1, "time": 1, "points": 0},
+            "default": {"date": 2, "time": 2, "points": 0},
             "max_chunk_cost": 30_000_000,
         })
     );
