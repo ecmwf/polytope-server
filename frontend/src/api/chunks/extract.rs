@@ -104,9 +104,12 @@ fn parse_order(value: Option<&Value>) -> Result<Vec<String>, String> {
         .collect()
 }
 
-/// Validate an extract body and build the job body. `max_chunk_cost` bounds
-/// fields x points.
+/// Validate an extract body and build the flat worker job body.
 pub fn build_extract_job(body: &Value, max_chunk_cost: u64) -> Result<Value, String> {
+    build_single_extract_job(body, max_chunk_cost).map(|(job, _cost)| job)
+}
+
+fn build_single_extract_job(body: &Value, max_chunk_cost: u64) -> Result<(Value, u64), String> {
     let obj = body
         .as_object()
         .ok_or("request body must be a JSON object")?;
@@ -196,15 +199,15 @@ pub fn build_extract_job(body: &Value, max_chunk_cost: u64) -> Result<Value, Str
         .iter()
         .try_fold(0u64, |acc, (lo, hi)| acc.checked_add(hi - lo));
     let cost = fields.zip(points).and_then(|(f, p)| f.checked_mul(p));
-    match cost {
-        Some(cost) if cost <= max_chunk_cost => {}
+    let cost = match cost {
+        Some(cost) if cost <= max_chunk_cost => cost,
         _ => {
             return Err(format!(
                 "extract cost (fields x points = {}) exceeds max_chunk_cost {max_chunk_cost}",
                 cost.map_or_else(|| "overflow".to_string(), |c| c.to_string())
             ));
         }
-    }
+    };
 
     request.insert(
         EXTRACT_KEY.to_string(),
@@ -216,7 +219,47 @@ pub fn build_extract_job(body: &Value, max_chunk_cost: u64) -> Result<Value, Str
             "shuffle": shuffle,
         }),
     );
-    Ok(Value::Object(request))
+    Ok((Value::Object(request), cost))
+}
+
+/// Accept either the legacy single body or Contract v2.5's multi-chunk envelope.
+pub fn build_extract_request(
+    body: &Value,
+    max_chunk_cost: u64,
+    max_multi_chunks: usize,
+) -> Result<Value, String> {
+    let Some(obj) = body.as_object() else {
+        return Err("request body must be a JSON object".to_string());
+    };
+    let Some(chunks) = obj.get("chunks") else {
+        return build_extract_job(body, max_chunk_cost);
+    };
+    if obj.len() != 1 {
+        return Err("a multi-chunk body must contain only 'chunks'".to_string());
+    }
+    let chunks = chunks.as_array().ok_or("'chunks' must be a JSON array")?;
+    if chunks.is_empty() || chunks.len() > max_multi_chunks {
+        return Err(format!(
+            "'chunks' must contain between 1 and {max_multi_chunks} elements"
+        ));
+    }
+
+    let mut normalized = Vec::with_capacity(chunks.len());
+    let mut aggregate_cost = 0u64;
+    for (index, chunk) in chunks.iter().enumerate() {
+        let (job, cost) = build_single_extract_job(chunk, max_chunk_cost)
+            .map_err(|error| format!("chunks[{index}]: {error}"))?;
+        aggregate_cost = aggregate_cost
+            .checked_add(cost)
+            .ok_or("aggregate extract cost overflow")?;
+        normalized.push(job);
+    }
+    if aggregate_cost > max_chunk_cost {
+        return Err(format!(
+            "aggregate extract cost {aggregate_cost} exceeds max_chunk_cost {max_chunk_cost}"
+        ));
+    }
+    Ok(json!({"chunks": normalized}))
 }
 
 #[cfg(test)]
@@ -420,5 +463,32 @@ mod tests {
                 "case '{name}' should be rejected"
             );
         }
+    }
+
+    #[test]
+    fn builds_multi_job_and_enforces_limits() {
+        let first = body();
+        let mut second = body();
+        second["request"]["param"] = json!("168");
+        let job =
+            build_extract_request(&json!({"chunks": [first.clone(), second]}), 1_000, 2).unwrap();
+        assert_eq!(job["chunks"].as_array().unwrap().len(), 2);
+        assert_eq!(job["chunks"][0]["extract"]["dtype"], "float64");
+
+        assert!(build_extract_request(&json!({"chunks": []}), 1_000, 2).is_err());
+        assert!(build_extract_request(
+            &json!({"chunks": [first.clone(), first.clone(), first]}),
+            1_000,
+            2
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn multi_aggregate_cost_is_bounded() {
+        let first = body(); // four fields x 15 points = 60
+        let mut second = body();
+        second["request"]["param"] = json!("168");
+        assert!(build_extract_request(&json!({"chunks": [first, second]}), 100, 64).is_err());
     }
 }

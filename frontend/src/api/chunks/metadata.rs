@@ -129,10 +129,9 @@ impl Node {
 
     fn max_feature_points(&self) -> Option<u64> {
         match self {
-            Node::Group { children, .. } => children
-                .iter()
-                .filter_map(Node::max_feature_points)
-                .max(),
+            Node::Group { children, .. } => {
+                children.iter().filter_map(Node::max_feature_points).max()
+            }
             Node::ArraySet { feature, .. } => feature.as_ref().map(|value| value.n_points),
         }
     }
@@ -172,6 +171,8 @@ pub struct Variable {
 pub struct Chunking {
     pub default: OrderedMap<u64>,
     pub max_chunk_cost: u64,
+    pub max_fields_per_job: u64,
+    pub max_multi_chunks: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -388,6 +389,8 @@ pub fn build_metadata_v2(
         chunking: Chunking {
             default: OrderedMap(default_chunks),
             max_chunk_cost: config.max_chunk_cost,
+            max_fields_per_job: config.default_max_fields_per_job,
+            max_multi_chunks: config.max_multi_chunks,
         },
         catalogue: CatalogueInfo {
             source: handle.source.clone(),
@@ -407,8 +410,8 @@ fn default_chunking(
     let date_len = tree.max_axis_len("date");
     let time_len = tree.max_axis_len("time");
     let feature_points = tree.max_feature_points();
-    let max_fields_per_job = feature_points
-        .map(|points| configured_max_fields.min((max_chunk_cost / points).max(1)));
+    let max_fields_per_job =
+        feature_points.map(|points| configured_max_fields.min((max_chunk_cost / points).max(1)));
     let mut temporal_chunks = std::collections::BTreeMap::new();
     // Feature series pack the temporal axes up to the per-job field target, whether
     // or not the series exceeds it: a short series becomes one job, not one job per

@@ -181,9 +181,13 @@ pub async fn extract_handler(
     let Some(route_handle) = state.app.collections.get(&collection).cloned() else {
         return bad_request(EP, format!("unknown collection '{collection}'"));
     };
-    let job_body = match parse_json(&body)
-        .and_then(|b| extract::build_extract_job(&b, state.config.max_chunk_cost))
-    {
+    let job_body = match parse_json(&body).and_then(|body| {
+        extract::build_extract_request(
+            &body,
+            state.config.max_chunk_cost,
+            state.config.max_multi_chunks,
+        )
+    }) {
         Ok(job_body) => job_body,
         Err(msg) => return bad_request(EP, msg),
     };

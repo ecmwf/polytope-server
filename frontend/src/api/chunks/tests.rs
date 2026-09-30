@@ -393,7 +393,12 @@ async fn metadata_single_cube_is_root_array_set() {
     // chunking + catalogue provenance.
     assert_eq!(
         v["chunking"],
-        json!({"default": {"date": 1, "time": 1, "values": 0}, "max_chunk_cost": 30000000})
+        json!({
+            "default": {"date": 1, "time": 1, "values": 0},
+            "max_chunk_cost": 30_000_000,
+            "max_fields_per_job": 8_760,
+            "max_multi_chunks": 64,
+        })
     );
     assert_eq!(
         v["catalogue"],
@@ -885,6 +890,8 @@ async fn metadata_feature_has_exact_contract_json_and_points_dimension() {
         json!({
             "default": {"date": 2, "time": 2, "points": 0},
             "max_chunk_cost": 30_000_000,
+            "max_fields_per_job": 8_760,
+            "max_multi_chunks": 64,
         })
     );
 }
@@ -1241,6 +1248,7 @@ fn chunks_config_defaults_and_validation() {
     assert!(chunks.enabled);
     assert_eq!(chunks.max_chunk_cost, 20_000_000);
     assert_eq!(chunks.default_max_fields_per_job, 8_760);
+    assert_eq!(chunks.max_multi_chunks, 64);
     assert_eq!(chunks.max_feature_points, 1_000_000);
     assert!(chunks.grids.is_empty());
     // Contract v2 catalogue defaults.
@@ -1279,6 +1287,9 @@ fn chunks_config_defaults_and_validation() {
     assert!(bad.validate().is_err());
     let bad: crate::config::ChunksConfig =
         serde_yaml::from_str("default_max_fields_per_job: 0").unwrap();
+    assert!(bad.validate().is_err());
+    let bad: crate::config::ChunksConfig =
+        serde_yaml::from_str("max_multi_chunks: 0").unwrap();
     assert!(bad.validate().is_err());
     let bad: crate::config::ChunksConfig =
         serde_yaml::from_str("grids: [{collection: c, count_values: 47, nside: 2}]").unwrap();
@@ -1385,6 +1396,27 @@ async fn extract_forwards_flat_mars_plus_extract_and_returns_inline_bytes() {
     let seen = seen.lock().unwrap();
     assert_eq!(seen.len(), 1);
     assert_eq!(seen[0], expected_job_body());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn extract_forwards_multi_chunks_as_one_job() {
+    let (url, seen) = spawn_capturing_worker().await;
+    let (app, _) = app_with(&url, chunks_section(), Arc::new(FakeExpander));
+    let mut second = extract_body();
+    second["request"]["param"] = json!("168");
+    let (status, _, _) = post_json(
+        app,
+        "/chunks/v1/destination-earth/extract",
+        &json!({"chunks": [extract_body(), second]}),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 1);
+    assert_eq!(seen[0]["chunks"].as_array().unwrap().len(), 2);
+    assert_eq!(seen[0]["chunks"][0], expected_job_body());
+    assert_eq!(seen[0]["chunks"][1]["param"], "168");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

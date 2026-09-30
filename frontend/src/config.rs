@@ -76,6 +76,9 @@ pub struct ChunksConfig {
     /// client chunking overrides are unaffected.
     #[serde(default = "default_max_fields_per_job")]
     pub default_max_fields_per_job: u64,
+    /// Maximum number of chunks accepted in one multi-chunk extract job.
+    #[serde(default = "default_max_multi_chunks")]
+    pub max_multi_chunks: usize,
     /// Maximum HEALPix cells selected by a metadata polygon (default 1,000,000).
     #[serde(default = "default_max_feature_points")]
     pub max_feature_points: u64,
@@ -108,6 +111,7 @@ impl Default for ChunksConfig {
             enabled: default_chunks_enabled(),
             max_chunk_cost: default_max_chunk_cost(),
             default_max_fields_per_job: default_max_fields_per_job(),
+            max_multi_chunks: default_max_multi_chunks(),
             max_feature_points: default_max_feature_points(),
             grids: Vec::new(),
             catalogue_url: None,
@@ -160,6 +164,9 @@ impl ChunksConfig {
         }
         if self.default_max_fields_per_job == 0 {
             return Err("chunks.default_max_fields_per_job must be greater than 0".to_string());
+        }
+        if self.max_multi_chunks == 0 {
+            return Err("chunks.max_multi_chunks must be greater than 0".to_string());
         }
         if self.max_feature_points == 0 {
             return Err("chunks.max_feature_points must be greater than 0".to_string());
@@ -219,6 +226,10 @@ const fn default_max_chunk_cost() -> u64 {
 
 const fn default_max_fields_per_job() -> u64 {
     8_760
+}
+
+const fn default_max_multi_chunks() -> usize {
+    64
 }
 
 const fn default_max_feature_points() -> u64 {
