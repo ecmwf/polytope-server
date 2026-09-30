@@ -2609,6 +2609,14 @@ def prepare_rust_extract_plan(request, user=None, job_id=None):
             "python_ms",
         )
     }
+    profile.update(
+        {
+            "chunks": 1,
+            "files": len(
+                {(path["host"], path["port"], path["path"]) for path in paths}
+            ),
+        }
+    )
     plan = {
         "kind": "rust_gribjump_extract_v1",
         "paths": paths,

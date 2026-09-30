@@ -1263,6 +1263,8 @@ def test_prepare_rust_extract_plan_keeps_field_order(fake_gj, monkeypatch):
     ]
     assert timings["fields"] == len(fields)
     assert plan["profile"]["lookup_mode"] == "inspect-parallel"
+    assert plan["profile"]["chunks"] == 1
+    assert plan["profile"]["files"] == len(fields)
 
 
 def test_prepare_rust_multi_plan_deduplicates_union_and_marks_missing(fake_gj, monkeypatch):
