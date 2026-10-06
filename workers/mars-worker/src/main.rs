@@ -437,9 +437,12 @@ impl Processor for MarsProcessor {
                         }
                     }
                     Err(MarsError::Invalidated { offset }) => {
-                        warn!(offset, "mars stream invalidated — unrecoverable");
+                        // Invalidation is a normal mars-client protocol event (server
+                        // retried another store candidate), unlike a raw TCP exception:
+                        // fail the job but keep the worker process alive.
+                        warn!(offset, "mars stream invalidated — failing job, worker stays up");
                         let raw = format!("stream invalidated at byte offset {offset}");
-                        source_error_for_task.set_unrecoverable_once(invalidated_user_message());
+                        source_error_for_task.set_once(invalidated_user_message());
                         let _ = tx.blocking_send(Err(std::io::Error::other(raw)));
                         break;
                     }
