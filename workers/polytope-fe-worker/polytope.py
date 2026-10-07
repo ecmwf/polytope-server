@@ -30,27 +30,31 @@ class PolytopeDataSource:
 
         # Create a temp file to store gribjump config
         self.config_file = "/tmp/gribjump.yaml"
-        with open(self.config_file, "w") as f:
-            f.write(yaml.dump(self.config.pop("gribjump_config")))
+        try:
+            with open(self.config_file, "w") as f:
+                f.write(yaml.dump(self.config.pop("gribjump_config")))
+        except OSError as exc:
+            raise RuntimeError(f"cannot write GribJump config {self.config_file}: {exc}") from exc
         self.config["datacube"]["config"] = self.config_file
         os.environ["GRIBJUMP_CONFIG_FILE"] = self.config_file
 
         # Create a temp file to store FDB config
         self.fdb_config_file = "/tmp/fdb.yaml"
         if "fdb_config" in config:
-            with open(self.fdb_config_file, "w") as f:
-                f.write(yaml.dump(self.config.pop("fdb_config")))
+            try:
+                with open(self.fdb_config_file, "w") as f:
+                    f.write(yaml.dump(self.config.pop("fdb_config")))
+            except OSError as exc:
+                raise RuntimeError(f"cannot write FDB config {self.fdb_config_file}: {exc}") from exc
             os.environ["FDB5_CONFIG_FILE"] = self.fdb_config_file
 
-    def retrieve(self, request):
-        import time
-        from polytope_feature.utility.exceptions import (  # type: ignore[import-not-found]
-            PolytopeError,
-        )
-        from polytope_mars.api import PolytopeMars  # type: ignore[import-not-found]
+    def prepare_request(self, request):
+        """Build the exact request/config pair used by polytope-mars.
 
-        t0 = time.monotonic()
-
+        Feature-resolution jobs use this too, so grid mapper selection, trusted
+        per-dataset options, and the temporary grid/hash compatibility rules cannot
+        drift from the covjson extraction path.
+        """
         r = copy.deepcopy(request.coerced_request)
 
         for k, v in list(r.items()):
@@ -126,7 +130,9 @@ class PolytopeDataSource:
                     if self.gh70_fix_step_ranges:
                         if k == "param" and not str(v[0]).lstrip("-").isdigit():
                             try:
-                                from covjsonkit.param_db import get_param_id_from_db
+                                from covjsonkit.param_db import (  # type: ignore[import-not-found]
+                                    get_param_id_from_db,
+                                )
                                 v[0] = get_param_id_from_db(v[0])
                             except Exception:
                                 logging.warning(
@@ -138,7 +144,9 @@ class PolytopeDataSource:
                         v = v[0]
                         if k == "param" and not str(v).lstrip("-").isdigit():
                             try:
-                                from covjsonkit.param_db import get_param_id_from_db
+                                from covjsonkit.param_db import (  # type: ignore[import-not-found]
+                                    get_param_id_from_db,
+                                )
                                 v = get_param_id_from_db(v)
                             except Exception:
                                 logging.warning(
@@ -203,6 +211,18 @@ class PolytopeDataSource:
             change_hash(r, polytope_mars_config)
         if self.separate_datetime:
             unmerge_date_time_options(r, polytope_mars_config)
+
+        return r, polytope_mars_config
+
+    def retrieve(self, request):
+        import time
+        from polytope_feature.utility.exceptions import (  # type: ignore[import-not-found]
+            PolytopeError,
+        )
+        from polytope_mars.api import PolytopeMars  # type: ignore[import-not-found]
+
+        t0 = time.monotonic()
+        r, polytope_mars_config = self.prepare_request(request)
 
         t_coerce = time.monotonic()
 

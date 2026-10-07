@@ -2,350 +2,469 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Contract v2.1 polygon parsing and HEALPix-NESTED feature resolution.
-//!
-//! `cdshealpix::nested::polygon_coverage(..., false)` supplies candidate cells.
-//! That API approximates HEALPix cell edges by great-circle arcs; at nside 1024
-//! its candidate-boundary uncertainty is below one cell width (about 3.4 km).
-//! We then test every candidate cell's centre with
-//! `cdshealpix::sph_geom::Polygon::contains`, so inclusion is centre-in-polygon
-//! rather than BMOC full-or-partial overlap. Polygon edges are great-circle arcs,
-//! including across the longitude seam and near the poles.
+//! Polytope-mars feature validation, worker job construction, and geometry cache.
 
-use std::f64::consts::PI;
+use std::collections::{HashMap, VecDeque};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
-use cdshealpix::nested;
-use cdshealpix::sph_geom::{
-    coo3d::{Coo3D, LonLat},
-    Polygon,
-};
-use serde::Serialize;
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value, json};
 
-const MIN_VERTICES: usize = 3;
-const MAX_VERTICES: usize = 4096;
+use super::metadata::Node;
 
-/// A validated polygon with canonical longitudes in `[0, 360)` degrees.
+const SUPPORTED_TYPES: &[&str] = &[
+    "polygon",
+    "boundingbox",
+    "timeseries",
+    "verticalprofile",
+    "circle",
+    "position",
+];
+
 #[derive(Debug, Clone, PartialEq)]
-pub struct PolygonRequest {
-    vertices_deg: Vec<[f64; 2]>,
+pub struct FeatureRequest {
+    feature_type: String,
+    value: Value,
+    canonical_json: String,
 }
 
-impl PolygonRequest {
-    fn vertices_rad(&self) -> Vec<(f64, f64)> {
-        self.vertices_deg
-            .iter()
-            .map(|[lon, lat]| (lon.to_radians(), lat.to_radians()))
-            .collect()
+impl FeatureRequest {
+    pub fn feature_type(&self) -> &str {
+        &self.feature_type
     }
 
-    #[cfg(test)]
-    fn vertices_deg(&self) -> &[[f64; 2]] {
-        &self.vertices_deg
+    fn value(&self) -> &Value {
+        &self.value
     }
 }
 
-/// The additive per-array-set Contract v2.1 feature block.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ResolvedFeature {
     #[serde(rename = "type")]
-    pub feature_type: &'static str,
+    pub feature_type: String,
     pub n_points: u64,
     pub ranges: Vec<[u64; 2]>,
     pub coords: FeatureCoords,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct FeatureCoords {
     pub lat: Vec<f64>,
     pub lon: Vec<f64>,
 }
 
-/// Parse an optional top-level metadata `feature`.
-pub fn parse_feature(value: Option<&Value>) -> Result<Option<PolygonRequest>, String> {
-    value.map(parse_polygon).transpose()
+pub fn parse_feature(value: Option<&Value>) -> Result<Option<FeatureRequest>, String> {
+    value.map(parse_feature_value).transpose()
 }
 
-fn parse_polygon(value: &Value) -> Result<PolygonRequest, String> {
+fn parse_feature_value(value: &Value) -> Result<FeatureRequest, String> {
     let object = value.as_object().ok_or("'feature' must be a JSON object")?;
-    match object.get("type") {
-        Some(Value::String(feature_type)) if feature_type == "polygon" => {}
-        Some(Value::String(feature_type)) => {
-            return Err(format!(
-                "unsupported feature type '{feature_type}'; v2.1 supports only 'polygon'"
-            ));
-        }
-        Some(_) => return Err("feature.type must be the string 'polygon'".to_string()),
-        None => return Err("feature must contain type 'polygon'".to_string()),
-    }
-
-    let shape = object
-        .get("shape")
-        .ok_or("polygon feature must contain a 'shape'")?
-        .as_array()
-        .ok_or("feature.shape must be an array of [lon, lat] vertices")?;
-    if !(MIN_VERTICES..=MAX_VERTICES).contains(&shape.len()) {
+    let feature_type = object
+        .get("type")
+        .and_then(Value::as_str)
+        .ok_or("feature.type must be a string")?;
+    if matches!(feature_type, "trajectory" | "path") {
         return Err(format!(
-            "feature.shape must contain {MIN_VERTICES}..={MAX_VERTICES} vertices (got {})",
-            shape.len()
+            "unsupported feature type '{feature_type}'; trajectory/path features do not yet reduce to a fixed spatial point set"
         ));
     }
-
-    let mut vertices = Vec::with_capacity(shape.len());
-    for (index, vertex) in shape.iter().enumerate() {
-        let pair = vertex
-            .as_array()
-            .filter(|pair| pair.len() == 2)
-            .ok_or_else(|| format!("feature.shape[{index}] must be [lon, lat]"))?;
-        let lon = pair[0]
-            .as_f64()
-            .filter(|value| value.is_finite())
-            .ok_or_else(|| format!("feature.shape[{index}][0] longitude must be a number"))?;
-        let lat = pair[1]
-            .as_f64()
-            .filter(|value| value.is_finite())
-            .ok_or_else(|| format!("feature.shape[{index}][1] latitude must be a number"))?;
-        if !(-180.0..=360.0).contains(&lon) {
-            return Err(format!(
-                "feature.shape[{index}][0] longitude must be in -180..=360 degrees"
-            ));
-        }
-        if !(-90.0..=90.0).contains(&lat) {
-            return Err(format!(
-                "feature.shape[{index}][1] latitude must be in -90..=90 degrees"
-            ));
-        }
-        vertices.push([normalise_lon(lon), clean_zero(lat)]);
-    }
-
-    // The contract accepts open or explicitly closed rings. cdshealpix closes
-    // polygons itself, so remove a repeated final vertex before constructing it.
-    if vertices.len() > MIN_VERTICES && vertices.first() == vertices.last() {
-        vertices.pop();
-    }
-    if vertices.len() < MIN_VERTICES {
-        return Err("feature.shape must contain at least 3 distinct ring vertices".to_string());
-    }
-    for index in 0..vertices.len() {
-        if vertices[index] == vertices[(index + 1) % vertices.len()] {
-            return Err(format!(
-                "feature.shape has a zero-length edge at vertex {index}"
-            ));
-        }
-    }
-
-    Ok(PolygonRequest {
-        vertices_deg: vertices,
-    })
-}
-
-fn normalise_lon(lon: f64) -> f64 {
-    clean_zero(lon.rem_euclid(360.0))
-}
-
-fn clean_zero(value: f64) -> f64 {
-    if value == 0.0 {
-        0.0
-    } else {
-        value
-    }
-}
-
-/// Resolve the polygon to sorted, disjoint half-open NESTED ranges and centres.
-pub fn resolve_polygon(
-    polygon: &PolygonRequest,
-    nside: u32,
-    max_feature_points: u64,
-) -> Result<ResolvedFeature, String> {
-    if !cdshealpix::is_nside(nside) {
+    if !SUPPORTED_TYPES.contains(&feature_type) {
         return Err(format!(
-            "HEALPix nside {nside} is invalid; it must be a non-zero power of two"
+            "unsupported feature type '{feature_type}'; supported polytope-mars feature types are {}",
+            SUPPORTED_TYPES.join(", ")
         ));
     }
-    let depth = cdshealpix::depth(nside);
-    let vertices = polygon.vertices_rad();
-    let geometry = Polygon::new(
-        vertices
-            .iter()
-            .map(|&(lon, lat)| LonLat { lon, lat })
-            .collect::<Vec<_>>()
-            .into_boxed_slice(),
-    );
-
-    // The approximate mode avoids cdshealpix's expensive special-point path
-    // (and a known polar-edge panic in 0.9.1). It affects only candidate cell
-    // edges; centre filtering below defines the Contract v2.1 inclusion.
-    let coverage = nested::polygon_coverage(depth, &vertices, false);
-    let layer = nested::get(depth);
-    let selected = || {
-        coverage.flat_iter().filter(|&hash| {
-            let (lon, lat) = layer.center(hash);
-            geometry.contains(&Coo3D::from_sph_coo(lon, lat))
-        })
-    };
-
-    let mut ranges = Vec::new();
-    let mut range_start = None;
-    let mut previous = 0_u64;
-    let mut n_points = 0_u64;
-    for hash in selected() {
-        n_points = n_points
-            .checked_add(1)
-            .ok_or("polygon selected too many HEALPix cells")?;
-        match range_start {
-            None => range_start = Some(hash),
-            Some(_) if hash != previous + 1 => {
-                ranges.push([range_start.take().unwrap(), previous + 1]);
-                range_start = Some(hash);
+    match feature_type {
+        "polygon" => {
+            let vertices = object.get("shape").and_then(Value::as_array).ok_or(
+                "polygon feature must contain a shape array",
+            )?;
+            if vertices.len() < 3 {
+                return Err("polygon feature.shape must contain at least 3 vertices".to_string());
             }
-            Some(_) => {}
         }
-        previous = hash;
+        "boundingbox" => {
+            if object.get("points").and_then(Value::as_array).is_none_or(|points| points.len() != 2) {
+                return Err("boundingbox feature.points must contain two points".to_string());
+            }
+        }
+        "timeseries" | "verticalprofile" | "position" => {
+            if object.get("points").and_then(Value::as_array).is_none_or(Vec::is_empty) {
+                return Err(format!("{feature_type} feature.points must not be empty"));
+            }
+        }
+        "circle"
+            if (!object.contains_key("center") || !object.contains_key("radius")) => {
+                return Err("circle feature must contain center and radius".to_string());
+            }
+        _ => {}
     }
-    if let Some(start) = range_start {
-        ranges.push([start, previous + 1]);
-    }
-
-    if n_points > max_feature_points {
+    if matches!(feature_type, "timeseries" | "verticalprofile") && object.contains_key("range") {
         return Err(format!(
-            "polygon selects {n_points} points, exceeding chunks.max_feature_points={max_feature_points}"
+            "{feature_type} feature.range is not supported by /chunks/v1; select time/level values in the MARS request so they remain zarr dimensions"
         ));
     }
+    let canonical_json = canonical_json(value)?;
+    Ok(FeatureRequest {
+        feature_type: feature_type.to_string(),
+        value: value.clone(),
+        canonical_json,
+    })
+}
 
-    let capacity = usize::try_from(n_points)
-        .map_err(|_| format!("polygon selects {n_points} points, too many for this server"))?;
-    let mut lat = Vec::with_capacity(capacity);
-    let mut lon = Vec::with_capacity(capacity);
-    for hash in selected() {
-        let (cell_lon, cell_lat) = layer.center(hash);
-        lat.push(clean_zero(cell_lat * 180.0 / PI));
-        lon.push(clean_zero(cell_lon * 180.0 / PI));
+fn canonical_json(value: &Value) -> Result<String, String> {
+    fn canonical(value: &Value) -> Value {
+        match value {
+            Value::Object(object) => {
+                let mut keys: Vec<_> = object.keys().collect();
+                keys.sort();
+                let mut sorted = Map::new();
+                for key in keys {
+                    sorted.insert(key.clone(), canonical(&object[key]));
+                }
+                Value::Object(sorted)
+            }
+            Value::Array(values) => Value::Array(values.iter().map(canonical).collect()),
+            other => other.clone(),
+        }
+    }
+    serde_json::to_string(&canonical(value))
+        .map_err(|error| format!("feature cannot be canonicalised: {error}"))
+}
+
+fn grid_cache_key(grid_hash: Option<&str>, feature: &FeatureRequest) -> String {
+    format!(
+        "{}\n{}",
+        grid_hash.unwrap_or("null"),
+        feature.canonical_json
+    )
+}
+
+#[derive(Debug)]
+struct CachedFeature {
+    inserted: Instant,
+    value: ResolvedFeature,
+}
+
+#[derive(Debug, Default)]
+struct FeatureCacheInner {
+    values: HashMap<String, CachedFeature>,
+    lru: VecDeque<String>,
+}
+
+#[derive(Debug)]
+pub struct FeatureCache {
+    ttl: Duration,
+    capacity: usize,
+    inner: Mutex<FeatureCacheInner>,
+}
+
+impl FeatureCache {
+    pub fn new(ttl: Duration, capacity: usize) -> Self {
+        Self {
+            ttl,
+            capacity,
+            inner: Mutex::new(FeatureCacheInner::default()),
+        }
     }
 
-    Ok(ResolvedFeature {
-        feature_type: "polygon",
-        n_points,
-        ranges,
-        coords: FeatureCoords { lat, lon },
-    })
+    pub fn get(&self, key: &str) -> Option<ResolvedFeature> {
+        let mut inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let now = Instant::now();
+        inner
+            .values
+            .retain(|_, entry| now.duration_since(entry.inserted) <= self.ttl);
+        let value = inner.values.get(key)?.value.clone();
+        inner.lru.retain(|candidate| candidate != key);
+        inner.lru.push_back(key.to_string());
+        Some(value)
+    }
+
+    pub fn insert(&self, key: String, value: ResolvedFeature) {
+        if self.capacity == 0 {
+            return;
+        }
+        let mut inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let now = Instant::now();
+        inner
+            .values
+            .retain(|_, entry| now.duration_since(entry.inserted) <= self.ttl);
+        inner.lru.retain(|candidate| candidate != &key);
+        while inner.values.len() >= self.capacity {
+            let Some(oldest) = inner.lru.pop_front() else {
+                inner.values.clear();
+                break;
+            };
+            inner.values.remove(&oldest);
+        }
+        inner.lru.push_back(key.clone());
+        inner.values.insert(
+            key,
+            CachedFeature {
+                inserted: now,
+                value,
+            },
+        );
+    }
+}
+
+#[derive(Debug)]
+pub struct ResolveTarget {
+    pub cache_key: String,
+    pub grid_hash: Option<String>,
+    pub count_values: u64,
+    pub job: Value,
+}
+
+pub fn resolve_targets(
+    tree: &Node,
+    feature: &FeatureRequest,
+    max_feature_points: u64,
+) -> Result<Vec<ResolveTarget>, String> {
+    fn visit(
+        node: &Node,
+        feature: &FeatureRequest,
+        max_feature_points: u64,
+        targets: &mut HashMap<String, ResolveTarget>,
+    ) -> Result<(), String> {
+        match node {
+            Node::Group { children, .. } => {
+                for child in children {
+                    visit(child, feature, max_feature_points, targets)?;
+                }
+            }
+            Node::ArraySet {
+                name,
+                base_request,
+                axes,
+                variables,
+                grid,
+                extract,
+                ..
+            } => {
+                let set_name = if name.is_empty() { "<root>" } else { name };
+                let variable = variables.first().ok_or_else(|| {
+                    format!("array_set '{set_name}' has no representative variable")
+                })?;
+                let mut job = Map::new();
+                for (key, value) in &base_request.0 {
+                    job.insert(key.clone(), Value::String(value.clone()));
+                }
+                for axis in axes {
+                    let value = axis.values.first().ok_or_else(|| {
+                        format!("array_set '{set_name}' axis '{}' is empty", axis.key)
+                    })?;
+                    job.insert(axis.key.clone(), Value::String(value.clone()));
+                }
+                job.insert("param".to_string(), Value::String(variable.param.clone()));
+                job.insert("feature".to_string(), feature.value().clone());
+                job.insert(
+                    "feature_resolve".to_string(),
+                    json!({
+                        "grid_hash": extract.grid_hash,
+                        "count_values": grid.count_values,
+                        "max_feature_points": max_feature_points,
+                    }),
+                );
+                let cache_key = grid_cache_key(extract.grid_hash.as_deref(), feature);
+                targets.entry(cache_key.clone()).or_insert(ResolveTarget {
+                    cache_key,
+                    grid_hash: extract.grid_hash.clone(),
+                    count_values: grid.count_values,
+                    job: Value::Object(job),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    let mut targets = HashMap::new();
+    visit(tree, feature, max_feature_points, &mut targets)?;
+    let mut targets: Vec<_> = targets.into_values().collect();
+    targets.sort_by(|left, right| left.cache_key.cmp(&right.cache_key));
+    Ok(targets)
+}
+
+pub fn validate_resolved(
+    feature: &FeatureRequest,
+    resolved: &ResolvedFeature,
+    count_values: u64,
+    max_feature_points: u64,
+) -> Result<(), String> {
+    if resolved.feature_type != feature.feature_type() {
+        return Err(format!(
+            "feature worker returned type '{}' for requested type '{}'",
+            resolved.feature_type,
+            feature.feature_type()
+        ));
+    }
+    if resolved.n_points == 0 {
+        return Err(format!(
+            "{} feature selects no grid points",
+            feature.feature_type()
+        ));
+    }
+    if resolved.n_points > max_feature_points {
+        return Err(format!(
+            "{} selects {} points, exceeding chunks.max_feature_points={max_feature_points}",
+            feature.feature_type(),
+            resolved.n_points
+        ));
+    }
+    let mut total = 0_u64;
+    let mut previous_hi = 0_u64;
+    for (index, [lo, hi]) in resolved.ranges.iter().copied().enumerate() {
+        if lo >= hi || hi > count_values || (index > 0 && lo <= previous_hi) {
+            return Err(
+                "feature worker returned invalid, overlapping, or unsorted ranges".to_string(),
+            );
+        }
+        total = total
+            .checked_add(hi - lo)
+            .ok_or("feature worker point count overflow")?;
+        previous_hi = hi;
+    }
+    if total != resolved.n_points {
+        return Err(format!(
+            "feature worker ranges select {total} points but n_points is {}",
+            resolved.n_points
+        ));
+    }
+    let expected = usize::try_from(resolved.n_points)
+        .map_err(|_| "feature worker point count is too large for this server")?;
+    if resolved.coords.lat.len() != expected || resolved.coords.lon.len() != expected {
+        return Err("feature worker coordinate lengths do not equal n_points".to_string());
+    }
+    if resolved
+        .coords
+        .lat
+        .iter()
+        .chain(&resolved.coords.lon)
+        .any(|coordinate| !coordinate.is_finite())
+    {
+        return Err("feature worker returned non-finite coordinates".to_string());
+    }
+    Ok(())
+}
+
+pub fn attach_resolved(
+    node: &mut Node,
+    feature: &FeatureRequest,
+    resolved: &HashMap<String, ResolvedFeature>,
+) -> Result<(), String> {
+    match node {
+        Node::Group { children, .. } => {
+            for child in children {
+                attach_resolved(child, feature, resolved)?;
+            }
+        }
+        Node::ArraySet {
+            extract,
+            feature: slot,
+            ..
+        } => {
+            let key = grid_cache_key(extract.grid_hash.as_deref(), feature);
+            let value = resolved
+                .get(&key)
+                .ok_or("feature resolution missing for an array-set grid")?;
+            *slot = Some(Box::new(value.clone()));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
-
-    fn polygon(shape: Value) -> PolygonRequest {
-        parse_feature(Some(&json!({"type": "polygon", "shape": shape})))
-            .unwrap()
-            .unwrap()
-    }
 
     #[test]
-    fn polygon_parsing_validates_and_normalises_open_or_closed_rings() {
-        let open = polygon(json!([[-10, 1], [360, 2], [10, 3]]));
-        assert_eq!(
-            open.vertices_deg(),
-            &[[350.0, 1.0], [0.0, 2.0], [10.0, 3.0]]
-        );
-
-        let closed = polygon(json!([[-10, 1], [0, 2], [10, 3], [350, 1]]));
-        assert_eq!(closed.vertices_deg(), open.vertices_deg());
-
-        for invalid in [
-            json!(null),
-            json!({"type": "bbox", "shape": [[0, 0], [1, 0], [0, 1]]}),
-            json!({"type": "polygon", "shape": [[0, 0], [1, 0]]}),
-            json!({"type": "polygon", "shape": [[0, 0], [1, 0], [2]]}),
-            json!({"type": "polygon", "shape": [[0, 0], [361, 0], [0, 1]]}),
-            json!({"type": "polygon", "shape": [[0, 0], [1, 91], [0, 1]]}),
-            json!({"type": "polygon", "shape": [[0, 0], [0, 0], [1, 1]]}),
-        ] {
-            assert!(parse_feature(Some(&invalid)).is_err(), "accepted {invalid}");
-        }
-        let too_many = json!({
-            "type": "polygon",
-            "shape": vec![json!([0, 0]); MAX_VERTICES + 1],
-        });
-        assert!(parse_feature(Some(&too_many)).is_err());
-        assert!(parse_feature(None).unwrap().is_none());
-    }
-
-    #[test]
-    fn dateline_and_polar_polygons_have_canonical_longitudes() {
-        // 179E -> 179W crosses the dateline by the short great-circle arc.
-        let dateline = polygon(json!([[179, -5], [-179, -5], [-179, 5], [179, 5]]));
-        assert_eq!(
-            dateline.vertices_deg(),
-            &[[179.0, -5.0], [181.0, -5.0], [181.0, 5.0], [179.0, 5.0]]
-        );
-
-        // cdshealpix's spherical polygon interpretation handles this ring near
-        // the north pole; longitude is irrelevant at the pole itself.
-        let polar = polygon(json!([[0, 85], [120, 85], [240, 85]]));
-        assert_eq!(polar.vertices_deg()[2], [240.0, 85.0]);
-        let result = resolve_polygon(&polar, 16, 3_072).unwrap();
-        assert!(result.n_points > 0);
-    }
-
-    #[test]
-    fn tiny_nside_one_polygon_selects_the_hand_checkable_equatorial_cell() {
-        let request = polygon(json!([[-20, -20], [20, -20], [20, 20], [-20, 20]]));
-        let result = resolve_polygon(&request, 1, 12).unwrap();
-        assert_eq!(result.n_points, 1);
-        assert_eq!(result.ranges, vec![[4, 5]]);
-        assert_eq!(result.coords.lat, vec![0.0]);
-        assert_eq!(result.coords.lon, vec![0.0]);
-    }
-
-    #[test]
-    fn nested_indices_match_healpy_reference_centres() {
-        // Standard HEALPix NESTED reference values, also returned by
-        // healpy.pix2ang(..., nest=True, lonlat=True). At nside=1 the north
-        // base cell 0 is (45 deg, asin(2/3)); equatorial cell 4 is (0, 0).
-        // At nside=2, nested child 3 of base cell 0 is centred at
-        // (45 deg, 66.4435356909 deg). These hard-coded checks guard the most
-        // dangerous possible failure here: silently using RING index order.
-        let checks = [
-            (0_u8, 0_u64, 45.0, 41.810_314_895_778_596),
-            (0, 4, 0.0, 0.0),
-            (0, 8, 45.0, -41.810_314_895_778_596),
-            (1, 3, 45.0, 66.443_535_690_898_76),
+    fn validates_supported_types_and_rejects_temporal_ranges_and_paths() {
+        let cases = [
+            json!({"type": "polygon", "shape": [[0, 0], [1, 0], [0, 1]]}),
+            json!({"type": "boundingbox", "points": [[0, 0], [1, 1]]}),
+            json!({"type": "timeseries", "points": [[0, 0]], "time_axis": "date"}),
+            json!({"type": "verticalprofile", "points": [[0, 0]]}),
+            json!({"type": "circle", "center": [[0, 0]], "radius": 1}),
+            json!({"type": "position", "points": [[0, 0]]}),
         ];
-        for (depth, hash, expected_lon, expected_lat) in checks {
-            let (lon, lat) = nested::center(depth, hash);
-            assert!((lon.to_degrees() - expected_lon).abs() < 1.0e-12);
-            assert!((lat.to_degrees() - expected_lat).abs() < 1.0e-12);
-            assert_eq!(nested::hash(depth, lon, lat), hash);
+        for value in &cases {
+            let expected = value["type"].as_str().unwrap();
+            let parsed = parse_feature(Some(value)).unwrap().unwrap();
+            assert_eq!(parsed.feature_type(), expected);
         }
+        let error = parse_feature(Some(&json!({"type": "trajectory", "points": []}))).unwrap_err();
+        assert!(error.contains("do not yet reduce"));
+        let error = parse_feature(Some(&json!({
+            "type": "timeseries",
+            "points": [[52.51, 13.46]],
+            "time_axis": "date",
+            "range": {"start": 1, "end": 2}
+        })))
+        .unwrap_err();
+        assert!(error.contains("remain zarr dimensions"));
     }
 
     #[test]
-    fn nside_1024_polygon_is_deterministic_and_ranges_are_canonical() {
-        let request = polygon(json!([[-1, 51], [1, 51], [1, 52], [-1, 52]]));
-        let first = resolve_polygon(&request, 1024, 1_000_000).unwrap();
-        let second = resolve_polygon(&request, 1024, 1_000_000).unwrap();
-        assert_eq!(first, second);
-        // Exact count is intentionally pinned: a cdshealpix convention or
-        // centre-inclusion regression must not silently change the region.
-        assert_eq!(first.n_points, 378);
-        assert_eq!(first.ranges.first(), Some(&[716_767, 716_768]));
-        assert_eq!(first.ranges.last(), Some(&[3_536_744, 3_536_745]));
+    fn cache_is_canonical_bounded_and_expires() {
+        let first = parse_feature(Some(&json!({
+            "type": "polygon",
+            "shape": [[0, 0], [1, 0], [0, 1]]
+        })))
+        .unwrap()
+        .unwrap();
+        let reordered = parse_feature(Some(&json!({
+            "shape": [[0, 0], [1, 0], [0, 1]],
+            "type": "polygon"
+        })))
+        .unwrap()
+        .unwrap();
         assert_eq!(
-            first.ranges.iter().map(|[lo, hi]| hi - lo).sum::<u64>(),
-            first.n_points
+            grid_cache_key(Some("abc"), &first),
+            grid_cache_key(Some("abc"), &reordered)
         );
-        assert_eq!(first.coords.lat.len() as u64, first.n_points);
-        assert_eq!(first.coords.lon.len() as u64, first.n_points);
-        assert!(first.ranges.iter().all(|[lo, hi]| lo < hi));
-        assert!(first.ranges.windows(2).all(|pair| pair[0][1] < pair[1][0]));
+        let cache = FeatureCache::new(Duration::from_secs(60), 1);
+        let value = ResolvedFeature {
+            feature_type: "polygon".to_string(),
+            n_points: 1,
+            ranges: vec![[2, 3]],
+            coords: FeatureCoords {
+                lat: vec![1.0],
+                lon: vec![2.0],
+            },
+        };
+        cache.insert("one".to_string(), value.clone());
+        assert_eq!(cache.get("one"), Some(value.clone()));
+        cache.insert("two".to_string(), value);
+        assert!(cache.get("one").is_none());
+        assert!(cache.get("two").is_some());
     }
 
     #[test]
-    fn over_cap_error_reports_the_exact_selected_count() {
-        let request = polygon(json!([[-20, -20], [20, -20], [20, 20], [-20, 20]]));
-        let error = resolve_polygon(&request, 1, 0).unwrap_err();
-        assert!(error.contains("selects 1 points"), "{error}");
-        assert!(error.contains("max_feature_points=0"), "{error}");
+    fn validates_caps_ranges_and_coordinates() {
+        let feature = parse_feature(Some(&json!({"type": "position", "points": [[1, 2]]})))
+            .unwrap()
+            .unwrap();
+        let valid = ResolvedFeature {
+            feature_type: "position".to_string(),
+            n_points: 2,
+            ranges: vec![[2, 4]],
+            coords: FeatureCoords {
+                lat: vec![1.0, 2.0],
+                lon: vec![3.0, 4.0],
+            },
+        };
+        validate_resolved(&feature, &valid, 10, 2).unwrap();
+        assert!(
+            validate_resolved(&feature, &valid, 10, 1)
+                .unwrap_err()
+                .contains("max_feature_points")
+        );
     }
 }

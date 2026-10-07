@@ -82,6 +82,14 @@ pub struct ChunksConfig {
     /// Maximum HEALPix cells selected by a metadata polygon (default 1,000,000).
     #[serde(default = "default_max_feature_points")]
     pub max_feature_points: u64,
+    /// Geometry-cache lifetime and bound; entries contain indices/coordinates only.
+    #[serde(default = "default_feature_cache_ttl_secs")]
+    pub feature_cache_ttl_secs: u64,
+    #[serde(default = "default_feature_cache_capacity")]
+    pub feature_cache_capacity: usize,
+    /// Maximum time metadata waits for its internal worker resolution job.
+    #[serde(default = "default_feature_resolve_timeout_secs")]
+    pub feature_resolve_timeout_secs: u64,
     /// Grid registry: first entry whose `collection` equals the request's
     /// collection and whose `match` is a subset of the canonical request wins.
     #[serde(default)]
@@ -113,6 +121,9 @@ impl Default for ChunksConfig {
             default_max_fields_per_job: default_max_fields_per_job(),
             max_multi_chunks: default_max_multi_chunks(),
             max_feature_points: default_max_feature_points(),
+            feature_cache_ttl_secs: default_feature_cache_ttl_secs(),
+            feature_cache_capacity: default_feature_cache_capacity(),
+            feature_resolve_timeout_secs: default_feature_resolve_timeout_secs(),
             grids: Vec::new(),
             catalogue_url: None,
             catalogue_location: None,
@@ -171,6 +182,12 @@ impl ChunksConfig {
         if self.max_feature_points == 0 {
             return Err("chunks.max_feature_points must be greater than 0".to_string());
         }
+        if self.feature_cache_ttl_secs == 0 || self.feature_cache_capacity == 0 {
+            return Err("chunks feature cache TTL and capacity must be greater than 0".to_string());
+        }
+        if self.feature_resolve_timeout_secs == 0 {
+            return Err("chunks.feature_resolve_timeout_secs must be greater than 0".to_string());
+        }
         for (i, grid) in self.grids.iter().enumerate() {
             if grid.collection.is_empty() {
                 return Err(format!("chunks.grids[{i}].collection must not be empty"));
@@ -181,7 +198,7 @@ impl ChunksConfig {
                 ));
             }
             if let Some(nside) = grid.nside {
-                if !cdshealpix::is_nside(nside) {
+                if nside == 0 || !nside.is_power_of_two() {
                     return Err(format!(
                         "chunks.grids[{i}].nside must be a non-zero power of two supported by HEALPix"
                     ));
@@ -234,6 +251,18 @@ const fn default_max_multi_chunks() -> usize {
 
 const fn default_max_feature_points() -> u64 {
     1_000_000
+}
+
+const fn default_feature_cache_ttl_secs() -> u64 {
+    300
+}
+
+const fn default_feature_cache_capacity() -> usize {
+    128
+}
+
+const fn default_feature_resolve_timeout_secs() -> u64 {
+    60
 }
 
 const fn default_catalogue_ttl_secs() -> u64 {

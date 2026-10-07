@@ -139,6 +139,12 @@ _config_path = None
 DEFAULT_CONTENT_TYPE = "application/prs.coverage+json"
 
 
+def _is_feature_resolve_request(request_payload) -> bool:
+    return isinstance(request_payload, dict) and isinstance(
+        request_payload.get("feature_resolve"), dict
+    )
+
+
 def _is_extract_request(request_payload) -> bool:
     """True for either Contract v2.5 extract body form."""
     if not isinstance(request_payload, dict):
@@ -249,7 +255,19 @@ def process(payload_json: str) -> tuple:
 
     timings: dict[str, Any]
     try:
-        if _is_extract_request(request.coerced_request):
+        if _is_feature_resolve_request(request.coerced_request):
+            import feature_resolve  # type: ignore[import-not-found]
+
+            output, resolve_ms = feature_resolve.resolve_feature(
+                datasource,
+                request,
+                user=request.user,
+                job_id=payload.get("job_id"),
+            )
+            content_type = "application/json"
+            timings = {"feature_resolve_ms": resolve_ms}
+            t_retrieve = t_result = time.monotonic()
+        elif _is_extract_request(request.coerced_request):
             # Python owns the chunks control plane. Native mode stops after FDB
             # lookup and hands a compact plan to the Rust host; fallback mode keeps
             # the complete historical pygribjump path.

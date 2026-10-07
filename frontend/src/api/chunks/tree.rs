@@ -14,10 +14,9 @@ use std::collections::BTreeMap;
 
 use chrono::NaiveDate;
 
-use super::expand::{axis_rank, CanonicalRequest};
-use super::feature::{resolve_polygon, PolygonRequest};
+use super::expand::{CanonicalRequest, axis_rank};
 use super::metadata::{
-    find_grid, Axis, ExtractInfo, Gaps, Grid, GroupAttrs, Node, OrderedMap, Variable,
+    Axis, ExtractInfo, Gaps, Grid, GroupAttrs, Node, OrderedMap, Variable, find_grid,
 };
 use super::qube::Cube;
 use crate::config::ChunksConfig;
@@ -38,41 +37,6 @@ pub fn build_tree(
     // canonical_request attrs for it).
     root.set_name(String::new());
     Ok(root)
-}
-
-/// Resolve and attach a polygon feature after names have been assigned to every
-/// array set. This keeps errors actionable for heterogeneous trees.
-pub fn attach_feature(
-    node: &mut Node,
-    polygon: &PolygonRequest,
-    max_feature_points: u64,
-) -> Result<(), String> {
-    match node {
-        Node::Group { children, .. } => {
-            for child in children {
-                attach_feature(child, polygon, max_feature_points)?;
-            }
-        }
-        Node::ArraySet {
-            name,
-            grid,
-            feature,
-            ..
-        } => {
-            let set_name = if name.is_empty() { "<root>" } else { name };
-            let nside = grid.nside.ok_or_else(|| {
-                format!(
-                    "array_set '{set_name}' is not a HEALPix-NESTED set: its chunks.grids entry has no nside"
-                )
-            })?;
-            *feature = Some(Box::new(resolve_polygon(
-                polygon,
-                nside,
-                max_feature_points,
-            )?));
-        }
-    }
-    Ok(())
 }
 
 fn build_subtree(

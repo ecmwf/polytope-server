@@ -8,13 +8,13 @@
 //! **structure tree** (`version: 2`). The request gains one optional field,
 //! `structure.gaps` (`"exact"` | `"span"`).
 
-use serde::ser::SerializeMap;
 use serde::Serialize;
+use serde::ser::SerializeMap;
 use serde_json::{Map, Value};
 
 use super::catalogue::QubeHandle;
 use super::expand::CanonicalRequest;
-use super::feature::{PolygonRequest, ResolvedFeature};
+use super::feature::{FeatureRequest, ResolvedFeature};
 use super::qube::Cube;
 use super::tree;
 use crate::config::{ChunksConfig, ChunksGridConfig};
@@ -51,7 +51,7 @@ pub enum Gaps {
 pub struct MetadataBody {
     pub request: Map<String, Value>,
     pub gaps: Gaps,
-    pub feature: Option<PolygonRequest>,
+    pub feature: Option<FeatureRequest>,
 }
 
 // ---------------------------------------------------------------------------
@@ -312,7 +312,6 @@ pub fn build_metadata_v2(
     user_keys: &std::collections::BTreeSet<String>,
     handle: &QubeHandle,
     gaps: Gaps,
-    feature: Option<&PolygonRequest>,
 ) -> Result<MetadataResponse, String> {
     // metkit fills unsupplied keys with MARS defaults (e.g. a default `date`,
     // `time` or `param`). Those defaults must NOT narrow the catalogue
@@ -371,10 +370,7 @@ pub fn build_metadata_v2(
     // and grid boundaries that the catalogue deliberately keeps separate.
     // Determinism comes from the (qubed-canonical) qube plus ascending value
     // sorting and canonical-key-order tree divergence.
-    let mut tree = tree::build_tree(&datacubes, config, collection, gaps)?;
-    if let Some(polygon) = feature {
-        tree::attach_feature(&mut tree, polygon, config.max_feature_points)?;
-    }
+    let tree = tree::build_tree(&datacubes, config, collection, gaps)?;
 
     let default_chunks = default_chunking(
         &tree,
@@ -398,6 +394,14 @@ pub fn build_metadata_v2(
             advisory: true,
         },
     })
+}
+
+pub fn refresh_default_chunking(response: &mut MetadataResponse, config: &ChunksConfig) {
+    response.chunking.default = OrderedMap(default_chunking(
+        &response.tree,
+        config.default_max_fields_per_job,
+        config.max_chunk_cost,
+    ));
 }
 
 fn default_chunking(
