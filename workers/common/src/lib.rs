@@ -51,6 +51,10 @@ fn codec_for_response(content_type: &str, accept_encoding: Option<&str>) -> Code
     }
 }
 
+fn encoded_buffered_length(codec: &Codec, buffered_length: Option<u64>) -> Option<u64> {
+    (codec == &Codec::Identity).then_some(buffered_length).flatten()
+}
+
 pub type RawStream = Box<dyn Stream<Item = Result<bytes::Bytes, std::io::Error>> + Send + Unpin>;
 
 #[derive(Debug, Default)]
@@ -822,7 +826,7 @@ async fn worker_task<P: Processor + 'static>(
                             &content_type,
                             content_encoding.as_deref(),
                             encoded,
-                            buffered_length,
+                            encoded_buffered_length(&codec, buffered_length),
                             &work.metadata,
                             DeliveryContext {
                                 job_id: &work.job_id,
@@ -1318,6 +1322,14 @@ mod tests {
             codec_for_response("application/json", Some("gzip")),
             Codec::Gzip
         );
+    }
+
+    #[test]
+    fn content_encoding_invalidates_the_source_byte_length() {
+        assert_eq!(encoded_buffered_length(&Codec::Identity, Some(42)), Some(42));
+        assert_eq!(encoded_buffered_length(&Codec::Zstd, Some(42)), None);
+        assert_eq!(encoded_buffered_length(&Codec::Gzip, Some(42)), None);
+        assert_eq!(encoded_buffered_length(&Codec::Identity, None), None);
     }
 
     #[test]
