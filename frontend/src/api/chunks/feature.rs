@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 
 use super::metadata::Node;
 
@@ -77,27 +77,35 @@ fn parse_feature_value(value: &Value) -> Result<FeatureRequest, String> {
     }
     match feature_type {
         "polygon" => {
-            let vertices = object.get("shape").and_then(Value::as_array).ok_or(
-                "polygon feature must contain a shape array",
-            )?;
+            let vertices = object
+                .get("shape")
+                .and_then(Value::as_array)
+                .ok_or("polygon feature must contain a shape array")?;
             if vertices.len() < 3 {
                 return Err("polygon feature.shape must contain at least 3 vertices".to_string());
             }
         }
         "boundingbox" => {
-            if object.get("points").and_then(Value::as_array).is_none_or(|points| points.len() != 2) {
+            if object
+                .get("points")
+                .and_then(Value::as_array)
+                .is_none_or(|points| points.len() != 2)
+            {
                 return Err("boundingbox feature.points must contain two points".to_string());
             }
         }
         "timeseries" | "verticalprofile" | "position" => {
-            if object.get("points").and_then(Value::as_array).is_none_or(Vec::is_empty) {
+            if object
+                .get("points")
+                .and_then(Value::as_array)
+                .is_none_or(Vec::is_empty)
+            {
                 return Err(format!("{feature_type} feature.points must not be empty"));
             }
         }
-        "circle"
-            if (!object.contains_key("center") || !object.contains_key("radius")) => {
-                return Err("circle feature must contain center and radius".to_string());
-            }
+        "circle" if (!object.contains_key("center") || !object.contains_key("radius")) => {
+            return Err("circle feature must contain center and radius".to_string());
+        }
         _ => {}
     }
     if matches!(feature_type, "timeseries" | "verticalprofile") && object.contains_key("range") {
@@ -461,10 +469,8 @@ mod tests {
             },
         };
         validate_resolved(&feature, &valid, 10, 2).unwrap();
-        assert!(
-            validate_resolved(&feature, &valid, 10, 1)
-                .unwrap_err()
-                .contains("max_feature_points")
-        );
+        assert!(validate_resolved(&feature, &valid, 10, 1)
+            .unwrap_err()
+            .contains("max_feature_points"));
     }
 }
