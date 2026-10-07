@@ -715,7 +715,7 @@ fn compress_python_compatible(wire: &[u8], level: i32) -> Result<Vec<u8>, String
     for parameter in [
         CParameter::CompressionLevel(level),
         CParameter::ContentSizeFlag(true),
-        CParameter::ChecksumFlag(false),
+        CParameter::ChecksumFlag(true),
         CParameter::DictIdFlag(true),
     ] {
         context
@@ -1065,6 +1065,20 @@ mod tests {
         Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     };
+
+    #[test]
+    fn compressed_frames_include_and_enforce_content_checksum() {
+        let payload = compress_python_compatible(b"checksum protected chunk", 3)
+            .expect("compress test chunk");
+        assert_ne!(payload[4] & 0b0000_0100, 0, "zstd checksum flag");
+        let mut damaged = payload;
+        let last = damaged.last_mut().expect("frame checksum bytes");
+        *last ^= 0xff;
+        assert!(
+            zstd::decode_all(std::io::Cursor::new(damaged)).is_err(),
+            "decoder must reject a damaged content checksum"
+        );
+    }
 
     #[derive(Default)]
     struct FakeState {

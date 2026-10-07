@@ -1137,7 +1137,9 @@ def compress(raw) -> bytes:
     """One zstd frame over ``raw`` (bytes or any C-contiguous buffer)."""
     import zstandard  # type: ignore[import-not-found]
 
-    return zstandard.ZstdCompressor(level=ZSTD_LEVEL, write_content_size=True).compress(raw)
+    return zstandard.ZstdCompressor(
+        level=ZSTD_LEVEL, write_content_size=True, write_checksum=True
+    ).compress(raw)
 
 
 def _ms(a, b):
