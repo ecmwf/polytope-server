@@ -102,6 +102,7 @@ ENV LD_LIBRARY_PATH=/opt/venv/lib/python3.11/site-packages/gribjumplib/lib64:/op
 COPY --from=builder /ecmwf/polytope-server/target/release/${BIN_NAME} /app/polytope-fe-worker
 COPY workers/polytope-fe-worker/run_polytope_worker.py /app/
 COPY workers/polytope-fe-worker/polytope.py /app/
+COPY workers/polytope-fe-worker/feature_resolve.py /app/
 COPY workers/polytope-fe-worker/extract.py /app/
 COPY workers/polytope-fe-worker/location_cache.py /app/
 COPY workers/polytope-fe-worker/dynamic_grid/ /app/dynamic_grid/
@@ -135,6 +136,7 @@ ENV LD_LIBRARY_PATH=/opt/venv/lib/python3.11/site-packages/gribjumplib/lib64:/op
 COPY --from=builder /ecmwf/polytope-server/target/release/${BIN_NAME} /app/polytope-fe-worker
 COPY workers/polytope-fe-worker/run_polytope_worker.py /app/
 COPY workers/polytope-fe-worker/polytope.py /app/
+COPY workers/polytope-fe-worker/feature_resolve.py /app/
 COPY workers/polytope-fe-worker/extract.py /app/
 COPY workers/polytope-fe-worker/location_cache.py /app/
 COPY workers/polytope-fe-worker/dynamic_grid/ /app/dynamic_grid/
