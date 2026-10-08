@@ -36,6 +36,43 @@ fn codec_from_accept_encoding(accept_encoding: Option<&str>) -> Codec {
     }
 }
 
+/// Media types whose payloads are already compressed, or are binary blobs that
+/// HTTP content encoding cannot usefully shrink. Compared case-insensitively
+/// against the media type, with any parameters stripped.
+const UNCOMPRESSIBLE_MEDIA_TYPES: &[&str] = &[
+    "application/x-grib",
+    "application/grib",
+    "application/octet-stream",
+    "application/x-polytope-multichunk",
+    "application/zip",
+    "application/gzip",
+    "application/zstd",
+];
+
+/// Pick the content encoding for a result body from its media type and the
+/// client's `Accept-Encoding`.
+///
+/// GRIB does not compress: on a 6.5M-point global field, grid_simple 16-bit
+/// (13.0 MB) reaches 1.10x at 22 MB/s with gzip-6 and 1.10x at 294 MB/s with
+/// zstd-3, and grid_ccsds (9.3 MB) reaches 1.00x with either. Spending that
+/// CPU — and, for gzip, that wall-clock — to shave a few percent off a
+/// multi-gigabyte download is not worth it, and the same holds for any other
+/// already-compressed or opaque binary payload (see
+/// [`UNCOMPRESSIBLE_MEDIA_TYPES`]). Text-shaped results do compress: CovJSON
+/// shrinks ~10x with gzip and ~20x with zstd, so those still negotiate an
+/// encoding from `Accept-Encoding`.
+fn codec_for_response(content_type: &str, accept_encoding: Option<&str>) -> Codec {
+    let media_type = content_type.split(';').next().unwrap_or("").trim();
+    if UNCOMPRESSIBLE_MEDIA_TYPES
+        .iter()
+        .any(|candidate| media_type.eq_ignore_ascii_case(candidate))
+    {
+        Codec::Identity
+    } else {
+        codec_from_accept_encoding(accept_encoding)
+    }
+}
+
 pub type RawStream = Box<dyn Stream<Item = Result<bytes::Bytes, std::io::Error>> + Send + Unpin>;
 
 #[derive(Debug, Default)]
@@ -738,8 +775,10 @@ async fn worker_task<P: Processor + 'static>(
                     source_error,
                 } => {
                     source_error_for_restart = source_error.clone();
-                    let codec =
-                        codec_from_accept_encoding(work.metadata["accept_encoding"].as_str());
+                    let codec = codec_for_response(
+                        &content_type,
+                        work.metadata["accept_encoding"].as_str(),
+                    );
                     let content_encoding = codec.content_encoding_header().map(str::to_string);
                     let (encoded, counter) = encode_stream_counted(body, &codec);
                     byte_counter = Some(counter);
@@ -1145,6 +1184,68 @@ async fn run_worker_loop_with_policy<P: Processor + 'static>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn grib_results_are_never_content_encoded() {
+        assert_eq!(
+            codec_for_response("application/x-grib", Some("zstd, gzip")),
+            Codec::Identity
+        );
+        assert_eq!(
+            codec_for_response("APPLICATION/X-GRIB; charset=x", Some("zstd, gzip")),
+            Codec::Identity
+        );
+        assert_eq!(
+            codec_for_response("application/grib", Some("gzip")),
+            Codec::Identity
+        );
+    }
+
+    #[test]
+    fn binary_and_pre_compressed_results_are_never_content_encoded() {
+        for content_type in [
+            "application/octet-stream",
+            "application/x-polytope-multichunk",
+            "application/zip",
+            "application/gzip",
+            "application/zstd",
+        ] {
+            assert_eq!(
+                codec_for_response(content_type, Some("zstd, gzip")),
+                Codec::Identity,
+                "{content_type} must be delivered verbatim"
+            );
+        }
+    }
+
+    #[test]
+    fn text_shaped_results_negotiate_the_offered_codec() {
+        assert_eq!(
+            codec_for_response("application/prs.coverage+json", Some("zstd, gzip")),
+            Codec::Zstd
+        );
+        assert_eq!(
+            codec_for_response("application/prs.coverage+json", Some("gzip")),
+            Codec::Gzip
+        );
+        assert_eq!(
+            codec_for_response("application/json", Some("gzip")),
+            Codec::Gzip
+        );
+        assert_eq!(codec_for_response("text/csv", Some("zstd")), Codec::Zstd);
+    }
+
+    #[test]
+    fn no_accept_encoding_means_no_content_encoding() {
+        assert_eq!(
+            codec_for_response("application/prs.coverage+json", None),
+            Codec::Identity
+        );
+        assert_eq!(
+            codec_for_response("application/x-grib", None),
+            Codec::Identity
+        );
+    }
 
     #[test]
     fn poll_health_warns_only_after_sustained_failure() {
