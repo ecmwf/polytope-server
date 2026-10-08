@@ -5,11 +5,14 @@
 //! Backwards-compatibility checks: the v1 API keeps parity with the legacy
 //! Python polytope-server on the response shapes that clients depend on.
 
+use std::sync::Arc;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use http_body_util::BodyExt;
 use polytope_server::build_app;
 use polytope_server::config::ServerConfig;
+use polytope_server::state::AppState;
 use tower::ServiceExt;
 
 fn app() -> axum::Router {
@@ -61,6 +64,13 @@ support:
 /// Combined with a very short `v1_poll_timeout_ms`, this lets us exercise the
 /// 202 Accepted pending path without a long wait.
 fn app_with_stalled_collection() -> axum::Router {
+    app_and_state_with_stalled_collection("").0
+}
+
+/// As [`app_with_stalled_collection`], but also hands back the app state so a
+/// test can inspect the metadata of the job it submitted. `extra_config` is
+/// appended to the YAML, for overriding sections such as `result_encoding`.
+fn app_and_state_with_stalled_collection(extra_config: &str) -> (axum::Router, Arc<AppState>) {
     // Bind on an ephemeral port; accept connections but never respond.
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
@@ -72,7 +82,7 @@ fn app_with_stalled_collection() -> axum::Router {
             open.push(stream);
         }
     });
-    app_from_yaml(&format!(
+    let cfg: ServerConfig = serde_yaml::from_str(&format!(
         r#"
 polytope:
   site: bol
@@ -81,7 +91,7 @@ bits:
   targets:
     stall_target:
       type: http
-      url: "http://{}/"
+      url: "http://{addr}/"
   collections:
     ecmwf:
       - my_route:
@@ -94,9 +104,42 @@ support:
   default_url: "https://support.ecmwf.int/"
 server:
   v1_poll_timeout_ms: 50
-"#,
-        addr
+{extra_config}"#
     ))
+    .expect("config parses");
+    build_app(cfg).expect("app builds")
+}
+
+/// Submits a v1 retrieve to the stalled collection and returns the metadata
+/// the frontend attached to the queued job.
+async fn submitted_job_metadata(
+    extra_config: &str,
+    user_agent: Option<&str>,
+    accept_encoding: Option<&str>,
+) -> serde_json::Value {
+    let (app, state) = app_and_state_with_stalled_collection(extra_config);
+    let body = serde_json::json!({"verb": "retrieve", "request": {"param": "t"}}).to_string();
+    let mut request =
+        Request::post("/api/v1/requests/ecmwf").header(header::CONTENT_TYPE, "application/json");
+    if let Some(user_agent) = user_agent {
+        request = request.header(header::USER_AGENT, user_agent);
+    }
+    if let Some(accept_encoding) = accept_encoding {
+        request = request.header(header::ACCEPT_ENCODING, accept_encoding);
+    }
+    let resp = app
+        .oneshot(request.body(Body::from(body)).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::ACCEPTED);
+
+    let snapshot = state
+        .bits
+        .active_jobs()
+        .into_iter()
+        .next()
+        .expect("the submitted job is still active against the stalled target");
+    snapshot.metadata
 }
 
 fn app_from_yaml(yaml: &str) -> axum::Router {
@@ -276,4 +319,74 @@ async fn security_and_cache_headers_present_on_every_response() {
     assert_eq!(h.get("x-content-type-options").unwrap(), "nosniff");
     assert_eq!(h.get("x-frame-options").unwrap(), "DENY");
     assert_eq!(h.get("x-xss-protection").unwrap(), "1; mode=block");
+}
+
+#[tokio::test]
+async fn v1_submit_always_asks_for_a_buffered_result() {
+    // v1 serves the result with a fixed Content-Length, encoded or not.
+    let metadata = submitted_job_metadata("", Some("curl/8.5.0"), Some("zstd, gzip")).await;
+    assert_eq!(metadata["buffer_full_output"], true);
+}
+
+#[tokio::test]
+async fn v1_forwards_accept_encoding_for_clients_that_decode_it() {
+    let metadata = submitted_job_metadata(
+        "",
+        Some("polytope-client/0.7.7 python-requests/2.34.2"),
+        Some("zstd, gzip"),
+    )
+    .await;
+    assert_eq!(metadata["accept_encoding"], "zstd, gzip");
+
+    let metadata = submitted_job_metadata("", Some("curl/8.5.0"), Some("gzip")).await;
+    assert_eq!(metadata["accept_encoding"], "gzip");
+
+    let metadata = submitted_job_metadata("", None, Some("gzip")).await;
+    assert_eq!(metadata["accept_encoding"], "gzip");
+}
+
+#[tokio::test]
+async fn v1_withholds_accept_encoding_from_pre_0_7_7_polytope_clients() {
+    // polytope-client below 0.7.7 counted decoded bytes against the compressed
+    // Content-Length and failed every encoded download.
+    for user_agent in [
+        "polytope-client/0.7.6 python-requests/2.34.2",
+        "python-requests/2.34.2",
+    ] {
+        let metadata = submitted_job_metadata("", Some(user_agent), Some("gzip, deflate")).await;
+        assert!(
+            metadata.get("accept_encoding").is_none(),
+            "'{user_agent}' must not be offered an encoded result, got {metadata}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn v1_accept_encoding_forwarding_can_be_disabled_by_config() {
+    let metadata = submitted_job_metadata(
+        "result_encoding:\n  enabled: false\n",
+        Some("polytope-client/0.7.7 python-requests/2.34.2"),
+        Some("zstd, gzip"),
+    )
+    .await;
+    assert!(metadata.get("accept_encoding").is_none(), "{metadata}");
+}
+
+#[tokio::test]
+async fn v1_accept_encoding_threshold_is_configurable() {
+    let metadata = submitted_job_metadata(
+        "result_encoding:\n  min_polytope_client_version: \"0.9.0\"\n",
+        Some("polytope-client/0.8.0 python-requests/2.34.2"),
+        Some("zstd, gzip"),
+    )
+    .await;
+    assert!(metadata.get("accept_encoding").is_none(), "{metadata}");
+
+    let metadata = submitted_job_metadata(
+        "result_encoding:\n  min_polytope_client_version: \"0.9.0\"\n",
+        Some("polytope-client/0.9.1 python-requests/2.34.2"),
+        Some("zstd, gzip"),
+    )
+    .await;
+    assert_eq!(metadata["accept_encoding"], "zstd, gzip");
 }

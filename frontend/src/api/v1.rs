@@ -439,8 +439,23 @@ pub async fn submit_request(
         &state.admin_bypass_roles,
     );
     // v1 clients require Content-Length, so delivery must buffer the full
-    // output before making it available for download.
+    // output before making it available for download. With an encoded result
+    // that Content-Length is simply the compressed length.
     job.metadata_mut()["buffer_full_output"] = json!(true);
+    // Forward Accept-Encoding only to clients that can download an encoded
+    // result: a v1 client fetches the result from the result store itself, and
+    // polytope-client below the configured minimum version miscounts a
+    // compressed body against Content-Length (see crate::result_encoding).
+    if state.result_encoding.client_can_download_encoded_result(
+        headers
+            .get(header::USER_AGENT)
+            .and_then(|value| value.to_str().ok()),
+    ) && let Some(encoding) = headers
+        .get(header::ACCEPT_ENCODING)
+        .and_then(|value| value.to_str().ok())
+    {
+        job.metadata_mut()["accept_encoding"] = json!(encoding);
+    }
     job.metadata_mut()["collection"] = json!(&collection);
     super::set_job_mock_time_metadata(&mut job, mock_time_extensions.mock_time.as_ref());
 

@@ -25,7 +25,7 @@ The following metadata keys are reserved for specific trusted purposes:
 
 - `cost`: Job cost estimation or billing data
 - `admin_overrides`: Admin-controlled overrides (e.g., `mock_now_rfc3339` for time mocking)
-- `accept_encoding`: Negotiated content encoding from HTTP headers
+- `accept_encoding`: The caller's `Accept-Encoding` header, from which the worker picks the result's content encoding (see "The `accept_encoding` metadata key" below)
 - `buffer_full_output`: Flag to buffer complete output before delivery (e.g., for v1 API compatibility)
 - `polytope_mars`: Trusted datacube and options configuration for Polytope FE workers (see below)
 - `metkit_ranges`: Per-key compact MARS ranges (e.g. `"1/to/100"`,
@@ -82,6 +82,42 @@ broker:
 ```
 
 When this transform runs, `job.metadata["polytope_mars"]` is set to the configured object. The value is sourced **only** from the trusted routing configuration, never from client request fields such as `request.polytope_mars`, `request.metadata`, `request.pre_path`, or `request.use_catalogue`.
+
+## The `accept_encoding` metadata key
+
+`accept_encoding` carries the caller's `Accept-Encoding` header to the worker,
+which uses it to decide whether to compress the result body it hands to the
+result store. The result store then serves that body with its
+`Content-Encoding`, its compressed `Content-Length`, and byte ranges over the
+compressed bytes, so whoever downloads the result has to understand the
+encoding.
+
+Who sets it:
+
+- v2 (`frontend/src/api/v2.rs`), EDR (`frontend/src/lib.rs`) and MCP
+  (`frontend/src/api/mcp.rs`) always forward the header.
+- v1 (`frontend/src/api/v1.rs`) forwards it only when the caller can download
+  an encoded result: polytope-client 0.7.6 and earlier counted decoded bytes
+  against the compressed `Content-Length` and failed every encoded download
+  ("Download failed: downloaded X byte(s) out of Y"). v1 therefore checks the
+  `User-Agent` against `result_encoding.min_polytope_client_version`
+  (default `0.7.7`, see `frontend/src/result_encoding.rs`): a
+  `polytope-client/<version>` below that minimum, or a bare
+  `python-requests/<version>` (what those clients sent), gets no
+  `accept_encoding` and therefore an unencoded result. Setting
+  `result_encoding.enabled: false` turns v1 forwarding off entirely.
+- Absent the key, the worker delivers the result unencoded.
+
+What the worker does with it (`codec_for_response` in
+`workers/common/src/lib.rs`): media types that are already compressed or are
+opaque binary are always delivered verbatim, whatever the client offered —
+`application/x-grib`, `application/grib`, `application/octet-stream`,
+`application/x-polytope-multichunk`, `application/zip`, `application/gzip` and
+`application/zstd` (matched case-insensitively, parameters ignored). GRIB does
+not compress: on a 6.5M-point global field, grid_simple 16-bit (13.0 MB)
+reaches 1.10x with both gzip-6 and zstd-3, and grid_ccsds (9.3 MB) reaches
+1.00x. Everything else negotiates zstd (preferred) or gzip from the header;
+CovJSON, for example, shrinks ~10x with gzip and ~20x with zstd.
 
 ## The `metkit_ranges` metadata key
 

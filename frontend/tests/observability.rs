@@ -29,6 +29,7 @@ targets:
         completed_redirect_ttl: std::time::Duration::from_secs(600),
         v1_poll_timeout: std::time::Duration::from_secs(30),
         v2_poll_timeout: std::time::Duration::from_secs(30),
+        result_encoding: Default::default(),
     })
 }
 

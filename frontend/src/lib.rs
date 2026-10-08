@@ -8,6 +8,7 @@ pub mod auth;
 pub mod config;
 #[cfg(feature = "metkit")]
 mod metkit_expansion;
+pub mod result_encoding;
 pub mod state;
 pub mod support;
 
@@ -70,11 +71,15 @@ pub fn build_app(
         )
     });
 
+    let result_encoding =
+        result_encoding::ResultEncodingPolicy::from_config(cfg.result_encoding.as_ref())?;
+
     let state = Arc::new(AppState {
         bits,
         auth_client,
         collections,
         allow_anonymous,
+        result_encoding,
         completed_redirect_ttl: std::time::Duration::from_secs(
             cfg.server.completed_redirect_ttl_secs,
         ),
@@ -485,6 +490,7 @@ targets:
             allow_anonymous: false,
             admin_bypass_roles: None,
             support: Default::default(),
+            result_encoding: Default::default(),
             completed_redirects: std::sync::Mutex::new(std::collections::HashMap::new()),
             completed_redirect_ttl: std::time::Duration::from_secs(600),
             v1_poll_timeout: std::time::Duration::from_secs(30),

@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 
 use crate::auth::AuthClient;
 use crate::config::SupportConfig;
+use crate::result_encoding::ResultEncodingPolicy;
 
 /// Default lifetime for completed redirects when the server setting is omitted.
 pub const COMPLETED_REDIRECT_TTL: Duration = Duration::from_secs(600);
@@ -37,6 +38,9 @@ pub struct AppState {
     pub allow_anonymous: bool,
     pub admin_bypass_roles: Option<HashMap<String, Vec<String>>>,
     pub support: SupportConfig,
+    /// When the v1 API may forward `Accept-Encoding` to workers, i.e. which
+    /// clients can be served a content-encoded result.
+    pub result_encoding: ResultEncodingPolicy,
     /// Completed redirect results keyed by job ID. The mutex is never held
     /// across an `.await` point.
     pub completed_redirects: Mutex<HashMap<String, CachedRedirect>>,

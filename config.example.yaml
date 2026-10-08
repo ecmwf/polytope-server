@@ -19,6 +19,15 @@ polytope:
 #   enabled: true
 #   port: 9090       # default 9090
 
+# Optional — when the v1 API may forward the caller's Accept-Encoding, and so
+# when a v1 result may be delivered content-encoded. polytope-client below
+# 0.7.7 failed encoded downloads, so v1 withholds the header from those
+# clients. Lower the minimum once they are gone; set `enabled: false` to stop
+# v1 forwarding altogether. v2, EDR and MCP are unaffected.
+# result_encoding:
+#   enabled: true
+#   min_polytope_client_version: "0.7.7"
+
 bits:
   routes:
     - default:

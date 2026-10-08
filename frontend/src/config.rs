@@ -55,6 +55,7 @@ pub struct ServerConfig {
     pub authentication: Option<AuthConfig>,
     pub admin_bypass_roles: Option<HashMap<String, Vec<String>>>,
     pub metrics: Option<MetricsConfig>,
+    pub result_encoding: Option<ResultEncodingConfig>,
     pub support: SupportConfig,
 }
 
@@ -83,6 +84,44 @@ impl Default for McpConfig {
 
 fn default_mcp_inline_result_max_bytes() -> usize {
     65_536
+}
+
+/// Minimum polytope-client version that downloads a content-encoded result
+/// correctly. 0.7.6 and earlier counted decoded bytes against the compressed
+/// `Content-Length` and failed the download.
+pub const DEFAULT_MIN_POLYTOPE_CLIENT_VERSION: &str = "0.7.7";
+
+/// When the v1 API may forward the caller's `Accept-Encoding` to workers, and
+/// so when a v1 result may be delivered content-encoded. v2, EDR and MCP
+/// always forward: only v1 hands the result-store URL to a client that may be
+/// an old polytope-client. See [`crate::result_encoding`].
+#[derive(Debug, Clone, Deserialize)]
+pub struct ResultEncodingConfig {
+    /// Set to `false` to stop the v1 API forwarding `Accept-Encoding`
+    /// entirely, whatever the caller is.
+    #[serde(default = "default_result_encoding_enabled")]
+    pub enabled: bool,
+    /// Lowest polytope-client version offered an encoded result
+    /// (`MAJOR.MINOR.PATCH`). Lower it once old clients are gone.
+    #[serde(default = "default_min_polytope_client_version")]
+    pub min_polytope_client_version: String,
+}
+
+impl Default for ResultEncodingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_result_encoding_enabled(),
+            min_polytope_client_version: default_min_polytope_client_version(),
+        }
+    }
+}
+
+const fn default_result_encoding_enabled() -> bool {
+    true
+}
+
+fn default_min_polytope_client_version() -> String {
+    DEFAULT_MIN_POLYTOPE_CLIENT_VERSION.to_string()
 }
 
 /// Where users are told to raise a support ticket when an error reaches them.
@@ -222,6 +261,8 @@ impl<'de> Deserialize<'de> for ServerConfig {
             #[serde(default)]
             metrics: Option<MetricsConfig>,
             #[serde(default)]
+            result_encoding: Option<ResultEncodingConfig>,
+            #[serde(default)]
             support: SupportConfig,
         }
 
@@ -239,6 +280,7 @@ impl<'de> Deserialize<'de> for ServerConfig {
             authentication: raw.authentication,
             admin_bypass_roles: raw.admin_bypass_roles,
             metrics: raw.metrics,
+            result_encoding: raw.result_encoding,
             support: raw.support,
         })
     }
@@ -694,6 +736,33 @@ bits: {}
         let cfg: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(cfg.server.v1_poll_timeout_ms, 50);
         assert_eq!(cfg.server.v2_poll_timeout_ms, 12_000);
+    }
+
+    #[test]
+    fn result_encoding_is_absent_unless_configured() {
+        let yaml = config_with_polytope("bits: {}\n");
+        let cfg: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
+        assert!(cfg.result_encoding.is_none());
+    }
+
+    #[test]
+    fn result_encoding_parses_and_defaults_its_own_keys() {
+        let yaml = config_with_polytope(
+            "bits: {}\nresult_encoding:\n  min_polytope_client_version: \"1.2.3\"\n",
+        );
+        let cfg: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
+        let result_encoding = cfg.result_encoding.unwrap();
+        assert_eq!(result_encoding.min_polytope_client_version, "1.2.3");
+        assert!(result_encoding.enabled, "enabled defaults to true");
+
+        let yaml = config_with_polytope("bits: {}\nresult_encoding:\n  enabled: false\n");
+        let cfg: ServerConfig = serde_yaml::from_str(&yaml).unwrap();
+        let result_encoding = cfg.result_encoding.unwrap();
+        assert!(!result_encoding.enabled);
+        assert_eq!(
+            result_encoding.min_polytope_client_version,
+            DEFAULT_MIN_POLYTOPE_CLIENT_VERSION
+        );
     }
 
     #[test]
