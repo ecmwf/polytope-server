@@ -70,6 +70,9 @@ RUN --mount=type=secret,id=GIT_AUTH_TOKEN,required=true \
 ###############################
 FROM chef-base AS builder
 ARG PACKAGE_NAME=polytope-server
+ARG VERSION
+# Compiled into the binary as service.version (see polytope_observability::service_version).
+ENV POLYTOPE_VERSION=$VERSION
 ARG BIN_NAME=polytope-server
 ARG FEATURES="metkit,telemetry"
 WORKDIR /ecmwf/polytope-server

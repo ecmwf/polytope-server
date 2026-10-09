@@ -208,7 +208,11 @@ release's `images.json`:
 
 There is nothing to bump before cutting a release. The `version` field in each
 crate's `Cargo.toml` is not used for images — these crates are not published to
-crates.io. To see what a release would rebuild before cutting it, run the
+crates.io. Binaries report the image tag they were built with as
+`service.version` (skaffold's `VERSION` build arg, compiled in via
+`polytope_observability::service_version`), so a carried-forward image keeps
+reporting the release that built it. To see what a release would rebuild before
+cutting it, run the
 fingerprint script on a clean checkout and compare with the previous release's
 `images.json`:
 

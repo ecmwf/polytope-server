@@ -35,7 +35,7 @@ build:
           - id: GIT_AUTH_TOKEN
             env: GH_TOKEN
         buildArgs:
-          VERSION: '{{ default "" .VERSION }}'
+          VERSION: '{{ default .IMAGE_TAG .VERSION }}'
           REVISION: '{{ default "" .REVISION }}'
 
     - image: eccr.ecmwf.int/polytope/polytope-fe-worker
@@ -47,7 +47,7 @@ build:
           - id: GIT_AUTH_TOKEN
             env: GH_TOKEN
         buildArgs:
-          VERSION: '{{ default "" .VERSION }}'
+          VERSION: '{{ default .IMAGE_TAG .VERSION }}'
           REVISION: '{{ default "" .REVISION }}'
 
     - image: eccr.ecmwf.int/polytope/fdb-worker
@@ -59,7 +59,7 @@ build:
           - id: GIT_AUTH_TOKEN
             env: GH_TOKEN
         buildArgs:
-          VERSION: '{{ default "" .VERSION }}'
+          VERSION: '{{ default .IMAGE_TAG .VERSION }}'
           REVISION: '{{ default "" .REVISION }}'
 
     - image: eccr.ecmwf.int/polytope/mars-worker
@@ -71,7 +71,7 @@ build:
           - id: GIT_AUTH_TOKEN
             env: GH_TOKEN
         buildArgs:
-          VERSION: '{{ default "" .VERSION }}'
+          VERSION: '{{ default .IMAGE_TAG .VERSION }}'
           REVISION: '{{ default "" .REVISION }}'
 
     - image: eccr.ecmwf.int/polytope/test-worker
@@ -83,7 +83,7 @@ build:
           - id: GIT_AUTH_TOKEN
             env: GH_TOKEN
         buildArgs:
-          VERSION: '{{ default "" .VERSION }}'
+          VERSION: '{{ default .IMAGE_TAG .VERSION }}'
           REVISION: '{{ default "" .REVISION }}'
 
     - image: eccr.ecmwf.int/polytope/polytope-loadgen
@@ -95,7 +95,7 @@ build:
           - id: GIT_AUTH_TOKEN
             env: GH_TOKEN
         buildArgs:
-          VERSION: '{{ default "" .VERSION }}'
+          VERSION: '{{ default .IMAGE_TAG .VERSION }}'
           REVISION: '{{ default "" .REVISION }}'
 
   tagPolicy:
@@ -171,7 +171,7 @@ profiles:
             cacheTTL: 480h
           buildArgs:
             GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
-            VERSION: '{{ default "" .VERSION }}'
+            VERSION: '{{ default .IMAGE_TAG .VERSION }}'
             REVISION: '{{ default "" .REVISION }}'
 
       - op: remove
@@ -188,7 +188,7 @@ profiles:
             cacheTTL: 480h
           buildArgs:
             GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
-            VERSION: '{{ default "" .VERSION }}'
+            VERSION: '{{ default .IMAGE_TAG .VERSION }}'
             REVISION: '{{ default "" .REVISION }}'
 
       - op: remove
@@ -205,7 +205,7 @@ profiles:
             cacheTTL: 480h
           buildArgs:
             GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
-            VERSION: '{{ default "" .VERSION }}'
+            VERSION: '{{ default .IMAGE_TAG .VERSION }}'
             REVISION: '{{ default "" .REVISION }}'
 
       - op: remove
@@ -222,7 +222,7 @@ profiles:
             cacheTTL: 480h
           buildArgs:
             GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
-            VERSION: '{{ default "" .VERSION }}'
+            VERSION: '{{ default .IMAGE_TAG .VERSION }}'
             REVISION: '{{ default "" .REVISION }}'
 
       - op: remove
@@ -239,7 +239,7 @@ profiles:
             cacheTTL: 480h
           buildArgs:
             GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
-            VERSION: '{{ default "" .VERSION }}'
+            VERSION: '{{ default .IMAGE_TAG .VERSION }}'
             REVISION: '{{ default "" .REVISION }}'
 
       - op: remove
@@ -256,7 +256,7 @@ profiles:
             cacheTTL: 480h
           buildArgs:
             GIT_AUTH_TOKEN: '{{ .GH_TOKEN }}'
-            VERSION: '{{ default "" .VERSION }}'
+            VERSION: '{{ default .IMAGE_TAG .VERSION }}'
             REVISION: '{{ default "" .REVISION }}'
 
   # Buildx is opt-in: normal local builds continue to use Skaffold's Docker
