@@ -164,20 +164,60 @@ JSON/text results. See [docs/mcp.md](docs/mcp.md) and
 
 `skaffold.yaml` builds separate images for the frontend, each worker, and the load generator from the same Rust workspace:
 
-| Image | Binary | Version source |
+| Image | Binary | Root crate |
 |---|---|---|
-| `eccr.ecmwf.int/polytope/frontend` | `polytope-server` | `frontend/TAG` |
-| `eccr.ecmwf.int/polytope/polytope-fe-worker` | `polytope-fe-worker` | `workers/polytope-fe-worker/TAG` |
-| `eccr.ecmwf.int/polytope/fdb-worker` | `fdb-worker` | `workers/fdb-worker/TAG` |
-| `eccr.ecmwf.int/polytope/mars-worker` | `mars-worker` | `workers/mars-worker/TAG` |
-| `eccr.ecmwf.int/polytope/test-worker` | `test-worker` | `workers/test-worker/TAG` |
-| `eccr.ecmwf.int/polytope/polytope-loadgen` | `loadgen` | `loadgen/TAG` |
+| `eccr.ecmwf.int/polytope/frontend` | `polytope-server` | `frontend` |
+| `eccr.ecmwf.int/polytope/polytope-fe-worker` | `polytope-fe-worker` | `workers/polytope-fe-worker` |
+| `eccr.ecmwf.int/polytope/fdb-worker` | `fdb-worker` | `workers/fdb-worker` |
+| `eccr.ecmwf.int/polytope/mars-worker` | `mars-worker` | `workers/mars-worker` |
+| `eccr.ecmwf.int/polytope/test-worker` | `test-worker` | `workers/test-worker` |
+| `eccr.ecmwf.int/polytope/polytope-loadgen` | `loadgen` | `loadgen` |
 
-Each image is versioned **independently** via its own `TAG` file. On a GitHub release each image is published under the version in its `TAG` file — **not** the git release tag — so image versions can drift independently of each other and of the top-level `VERSION` file. Image tags are immutable: if an image's `TAG` already exists in ECCR it was published by an earlier release and is skipped rather than overwritten.
+### Releases
 
-**When making a change that should produce a new image, bump the relevant `TAG` file.** The `version` field in each crate's `Cargo.toml` is ignored for this purpose — these crates are not published to crates.io and `Cargo.toml` versions carry no meaning for image releases.
+The repository has a single version: the git tag of a GitHub release (semantic
+version, e.g. `2.4.0`). Publishing a release runs
+[`release.yaml`](.github/workflows/release.yaml), which:
 
-The top-level `VERSION` file is the app-wide version. On every push to `main`, CI creates a `{VERSION}.dev0` git tag if it doesn't already exist; a human promotes that to the real release tag (e.g. `2.2.0`) to trigger the release workflow.
+1. computes a content fingerprint for every image with
+   [`tools/release/image-fingerprint.sh`](tools/release/image-fingerprint.sh) —
+   the image's resolved Rust dependency closure (exact crate versions and git
+   revisions), the tree hash of every workspace crate in that closure, and its
+   Dockerfile;
+2. compares each fingerprint with the one recorded by the previous release;
+3. builds and pushes only the images whose fingerprint changed, tagged with the
+   release tag, and carries the previous tag + digest forward for the rest;
+4. attaches `images.json` to the release and appends the same table to the
+   release notes.
+
+So an image tag always names the release whose source built it, and a release
+that only bumps a frontend dependency publishes only a new frontend. Image tags
+are immutable. Deployment config should take tags (or digests) from the latest
+release's `images.json`:
+
+```json
+{
+  "release": "2.4.1",
+  "previous": "2.4.0",
+  "images": {
+    "frontend":    { "image": "eccr.ecmwf.int/polytope/frontend",    "tag": "2.4.1", "digest": "sha256:…", "fingerprint": "…", "changed": true },
+    "mars-worker": { "image": "eccr.ecmwf.int/polytope/mars-worker", "tag": "2.4.0", "digest": "sha256:…", "fingerprint": "…", "changed": false }
+  }
+}
+```
+
+There is nothing to bump before cutting a release. The `version` field in each
+crate's `Cargo.toml` is not used for images — these crates are not published to
+crates.io. To see what a release would rebuild before cutting it, run the
+fingerprint script on a clean checkout and compare with the previous release's
+`images.json`:
+
+```bash
+tools/release/image-fingerprint.sh frontend            # prints the fingerprint
+tools/release/image-fingerprint.sh frontend --verbose  # also lists the inputs
+```
+
+The first release after a release without `images.json` rebuilds every image.
 
 For dev builds, skaffold tags images with the current git commit SHA by default (`tagPolicy.gitCommit`). Set `FIXED_TAG` to override, or `PREFIX` to prepend to the SHA.
 

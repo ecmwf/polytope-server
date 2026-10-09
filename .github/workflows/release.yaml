@@ -2,12 +2,19 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Publishes the application images on GitHub release. Each image is published
-# under the tag in its per-artifact TAG file (frontend/TAG, workers/*/TAG,
-# loadgen/TAG) — NOT the release tag — so image versions can drift
-# independently of each other and of the app VERSION. Tags are immutable: an
-# image whose TAG already exists in ECCR was published by an earlier release
-# and is skipped.
+# Publishes the application images on GitHub release.
+#
+# Every image built by a release is tagged with the release tag. An image is
+# only rebuilt when its content fingerprint (tools/release/image-fingerprint.sh)
+# differs from the one recorded in the previous release's images.json;
+# otherwise the previous release's tag + digest are carried forward. So an
+# image tag always names the release whose source built it, and a release that
+# only touches the frontend's dependencies publishes only a new frontend.
+#
+# The result is published as `images.json` on the release (and as a table in
+# the release notes): one entry per image with tag, digest, fingerprint and
+# whether this release rebuilt it. Deployment config should take image tags
+# from there.
 
 name: Release images
 
@@ -23,34 +30,127 @@ concurrency:
   group: release-images-${{ github.event.release.tag_name }}
   cancel-in-progress: false
 
+env:
+  ARTIFACTS: frontend polytope-fe-worker fdb-worker mars-worker test-worker polytope-loadgen
+  REGISTRY: eccr.ecmwf.int/polytope
+
 jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      any_changed: ${{ steps.plan.outputs.any_changed }}
+    env:
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Validate release tag
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          if [[ ! "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "release tag must be a semantic version, got '$TAG'" >&2
+            exit 1
+          fi
+
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # stable
+
+      - name: Configure access to private git dependencies
+        env:
+          RAW_GH_TOKEN: ${{ secrets.GH_REPO_READ_TOKEN }}
+        run: |
+          token="$(printf '%s' "$RAW_GH_TOKEN" | tr -d '[:space:]')"
+          echo "::add-mask::$token"
+          git config --global url."https://x-access-token:${token}@github.com/".insteadOf "https://github.com/"
+
+      - name: Compute image fingerprints
+        id: fingerprints
+        run: |
+          : > fingerprints.txt
+          for artifact in $ARTIFACTS; do
+            fp=$(tools/release/image-fingerprint.sh "$artifact")
+            echo "$artifact $fp" | tee -a fingerprints.txt
+          done
+
+      # Walk back through release tags on this history until one carries an
+      # images.json. If none does (first release under this scheme), every
+      # image is rebuilt.
+      - name: Fetch previous release manifest
+        id: previous
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          ref="$TAG"
+          for _ in $(seq 1 20); do
+            prev=$(git describe --tags --abbrev=0 --match '[0-9]*' "$ref^" 2>/dev/null) || break
+            if gh release download "$prev" --pattern images.json --output previous.json 2>/dev/null; then
+              echo "previous=$prev" >> "$GITHUB_OUTPUT"
+              echo "Carrying forward from release $prev"
+              exit 0
+            fi
+            ref="$prev"
+          done
+          echo "No previous release with images.json found; all images will be built."
+          echo '{"images":{}}' > previous.json
+
+      - name: Build plan
+        id: plan
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          PREVIOUS: ${{ steps.previous.outputs.previous }}
+        run: |
+          jq -n --arg tag "$TAG" --arg previous "$PREVIOUS" --arg registry "$REGISTRY" \
+             --rawfile fps fingerprints.txt --slurpfile prev previous.json '
+            ($fps | split("\n") | map(select(length > 0) | split(" ") | {key: .[0], value: .[1]}) | from_entries) as $fp
+            | {
+                release: $tag,
+                previous: (if $previous == "" then null else $previous end),
+                images: ($fp | to_entries | map({
+                  key: .key,
+                  value: (
+                    ($prev[0].images[.key] // null) as $p
+                    | if $p != null and $p.fingerprint == .value then
+                        {image: $p.image, tag: $p.tag, digest: $p.digest, fingerprint: .value, changed: false}
+                      else
+                        {image: ($registry + "/" + .key), tag: $tag, digest: null, fingerprint: .value, changed: true}
+                      end)
+                }) | from_entries)
+              }' > plan.json
+          jq . plan.json
+
+          changed=$(jq -c '[.images | to_entries[] | select(.value.changed) | {artifact: .key, image: .value.image}]' plan.json)
+          echo "matrix={\"include\":$changed}" >> "$GITHUB_OUTPUT"
+          echo "any_changed=$(jq -r 'length > 0' <<<"$changed")" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Release plan for $TAG"
+            echo
+            jq -r '.images | to_entries[] | "- \(.key): \(if .value.changed then "**build**" else "carry forward \(.value.tag)" end)"' plan.json
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: plan
+          path: plan.json
+          retention-days: 7
+
   publish:
     name: Publish ${{ matrix.artifact }}
+    needs: plan
+    if: needs.plan.outputs.any_changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     strategy:
       fail-fast: false
       max-parallel: 2
-      matrix:
-        include:
-          - artifact: frontend
-            image: eccr.ecmwf.int/polytope/frontend
-            tag_file: frontend/TAG
-          - artifact: polytope-fe-worker
-            image: eccr.ecmwf.int/polytope/polytope-fe-worker
-            tag_file: workers/polytope-fe-worker/TAG
-          - artifact: fdb-worker
-            image: eccr.ecmwf.int/polytope/fdb-worker
-            tag_file: workers/fdb-worker/TAG
-          - artifact: mars-worker
-            image: eccr.ecmwf.int/polytope/mars-worker
-            tag_file: workers/mars-worker/TAG
-          - artifact: test-worker
-            image: eccr.ecmwf.int/polytope/test-worker
-            tag_file: workers/test-worker/TAG
-          - artifact: polytope-loadgen
-            image: eccr.ecmwf.int/polytope/polytope-loadgen
-            tag_file: loadgen/TAG
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
     env:
       SKAFFOLD_SHA256: 8f62095ba8c282c03ad7b4987fbaf4f29b289fd6cbafb0351effd49f73f0240d
       SKAFFOLD_VERSION: v2.18.0
@@ -65,19 +165,16 @@ jobs:
           ECCR_USERNAME: ${{ secrets.ECCR_USERNAME }}
         run: printf '%s' "$ECCR_PASSWORD" | docker login eccr.ecmwf.int --username "$ECCR_USERNAME" --password-stdin
 
-      # Image tags are immutable: if this image's TAG is already in ECCR it was
-      # published by an earlier release — skip instead of overwriting.
+      # Tags are immutable. The plan only lists images whose inputs changed, so
+      # an existing tag means a previous run of this same release already
+      # published it (e.g. a re-run after a partial failure).
       - name: Check if image tag already exists
         id: check
+        env:
+          TAG: ${{ github.event.release.tag_name }}
         run: |
-          tag=$(cat "${{ matrix.tag_file }}")
-          if [[ ! "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-            echo "${{ matrix.tag_file }} must contain a semantic version, got '$tag'" >&2
-            exit 1
-          fi
-          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
-          if docker manifest inspect "${{ matrix.image }}:${tag}" >/dev/null 2>&1; then
-            echo "${{ matrix.image }}:${tag} already published; skipping."
+          if docker manifest inspect "${{ matrix.image }}:${TAG}" >/dev/null 2>&1; then
+            echo "${{ matrix.image }}:${TAG} already published; skipping build."
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -109,24 +206,84 @@ jobs:
       - name: Build and publish ${{ matrix.artifact }}
         if: steps.check.outputs.skip == 'false'
         env:
-          FIXED_TAG: ${{ steps.check.outputs.tag }}
-          VERSION: ${{ steps.check.outputs.tag }}
+          FIXED_TAG: ${{ github.event.release.tag_name }}
+          VERSION: ${{ github.event.release.tag_name }}
           REVISION: ${{ github.sha }}
           BUILDKIT_CACHE_MODE: read-write
         run: skaffold build --cache-artifacts=false --push=true --filename skaffold.yaml --profile buildx-cache --build-image "${{ matrix.image }}"
 
       - name: Record published image digest
-        if: steps.check.outputs.skip == 'false'
-        id: digest
+        env:
+          TAG: ${{ github.event.release.tag_name }}
         run: |
-          digest="$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "${{ matrix.image }}:${{ steps.check.outputs.tag }}")"
+          digest="$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "${{ matrix.image }}:${TAG}")"
           test -n "$digest"
-          image="${{ matrix.image }}@$digest"
-          echo "digest=$digest" >> "$GITHUB_OUTPUT"
-          echo "image=$image" >> "$GITHUB_OUTPUT"
+          mkdir -p published
+          jq -n --arg artifact "${{ matrix.artifact }}" --arg digest "$digest" \
+            '{artifact: $artifact, digest: $digest}' > "published/${{ matrix.artifact }}.json"
           {
             echo "### Published ${{ matrix.artifact }}"
             echo
-            echo "- Image: \`$image\`"
+            echo "- Image: \`${{ matrix.image }}@$digest\`"
             echo "- Source revision: \`${{ github.sha }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: published-${{ matrix.artifact }}
+          path: published/${{ matrix.artifact }}.json
+          retention-days: 7
+
+  manifest:
+    name: Publish images.json
+    needs: [plan, publish]
+    # Run when nothing needed building (publish skipped) or when every build
+    # succeeded. A partial failure leaves the release without a manifest; fix
+    # and re-run the workflow, already-published images are detected and skipped.
+    if: always() && needs.plan.result == 'success' && (needs.publish.result == 'success' || needs.publish.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: artifacts
+
+      - name: Assemble images.json
+        run: |
+          shopt -s nullglob
+          # Fill in the digests recorded by the publish jobs.
+          jq -s '
+            (.[1:] | map({key: .artifact, value: .digest}) | from_entries) as $digests
+            | .[0]
+            | .images |= with_entries(
+                if .value.changed then .value.digest = $digests[.key] else . end)
+          ' artifacts/plan/plan.json artifacts/published-*/*.json > images.json
+          jq -e '[.images[] | .digest != null] | all' images.json >/dev/null \
+            || { echo "images.json is missing digests:" >&2; jq . images.json >&2; exit 1; }
+          jq . images.json
+
+      - name: Attach images.json to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$TAG" images.json --clobber --repo "${{ github.repository }}"
+
+      - name: Append image table to release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          table=$(jq -r '
+            "## Images", "",
+            "| Image | Tag | Changed | Digest |", "|---|---|---|---|",
+            (.images | to_entries[] |
+              "| `\(.value.image)` | `\(.value.tag)` | \(if .value.changed then "yes" else "no" end) | `\(.value.digest)` |")
+          ' images.json)
+          body=$(gh release view "$TAG" --repo "${{ github.repository }}" --json body --jq .body)
+          # Idempotent on re-runs: replace an existing images section.
+          body=$(printf '%s\n' "$body" | sed '/^## Images$/,$d')
+          printf '%s\n\n%s\n' "$body" "$table" > notes.md
+          gh release edit "$TAG" --repo "${{ github.repository }}" --notes-file notes.md
+          cat notes.md >> "$GITHUB_STEP_SUMMARY"
