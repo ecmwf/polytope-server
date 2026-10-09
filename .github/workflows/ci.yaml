@@ -84,9 +84,8 @@ jobs:
         run: skaffold diagnose --yaml-only --filename skaffold.yaml >/dev/null
 
   # Select the images affected by a PR before starting the costly container
-  # builds. Release-tag existence is intentionally not considered here: a PR
-  # must validate its changed image even when an older immutable release image
-  # already has the same TAG-file value.
+  # builds. This is a conservative path-based pre-filter for CI only; release
+  # builds decide per image via tools/release/image-fingerprint.sh.
   changed-images:
     name: Select changed images
     if: github.event_name == 'pull_request' || github.event_name == 'push'
@@ -164,47 +163,3 @@ jobs:
         env:
           BUILDKIT_CACHE_MODE: ${{ github.event_name == 'push' && 'read-write' || 'read' }}
         run: skaffold build --cache-artifacts=false --push=false --filename skaffold.yaml --profile buildx-cache --build-image "${{ matrix.image }}"
-
-  # On push to main: create a {VERSION}.dev0 git tag if it doesn't exist yet.
-  # A human promotes to the real tag (e.g. 2.2.0) to trigger release.yaml.
-  tag:
-    name: Tag
-    needs: [fmt, test, skaffold-validate]
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Check if dev tag already exists
-        id: check
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          version=$(cat VERSION 2>/dev/null | tr -d '[:space:]')
-          if [[ -z "$version" ]]; then
-            echo "No VERSION file; skipping."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          dev_tag="${version}.dev0"
-          echo "dev_tag=${dev_tag}" >> "$GITHUB_OUTPUT"
-          if gh api /repos/${{ github.repository }}/git/ref/tags/${dev_tag} >/dev/null 2>&1; then
-            echo "${dev_tag} already exists; skipping."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Create tag
-        if: steps.check.outputs.skip == 'false'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api /repos/${{ github.repository }}/git/refs \
-            --method POST \
-            --field ref="refs/tags/${{ steps.check.outputs.dev_tag }}" \
-            --field sha="${{ github.sha }}"
