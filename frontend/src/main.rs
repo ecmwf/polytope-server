@@ -38,7 +38,7 @@ fn init_meter_provider(
         .with_attributes([
             KeyValue::new("service.name", "polytope-server"),
             KeyValue::new("service.instance.id", broker_id.to_owned()),
-            KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
+            KeyValue::new("service.version", polytope_observability::service_version()),
             KeyValue::new("deployment.environment", env.to_owned()),
             KeyValue::new("bits.site", site.to_owned()),
             KeyValue::new("bits.env", env.to_owned()),

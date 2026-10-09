@@ -4,6 +4,18 @@
 
 use serde_json::{Map, Value};
 
+/// Version reported as `service.version` in logs, traces and metrics.
+///
+/// Image builds set `POLYTOPE_VERSION` to the image tag (the release tag for
+/// release builds, the git commit for dev builds). Plain `cargo build` has no
+/// meaningful version to report: crate versions are not maintained.
+pub fn service_version() -> &'static str {
+    match option_env!("POLYTOPE_VERSION") {
+        Some(v) if !v.trim().is_empty() => v,
+        _ => "unversioned",
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Resource {
     service_name: &'static str,
@@ -17,7 +29,7 @@ impl Resource {
     pub fn from_env(service_name: &'static str) -> Self {
         Self {
             service_name,
-            service_version: env!("CARGO_PKG_VERSION"),
+            service_version: service_version(),
             deployment_environment: non_empty_env("POLYTOPE_ENV"),
             k8s_namespace_name: non_empty_env("K8S_NAMESPACE_NAME"),
             k8s_pod_name: non_empty_env("K8S_POD_NAME"),

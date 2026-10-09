@@ -13,6 +13,7 @@ pub use formatter::{
     DEFAULT_LOG_LIST_PREVIEW_LENGTH, DEFAULT_LOG_MAX_LIST_LENGTH, DEFAULT_LOG_MAX_STRING_LENGTH,
     JsonFieldFormatter, OtelJsonFormatter, bounded_request, bounded_request_with, request,
 };
+pub use resource::service_version;
 pub use test_helper::capturing_subscriber;
 
 use tracing_subscriber::prelude::*;
