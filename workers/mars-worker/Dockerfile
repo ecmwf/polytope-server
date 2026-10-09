@@ -75,6 +75,9 @@ RUN --mount=type=secret,id=GIT_AUTH_TOKEN,required=true \
 ###############################
 FROM chef-base AS builder
 ARG PACKAGE_NAME=mars-worker
+ARG VERSION
+# Compiled into the binary as service.version (see polytope_observability::service_version).
+ENV POLYTOPE_VERSION=$VERSION
 ARG BIN_NAME=mars-worker
 WORKDIR /ecmwf/polytope-server
 COPY --from=mars-libs /opt/mars-client /opt/mars-client
