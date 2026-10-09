@@ -37,7 +37,7 @@ pub fn init_meter_provider() -> (
                 "service.instance.id",
                 std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown".into()),
             ),
-            KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
+            KeyValue::new("service.version", polytope_observability::service_version()),
             KeyValue::new(
                 "deployment.environment",
                 std::env::var("POLYTOPE_ENV").unwrap_or_else(|_| "unknown".into()),
