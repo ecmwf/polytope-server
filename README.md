@@ -128,13 +128,18 @@ routing engine.
 
 ### v1 (legacy)
 
+OpenAPI description: [docs/openapi/v1.yaml](docs/openapi/v1.yaml). It is hand-maintained and
+checked against the running handlers by `frontend/tests/v1_openapi_contract.rs`.
+
 - `GET /api/v1/test`
 - `GET /api/v1/collections`
+- `GET /api/v1/user`
 - `GET /api/v1/requests`
-- `POST /api/v1/requests/{id}`
+- `POST /api/v1/requests/{collection}`
 - `GET /api/v1/requests/{id}`
 - `DELETE /api/v1/requests/{id}`
 - `GET /api/v1/downloads/{id}` (deprecated)
+- `GET`, `POST /api/v1/uploads/{id}` (unsupported)
 
 ### v2
 
