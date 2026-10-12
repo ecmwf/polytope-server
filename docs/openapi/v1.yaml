@@ -1,0 +1,746 @@
+# SPDX-FileCopyrightText: 2026 European Centre for Medium-Range Weather Forecasts (ECMWF)
+#
+# SPDX-License-Identifier: Apache-2.0
+
+openapi: 3.1.0
+info:
+  title: Polytope API (v1, legacy)
+  version: "1.0"
+  description: |
+    Legacy v1 HTTP API of the Polytope data-access service.
+
+    **Flow.** Submit a request with `POST /api/v1/requests/{collection}` (returns
+    `202` plus a `Location` header), then poll `GET /api/v1/requests/{id}` until the
+    result is ready. While the job is queued or running the poll returns `202` with
+    `Retry-After`. When it finishes the poll returns either `303` with a JSON body
+    carrying the download `location`, or `200` with the data inline.
+
+    **Errors.** For every status >= 400 the service replaces the body with a
+    single-field JSON object, `{"message": "<human-readable text>"}`, which may
+    quote a request ID for support. Clients should display `message` verbatim.
+
+    **Authentication.** Every endpoint except `GET /api/v1/test` requires an
+    `Authorization` header, unless the deployment explicitly allows anonymous
+    access (anonymous callers can submit, but own nothing: the listing endpoints
+    return nothing for them). The service passes the credential to an
+    authentication service (auth-o-tron), so the accepted schemes depend on the
+    deployment. The two schemes described here are `Bearer` (a JWT or OIDC token)
+    and `EmailKey`; for `EmailKey` only the key part is checked. A credential the
+    authentication service rejects, or answers with an error for, gives `401`.
+    If the authentication service cannot be reached at all, protected endpoints
+    answer `503` (credentials it accepted shortly before may keep working from a
+    cache). Request headers beginning `Polytope-Mock-` are reserved for
+    administrators and are refused with `400`, `401` or `403` for anyone else; do
+    not send them.
+
+    **Authorisation failures.** Whether a user may use a collection, or a
+    particular combination of keywords, is decided while the job runs. Such
+    refusals are reported as `400` on the submit or poll response, with the
+    reason in `message`, not as `401`/`403`.
+
+    **Timing.** Both `POST /requests/{collection}` and `GET /requests/{id}` wait
+    on the server for up to a configured timeout (default 30 s) before answering
+    `202`. Set gateway and client timeouts above that.
+
+    **Replicas.** Request state is held by the server instance that accepted
+    the request. If the deployment shares broker state between instances, a poll
+    that reaches another instance is forwarded to the owner; otherwise it
+    answers `404`. Listings, cancellation, the ownership check and the repeated
+    `303` only work against the instance that holds the state (for the `303`,
+    the instance that served it), so route a client's requests to the same
+    instance where possible.
+
+    **Methods.** Only the methods documented here are supported. Do not send
+    `HEAD` to `/api/v1/requests/{id}`: it is processed like `GET` and consumes
+    the result.
+
+    **Request IDs** are opaque strings. Pass them back unchanged and do not parse
+    them.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+servers:
+  # Placeholder: replace with the URL of the deployment being described.
+  - url: https://{host}
+    variables:
+      host:
+        default: polytope.example.org
+        description: Polytope deployment host.
+tags:
+  - name: requests
+    description: Submit, poll and cancel retrievals.
+  - name: meta
+    description: Service and account information.
+  - name: deprecated
+    description: Removed endpoints that still answer with 410.
+
+security:
+  - bearerAuth: []
+  - emailKey: []
+
+paths:
+  /api/v1/test:
+    get:
+      tags: [meta]
+      summary: Liveness check
+      security: []
+      operationId: v1Test
+      responses:
+        "200":
+          description: Service is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message]
+                properties:
+                  message:
+                    type: string
+                    examples: [Polytope server is alive]
+
+  /api/v1/collections:
+    get:
+      tags: [meta]
+      summary: List available collections
+      operationId: v1ListCollections
+      responses:
+        "200":
+          description: Collection names, sorted alphabetically.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message]
+                properties:
+                  message:
+                    type: array
+                    items:
+                      type: string
+                    examples: [[destination-earth, ecmwf-mars]]
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/user:
+    get:
+      tags: [meta]
+      summary: Count of the caller's requests held by this instance
+      operationId: v1UserInfo
+      responses:
+        "200":
+          description: |
+            Number of requests owned by the caller that the serving instance
+            still holds (see `GET /api/v1/requests`). Anonymous callers always
+            get `"0"`.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [live requests]
+                properties:
+                  live requests:
+                    type: string
+                    description: Integer encoded as a string.
+                    examples: ["2"]
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/requests:
+    get:
+      tags: [requests]
+      summary: List the caller's requests
+      operationId: v1ListRequests
+      description: |
+        Lists the caller's requests across all collections (including requests
+        the same user submitted through other Polytope APIs). Only requests owned
+        by the authenticated user and realm are returned, and only those still
+        held by the instance that answers: queued, processing, processed but not
+        yet fetched, and failed. The result is therefore per instance, and
+        finished requests disappear once fetched or expired. Anonymous callers
+        get an empty list.
+      responses:
+        "200":
+          description: Request records, oldest first.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RequestList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/requests/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: |
+          Request ID returned by the submit call. For `GET` this may also be a
+          collection name, which lists the caller's active requests in that
+          collection. For `DELETE` the literal `all` cancels every request of the
+          caller's held by the serving instance.
+        schema:
+          type: string
+    post:
+      tags: [requests]
+      summary: Submit a retrieval request to a collection
+      operationId: v1SubmitRequest
+      description: |
+        Queues a retrieval. On success the response is `202` with a `Location`
+        header (`./{id}`) pointing at the poll URL. Poll it with
+        `GET /api/v1/requests/{id}`.
+
+        The server first waits on the new job for up to the configured timeout
+        (default 30 s), returning early once the job starts processing. If the job
+        fails within that window (invalid request, authorisation refusal, rate
+        limit, overload) the failure is returned on this response instead of
+        `202`. A job that has already succeeded is not consumed here: the
+        response is still `202` and the data is fetched with the poll.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: |
+            Collection name (as listed by `GET /api/v1/collections`). Named `id`
+            only because this path shares a template with the poll endpoint.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubmitBody"
+            examples:
+              mars:
+                summary: MARS-style request as a JSON object
+                value:
+                  verb: retrieve
+                  request:
+                    class: od
+                    stream: oper
+                    type: fc
+                    expver: "0001"
+                    date: "20250101"
+                    time: "00"
+                    levtype: sfc
+                    param: 167
+                    step: "0"
+              yaml:
+                summary: Request as a YAML string
+                value:
+                  verb: retrieve
+                  request: "class: od\nstream: oper\ntype: fc\nparam: 167\n"
+      responses:
+        "202":
+          $ref: "#/components/responses/Pending"
+        "200":
+          description: The job was cancelled before the server could answer.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cancelled"
+        "400":
+          description: |
+            Syntactically invalid JSON, a `verb` other than `retrieve`, an
+            unparseable `request`, or a job that failed validation or was refused
+            (including authorisation and role refusals).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Unknown collection.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: Request body too large (default limit 2 MiB).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "415":
+          description: Missing or non-JSON `Content-Type`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          description: Well-formed JSON that does not match the body schema.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          description: |
+            The authentication service is unavailable, or the broker is at
+            capacity.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "529":
+          $ref: "#/components/responses/Overloaded"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    get:
+      tags: [requests]
+      summary: Poll a request (or list a collection's requests)
+      operationId: v1GetRequest
+      description: |
+        Long-polls the request. The call blocks for up to a server-configured
+        timeout (default 30 s) before returning `202`.
+
+        Results are delivered one of two ways:
+        - `303` with a JSON body whose `location` is the download URL. The same
+          `303` is returned again if the request is re-polled within a
+          server-configured window (default 10 minutes), but only by the instance
+          that served the first `303`. After the window, immediately if that
+          instance's cache of finished requests was full when the result was
+          delivered, or whenever another instance answers, a re-poll returns
+          `404` (or `410` if the state was lost).
+        - `200` with the data inline in the body. The result is consumed by the
+          fetch: a second `GET` returns `404`.
+
+        Requests held by the serving instance that belong to another user are
+        reported as `404`.
+      responses:
+        "200":
+          description: |
+            One of:
+            - the result data inline, with the content type the data has (for
+              example `application/x-grib`) and a `Content-Disposition`.
+              `Content-Length` is set unless the response is compressed because
+              the client sent `Accept-Encoding`, which most HTTP clients do by
+              default, so do not rely on it
+            - `{"status": "cancelled"}` if the request was cancelled
+            - a request list, if `id` was a collection name
+
+            Because the data itself may be JSON, a JSON body is not necessarily
+            one of the two documented shapes.
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+              description: Present when the body is result data.
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - $ref: "#/components/schemas/Cancelled"
+                  - $ref: "#/components/schemas/RequestList"
+                  - description: Result data that is itself JSON.
+            "*/*": {}
+        "202":
+          $ref: "#/components/responses/Pending"
+        "303":
+          description: Result is ready for download at `location`.
+          headers:
+            Location:
+              required: true
+              schema:
+                type: string
+                format: uri
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Redirect"
+        "400":
+          description: |
+            The request failed: a validation error, or a refusal such as an
+            authorisation or role check.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "404":
+          description: |
+            Unknown request ID, already fetched, expired from the finished-request
+            cache, or owned by another user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "410":
+          description: Request state expired or was lost, or the client disconnected.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "529":
+          $ref: "#/components/responses/Overloaded"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags: [requests]
+      summary: Cancel a request (or all of the caller's requests)
+      operationId: v1DeleteRequest
+      responses:
+        "200":
+          description: |
+            Cancellation processed. The count can be 0, including for an unknown
+            ID. The literal `all` is matched case-insensitively.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [message]
+                properties:
+                  message:
+                    type: string
+                    examples: [Successfully revoked 1 requests]
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "404":
+          description: The request belongs to another user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/downloads/{id}:
+    get:
+      tags: [deprecated]
+      deprecated: true
+      summary: Removed. Poll /api/v1/requests/{id} instead.
+      operationId: v1DownloadsDeprecated
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "410":
+          description: Always returned.
+          headers:
+            Deprecation:
+              required: true
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /api/v1/uploads/{id}:
+    get:
+      tags: [deprecated]
+      deprecated: true
+      summary: Not supported.
+      operationId: v1UploadsGetDeprecated
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "410":
+          description: Always returned.
+          headers:
+            Deprecation:
+              required: true
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+    post:
+      tags: [deprecated]
+      deprecated: true
+      summary: Not supported.
+      operationId: v1UploadsPostDeprecated
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "410":
+          description: Always returned.
+          headers:
+            Deprecation:
+              required: true
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Bearer token (for example an OIDC access token). Accepted only if the
+        deployment's auth service has a matching provider configured.
+    emailKey:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: |
+        ECMWF/DestinE email and API key, sent as
+        `Authorization: EmailKey <email>:<key>`.
+
+  responses:
+    Pending:
+      description: |
+        Request accepted and queued or still processing. Poll the URL in
+        `Location` after `Retry-After` seconds.
+      headers:
+        Location:
+          required: true
+          schema:
+            type: string
+          description: Relative poll URL, `./{id}`.
+        Retry-After:
+          required: true
+          schema:
+            type: integer
+          description: Seconds to wait before polling again (5).
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [message, status]
+            properties:
+              message:
+                type: string
+                examples: [Request queued]
+              status:
+                type: string
+                enum: [queued, processing]
+    Unauthorized:
+      description: Missing, empty or invalid `Authorization` header.
+      headers:
+        WWW-Authenticate:
+          required: true
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    ServiceUnavailable:
+      description: The authentication service is unavailable. Retry later.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    RateLimited:
+      description: Per-caller admission limit exceeded. Retry after `Retry-After` seconds.
+      headers:
+        Retry-After:
+          required: true
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Overloaded:
+      description: Service temporarily overloaded. Retry after `Retry-After` seconds.
+      headers:
+        Retry-After:
+          required: true
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    ServerError:
+      description: Internal error while processing the request.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Cancelled:
+      type: object
+      required: [status]
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          enum: [cancelled]
+
+    Error:
+      type: object
+      required: [message]
+      additionalProperties: false
+      properties:
+        message:
+          type: string
+          description: Self-contained human-readable explanation.
+
+    SubmitBody:
+      type: object
+      required: [verb, request]
+      properties:
+        verb:
+          type: string
+          enum: [retrieve]
+          description: Only `retrieve` is supported.
+        request:
+          description: |
+            The request, either as a JSON object of keyword-to-value pairs or as
+            a YAML string that parses to one. The accepted keys depend on the
+            collection.
+          oneOf:
+            - type: object
+              additionalProperties: true
+            - type: string
+
+    Redirect:
+      type: object
+      required: [location]
+      additionalProperties: false
+      properties:
+        location:
+          type: string
+          format: uri
+          description: Download URL.
+        contentType:
+          type: string
+        contentLength:
+          type: integer
+          format: int64
+
+    RequestList:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: array
+          items:
+            $ref: "#/components/schemas/RequestRecord"
+
+    AuthUser:
+      type: object
+      description: Identity as resolved by the auth service.
+      properties:
+        version:
+          type: integer
+        username:
+          type: string
+        realm:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+        attributes:
+          type: object
+          additionalProperties:
+            type: string
+        scopes:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+
+    RequestRecord:
+      type: object
+      description: Legacy request record, kept for compatibility with older clients.
+      required:
+        - id
+        - timestamp
+        - last_modified
+        - user
+        - verb
+        - url
+        - md5
+        - collection
+        - status
+        - user_message
+        - user_request
+        - coerced_request
+        - content_length
+        - content_type
+        - status_history
+        - datasource
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+        timestamp:
+          type: number
+          description: Creation time, Unix epoch seconds.
+        last_modified:
+          type: number
+        user:
+          $ref: "#/components/schemas/AuthUser"
+        verb:
+          type: string
+          examples: [retrieve]
+        url:
+          type: string
+          description: Result URL once available, otherwise an empty string.
+        md5:
+          type: [string, "null"]
+        collection:
+          type: string
+        status:
+          type: string
+          enum: [queued, processing, processed, failed]
+          description: Current state of the request.
+        user_message:
+          type: string
+        user_request:
+          type: string
+          description: The submitted request, flattened, serialised as a JSON string.
+        coerced_request:
+          type: object
+          additionalProperties: true
+          description: The submitted request, flattened (`verb` removed, a YAML string parsed).
+        content_length:
+          type: [integer, "null"]
+          format: int64
+        content_type:
+          type: string
+        status_history:
+          type: object
+          additionalProperties:
+            type: number
+          description: Map of status name to Unix epoch seconds.
+        datasource:
+          type: string

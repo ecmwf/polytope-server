@@ -65,7 +65,7 @@ fn pending_request_body(status: PendingStatus) -> Value {
 ///
 /// Body shape: `{contentLength?, contentType?, location}` — matching the
 /// Python frontend (no `message` / `status` keys on redirect).
-fn build_redirect_response(
+pub fn build_redirect_response(
     location: &str,
     content_type: Option<&str>,
     content_length: Option<u64>,
