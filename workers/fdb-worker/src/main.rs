@@ -22,7 +22,10 @@ impl Processor for FdbProcessor {
 
         let request = work.request;
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(16);
+        // Held by the blocking task, which can outlive the async job.
+        let active = polytope_observability::active_request(&work.job_id);
         tokio::task::spawn_blocking(move || {
+            let _active = active;
             let fdb = match FDB::new(Some(&fdb_config)) {
                 Ok(fdb) => fdb,
                 Err(err) => {

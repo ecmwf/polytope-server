@@ -52,6 +52,16 @@ fn child() {
             std::process::exit(3);
         }
         "panic" => panic!("boom"),
+        "abort" => {
+            eprintln!("terminate called after throwing an instance of 'eckit::SeriousBug'");
+            unsafe { libc::abort() }
+        }
+        "c-stdio" => {
+            // Buffered by C stdio (stdout is a pipe), flushed by `exit` only
+            // after the atexit handlers.
+            unsafe { libc::printf(c"buffered by C stdio\n".as_ptr()) };
+            std::process::exit(0);
+        }
         _ => unreachable!(),
     }
 }
@@ -68,6 +78,27 @@ fn output_written_just_before_exit_is_logged() {
         "{bodies:?}"
     );
     assert!(bodies.contains(&"stdout before exit"), "{bodies:?}");
+}
+
+#[test]
+fn text_printed_before_abort_reaches_the_real_stderr() {
+    use std::os::unix::process::ExitStatusExt;
+    let (status, _events, stderr) = run_child("abort");
+    assert_eq!(status.signal(), Some(libc::SIGABRT));
+    assert!(
+        stderr.contains("terminate called after throwing an instance of 'eckit::SeriousBug'"),
+        "{stderr:?}"
+    );
+}
+
+#[test]
+fn c_stdio_buffers_are_flushed_into_the_log_at_exit() {
+    let (status, events, _stderr) = run_child("c-stdio");
+    assert!(status.success());
+    assert!(
+        events.iter().any(|e| e["body"] == "buffered by C stdio"),
+        "{events:#?}"
+    );
 }
 
 #[test]

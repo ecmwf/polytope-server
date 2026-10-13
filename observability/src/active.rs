@@ -34,13 +34,14 @@ impl Drop for ActiveRequest {
     }
 }
 
-/// The request id, if exactly one request is in progress. With several, the
-/// origin of process-wide output is ambiguous, so none is claimed.
+/// The request id, if all work in progress belongs to one request. With
+/// several requests, the origin of process-wide output is ambiguous, so none is
+/// claimed. (A request whose blocking task outlives its async job and the next
+/// request therefore yield none.)
 pub(crate) fn sole_active_request() -> Option<String> {
-    match active().as_slice() {
-        [only] => Some(only.clone()),
-        _ => None,
-    }
+    let ids = active();
+    let first = ids.first()?;
+    ids.iter().all(|id| id == first).then(|| first.clone())
 }
 
 #[cfg(test)]
@@ -57,7 +58,9 @@ mod tests {
         assert_eq!(sole_active_request(), None);
         drop(first);
         assert_eq!(sole_active_request().as_deref(), Some("b"));
-        drop(second);
+        let third = active_request("b");
+        assert_eq!(sole_active_request().as_deref(), Some("b"));
+        drop((second, third));
         assert_eq!(sole_active_request(), None);
     }
 }

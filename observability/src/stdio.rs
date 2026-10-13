@@ -12,7 +12,8 @@
 use std::fs::File;
 use std::io::{self, Read};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-use std::sync::{Arc, Mutex, Once};
+use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, Once};
 use std::time::{Duration, Instant};
 
 use crate::active::sole_active_request;
@@ -56,7 +57,15 @@ struct Capture {
 }
 
 static CAPTURES: Mutex<Vec<Arc<Capture>>> = Mutex::new(Vec::new());
-static EXIT_FLUSH: Once = Once::new();
+static INSTALL_HOOKS: Once = Once::new();
+static ORIGINAL_STDERR: AtomicI32 = AtomicI32::new(-1);
+static INSTALLED_IN_PID: AtomicU32 = AtomicU32::new(0);
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 /// Points fd 1 and fd 2 at pipes that background threads drain into `tracing`
 /// events (stdout at INFO, stderr at WARN), and returns the original stdout so
@@ -85,23 +94,97 @@ pub fn redirect_native_stdio() -> io::Result<File> {
     }
     drop((out_write, err_write));
 
-    CAPTURES.lock().unwrap().extend(captures);
-    EXIT_FLUSH.call_once(|| unsafe {
-        libc::atexit(flush_at_exit);
+    lock(&CAPTURES).extend(captures);
+    INSTALL_HOOKS.call_once(|| {
+        ORIGINAL_STDERR.store(
+            original_err
+                .try_clone()
+                .map_or(-1, std::os::fd::IntoRawFd::into_raw_fd),
+            Ordering::Relaxed,
+        );
+        INSTALLED_IN_PID.store(std::process::id(), Ordering::Relaxed);
+        unsafe {
+            libc::atexit(flush_at_exit);
+            let mut action: libc::sigaction = std::mem::zeroed();
+            action.sa_sigaction = dump_on_abort as extern "C" fn(libc::c_int) as usize;
+            action.sa_flags = libc::SA_RESETHAND;
+            libc::sigemptyset(&mut action.sa_mask);
+            libc::sigaction(libc::SIGABRT, &action, std::ptr::null_mut());
+        }
     });
     Ok(File::from(original_out))
 }
 
 extern "C" fn flush_at_exit() {
+    if std::process::id() != INSTALLED_IN_PID.load(Ordering::Relaxed) {
+        return; // a forked child must not touch the parent's pipes
+    }
+    // C stdio buffers are flushed by `exit` only after the atexit handlers.
+    unsafe { libc::fflush(std::ptr::null_mut()) };
     // On a fresh thread: the exiting thread's thread-locals (which `tracing`
     // uses) may already be destroyed, and a panic here would abort the process.
-    let _ = std::thread::spawn(|| {
-        let captures = CAPTURES.lock().map(|c| c.clone()).unwrap_or_default();
-        for capture in captures {
-            capture.flush_everything_written();
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let spawned = std::thread::Builder::new()
+        .name("native-stdio-exit".into())
+        .spawn(move || {
+            let captures = lock(&CAPTURES).clone();
+            for capture in captures {
+                capture.flush_everything_written();
+            }
+            let _ = done_tx.send(());
+        });
+    if spawned.is_ok() {
+        let _ = done_rx.recv_timeout(Duration::from_secs(2));
+    }
+}
+
+/// `abort()` (C++ `terminate`, Rust allocation failures, ...) kills the process
+/// without running atexit handlers, so whatever the dying process printed
+/// last ("terminate called after throwing ...") would be lost in the pipes.
+/// Copies it, raw, to the original stderr. Never blocks for long: it only try-locks.
+extern "C" fn dump_on_abort(_signal: libc::c_int) {
+    let fd = ORIGINAL_STDERR.load(Ordering::Relaxed);
+    if fd < 0 {
+        return;
+    }
+    let Ok(captures) = CAPTURES.try_lock() else {
+        return;
+    };
+    for capture in captures.iter() {
+        // The drain thread holds this lock for the instant between reading the
+        // dying process's last words and batching them; wait that out, but not
+        // forever (the aborting thread may itself hold it).
+        for _ in 0..100 {
+            if let Ok(pending) = capture.pending.try_lock() {
+                write_raw(fd, &pending.bytes);
+                break;
+            }
+            unsafe { libc::usleep(500) };
         }
-    })
-    .join();
+        let pipe = capture.pipe.as_raw_fd();
+        let mut chunk = [0u8; 4096];
+        unsafe {
+            let flags = libc::fcntl(pipe, libc::F_GETFL);
+            libc::fcntl(pipe, libc::F_SETFL, flags | libc::O_NONBLOCK);
+            loop {
+                let n = libc::read(pipe, chunk.as_mut_ptr().cast(), chunk.len());
+                if n <= 0 {
+                    break;
+                }
+                write_raw(fd, &chunk[..n as usize]);
+            }
+        }
+    }
+}
+
+fn write_raw(fd: libc::c_int, mut bytes: &[u8]) {
+    while !bytes.is_empty() {
+        let n = unsafe { libc::write(fd, bytes.as_ptr().cast(), bytes.len()) };
+        if n <= 0 {
+            return;
+        }
+        bytes = &bytes[n as usize..];
+    }
 }
 
 fn cvt(ret: libc::c_int) -> io::Result<libc::c_int> {
@@ -172,7 +255,7 @@ impl Capture {
     }
 
     fn poll_timeout_ms(&self) -> i32 {
-        let pending = self.pending.lock().unwrap();
+        let pending = lock(&self.pending);
         let Some(since) = pending.since else {
             return -1;
         };
@@ -182,7 +265,7 @@ impl Capture {
 
     /// Reads what is in the pipe into the pending batch. `false` at EOF/error.
     fn read_available(&self) -> bool {
-        let mut pending = self.pending.lock().unwrap();
+        let mut pending = lock(&self.pending);
         let mut chunk = [0u8; 8192];
         loop {
             match (&self.pipe).read(&mut chunk) {
@@ -228,7 +311,7 @@ impl Capture {
     }
 
     fn flush(&self) {
-        let mut pending = self.pending.lock().unwrap();
+        let mut pending = lock(&self.pending);
         self.emit_all(&mut pending);
     }
 
@@ -240,7 +323,7 @@ impl Capture {
             let flags = libc::fcntl(fd, libc::F_GETFL);
             libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
         }
-        let mut pending = self.pending.lock().unwrap();
+        let mut pending = lock(&self.pending);
         let mut chunk = [0u8; 8192];
         loop {
             match (&self.pipe).read(&mut chunk) {
@@ -297,10 +380,14 @@ fn split_point(bytes: &[u8], max: usize) -> usize {
 // is worth seeing whichever fd it came through.
 fn level_for(stream: Stream, text: &str) -> tracing::Level {
     let is_handled = |line: &str| HANDLED_EXCEPTIONS.iter().any(|h| line.starts_with(h));
-    if text.lines().all(is_handled) {
+    let mut rest = text
+        .lines()
+        .filter(|line| !line.trim().is_empty() && !is_handled(line))
+        .peekable();
+    if rest.peek().is_none() {
         return tracing::Level::DEBUG;
     }
-    if text.lines().any(|line| line.starts_with("Exception: ")) {
+    if rest.any(|line| line.starts_with("Exception: ")) {
         return tracing::Level::WARN;
     }
     match stream {
@@ -325,8 +412,13 @@ mod tests {
     fn other_exceptions_are_not_hidden() {
         let text = "Exception: SeriousBug: RequestEnvironment not initialized";
         assert_eq!(level_for(Stream::Stdout, text), Level::WARN);
-        let mixed = "Exception: Bad value: Wrong input for time: 24 hours\nSerious bug: y";
+        let mixed = "Exception: Bad value: Wrong input for time: 24 hours\nException: y";
         assert_eq!(level_for(Stream::Stdout, mixed), Level::WARN);
+        // A handled exception sharing a batch with ordinary output is not what
+        // decides the level.
+        let with_output = "Exception: Bad value: Wrong input for time: 24 hours\n\nStarting";
+        assert_eq!(level_for(Stream::Stdout, with_output), Level::INFO);
+        assert_eq!(level_for(Stream::Stderr, with_output), Level::WARN);
     }
 
     #[test]

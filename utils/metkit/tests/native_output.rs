@@ -96,7 +96,10 @@ fn reported_requests_succeed_and_their_output_becomes_log_events() {
         events[0]["body"],
         "Duplicate values in date [20260927,20260927] 20260927"
     );
-    assert_eq!(events[0]["attributes"]["event.name"], "process.native_output");
+    assert_eq!(
+        events[0]["attributes"]["event.name"],
+        "process.native_output"
+    );
     assert_eq!(events[0]["attributes"]["log.iostream"], "stderr");
 
     let expanded = metkit::expand_json(&example_2_request()).expect("example 2 expands");
