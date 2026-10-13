@@ -25,6 +25,8 @@ metadata:
 # ─── Build ────────────────────────────────────────────────────────────────────
 
 build:
+  # tools/release/image-fingerprint.sh reads PACKAGE_NAME and FEATURES from each
+  # Dockerfile; do not override them through buildArgs here or in buildx-build.sh.
   artifacts:
     - image: eccr.ecmwf.int/polytope/frontend
       context: .

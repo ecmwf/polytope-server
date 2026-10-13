@@ -51,10 +51,10 @@ jobs:
           token="$(printf '%s' "$RAW_GH_TOKEN" | tr -d '[:space:]')"
           echo "::add-mask::$token"
           git config --global url."https://x-access-token:${token}@github.com/".insteadOf "https://github.com/"
-      - name: Strip local path patches
-        run: sed -i '/^\[patch\./,$d' Cargo.toml
       - name: Image fingerprints
         run: tools/release/image-fingerprint.sh --all
+      - name: Strip local path patches
+        run: sed -i '/^\[patch\./,$d' Cargo.toml
       - name: Frontend unit tests
         env:
           NO_PROXY: "127.0.0.1,localhost"
