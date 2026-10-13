@@ -103,7 +103,8 @@ transform actions" principle, and is safe specifically because:
   expanded request.
 - It is best-effort and purely additive: if a field isn't recognised as a
   single well-formed range, or the canonicalization probe doesn't come back
-  as expected, that key is simply omitted from `metkit_ranges` -- the
+  as expected (or the range's two ends are identical, i.e. a single value),
+  that key is simply omitted from `metkit_ranges` -- the
   request is still served correctly via the ordinary fully-expanded
   `job.request`, just without the compact form for that key. Nothing here
   can cause a job to be rejected that would otherwise have succeeded.
