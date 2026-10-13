@@ -23,7 +23,7 @@ import operator
 import warnings
 from decimal import Decimal
 from enum import Enum
-from functools import reduce, partial
+from functools import reduce
 
 import boto3
 import botocore
@@ -174,10 +174,9 @@ class DynamoDBMetricStore(MetricStore):
         if not ids:
             return 0
 
+        filter_expr = Attr("request_id").exists()
         if not include_processed:
-            fn = partial(self.table.scan, FilterExpression=Attr("status").ne("processed"))
-        else:
-            fn = self.table.scan
+            filter_expr = filter_expr & Attr("status").ne("processed")
 
         # stream the metrics to delete to avoid throttling
         to_delete = (
