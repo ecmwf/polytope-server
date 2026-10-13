@@ -72,7 +72,7 @@ fn emit_python_logs(job_id: &str, logs: &[PyLogRecord]) {
     match max_severity {
         LogSeverity::Error => {
             error!(
-                job_id = %job_id,
+                request.id = %job_id,
                 python_log_count = log_count,
                 python_logs = %logs_json,
                 "python worker logs"
@@ -80,7 +80,7 @@ fn emit_python_logs(job_id: &str, logs: &[PyLogRecord]) {
         }
         LogSeverity::Warn => {
             warn!(
-                job_id = %job_id,
+                request.id = %job_id,
                 python_log_count = log_count,
                 python_logs = %logs_json,
                 "python worker logs"
@@ -88,7 +88,7 @@ fn emit_python_logs(job_id: &str, logs: &[PyLogRecord]) {
         }
         LogSeverity::Info => {
             info!(
-                job_id = %job_id,
+                request.id = %job_id,
                 python_log_count = log_count,
                 python_logs = %logs_json,
                 "python worker logs"
@@ -96,7 +96,7 @@ fn emit_python_logs(job_id: &str, logs: &[PyLogRecord]) {
         }
         LogSeverity::Debug => {
             debug!(
-                job_id = %job_id,
+                request.id = %job_id,
                 python_log_count = log_count,
                 python_logs = %logs_json,
                 "python worker logs"
@@ -112,7 +112,7 @@ struct PolytopeProcessor {
 #[async_trait]
 impl Processor for PolytopeProcessor {
     async fn process(&self, work: WorkItem) -> ProcessResult {
-        info!(job_id = %work.job_id, "processing request");
+        info!(request.id = %work.job_id, "processing request");
 
         let payload = json!({
             "request": work.request,
@@ -124,7 +124,7 @@ impl Processor for PolytopeProcessor {
         let payload_str = match serde_json::to_string(&payload) {
             Ok(s) => s,
             Err(err) => {
-                error!(job_id = %work.job_id, error = %err, "failed to serialize payload");
+                error!(request.id = %work.job_id, error = %err, "failed to serialize payload");
                 return ProcessResult::error(format!("failed to serialize payload: {err}"));
             }
         };
@@ -156,7 +156,7 @@ impl Processor for PolytopeProcessor {
                 let status: PyStatus = match serde_json::from_str(&status_json) {
                     Ok(s) => s,
                     Err(err) => {
-                        error!(job_id = %job_id, error = %err, status_json = %status_json, "failed to parse status_json");
+                        error!(request.id = %job_id, error = %err, status_json = %status_json, "failed to parse status_json");
                         return ProcessResult::error(format!(
                             "protocol error: failed to parse status_json: {err}"
                         ));
@@ -168,7 +168,7 @@ impl Processor for PolytopeProcessor {
                 if status.ok {
                     let len = bytes.len() as u64;
                     let timings = serde_json::to_string(&status.timings).unwrap_or_default();
-                    info!(job_id = %job_id, bytes = len, timings = %timings, "request completed");
+                    info!(request.id = %job_id, bytes = len, timings = %timings, "request completed");
                     let stream = futures::stream::once(futures::future::ready(Ok::<
                         bytes::Bytes,
                         std::io::Error,
@@ -184,11 +184,11 @@ impl Processor for PolytopeProcessor {
                 }
             }
             Ok(Err(py_err)) => {
-                error!(job_id = %job_id, error = %py_err, "python error");
+                error!(request.id = %job_id, error = %py_err, "python error");
                 ProcessResult::error(format!("{py_err}"))
             }
             Err(join_err) => {
-                error!(job_id = %job_id, error = %join_err, "task join error");
+                error!(request.id = %job_id, error = %join_err, "task join error");
                 ProcessResult::error(format!("task join error: {join_err}"))
             }
         }
