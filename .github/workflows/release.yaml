@@ -26,6 +26,12 @@ on:
 permissions:
   contents: read
 
+# Default `run` steps use `bash -e {0}` without pipefail, which would let a
+# failing command on the left of a pipe go unnoticed.
+defaults:
+  run:
+    shell: bash
+
 concurrency:
   group: release-images-${{ github.event.release.tag_name }}
   cancel-in-progress: false
@@ -69,7 +75,9 @@ jobs:
           git config --global url."https://x-access-token:${token}@github.com/".insteadOf "https://github.com/"
 
       - name: Compute image fingerprints
-        run: tools/release/image-fingerprint.sh --all | tee fingerprints.txt
+        run: |
+          tools/release/image-fingerprint.sh --all > fingerprints.txt
+          cat fingerprints.txt
 
       - name: Log in to ECCR
         env:
@@ -128,12 +136,20 @@ jobs:
           # content is unchanged, so rebuild it under this release's tag instead.
           for artifact in $(jq -r '.images | to_entries[] | select(.value.changed | not) | .key' plan.json); do
             ref=$(jq -r --arg a "$artifact" '.images[$a] | .image + "@" + .digest' plan.json)
-            if ! docker manifest inspect "$ref" >/dev/null 2>&1; then
-              echo "::warning::carried-forward image $ref is not in the registry; rebuilding $artifact"
-              jq --arg a "$artifact" --arg tag "$TAG" --arg registry "$REGISTRY" --arg sha "$GITHUB_SHA" \
-                '.images[$a] |= {image: ($registry + "/" + $a), tag: $tag, digest: null, fingerprint: .fingerprint, revision: $sha, changed: true}' \
-                plan.json > plan.next && mv plan.next plan.json
+            if err=$(docker manifest inspect "$ref" 2>&1 >/dev/null); then
+              continue
             fi
+            # Only a definite "no such manifest" means the image is gone. A
+            # registry/network error must not turn into a rebuild of everything.
+            if ! grep -qiE 'manifest unknown|no such manifest|not found' <<<"$err"; then
+              echo "::error::could not check carried-forward image $ref: $err" >&2
+              exit 1
+            fi
+            echo "::warning::carried-forward image $ref is not in the registry; rebuilding $artifact"
+            jq --arg a "$artifact" --arg tag "$TAG" --arg registry "$REGISTRY" --arg sha "$GITHUB_SHA" \
+              '.images[$a] |= {image: ($registry + "/" + $a), tag: $tag, digest: null, fingerprint: .fingerprint, revision: $sha, changed: true}' \
+              plan.json > plan.next
+            mv plan.next plan.json
           done
           jq . plan.json
 
@@ -306,7 +322,14 @@ jobs:
           ' images.json)
           body=$(gh release view "$TAG" --repo "${{ github.repository }}" --json body --jq .body | tr -d '\r')
           # Idempotent on re-runs: replace the bounded images block, leave the
-          # rest of the (possibly hand-edited) notes alone.
+          # rest of the (possibly hand-edited) notes alone. With one marker
+          # missing the sed range below would eat the rest of the notes.
+          starts=$(grep -c '<!-- images:start -->' <<<"$body" || true)
+          ends=$(grep -c '<!-- images:end -->' <<<"$body" || true)
+          if [[ "$starts" != "$ends" || "$starts" -gt 1 ]]; then
+            echo "::error::release notes have unbalanced images markers (start=$starts, end=$ends); fix or remove them and re-run" >&2
+            exit 1
+          fi
           body=$(printf '%s\n' "$body" | sed '/<!-- images:start -->/,/<!-- images:end -->/d')
           printf '%s\n\n%s\n' "$body" "$table" > notes.md
           gh release edit "$TAG" --repo "${{ github.repository }}" --notes-file notes.md

@@ -34,6 +34,12 @@
 set -euo pipefail
 export LC_ALL=C
 
+# Images are built for linux/amd64 (skaffold.yaml). Resolve for that target
+# rather than the host, so a fingerprint computed on a laptop matches CI.
+TARGET=x86_64-unknown-linux-gnu
+
+sha256() { if command -v sha256sum >/dev/null; then sha256sum; else shasum -a 256; fi; }
+
 ARTIFACTS=(frontend polytope-fe-worker fdb-worker mars-worker test-worker polytope-loadgen)
 
 # Echo "<manifest> <dockerfile>" for an artifact.
@@ -80,7 +86,7 @@ fingerprint() {
   # the "(*)" de-dup markers and "(proc-macro)" annotations, and make path
   # crates relative so the result does not depend on the checkout location.
   local closure
-  closure=$(cargo tree --manifest-path "$manifest" -p "$package" \
+  closure=$(cargo tree --manifest-path "$manifest" -p "$package" --target "$TARGET" \
               -e normal,build --locked --prefix none --format '{p}' \
               ${features:+--features "$features"} \
             | sed -e 's| (\*)$||' -e 's| (proc-macro)||' -e "s|($root/|(|" \
@@ -107,7 +113,7 @@ fingerprint() {
     } >&2
   fi
 
-  FP=$(printf '%s\n%s\n%s\n' "$closure" "$tree_hashes" "$build_env" | sha256sum | cut -c1-16)
+  FP=$(printf '%s\n%s\n%s\n' "$closure" "$tree_hashes" "$build_env" | sha256 | cut -c1-16)
 }
 
 root=$(git rev-parse --show-toplevel)
