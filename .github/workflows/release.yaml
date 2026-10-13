@@ -65,6 +65,8 @@ jobs:
           fi
 
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # stable
+        with:
+          toolchain: stable
 
       - name: Configure access to private git dependencies
         env:
