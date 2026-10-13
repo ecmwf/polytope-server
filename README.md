@@ -181,8 +181,13 @@ JSON/text results. See [docs/mcp.md](docs/mcp.md) and
 ### Releases
 
 The repository has a single version: the git tag of a GitHub release (semantic
-version, e.g. `2.4.0`). Publishing a release runs
-[`release.yaml`](.github/workflows/release.yaml), which:
+version, e.g. `2.4.0`). To cut a release, run the
+[`release.yaml`](.github/workflows/release.yaml) workflow from `main`
+(Actions → "Release images" → Run workflow, or
+`gh workflow run release.yaml --ref main -f version=2.4.0`). Do not create the
+release or the tag by hand: the workflow creates both, at the very end, once
+every image is built and pushed — so a release never exists without its images.
+It:
 
 1. computes a content fingerprint for every image with
    [`tools/release/image-fingerprint.sh`](tools/release/image-fingerprint.sh) —
@@ -194,13 +199,19 @@ version, e.g. `2.4.0`). Publishing a release runs
 3. builds and pushes only the images whose fingerprint changed, tagged with the
    release tag, and carries the previous tag + digest forward for the rest (an
    image that has disappeared from the registry is rebuilt instead);
-4. attaches `images.json` to the release and appends the same table to the
-   release notes.
+4. creates the git tag and the GitHub release, with generated notes, the image
+   table and `images.json` attached — marked **not latest**.
+
+A human then checks the release and its `images.json` and promotes it with
+`gh release edit 2.4.0 --latest` (or "Set as the latest release" on the release
+page). Until then the previous release stays "latest".
 
 So an image tag always names the release whose source built it, and a release
 that only bumps a frontend dependency publishes only a new frontend. Image tags
-are immutable: re-running a release skips images already published from the
-same commit and fails if a tag exists for a different one. Deployment config
+are immutable. If a run fails before the release is created, no tag or release
+exists: fix the cause and re-run (the same version can be used); images already
+pushed from the same commit are skipped, and the run fails if an image tag exists
+for a different commit. Deployment config
 should take tags (or digests) from the latest release's `images.json`:
 
 ```json
@@ -234,15 +245,15 @@ Things to know:
 
 - The first release after one without `images.json` rebuilds every image, and a
   release cut from a commit that predates `tools/release/` cannot be published
-  by this workflow.
+  by this workflow. Releases must be cut from a commit on `main`, and a version
+  that already has a tag is refused.
 - Only inputs tracked in git are fingerprinted. Mutable external inputs — base
   images referenced by tag rather than digest, `apt` packages, unpinned Python
   requirements — are not, so an unchanged image is never rebuilt to pick up a
   base-image security fix. To force a rebuild, change the image's `Dockerfile`
   (ideally by pinning a newer base image digest).
-- Do not edit the `<!-- images:start -->` … `<!-- images:end -->` block in the
-  release notes; the workflow rewrites it. Anything else in the notes is left
-  alone.
+- The release notes (generated changelog plus the image table) can be edited
+  freely after the release has been created.
 
 For dev builds, skaffold tags images with the current git commit SHA by default (`tagPolicy.gitCommit`). Set `FIXED_TAG` to override, or `PREFIX` to prepend to the SHA.
 
