@@ -70,9 +70,6 @@ RUN --mount=type=secret,id=GIT_AUTH_TOKEN,required=true \
 ###############################
 FROM chef-base AS builder
 ARG PACKAGE_NAME=polytope-server
-ARG VERSION
-# Compiled into the binary as service.version (see polytope_observability::service_version).
-ENV POLYTOPE_VERSION=$VERSION
 ARG BIN_NAME=polytope-server
 ARG FEATURES="metkit,telemetry"
 WORKDIR /ecmwf/polytope-server
@@ -89,6 +86,9 @@ ENV METKIT_BUILD_INCLUDE_DIR=/opt/metkit/include
 ENV ECKIT_INCLUDE_DIR=/opt/metkit/include
 ENV ECKIT_BUILD_INCLUDE_DIR=/opt/metkit/include
 ENV GIT_TERMINAL_PROMPT=0
+ARG VERSION
+# Compiled into the binary as service.version (see polytope_observability::service_version).
+ENV POLYTOPE_VERSION=$VERSION
 RUN --mount=type=secret,id=GIT_AUTH_TOKEN,required=true \
     export GIT_CONFIG_GLOBAL="$(mktemp)" \
     && trap 'rm -f "$GIT_CONFIG_GLOBAL"' EXIT \

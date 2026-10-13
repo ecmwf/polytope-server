@@ -11,7 +11,7 @@ use serde_json::{Map, Value};
 /// meaningful version to report: crate versions are not maintained.
 pub fn service_version() -> &'static str {
     match option_env!("POLYTOPE_VERSION") {
-        Some(v) if !v.trim().is_empty() => v,
+        Some(v) if !v.trim().is_empty() => v.trim(),
         _ => "unversioned",
     }
 }

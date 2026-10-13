@@ -75,9 +75,6 @@ RUN --mount=type=secret,id=GIT_AUTH_TOKEN,required=true \
 ###############################
 FROM chef-base AS builder
 ARG PACKAGE_NAME=mars-worker
-ARG VERSION
-# Compiled into the binary as service.version (see polytope_observability::service_version).
-ENV POLYTOPE_VERSION=$VERSION
 ARG BIN_NAME=mars-worker
 WORKDIR /ecmwf/polytope-server
 COPY --from=mars-libs /opt/mars-client /opt/mars-client
@@ -95,6 +92,9 @@ ENV ECKIT_INCLUDE_DIR=/opt/mars-client/include
 ENV ECKIT_BUILD_INCLUDE_DIR=/opt/mars-client/include
 ENV METKIT_INCLUDE_DIR=/opt/mars-client/include
 ENV METKIT_BUILD_INCLUDE_DIR=/opt/mars-client/include
+ARG VERSION
+# Compiled into the binary as service.version (see polytope_observability::service_version).
+ENV POLYTOPE_VERSION=$VERSION
 RUN --mount=type=secret,id=GIT_AUTH_TOKEN,required=true \
     export GIT_CONFIG_GLOBAL="$(mktemp)" \
     && trap 'rm -f "$GIT_CONFIG_GLOBAL"' EXIT \
