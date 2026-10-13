@@ -182,7 +182,8 @@ class DynamoDBMetricStore(MetricStore):
         to_delete = (
             item["uuid"]
             for item in _iter_items(
-                fn,
+                self.table.scan,
+                FilterExpression=filter_expr,
                 ProjectionExpression="#u,request_id",
                 ExpressionAttributeNames={"#u": "uuid"},
             )
