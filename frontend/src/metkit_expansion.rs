@@ -67,7 +67,11 @@ impl TransformAction for MetkitExpansion {
         // range in metadata for that key. An FE worker that requires a
         // compact range for a given key is responsible for rejecting that
         // case itself.
-        let detected_ranges = detect_ranges(obj);
+        let mut detected_ranges = detect_ranges(obj);
+        // A range whose ends are equal is a single value, already carried by
+        // the enumerated request; probing it as `[a, a]` only makes metkit
+        // warn about duplicate values.
+        detected_ranges.retain(|range| range.start != range.end);
         let metkit_ranges = if detected_ranges.is_empty() {
             serde_json::Map::new()
         } else {
@@ -500,5 +504,62 @@ mod tests {
         action.execute(&mut job).await.unwrap();
 
         assert!(job.metadata.get("metkit_ranges").is_none());
+    }
+
+    // The two requests from the "Malformed OTEL Log Events Break Field
+    // Extraction" report. Both used to make metkit print stray text to
+    // stdout/stderr next to the frontend's JSON log line; the expansion itself
+    // has always succeeded, which is what these pin (the log routing is
+    // covered by utils/metkit/tests/native_output.rs).
+
+    #[tokio::test]
+    async fn same_day_date_range_expands_without_probing_the_range() {
+        let action = MetkitExpansion {};
+        let mut job = Job::new(json!({
+            "class": "d1",
+            "dataset": "extremes-dt",
+            "date": "20260927/to/20260927",
+            "expver": "0001",
+            "levtype": "sfc",
+            "param": "167",
+            "step": "0",
+            "stream": "oper",
+            "time": "0000",
+            "type": "fc",
+        }));
+
+        let result = action.execute(&mut job).await.unwrap();
+        assert!(matches!(result, TransformResult::Continue));
+        assert_eq!(job.request.get("date"), Some(&json!("20260927")));
+        assert_eq!(job.request.get("param"), Some(&json!("167")));
+        assert!(job.metadata.get("metkit_ranges").is_none());
+    }
+
+    #[tokio::test]
+    async fn time_range_ending_before_midnight_expands_despite_internal_exception() {
+        let action = MetkitExpansion {};
+        let mut job = Job::new(json!({
+            "class": "d1",
+            "dataset": "extremes-dt",
+            "date": "20261002",
+            "expver": "0001",
+            "feature": {
+                "type": "polygon",
+                "shape": [[[37.4, 15.1], [37.1, 15.3], [36.6, 15.1], [37.4, 15.1]]],
+            },
+            "levtype": "sfc",
+            "param": "165/167",
+            "step": "1",
+            "stream": "oper",
+            "time": "0000/to/2300",
+            "type": "fc",
+        }));
+
+        let result = action.execute(&mut job).await.unwrap();
+        assert!(matches!(result, TransformResult::Continue));
+        assert_eq!(job.request.get("date"), Some(&json!("20261002")));
+        assert_eq!(job.request.get("param"), Some(&json!("165/167")));
+        assert_eq!(job.request.get("time"), Some(&json!("0000/0600/1200/1800")));
+        assert!(job.request.get("feature").is_some());
     }
 }
