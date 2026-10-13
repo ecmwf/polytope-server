@@ -12,5 +12,11 @@ description = "Rust bindings for metkit MARS request expansion using cxx"
 cxx = "1.0"
 serde_json = "1"
 
+[dev-dependencies]
+libc = "0.2"
+polytope-observability = { path = "../../observability" }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
 [build-dependencies]
 cxx-build = "1.0"
