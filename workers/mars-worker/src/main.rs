@@ -371,7 +371,10 @@ impl Processor for MarsProcessor {
         let mars_logs = self.mars_logs.clone();
         let request_id = work.job_id.clone();
         let stream_queue_byte_limit = self.stream_queue_byte_limit;
+        // Held by the blocking task, which can outlive the async job.
+        let active = polytope_observability::active_request(&work.job_id);
         tokio::task::spawn_blocking(move || {
+            let _active = active;
             // Broker concurrency may be greater than one. This process-wide
             // lock permits exactly one active relay generation and MARS call.
             let _env_guard = env_lock

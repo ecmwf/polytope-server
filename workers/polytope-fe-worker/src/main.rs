@@ -130,7 +130,10 @@ impl Processor for PolytopeProcessor {
         };
 
         let job_id = work.job_id.clone();
+        // Held by the blocking task, which can outlive the async job.
+        let active = polytope_observability::active_request(&job_id);
         let result = tokio::task::spawn_blocking(move || {
+            let _active = active;
             Python::with_gil(|py| -> PyResult<(Vec<u8>, String)> {
                 let wrapper = py.import("run_polytope_worker")?;
                 let result = wrapper.call_method1("process", (&payload_str,))?;

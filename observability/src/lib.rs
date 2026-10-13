@@ -66,6 +66,7 @@ fn log_panic(info: &std::panic::PanicHookInfo<'_>) {
         .then(|| backtrace.to_string());
     tracing::error!(
         "event.name" = "process.panic",
+        outcome = "error",
         thread = std::thread::current().name().unwrap_or("<unnamed>"),
         "code.location" = location.as_deref(),
         backtrace = backtrace.as_deref(),
