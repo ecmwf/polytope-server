@@ -42,8 +42,14 @@ args=(
   --cache-from "type=registry,ref=$cache_ref"
 )
 
-if [[ "${VERSION:-}" != "" ]]; then
-  args+=(--build-arg "VERSION=$VERSION")
+# Compiled into the binary as service.version. Default to the image tag (the git
+# commit for dev builds) so this profile matches the plain docker builder.
+image_tag="${IMAGE%%@*}"
+image_tag="${image_tag##*:}"
+[[ "$image_tag" == */* ]] && image_tag=""   # registry port, no tag
+version="${VERSION:-$image_tag}"
+if [[ "$version" != "" ]]; then
+  args+=(--build-arg "VERSION=$version")
 fi
 if [[ "${REVISION:-}" != "" ]]; then
   args+=(--build-arg "REVISION=$REVISION")

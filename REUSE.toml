@@ -19,7 +19,6 @@ path = [
   "pytest.ini",
   "**/requirements.txt",
   "dev/otel/grafana/dashboards/**",
-  "VERSION",
   "**/TAG",
   "docker/cpp-libs/README.md",
 ]

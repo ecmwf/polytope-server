@@ -187,26 +187,29 @@ version, e.g. `2.4.0`). Publishing a release runs
 1. computes a content fingerprint for every image with
    [`tools/release/image-fingerprint.sh`](tools/release/image-fingerprint.sh) —
    the image's resolved Rust dependency closure (exact crate versions and git
-   revisions), the tree hash of every workspace crate in that closure, and its
-   Dockerfile;
+   revisions), the tree hash of every workspace crate in that closure, its
+   Dockerfile, and the shared build inputs (`skaffold.yaml`, the root
+   `Cargo.toml`, `.dockerignore`, the Buildx wrapper);
 2. compares each fingerprint with the one recorded by the previous release;
 3. builds and pushes only the images whose fingerprint changed, tagged with the
-   release tag, and carries the previous tag + digest forward for the rest;
+   release tag, and carries the previous tag + digest forward for the rest (an
+   image that has disappeared from the registry is rebuilt instead);
 4. attaches `images.json` to the release and appends the same table to the
    release notes.
 
 So an image tag always names the release whose source built it, and a release
 that only bumps a frontend dependency publishes only a new frontend. Image tags
-are immutable. Deployment config should take tags (or digests) from the latest
-release's `images.json`:
+are immutable: re-running a release skips images already published from the
+same commit and fails if a tag exists for a different one. Deployment config
+should take tags (or digests) from the latest release's `images.json`:
 
 ```json
 {
   "release": "2.4.1",
   "previous": "2.4.0",
   "images": {
-    "frontend":    { "image": "eccr.ecmwf.int/polytope/frontend",    "tag": "2.4.1", "digest": "sha256:…", "fingerprint": "…", "changed": true },
-    "mars-worker": { "image": "eccr.ecmwf.int/polytope/mars-worker", "tag": "2.4.0", "digest": "sha256:…", "fingerprint": "…", "changed": false }
+    "frontend":    { "image": "eccr.ecmwf.int/polytope/frontend",    "tag": "2.4.1", "digest": "sha256:…", "fingerprint": "…", "revision": "<commit>", "changed": true },
+    "mars-worker": { "image": "eccr.ecmwf.int/polytope/mars-worker", "tag": "2.4.0", "digest": "sha256:…", "fingerprint": "…", "revision": "<commit>", "changed": false }
   }
 }
 ```
@@ -216,17 +219,30 @@ crate's `Cargo.toml` is not used for images — these crates are not published t
 crates.io. Binaries report the image tag they were built with as
 `service.version` (skaffold's `VERSION` build arg, compiled in via
 `polytope_observability::service_version`), so a carried-forward image keeps
-reporting the release that built it. To see what a release would rebuild before
-cutting it, run the
-fingerprint script on a clean checkout and compare with the previous release's
+reporting the release that built it.
+
+To see what a release would rebuild before cutting it, run the fingerprint
+script on a clean checkout and compare with the previous release's
 `images.json`:
 
 ```bash
-tools/release/image-fingerprint.sh frontend            # prints the fingerprint
-tools/release/image-fingerprint.sh frontend --verbose  # also lists the inputs
+tools/release/image-fingerprint.sh --all                # "<artifact> <fingerprint>" per image
+tools/release/image-fingerprint.sh frontend --verbose   # one image, also lists the inputs
 ```
 
-The first release after a release without `images.json` rebuilds every image.
+Things to know:
+
+- The first release after one without `images.json` rebuilds every image, and a
+  release cut from a commit that predates `tools/release/` cannot be published
+  by this workflow.
+- Only inputs tracked in git are fingerprinted. Mutable external inputs — base
+  images referenced by tag rather than digest, `apt` packages, unpinned Python
+  requirements — are not, so an unchanged image is never rebuilt to pick up a
+  base-image security fix. To force a rebuild, change the image's `Dockerfile`
+  (ideally by pinning a newer base image digest).
+- Do not edit the `<!-- images:start -->` … `<!-- images:end -->` block in the
+  release notes; the workflow rewrites it. Anything else in the notes is left
+  alone.
 
 For dev builds, skaffold tags images with the current git commit SHA by default (`tagPolicy.gitCommit`). Set `FIXED_TAG` to override, or `PREFIX` to prepend to the SHA.
 

@@ -12,9 +12,9 @@
 # only touches the frontend's dependencies publishes only a new frontend.
 #
 # The result is published as `images.json` on the release (and as a table in
-# the release notes): one entry per image with tag, digest, fingerprint and
-# whether this release rebuilt it. Deployment config should take image tags
-# from there.
+# the release notes): one entry per image with tag, digest, fingerprint, source
+# revision and whether this release rebuilt it. Deployment config should take
+# image tags from there.
 
 name: Release images
 
@@ -31,7 +31,6 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  ARTIFACTS: frontend polytope-fe-worker fdb-worker mars-worker test-worker polytope-loadgen
   REGISTRY: eccr.ecmwf.int/polytope
 
 jobs:
@@ -70,13 +69,13 @@ jobs:
           git config --global url."https://x-access-token:${token}@github.com/".insteadOf "https://github.com/"
 
       - name: Compute image fingerprints
-        id: fingerprints
-        run: |
-          : > fingerprints.txt
-          for artifact in $ARTIFACTS; do
-            fp=$(tools/release/image-fingerprint.sh "$artifact")
-            echo "$artifact $fp" | tee -a fingerprints.txt
-          done
+        run: tools/release/image-fingerprint.sh --all | tee fingerprints.txt
+
+      - name: Log in to ECCR
+        env:
+          ECCR_PASSWORD: ${{ secrets.ECCR_PASSWORD }}
+          ECCR_USERNAME: ${{ secrets.ECCR_USERNAME }}
+        run: printf '%s' "$ECCR_PASSWORD" | docker login eccr.ecmwf.int --username "$ECCR_USERNAME" --password-stdin
 
       # Walk back through release tags on this history until one carries an
       # images.json. If none does (first release under this scheme), every
@@ -90,7 +89,7 @@ jobs:
           ref="$TAG"
           for _ in $(seq 1 20); do
             prev=$(git describe --tags --abbrev=0 --match '[0-9]*' "$ref^" 2>/dev/null) || break
-            if gh release download "$prev" --pattern images.json --output previous.json 2>/dev/null; then
+            if gh release download "$prev" --repo "${{ github.repository }}" --pattern images.json --output previous.json 2>/dev/null; then
               echo "previous=$prev" >> "$GITHUB_OUTPUT"
               echo "Carrying forward from release $prev"
               exit 0
@@ -106,7 +105,7 @@ jobs:
           TAG: ${{ github.event.release.tag_name }}
           PREVIOUS: ${{ steps.previous.outputs.previous }}
         run: |
-          jq -n --arg tag "$TAG" --arg previous "$PREVIOUS" --arg registry "$REGISTRY" \
+          jq -n --arg tag "$TAG" --arg previous "$PREVIOUS" --arg registry "$REGISTRY" --arg sha "$GITHUB_SHA" \
              --rawfile fps fingerprints.txt --slurpfile prev previous.json '
             ($fps | split("\n") | map(select(length > 0) | split(" ") | {key: .[0], value: .[1]}) | from_entries) as $fp
             | {
@@ -117,12 +116,25 @@ jobs:
                   value: (
                     ($prev[0].images[.key] // null) as $p
                     | if $p != null and $p.fingerprint == .value then
-                        {image: $p.image, tag: $p.tag, digest: $p.digest, fingerprint: .value, changed: false}
+                        {image: $p.image, tag: $p.tag, digest: $p.digest, fingerprint: .value, revision: ($p.revision // null), changed: false}
                       else
-                        {image: ($registry + "/" + .key), tag: $tag, digest: null, fingerprint: .value, changed: true}
+                        {image: ($registry + "/" + .key), tag: $tag, digest: null, fingerprint: .value, revision: $sha, changed: true}
                       end)
                 }) | from_entries)
               }' > plan.json
+
+          # A carried-forward image that is no longer in the registry (retention,
+          # manual cleanup) would be advertised forever. The fingerprint says its
+          # content is unchanged, so rebuild it under this release's tag instead.
+          for artifact in $(jq -r '.images | to_entries[] | select(.value.changed | not) | .key' plan.json); do
+            ref=$(jq -r --arg a "$artifact" '.images[$a] | .image + "@" + .digest' plan.json)
+            if ! docker manifest inspect "$ref" >/dev/null 2>&1; then
+              echo "::warning::carried-forward image $ref is not in the registry; rebuilding $artifact"
+              jq --arg a "$artifact" --arg tag "$TAG" --arg registry "$REGISTRY" --arg sha "$GITHUB_SHA" \
+                '.images[$a] |= {image: ($registry + "/" + $a), tag: $tag, digest: null, fingerprint: .fingerprint, revision: $sha, changed: true}' \
+                plan.json > plan.next && mv plan.next plan.json
+            fi
+          done
           jq . plan.json
 
           changed=$(jq -c '[.images | to_entries[] | select(.value.changed) | {artifact: .key, image: .value.image}]' plan.json)
@@ -140,6 +152,7 @@ jobs:
           name: plan
           path: plan.json
           retention-days: 7
+          overwrite: true
 
   publish:
     name: Publish ${{ matrix.artifact }}
@@ -166,15 +179,23 @@ jobs:
         run: printf '%s' "$ECCR_PASSWORD" | docker login eccr.ecmwf.int --username "$ECCR_USERNAME" --password-stdin
 
       # Tags are immutable. The plan only lists images whose inputs changed, so
-      # an existing tag means a previous run of this same release already
-      # published it (e.g. a re-run after a partial failure).
+      # an existing tag normally means a previous run of this same release
+      # already published it (e.g. a re-run after a partial failure). Make sure
+      # it was built from this release's commit: a release that was deleted and
+      # re-created on another commit must not adopt the old image.
       - name: Check if image tag already exists
         id: check
         env:
           TAG: ${{ github.event.release.tag_name }}
         run: |
           if docker manifest inspect "${{ matrix.image }}:${TAG}" >/dev/null 2>&1; then
-            echo "${{ matrix.image }}:${TAG} already published; skipping build."
+            revision=$(docker buildx imagetools inspect --format '{{json .Image}}' "${{ matrix.image }}:${TAG}" \
+              | jq -r '[ (if has("config") then . else .[] end) | .config.Labels["org.opencontainers.image.revision"] // empty ] | first // ""')
+            if [[ "$revision" != "$GITHUB_SHA" ]]; then
+              echo "::error::${{ matrix.image }}:${TAG} exists but was built from '${revision:-unknown}', not $GITHUB_SHA. Tags are immutable; cut a new release." >&2
+              exit 1
+            fi
+            echo "${{ matrix.image }}:${TAG} already published from this revision; skipping build."
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -233,6 +254,7 @@ jobs:
           name: published-${{ matrix.artifact }}
           path: published/${{ matrix.artifact }}.json
           retention-days: 7
+          overwrite: true
 
   manifest:
     name: Publish images.json
@@ -276,14 +298,16 @@ jobs:
           TAG: ${{ github.event.release.tag_name }}
         run: |
           table=$(jq -r '
-            "## Images", "",
+            "<!-- images:start -->", "## Images", "",
             "| Image | Tag | Changed | Digest |", "|---|---|---|---|",
             (.images | to_entries[] |
-              "| `\(.value.image)` | `\(.value.tag)` | \(if .value.changed then "yes" else "no" end) | `\(.value.digest)` |")
+              "| `\(.value.image)` | `\(.value.tag)` | \(if .value.changed then "yes" else "no" end) | `\(.value.digest)` |"),
+            "", "<!-- images:end -->"
           ' images.json)
-          body=$(gh release view "$TAG" --repo "${{ github.repository }}" --json body --jq .body)
-          # Idempotent on re-runs: replace an existing images section.
-          body=$(printf '%s\n' "$body" | sed '/^## Images$/,$d')
+          body=$(gh release view "$TAG" --repo "${{ github.repository }}" --json body --jq .body | tr -d '\r')
+          # Idempotent on re-runs: replace the bounded images block, leave the
+          # rest of the (possibly hand-edited) notes alone.
+          body=$(printf '%s\n' "$body" | sed '/<!-- images:start -->/,/<!-- images:end -->/d')
           printf '%s\n\n%s\n' "$body" "$table" > notes.md
           gh release edit "$TAG" --repo "${{ github.repository }}" --notes-file notes.md
           cat notes.md >> "$GITHUB_STEP_SUMMARY"
