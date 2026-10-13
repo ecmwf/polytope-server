@@ -52,7 +52,16 @@ jobs:
           echo "::add-mask::$token"
           git config --global url."https://x-access-token:${token}@github.com/".insteadOf "https://github.com/"
       - name: Image fingerprints
-        run: tools/release/image-fingerprint.sh --all
+        run: |
+          set +e
+          echo "## env"; cargo -V; git --version; pwd; git rev-parse HEAD; git rev-parse --show-toplevel
+          git log --oneline -3; git status --short | head; ls -la
+          git ls-files --eol | awk '{print $1,$2}' | sort | uniq -c
+          git ls-files -s | awk '{print $1}' | sort | uniq -c
+          cat ~/.cargo/config.toml .cargo/config.toml 2>/dev/null | grep -vi token
+          for f in frontend/Dockerfile skaffold.yaml Cargo.toml .dockerignore .github/scripts/buildx-build.sh; do echo "$f $(git rev-parse HEAD:$f) $(git hash-object $f)"; done
+          for a in polytope-loadgen frontend; do echo "#### $a"; tools/release/image-fingerprint.sh $a --verbose; done 2>&1
+          tools/release/image-fingerprint.sh --all
       - name: Strip local path patches
         run: sed -i '/^\[patch\./,$d' Cargo.toml
       - name: Frontend unit tests
