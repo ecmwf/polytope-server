@@ -85,9 +85,11 @@ fingerprint() {
   # for path crates and "name vX.Y.Z (<git url>#<rev>)" for git crates. Strip
   # the "(*)" de-dup markers and "(proc-macro)" annotations, and make path
   # crates relative so the result does not depend on the checkout location.
+  # `--color never`: CARGO_TERM_COLOR=always (set on CI runners) would wrap "(*)"
+  # in escape codes and defeat the strip below.
   local closure
   closure=$(cargo tree --manifest-path "$manifest" -p "$package" --target "$TARGET" \
-              -e normal,build --locked --prefix none --format '{p}' \
+              -e normal,build --locked --prefix none --color never --format '{p}' \
               ${features:+--features "$features"} \
             | sed -e 's| (\*)$||' -e 's| (proc-macro)||' -e "s|($root/|(|" \
             | sort -u)
