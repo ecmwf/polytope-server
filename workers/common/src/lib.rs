@@ -633,6 +633,8 @@ async fn worker_task<P: Processor + 'static>(
 
         let poll_wait_ms = poll_started.elapsed().as_millis() as u64;
         let idle_ms = idle_anchor.elapsed().as_millis() as u64;
+        // Lets stdout/stderr output from native code during this job carry its id.
+        let _active_request = polytope_observability::active_request(&work.job_id);
         let (enduser_id, enduser_realm) = enduser_fields(&work.user);
         if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
             tracing::info!("event.name" = "worker.job.started", outcome = "success", request.id = %work.job_id, poll_wait_ms, idle_ms, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "job started");
