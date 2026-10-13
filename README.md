@@ -209,9 +209,10 @@ page). Until then the previous release stays "latest".
 So an image tag always names the release whose source built it, and a release
 that only bumps a frontend dependency publishes only a new frontend. Image tags
 are immutable. If a run fails before the release is created, no tag or release
-exists: fix the cause and re-run (the same version can be used); images already
-pushed from the same commit are skipped, and the run fails if an image tag exists
-for a different commit. Deployment config
+exists. Re-running from the same commit with the same version is safe (images
+already pushed from that commit are skipped). If the fix is a new commit, use a
+new version, or first delete the stray `<image>:<version>` tags from ECCR: the
+run refuses to reuse a tag that was built from a different commit. Deployment config
 should take tags (or digests) from the latest release's `images.json`:
 
 ```json

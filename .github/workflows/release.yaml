@@ -60,6 +60,7 @@ jobs:
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
       any_changed: ${{ steps.plan.outputs.any_changed }}
+      notes_base: ${{ steps.previous.outputs.notes_base }}
     env:
       CARGO_NET_GIT_FETCH_WITH_CLI: "true"
     steps:
@@ -74,6 +75,10 @@ jobs:
         run: |
           if [[ ! "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
             echo "::error::version must be a semantic version without a prefix, got '$TAG'" >&2
+            exit 1
+          fi
+          if ! git check-ref-format "refs/tags/$TAG"; then
+            echo "::error::'$TAG' is not a valid git tag name" >&2
             exit 1
           fi
           if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
@@ -117,10 +122,13 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ inputs.version }}
         run: |
+          # Start of the generated changelog: the nearest release tag, whether or
+          # not it has been promoted to "latest" yet.
+          echo "notes_base=$(git describe --tags --abbrev=0 --match '[0-9]*' "$GITHUB_SHA" 2>/dev/null || true)" >> "$GITHUB_OUTPUT"
           ref="$GITHUB_SHA"
           for _ in $(seq 1 20); do
             prev=$(git describe --tags --abbrev=0 --match '[0-9]*' "$ref" 2>/dev/null) || break
-            if gh release download "$prev" --repo "${{ github.repository }}" --pattern images.json --output previous.json 2>/dev/null; then
+            if gh release download "$prev" --repo "${{ github.repository }}" --pattern images.json --output previous.json --clobber 2>/dev/null; then
               echo "previous=$prev" >> "$GITHUB_OUTPUT"
               echo "Carrying forward from release $prev"
               exit 0
@@ -227,7 +235,7 @@ jobs:
         env:
           TAG: ${{ inputs.version }}
         run: |
-          if docker manifest inspect "${{ matrix.image }}:${TAG}" >/dev/null 2>&1; then
+          if err=$(docker manifest inspect "${{ matrix.image }}:${TAG}" 2>&1 >/dev/null); then
             revision=$(docker buildx imagetools inspect --format '{{json .Image}}' "${{ matrix.image }}:${TAG}" \
               | jq -r '[ (if has("config") then . else .[] end) | .config.Labels["org.opencontainers.image.revision"] // empty ] | first // ""')
             if [[ "$revision" != "$GITHUB_SHA" ]]; then
@@ -236,8 +244,13 @@ jobs:
             fi
             echo "${{ matrix.image }}:${TAG} already published from this revision; skipping build."
             echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
+          elif grep -qiE 'manifest unknown|no such manifest|artifact [^ ]+ not found' <<<"$err"; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
+          else
+            # A registry/network error must not read as "tag absent": pushing would
+            # then overwrite a tag this check exists to protect.
+            echo "::error::could not check ${{ matrix.image }}:${TAG}: $err" >&2
+            exit 1
           fi
 
       - name: Prepare repository token
@@ -338,13 +351,15 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ inputs.version }}
           REPO: ${{ github.repository }}
+          NOTES_BASE: ${{ needs.plan.outputs.notes_base }}
         run: |
           if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
-            echo "::error::release $TAG already exists" >&2
+            echo "::error::release $TAG already exists (a draft left by a failed attempt also counts: gh release delete $TAG --yes)" >&2
             exit 1
           fi
-          gh api --method POST "repos/$REPO/releases/generate-notes" \
-            -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" --jq .body > notes.md
+          args=(-f tag_name="$TAG" -f target_commitish="$GITHUB_SHA")
+          if [[ -n "$NOTES_BASE" ]]; then args+=(-f previous_tag_name="$NOTES_BASE"); fi
+          gh api --method POST "repos/$REPO/releases/generate-notes" "${args[@]}" --jq .body > notes.md
           {
             echo
             jq -r '
