@@ -58,10 +58,11 @@ jobs:
         run: tools/release/image-fingerprint.sh --all
       - name: Strip local path patches
         run: sed -i '/^\[patch\./,$d' Cargo.toml
-      # mars-worker and utils/metkit are excluded from the workspace (they need
-      # native MARS libraries) and are only compiled by the release build.
+      # The frontend image is built with the `metkit` and `telemetry` features.
+      # mars-worker, utils/metkit and the frontend's `metkit` feature need native
+      # MARS libraries and are only compiled by the release build.
       - name: Compile workspace
-        run: cargo check --workspace --all-targets --locked
+        run: cargo check --workspace --all-targets --locked --features polytope-server/telemetry
       - name: Frontend unit tests
         env:
           NO_PROXY: "127.0.0.1,localhost"
