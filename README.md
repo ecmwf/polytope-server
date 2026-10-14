@@ -229,10 +229,10 @@ not mistaken for a release). Re-running a failed workflow on the same tag is
 safe: images already pushed from that commit are skipped.
 
 Pull requests and pushes to `main` do not build images: CI compiles the
-workspace (`cargo check --workspace --all-targets`) and lints every Dockerfile
-(`docker buildx build --check`) instead. `mars-worker` is outside the
-workspace (it needs native MARS libraries) and is only compiled by the release
-build.
+workspace (`cargo check --workspace --all-targets --features
+polytope-server/telemetry`) and lints every Dockerfile (`docker buildx build
+--check`) instead. `mars-worker`, `utils/metkit` and the frontend's `metkit`
+feature need native MARS libraries and are only compiled by the release build.
 
 There is nothing to bump before cutting a release. The `version` field in each
 crate's `Cargo.toml` is not used for images — these crates are not published to
