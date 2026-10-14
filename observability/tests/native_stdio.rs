@@ -86,33 +86,18 @@ fn native_stdout_and_stderr_become_log_events() {
     assert_eq!(stdout_event["severityText"], "INFO");
     assert_eq!(stdout_event["body"], "Starting 7 threads");
 
-    // A caught eckit exception is only worth DEBUG; any other is not hidden.
-    write_fd(
-        1,
-        "Exception: Bad value: Wrong input for time: 24 hours 0 minutes 0 seconds \n",
-    );
-    let events = wait_for_events(&logs, 3);
-    assert_eq!(events.len(), 3, "got: {events:#?}");
-    assert_eq!(events[2]["severityText"], "DEBUG");
-    write_fd(
-        1,
-        "Exception: SeriousBug: RequestEnvironment not initialized\n",
-    );
-    let events = wait_for_events(&logs, 4);
-    assert_eq!(events[3]["severityText"], "WARN");
-
     // Output while exactly one request is in progress is attributed to it; it
     // is never folded into the batch of another request.
     write_fd(2, "before\n");
-    wait_for_events(&logs, 5);
+    wait_for_events(&logs, 3);
     let request = active_request("job-1");
     write_fd(2, "during\n");
-    wait_for_events(&logs, 6);
+    wait_for_events(&logs, 4);
     drop(request);
     write_fd(2, "after\n");
-    let events = wait_for_events(&logs, 7);
-    assert_eq!(events.len(), 7, "got: {events:#?}");
-    let attributed: Vec<_> = events[4..]
+    let events = wait_for_events(&logs, 5);
+    assert_eq!(events.len(), 5, "got: {events:#?}");
+    let attributed: Vec<_> = events[2..]
         .iter()
         .map(|e| {
             (
@@ -129,10 +114,10 @@ fn native_stdout_and_stderr_become_log_events() {
     // Bursts bigger than the batch cap are split on line boundaries.
     let line = format!("{}\n", "y".repeat(99));
     write_fd(2, &line.repeat(200));
-    wait_for_events(&logs, 9);
+    wait_for_events(&logs, 6);
     std::thread::sleep(Duration::from_millis(300));
     let events = logs.json_lines();
-    let chunks = &events[7..];
+    let chunks = &events[5..];
     assert!(chunks.len() >= 2, "got: {chunks:#?}");
     for chunk in chunks {
         let body = chunk["body"].as_str().unwrap();

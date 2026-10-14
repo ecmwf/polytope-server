@@ -24,10 +24,6 @@ const QUIET_PERIOD: Duration = Duration::from_millis(50);
 const MAX_BATCH_AGE: Duration = Duration::from_secs(1);
 const MAX_BATCH_BYTES: usize = 8 * 1024;
 
-// eckit constructs (and prints) this exception for the first out-of-range value
-// when metkit expands a `time=a/to/b` list, then catches it to end the list.
-const HANDLED_EXCEPTIONS: &[&str] = &["Exception: Bad value: Wrong input for time: 24 hours"];
-
 #[derive(Clone, Copy)]
 enum Stream {
     Stdout,
@@ -354,10 +350,9 @@ impl Capture {
                 )
             };
         }
-        match level_for(self.stream, text) {
-            tracing::Level::DEBUG => log!(tracing::Level::DEBUG),
-            tracing::Level::INFO => log!(tracing::Level::INFO),
-            _ => log!(tracing::Level::WARN),
+        match self.stream {
+            Stream::Stdout => log!(tracing::Level::INFO),
+            Stream::Stderr => log!(tracing::Level::WARN),
         }
     }
 }
@@ -375,60 +370,9 @@ fn split_point(bytes: &[u8], max: usize) -> usize {
     if cut == 0 { max } else { cut }
 }
 
-// eckit prints "Exception: ..." whenever an exception object is constructed,
-// including ones its callers catch. Known handled ones are noise; any other
-// is worth seeing whichever fd it came through.
-fn level_for(stream: Stream, text: &str) -> tracing::Level {
-    let is_handled = |line: &str| HANDLED_EXCEPTIONS.iter().any(|h| line.starts_with(h));
-    let mut rest = text
-        .lines()
-        .filter(|line| !line.trim().is_empty() && !is_handled(line))
-        .peekable();
-    if rest.peek().is_none() {
-        return tracing::Level::DEBUG;
-    }
-    if rest.any(|line| line.starts_with("Exception: ")) {
-        return tracing::Level::WARN;
-    }
-    match stream {
-        Stream::Stdout => tracing::Level::INFO,
-        Stream::Stderr => tracing::Level::WARN,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tracing::Level;
-
-    #[test]
-    fn known_handled_eckit_exception_is_debug() {
-        let text = "Exception: Bad value: Wrong input for time: 24 hours 0 minutes 0 seconds";
-        assert_eq!(level_for(Stream::Stdout, text), Level::DEBUG);
-        assert_eq!(level_for(Stream::Stderr, text), Level::DEBUG);
-    }
-
-    #[test]
-    fn other_exceptions_are_not_hidden() {
-        let text = "Exception: SeriousBug: RequestEnvironment not initialized";
-        assert_eq!(level_for(Stream::Stdout, text), Level::WARN);
-        let mixed = "Exception: Bad value: Wrong input for time: 24 hours\nException: y";
-        assert_eq!(level_for(Stream::Stdout, mixed), Level::WARN);
-        // A handled exception sharing a batch with ordinary output is not what
-        // decides the level.
-        let with_output = "Exception: Bad value: Wrong input for time: 24 hours\n\nStarting";
-        assert_eq!(level_for(Stream::Stdout, with_output), Level::INFO);
-        assert_eq!(level_for(Stream::Stderr, with_output), Level::WARN);
-    }
-
-    #[test]
-    fn other_output_keeps_the_stream_level() {
-        assert_eq!(level_for(Stream::Stdout, "Starting 7 threads"), Level::INFO);
-        assert_eq!(
-            level_for(Stream::Stderr, "Duplicate values in date [1,1] 1"),
-            Level::WARN
-        );
-    }
 
     #[test]
     fn batches_are_cut_at_a_line_boundary() {
