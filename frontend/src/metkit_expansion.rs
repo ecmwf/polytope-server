@@ -235,7 +235,10 @@ fn probe_ranges(
     let mut result = serde_json::Map::new();
     let probe_expanded = match metkit::expand_json(&serde_json::Value::Object(probe_obj)) {
         Ok(v) => v,
-        Err(_) => return result,
+        Err(e) => {
+            tracing::debug!(error = %e, "metkit range probe failed");
+            return result;
+        }
     };
     let Some(probe_exp_obj) = probe_expanded.as_object() else {
         return result;
@@ -251,8 +254,7 @@ fn probe_ranges(
         let (norm_start, norm_end) = match text.split('/').collect::<Vec<_>>().as_slice() {
             [a, b] => (a.to_string(), b.to_string()),
             // Degenerate case: start and end canonicalize to the same
-            // value (e.g. a genuinely single-element range, or two
-            // different spellings of the same value); use it for both
+            // value (two different spellings of one value); use it for both
             // endpoints.
             [a] => (a.to_string(), a.to_string()),
             // Anything else is unexpected for a 2-value probe -- skip this

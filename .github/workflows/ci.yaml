@@ -69,6 +69,8 @@ jobs:
         run: |
           unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy ALL_PROXY all_proxy
           cargo test --locked -p polytope-server
+      - name: Observability tests
+        run: cargo test --locked -p polytope-observability
       - name: Integration tests
         env:
           NO_PROXY: "127.0.0.1,localhost"
