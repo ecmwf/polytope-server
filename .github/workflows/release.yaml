@@ -2,39 +2,38 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Builds and publishes the application images, then creates the GitHub release.
+# Builds and publishes the application images for a release tag, then drafts
+# the GitHub release.
 #
-# Started by hand (Actions -> "Release images" -> Run workflow, or
-# `gh workflow run release.yaml -f version=2.4.0`) from a commit on main. The
-# git tag and the GitHub release only come into existence in the last job,
-# after every image has been pushed, so a release never exists without its
-# images. The release is published as NOT the latest release: a human checks
-# it (and the images.json it carries) and promotes it with
-# `gh release edit <version> --latest` or from the release page.
+# Runs when a human pushes a semver tag (e.g. `git tag 2.6.0 <sha> && git push
+# origin 2.6.0`) on a commit on main. The release is created as a DRAFT once
+# every image has been pushed; a human reviews it (and the images.json it
+# carries) and publishes it from the release page. Only a published release is
+# deployable. Tags are immutable: a failed release is fixed forward under the
+# next version.
 #
 # Every image built by a release is tagged with the release version. An image is
 # only rebuilt when its content fingerprint (tools/release/image-fingerprint.sh)
-# differs from the one recorded in the previous release's images.json;
-# otherwise the previous release's tag + digest are carried forward. So an
+# differs from the one recorded in the previous published release's
+# images.json; otherwise that release's tag + digest are carried forward. So an
 # image tag always names the release whose source built it, and a release that
 # only touches the frontend's dependencies publishes only a new frontend.
 #
-# The result is published as `images.json` on the release (and as a table in
-# the release notes): one entry per image with tag, digest, fingerprint, source
-# revision and whether this release rebuilt it. Deployment config should take
-# image tags from there.
+# The result is attached as `images.json` (and as a table in the release
+# notes): one entry per image with tag, digest, fingerprint, source revision
+# and whether this release rebuilt it. Deployment config should take image
+# tags from there.
 
 name: Release images
 
-run-name: Release ${{ inputs.version }}
+run-name: Release ${{ github.ref_name }}
 
+# Plain semver tags, no `v` prefix (2.6.0, 2.6.0-rc1). The glob is loose; the
+# plan job fails on anything that is not a semantic version.
 on:
-  workflow_dispatch:
-    inputs:
-      version:
-        description: Semantic version to release, without a prefix (e.g. 2.4.0)
-        required: true
-        type: string
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+*"
 
 permissions:
   contents: read
@@ -46,7 +45,7 @@ defaults:
     shell: bash
 
 concurrency:
-  group: release-images-${{ inputs.version }}
+  group: release-images-${{ github.ref_name }}
   cancel-in-progress: false
 
 env:
@@ -58,6 +57,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
+      commit: ${{ steps.validate.outputs.commit }}
       matrix: ${{ steps.plan.outputs.matrix }}
       any_changed: ${{ steps.plan.outputs.any_changed }}
       notes_base: ${{ steps.previous.outputs.notes_base }}
@@ -69,26 +69,23 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
+      # `^{commit}` peels an annotated tag: image labels, images.json and the
+      # release target all want the commit, not the tag object.
       - name: Validate version and commit
+        id: validate
         env:
-          TAG: ${{ inputs.version }}
+          TAG: ${{ github.ref_name }}
         run: |
           if [[ ! "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error::version must be a semantic version without a prefix, got '$TAG'" >&2
+            echo "::error::release tags must be a semantic version without a prefix, got '$TAG'" >&2
             exit 1
           fi
-          if ! git check-ref-format "refs/tags/$TAG"; then
-            echo "::error::'$TAG' is not a valid git tag name" >&2
+          commit=$(git rev-parse --verify "$GITHUB_SHA^{commit}")
+          if ! git merge-base --is-ancestor "$commit" origin/main; then
+            echo "::error::$TAG points at $commit, which is not on main; releases are cut from main" >&2
             exit 1
           fi
-          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
-            echo "::error::tag $TAG already exists; versions are never re-used" >&2
-            exit 1
-          fi
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "::error::$GITHUB_SHA is not on main; releases are cut from main" >&2
-            exit 1
-          fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
 
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c # stable
         with:
@@ -114,37 +111,46 @@ jobs:
         run: printf '%s' "$ECCR_PASSWORD" | docker login eccr.ecmwf.int --username "$ECCR_USERNAME" --password-stdin
 
       # Walk back through the release tags in this commit's history until one
-      # carries an images.json. If none does (first release under this scheme),
-      # every image is rebuilt.
+      # carries a published release with an images.json. Drafts are never
+      # carried forward from: they were not approved for deployment. If nothing
+      # is found (first release under this scheme), every image is rebuilt.
       - name: Fetch previous release manifest
         id: previous
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ inputs.version }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          COMMIT: ${{ steps.validate.outputs.commit }}
         run: |
-          # Start of the generated changelog: the nearest release tag, whether or
-          # not it has been promoted to "latest" yet.
-          echo "notes_base=$(git describe --tags --abbrev=0 --match '[0-9]*' "$GITHUB_SHA" 2>/dev/null || true)" >> "$GITHUB_OUTPUT"
-          ref="$GITHUB_SHA"
+          # Start of the generated changelog: the nearest release tag, published
+          # or not.
+          echo "notes_base=$(git describe --tags --abbrev=0 --match '[0-9]*' --exclude "$TAG" "$COMMIT" 2>/dev/null || true)" >> "$GITHUB_OUTPUT"
+          ref="$COMMIT"
           for _ in $(seq 1 20); do
-            prev=$(git describe --tags --abbrev=0 --match '[0-9]*' "$ref" 2>/dev/null) || break
-            if gh release download "$prev" --repo "${{ github.repository }}" --pattern images.json --output previous.json --clobber 2>/dev/null; then
+            prev=$(git describe --tags --abbrev=0 --match '[0-9]*' --exclude "$TAG" "$ref" 2>/dev/null) || break
+            ref="$prev^"
+            if [[ "$(gh release view "$prev" --repo "$REPO" --json isDraft --jq .isDraft 2>/dev/null)" != "false" ]]; then
+              echo "Skipping $prev: no published release"
+              continue
+            fi
+            if gh release download "$prev" --repo "$REPO" --pattern images.json --output previous.json --clobber; then
               echo "previous=$prev" >> "$GITHUB_OUTPUT"
               echo "Carrying forward from release $prev"
               exit 0
             fi
-            ref="$prev^"
+            echo "Skipping $prev: no images.json"
           done
-          echo "No previous release with images.json found; all images will be built."
+          echo "No previous published release with images.json found; all images will be built."
           echo '{"images":{}}' > previous.json
 
       - name: Build plan
         id: plan
         env:
-          TAG: ${{ inputs.version }}
+          TAG: ${{ github.ref_name }}
+          COMMIT: ${{ steps.validate.outputs.commit }}
           PREVIOUS: ${{ steps.previous.outputs.previous }}
         run: |
-          jq -n --arg tag "$TAG" --arg previous "$PREVIOUS" --arg registry "$REGISTRY" --arg sha "$GITHUB_SHA" \
+          jq -n --arg tag "$TAG" --arg previous "$PREVIOUS" --arg registry "$REGISTRY" --arg sha "$COMMIT" \
              --rawfile fps fingerprints.txt --slurpfile prev previous.json '
             ($fps | split("\n") | map(select(length > 0) | split(" ") | {key: .[0], value: .[1]}) | from_entries) as $fp
             | {
@@ -177,7 +183,7 @@ jobs:
               exit 1
             fi
             echo "::warning::carried-forward image $ref is not in the registry; rebuilding $artifact"
-            jq --arg a "$artifact" --arg tag "$TAG" --arg registry "$REGISTRY" --arg sha "$GITHUB_SHA" \
+            jq --arg a "$artifact" --arg tag "$TAG" --arg registry "$REGISTRY" --arg sha "$COMMIT" \
               '.images[$a] |= {image: ($registry + "/" + $a), tag: $tag, digest: null, fingerprint: .fingerprint, revision: $sha, changed: true}' \
               plan.json > plan.next
             mv plan.next plan.json
@@ -214,6 +220,8 @@ jobs:
     env:
       SKAFFOLD_SHA256: 8f62095ba8c282c03ad7b4987fbaf4f29b289fd6cbafb0351effd49f73f0240d
       SKAFFOLD_VERSION: v2.18.0
+      TAG: ${{ github.ref_name }}
+      COMMIT: ${{ needs.plan.outputs.commit }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -232,14 +240,12 @@ jobs:
       # re-created on another commit must not adopt the old image.
       - name: Check if image tag already exists
         id: check
-        env:
-          TAG: ${{ inputs.version }}
         run: |
           if err=$(docker manifest inspect "${{ matrix.image }}:${TAG}" 2>&1 >/dev/null); then
             revision=$(docker buildx imagetools inspect --format '{{json .Image}}' "${{ matrix.image }}:${TAG}" \
               | jq -r '[ (if has("config") then . else .[] end) | .config.Labels["org.opencontainers.image.revision"] // empty ] | first // ""')
-            if [[ "$revision" != "$GITHUB_SHA" ]]; then
-              echo "::error::${{ matrix.image }}:${TAG} exists but was built from '${revision:-unknown}', not $GITHUB_SHA. Tags are immutable; cut a new release." >&2
+            if [[ "$revision" != "$COMMIT" ]]; then
+              echo "::error::${{ matrix.image }}:${TAG} exists but was built from '${revision:-unknown}', not $COMMIT. Tags are immutable; cut a new release." >&2
               exit 1
             fi
             echo "${{ matrix.image }}:${TAG} already published from this revision; skipping build."
@@ -279,15 +285,13 @@ jobs:
       - name: Build and publish ${{ matrix.artifact }}
         if: steps.check.outputs.skip == 'false'
         env:
-          FIXED_TAG: ${{ inputs.version }}
-          VERSION: ${{ inputs.version }}
-          REVISION: ${{ github.sha }}
+          FIXED_TAG: ${{ github.ref_name }}
+          VERSION: ${{ github.ref_name }}
+          REVISION: ${{ needs.plan.outputs.commit }}
           BUILDKIT_CACHE_MODE: read-write
         run: skaffold build --cache-artifacts=false --push=true --filename skaffold.yaml --profile buildx-cache --build-image "${{ matrix.image }}"
 
       - name: Record published image digest
-        env:
-          TAG: ${{ inputs.version }}
         run: |
           digest="$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "${{ matrix.image }}:${TAG}")"
           # A malformed value would end up in images.json as the image digest.
@@ -302,7 +306,7 @@ jobs:
             echo "### Published ${{ matrix.artifact }}"
             echo
             echo "- Image: \`${{ matrix.image }}@$digest\`"
-            echo "- Source revision: \`${{ github.sha }}\`"
+            echo "- Source revision: \`$COMMIT\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -316,9 +320,9 @@ jobs:
     name: Publish images.json
     needs: [plan, publish]
     # Run when nothing needed building (publish skipped) or when every build
-    # succeeded. After a partial failure no tag or release exists yet; fix the
-    # cause and re-run the failed jobs (or the whole workflow with the same
-    # version): images already pushed from this commit are detected and skipped.
+    # succeeded. After a partial failure no release exists yet; fix the cause
+    # and re-run the failed jobs: images already pushed from this commit are
+    # detected and skipped.
     if: always() && needs.plan.result == 'success' && (needs.publish.result == 'success' || needs.publish.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -343,13 +347,13 @@ jobs:
             || { echo "images.json is missing digests:" >&2; jq . images.json >&2; exit 1; }
           jq . images.json
 
-      # The tag and the release are created here, and only here: every image has
-      # been pushed and images.json is complete. `--latest=false` keeps the
-      # previous release as "latest" until a human has checked this one.
-      - name: Create the release
+      # The release is created here, and only here: every image has been pushed
+      # and images.json is complete. It is a draft until a human publishes it.
+      - name: Create the draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ inputs.version }}
+          TAG: ${{ github.ref_name }}
+          COMMIT: ${{ needs.plan.outputs.commit }}
           REPO: ${{ github.repository }}
           NOTES_BASE: ${{ needs.plan.outputs.notes_base }}
         run: |
@@ -357,7 +361,7 @@ jobs:
             echo "::error::release $TAG already exists (a draft left by a failed attempt also counts: gh release delete $TAG --yes)" >&2
             exit 1
           fi
-          args=(-f tag_name="$TAG" -f target_commitish="$GITHUB_SHA")
+          args=(-f tag_name="$TAG" -f target_commitish="$COMMIT")
           if [[ -n "$NOTES_BASE" ]]; then args+=(-f previous_tag_name="$NOTES_BASE"); fi
           gh api --method POST "repos/$REPO/releases/generate-notes" "${args[@]}" --jq .body > notes.md
           {
@@ -369,12 +373,12 @@ jobs:
                 "| `\(.value.image)` | `\(.value.tag)` | \(if .value.changed then "yes" else "no" end) | `\(.value.digest)` |")
             ' images.json
           } >> notes.md
-          gh release create "$TAG" images.json --repo "$REPO" --target "$GITHUB_SHA" \
-            --title "$TAG" --notes-file notes.md --latest=false
+          gh release create "$TAG" images.json --repo "$REPO" --draft --verify-tag --target "$COMMIT" \
+            --title "$TAG" --notes-file notes.md
           {
-            echo "### Release $TAG created (not marked as latest)"
+            echo "### Draft release $TAG created"
             echo
-            echo "Check it, then promote it with \`gh release edit $TAG --latest\` or from the release page."
+            echo "Review it and publish it from the release page (or \`gh release edit $TAG --draft=false\`). Only a published release is deployable."
             echo
             cat notes.md
           } >> "$GITHUB_STEP_SUMMARY"
