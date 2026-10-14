@@ -181,13 +181,15 @@ JSON/text results. See [docs/mcp.md](docs/mcp.md) and
 ### Releases
 
 The repository has a single version: the git tag of a GitHub release (semantic
-version, e.g. `2.4.0`). To cut a release, run the
-[`release.yaml`](.github/workflows/release.yaml) workflow from `main`
-(Actions → "Release images" → Run workflow, or
-`gh workflow run release.yaml --ref main -f version=2.4.0`). Do not create the
-release or the tag by hand: the workflow creates both, at the very end, once
-every image is built and pushed — so a release never exists without its images.
-It:
+version without a prefix, e.g. `2.6.0`). Images are built only by the
+[`release.yaml`](.github/workflows/release.yaml) workflow, which runs when a
+semver tag is pushed. To cut a release, tag a commit on `main`:
+
+```bash
+git tag 2.6.0 <sha> && git push origin 2.6.0
+```
+
+The workflow then:
 
 1. computes a content fingerprint for every image with
    [`tools/release/image-fingerprint.sh`](tools/release/image-fingerprint.sh) —
@@ -195,36 +197,42 @@ It:
    revisions), the tree hash of every workspace crate in that closure, its
    Dockerfile, and the shared build inputs (`skaffold.yaml`, the root
    `Cargo.toml`, `.dockerignore`, the Buildx wrapper);
-2. compares each fingerprint with the one recorded by the previous release;
+2. compares each fingerprint with the one recorded by the previous *published*
+   release (drafts are ignored);
 3. builds and pushes only the images whose fingerprint changed, tagged with the
    release tag, and carries the previous tag + digest forward for the rest (an
    image that has disappeared from the registry is rebuilt instead);
-4. creates the git tag and the GitHub release, with generated notes, the image
-   table and `images.json` attached — marked **not latest**.
+4. creates the GitHub release as a **draft** on the tag, with generated notes,
+   the image table and `images.json` attached.
 
-A human then checks the release and its `images.json` and promotes it with
-`gh release edit 2.4.0 --latest` (or "Set as the latest release" on the release
-page). Until then the previous release stays "latest".
-
-So an image tag always names the release whose source built it, and a release
-that only bumps a frontend dependency publishes only a new frontend. Image tags
-are immutable. If a run fails before the release is created, no tag or release
-exists. Re-running from the same commit with the same version is safe (images
-already pushed from that commit are skipped). If the fix is a new commit, use a
-new version, or first delete the stray `<image>:<version>` tags from ECCR: the
-run refuses to reuse a tag that was built from a different commit. Deployment config
-should take tags (or digests) from the latest release's `images.json`:
+A human reviews the draft and its `images.json` and publishes it from the
+release page (or `gh release edit 2.6.0 --draft=false`). Only a published
+release is deployable; deployment config should take tags (or digests) from
+the latest published release's `images.json`:
 
 ```json
 {
-  "release": "2.4.1",
-  "previous": "2.4.0",
+  "release": "2.6.1",
+  "previous": "2.6.0",
   "images": {
-    "frontend":    { "image": "eccr.ecmwf.int/polytope/frontend",    "tag": "2.4.1", "digest": "sha256:…", "fingerprint": "…", "revision": "<commit>", "changed": true },
-    "mars-worker": { "image": "eccr.ecmwf.int/polytope/mars-worker", "tag": "2.4.0", "digest": "sha256:…", "fingerprint": "…", "revision": "<commit>", "changed": false }
+    "frontend":    { "image": "eccr.ecmwf.int/polytope/frontend",    "tag": "2.6.1", "digest": "sha256:…", "fingerprint": "…", "revision": "<commit>", "changed": true },
+    "mars-worker": { "image": "eccr.ecmwf.int/polytope/mars-worker", "tag": "2.6.0", "digest": "sha256:…", "fingerprint": "…", "revision": "<commit>", "changed": false }
   }
 }
 ```
+
+So an image tag always names the release whose source built it, and a release
+that only bumps a frontend dependency publishes only a new frontend. Tags —
+git and image — are immutable: if a release fails or the draft is rejected,
+fix forward and use the next version (delete the stray draft, if any, so it is
+not mistaken for a release). Re-running a failed workflow on the same tag is
+safe: images already pushed from that commit are skipped.
+
+Pull requests and pushes to `main` do not build images: CI compiles the
+workspace (`cargo check --workspace --all-targets`) and lints every Dockerfile
+(`docker buildx build --check`) instead. `mars-worker` is outside the
+workspace (it needs native MARS libraries) and is only compiled by the release
+build.
 
 There is nothing to bump before cutting a release. The `version` field in each
 crate's `Cargo.toml` is not used for images — these crates are not published to
@@ -244,17 +252,16 @@ tools/release/image-fingerprint.sh frontend --verbose   # one image, also lists 
 
 Things to know:
 
-- The first release after one without `images.json` rebuilds every image, and a
-  release cut from a commit that predates `tools/release/` cannot be published
-  by this workflow. Releases must be cut from a commit on `main`, and a version
-  that already has a tag is refused.
+- The first release after one without `images.json` rebuilds every image, and
+  a tag on a commit that predates `tools/release/` cannot be released by this
+  workflow. The tagged commit must be on `main`.
 - Only inputs tracked in git are fingerprinted. Mutable external inputs — base
   images referenced by tag rather than digest, `apt` packages, unpinned Python
   requirements — are not, so an unchanged image is never rebuilt to pick up a
   base-image security fix. To force a rebuild, change the image's `Dockerfile`
   (ideally by pinning a newer base image digest).
 - The release notes (generated changelog plus the image table) can be edited
-  freely after the release has been created.
+  freely before or after publishing the draft.
 
 For dev builds, skaffold tags images with the current git commit SHA by default (`tagPolicy.gitCommit`). Set `FIXED_TAG` to override, or `PREFIX` to prepend to the SHA.
 
@@ -273,22 +280,18 @@ The normal Skaffold build uses the local Docker cache:
 skaffold build -b eccr.ecmwf.int/polytope/frontend
 ```
 
-To additionally import the shared ECCR BuildKit cache produced by CI, log in to
-ECCR and opt into the `buildx-cache` profile:
+To additionally import the shared ECCR BuildKit cache produced by release
+builds, log in to ECCR and opt into the `buildx-cache` profile:
 
 ```bash
 docker login eccr.ecmwf.int
 skaffold build -p buildx-cache -b eccr.ecmwf.int/polytope/frontend
 ```
 
-The profile is read-only by default. CI for pull requests also imports only;
-trusted pushes to `main` and release jobs set `BUILDKIT_CACHE_MODE=read-write`
-to refresh the affected cache. Do not enable write mode for ordinary local
-builds. Cache entries are per image and platform, for example
-`eccr.ecmwf.int/polytope/build-cache:frontend-linux-amd64-v1`.
-
-The legacy `kaniko` profile does not support the BuildKit secret mounts used by
-application Dockerfiles and should not be used for these images.
+The profile is read-only by default; only release builds set
+`BUILDKIT_CACHE_MODE=read-write` to refresh the affected cache. Do not enable
+write mode for ordinary local builds. Cache entries are per image and platform,
+for example `eccr.ecmwf.int/polytope/build-cache:frontend-linux-amd64-v1`.
 
 ### C++ library images
 
