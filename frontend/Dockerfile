@@ -114,6 +114,11 @@ COPY --from=metkit-build /opt/metkit/lib /opt/metkit/lib
 COPY --from=metkit-build /opt/metkit/share /opt/metkit/share
 COPY --from=builder /ecmwf/polytope-server/target/release/${BIN_NAME} /app/polytope-server
 ENV LD_LIBRARY_PATH="/opt/metkit/lib"
+# eckit prints every exception it constructs, including ones metkit catches
+# itself. Failures reach us as errors from metkit::expand_json instead.
+ENV ECKIT_EXCEPTION_IS_SILENT=1 \
+    ECKIT_SERIOUS_BUG_IS_SILENT=1 \
+    ECKIT_ASSERT_FAILED_IS_SILENT=1
 ENTRYPOINT ["/app/polytope-server"]
 
 ###############################

@@ -81,7 +81,13 @@ fn example_2_request() -> Value {
 }
 
 #[test]
-fn reported_requests_succeed_and_their_output_becomes_log_events() {
+fn reported_requests_succeed_and_failures_are_errors_not_stray_output() {
+    // As set in the frontend image.
+    unsafe {
+        std::env::set_var("ECKIT_EXCEPTION_IS_SILENT", "1");
+        std::env::set_var("ECKIT_SERIOUS_BUG_IS_SILENT", "1");
+        std::env::set_var("ECKIT_ASSERT_FAILED_IS_SILENT", "1");
+    }
     let _restore = unsafe { RestoreFds(libc::dup(1), libc::dup(2)) };
     let _original_stdout = redirect_native_stdio().expect("redirect stdio");
     let (layer, logs) = capturing_subscriber("svc");
@@ -102,15 +108,17 @@ fn reported_requests_succeed_and_their_output_becomes_log_events() {
     );
     assert_eq!(events[0]["attributes"]["log.iostream"], "stderr");
 
+    // metkit catches an eckit exception to end the list; nothing is printed.
     let expanded = metkit::expand_json(&example_2_request()).expect("example 2 expands");
     assert_eq!(expanded["date"], "20261002");
     assert_eq!(expanded["time"], "0000/0600/1200/1800");
-    let events = wait_for_events(&logs, 2);
-    assert_eq!(events.len(), 2, "got: {events:#?}");
-    // A caught exception: only DEBUG.
-    assert_eq!(events[1]["severityText"], "DEBUG");
-    assert_eq!(
-        events[1]["body"],
-        "Exception: Bad value: Wrong input for time: 24 hours 0 minutes 0 seconds"
-    );
+
+    // A real failure comes back as an error carrying the message.
+    let mut invalid = example_2_request();
+    invalid["class"] = json!("not-a-class");
+    let err = metkit::expand_json(&invalid).expect_err("invalid class is rejected");
+    assert!(!err.to_string().is_empty());
+
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(logs.json_lines().len(), 1, "got: {:#?}", logs.json_lines());
 }
