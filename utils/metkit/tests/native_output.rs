@@ -2,96 +2,25 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! eckit/metkit print diagnostics straight to stdout/stderr ("Exception: ..."
-//! from an `eckit::Exception` constructor, `std::cerr` "Duplicate values ...").
-//! In a service that text used to land right after the JSON log lines and
-//! break the collector's JSON parsing; `polytope-observability` now turns it
-//! into log events. These tests run the two requests from the "Malformed OTEL
-//! Log Events Break Field Extraction" report through real metkit with that
-//! capture active.
+//! The two requests from the "Malformed OTEL Log Events Break Field
+//! Extraction" report through real metkit, configured as in the frontend image
+//! (eckit's exception printing silenced) with `polytope-observability`
+//! capturing fd 1/2. See `native_output_unsilenced.rs` for the default.
 //!
 //! Redirects the process-wide fd 1/2, so this is its own test binary and a
 //! single test.
 
-use std::time::{Duration, Instant};
+mod common;
 
-use polytope_observability::test_helper::CapturedLogs;
-use polytope_observability::{capturing_subscriber, redirect_native_stdio};
-use serde_json::{json, Value};
-use tracing_subscriber::prelude::*;
+use std::time::Duration;
 
-/// Puts fd 1/2 back so the test harness can print its results.
-struct RestoreFds(i32, i32);
-
-impl Drop for RestoreFds {
-    fn drop(&mut self) {
-        unsafe {
-            libc::dup2(self.0, 1);
-            libc::dup2(self.1, 2);
-        }
-    }
-}
-
-fn wait_for_events(logs: &CapturedLogs, count: usize) -> Vec<Value> {
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let events = logs.json_lines();
-        if events.len() >= count || Instant::now() > deadline {
-            return events;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-}
-
-// Example 1: `date=20260927/to/20260927`. The frontend used to probe the range
-// endpoints as `[start, end]`, for which metkit warns on stderr.
-fn example_1_range_probe() -> Value {
-    json!({
-        "verb": "retrieve",
-        "class": "d1",
-        "dataset": "extremes-dt",
-        "date": ["20260927", "20260927"],
-        "expver": "0001",
-        "levtype": "sfc",
-        "param": "167",
-        "step": "0",
-        "stream": "oper",
-        "time": "0000",
-        "type": "fc",
-    })
-}
-
-// Example 2: `time=0000/to/2300`. metkit ends the range by catching an
-// eckit::Exception for 24:00, which eckit prints on construction, yet the
-// expansion succeeds.
-fn example_2_request() -> Value {
-    json!({
-        "verb": "retrieve",
-        "class": "d1",
-        "dataset": "extremes-dt",
-        "date": "20261002",
-        "expver": "0001",
-        "levtype": "sfc",
-        "param": "165/167",
-        "step": "1",
-        "stream": "oper",
-        "time": "0000/to/2300",
-        "type": "fc",
-    })
-}
+use common::*;
+use serde_json::json;
 
 #[test]
 fn reported_requests_succeed_and_failures_are_errors_not_stray_output() {
-    // As set in the frontend image.
-    unsafe {
-        std::env::set_var("ECKIT_EXCEPTION_IS_SILENT", "1");
-        std::env::set_var("ECKIT_SERIOUS_BUG_IS_SILENT", "1");
-        std::env::set_var("ECKIT_ASSERT_FAILED_IS_SILENT", "1");
-    }
-    let _restore = unsafe { RestoreFds(libc::dup(1), libc::dup(2)) };
-    let _original_stdout = redirect_native_stdio().expect("redirect stdio");
-    let (layer, logs) = capturing_subscriber("svc");
-    tracing::subscriber::set_global_default(tracing_subscriber::registry().with(layer)).unwrap();
+    unsafe { std::env::set_var("ECKIT_EXCEPTION_IS_SILENT", "1") };
+    let (_restore, logs) = capture_native_output();
 
     let expanded = metkit::expand_json(&example_1_range_probe()).expect("example 1 expands");
     assert_eq!(expanded["date"], "20260927/20260927");
@@ -117,7 +46,7 @@ fn reported_requests_succeed_and_failures_are_errors_not_stray_output() {
     let mut invalid = example_2_request();
     invalid["class"] = json!("not-a-class");
     let err = metkit::expand_json(&invalid).expect_err("invalid class is rejected");
-    assert!(!err.to_string().is_empty());
+    assert!(err.to_string().contains("not-a-class"), "{err}");
 
     std::thread::sleep(Duration::from_millis(300));
     assert_eq!(logs.json_lines().len(), 1, "got: {:#?}", logs.json_lines());

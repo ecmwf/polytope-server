@@ -8,6 +8,9 @@
 //! `warnings`/`print` write to stdout/stderr directly. That text lands right
 //! after the service's JSON log lines, and a collector that parses each line
 //! as JSON then fails on the combined line and drops all its fields.
+//!
+//! Output still in the pipe when the process dies without running atexit
+//! handlers or raising SIGABRT (`_exit`, SIGKILL, e.g. eckit's `PANIC`) is lost.
 
 use std::fs::File;
 use std::io::{self, Read};
