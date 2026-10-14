@@ -28,12 +28,14 @@ name: Release images
 
 run-name: Release ${{ github.ref_name }}
 
-# Plain semver tags, no `v` prefix (2.6.0, 2.6.0-rc1). The glob is loose; the
-# plan job fails on anything that is not a semantic version.
+# Plain semver tags, no `v` prefix: 2.6.0, or 2.6.0-rc1 for a pre-release.
+# Dotted suffixes (2.6.0.dev0, 2.6.0.1) are not releases and do not trigger a
+# run; the plan job re-checks the tag against the same shape.
 on:
   push:
     tags:
-      - "[0-9]+.[0-9]+.[0-9]+*"
+      - "[0-9]+.[0-9]+.[0-9]+"
+      - "[0-9]+.[0-9]+.[0-9]+-*"
 
 permissions:
   contents: read
@@ -76,8 +78,8 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
         run: |
-          if [[ ! "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error::release tags must be a semantic version without a prefix, got '$TAG'" >&2
+          if [[ ! "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::release tags must be a semantic version without a prefix (2.6.0, 2.6.0-rc1), got '$TAG'" >&2
             exit 1
           fi
           commit=$(git rev-parse --verify "$GITHUB_SHA^{commit}")
