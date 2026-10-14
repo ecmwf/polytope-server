@@ -26,16 +26,26 @@
 
 name: Release images
 
-run-name: Release ${{ github.ref_name }}
+run-name: ${{ inputs.tag && format('Dry run {0}', inputs.tag) || format('Release {0}', github.ref_name) }}
 
 # Plain semver tags, no `v` prefix: 2.6.0, or 2.6.0-rc1 for a pre-release.
 # Dotted suffixes (2.6.0.dev0, 2.6.0.1) are not releases and do not trigger a
 # run; the plan job re-checks the tag against the same shape.
+#
+# A manual run is a dry run: it computes the plan for the selected branch as if
+# the given tag pointed at it (fingerprints, previous-release lookup, what
+# would be built or carried forward) and stops. Nothing is pushed or created.
 on:
   push:
     tags:
       - "[0-9]+.[0-9]+.[0-9]+"
       - "[0-9]+.[0-9]+.[0-9]+-*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Version to plan for (dry run, nothing is published)
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -47,11 +57,13 @@ defaults:
     shell: bash
 
 concurrency:
-  group: release-images-${{ github.ref_name }}
+  group: release-images-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 env:
   REGISTRY: eccr.ecmwf.int/polytope
+  TAG: ${{ inputs.tag || github.ref_name }}
+  DRY_RUN: ${{ github.event_name == 'workflow_dispatch' }}
 
 jobs:
   plan:
@@ -75,15 +87,13 @@ jobs:
       # release target all want the commit, not the tag object.
       - name: Validate version and commit
         id: validate
-        env:
-          TAG: ${{ github.ref_name }}
         run: |
           if [[ ! "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
             echo "::error::release tags must be a semantic version without a prefix (2.6.0, 2.6.0-rc1), got '$TAG'" >&2
             exit 1
           fi
           commit=$(git rev-parse --verify "$GITHUB_SHA^{commit}")
-          if ! git merge-base --is-ancestor "$commit" origin/main; then
+          if [[ "$DRY_RUN" != "true" ]] && ! git merge-base --is-ancestor "$commit" origin/main; then
             echo "::error::$TAG points at $commit, which is not on main; releases are cut from main" >&2
             exit 1
           fi
@@ -121,7 +131,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
           COMMIT: ${{ steps.validate.outputs.commit }}
         run: |
           # Several release tags can sit on one commit (a rejected draft re-tagged
@@ -164,7 +173,6 @@ jobs:
       - name: Build plan
         id: plan
         env:
-          TAG: ${{ github.ref_name }}
           COMMIT: ${{ steps.validate.outputs.commit }}
           PREVIOUS: ${{ steps.previous.outputs.previous }}
         run: |
@@ -228,7 +236,7 @@ jobs:
   publish:
     name: Publish ${{ matrix.artifact }}
     needs: plan
-    if: needs.plan.outputs.any_changed == 'true'
+    if: github.event_name == 'push' && needs.plan.outputs.any_changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     strategy:
@@ -238,7 +246,6 @@ jobs:
     env:
       SKAFFOLD_SHA256: 8f62095ba8c282c03ad7b4987fbaf4f29b289fd6cbafb0351effd49f73f0240d
       SKAFFOLD_VERSION: v2.18.0
-      TAG: ${{ github.ref_name }}
       COMMIT: ${{ needs.plan.outputs.commit }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -341,7 +348,7 @@ jobs:
     # succeeded. After a partial failure no release exists yet; fix the cause
     # and re-run the failed jobs: images already pushed from this commit are
     # detected and skipped.
-    if: always() && needs.plan.result == 'success' && (needs.publish.result == 'success' || needs.publish.result == 'skipped')
+    if: always() && github.event_name == 'push' && needs.plan.result == 'success' && (needs.publish.result == 'success' || needs.publish.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -370,7 +377,6 @@ jobs:
       - name: Create the draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
           COMMIT: ${{ needs.plan.outputs.commit }}
           REPO: ${{ github.repository }}
           NOTES_BASE: ${{ needs.plan.outputs.notes_base }}
