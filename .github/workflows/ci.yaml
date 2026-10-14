@@ -2,6 +2,9 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+# Images are built only by release.yaml; CI compiles the workspace and lints
+# the Dockerfiles instead.
+
 name: CI
 
 on:
@@ -55,6 +58,10 @@ jobs:
         run: tools/release/image-fingerprint.sh --all
       - name: Strip local path patches
         run: sed -i '/^\[patch\./,$d' Cargo.toml
+      # mars-worker and utils/metkit are excluded from the workspace (they need
+      # native MARS libraries) and are only compiled by the release build.
+      - name: Compile workspace
+        run: cargo check --workspace --all-targets --locked
       - name: Frontend unit tests
         env:
           NO_PROXY: "127.0.0.1,localhost"
@@ -85,83 +92,31 @@ jobs:
       - name: Validate Skaffold configuration
         run: skaffold diagnose --yaml-only --filename skaffold.yaml >/dev/null
 
-  # Select the images affected by a PR before starting the costly container
-  # builds. This is a conservative path-based pre-filter for CI only; release
-  # builds decide per image via tools/release/image-fingerprint.sh.
-  changed-images:
-    name: Select changed images
-    if: github.event_name == 'pull_request' || github.event_name == 'push'
+  # Static Dockerfile validation, no build. `--check` resolves every base image,
+  # and some are private ECCR images, so it needs the registry login; fork PRs
+  # have no access to the secrets and are skipped.
+  dockerfile-lint:
+    name: Lint ${{ matrix.dockerfile }}
+    if: github.event_name == 'push' || !github.event.pull_request.head.repo.fork
     runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.select.outputs.matrix }}
-      has_images: ${{ steps.select.outputs.has_images }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Select affected images
-        id: select
-        env:
-          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-          HEAD_SHA: ${{ github.sha }}
-        run: |
-          if [[ -z "$BASE_SHA" || "$BASE_SHA" =~ ^0+$ ]]; then
-            BASE_SHA="$(git rev-parse "$HEAD_SHA^")"
-          fi
-          matrix="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" | python3 .github/scripts/select-images.py)"
-          echo "Changed-image matrix: $matrix"
-          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
-          if python3 -c 'import json, sys; sys.exit(not json.loads(sys.argv[1])["include"])' "$matrix"; then
-            echo "has_images=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_images=false" >> "$GITHUB_OUTPUT"
-          fi
-
-  # Fork PRs are skipped: private dependency and ECCR credentials are required.
-  # PRs import cache only; trusted pushes to main refresh the affected cache.
-  image-build:
-    name: Build / ${{ matrix.name }}
-    needs: [fmt, test, skaffold-validate, changed-images]
-    if: (github.event_name == 'push' || (github.event_name == 'pull_request' && !github.event.pull_request.head.repo.fork)) && needs.changed-images.outputs.has_images == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
     strategy:
       fail-fast: false
-      max-parallel: 2
-      matrix: ${{ fromJSON(needs.changed-images.outputs.matrix) }}
+      matrix:
+        dockerfile:
+          - frontend/Dockerfile
+          - workers/polytope-fe-worker/Dockerfile
+          - workers/fdb-worker/Dockerfile
+          - workers/mars-worker/Dockerfile
+          - workers/test-worker/Dockerfile
+          - loadgen/Dockerfile
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
       - name: Log in to ECCR
         env:
           ECCR_PASSWORD: ${{ secrets.ECCR_PASSWORD }}
           ECCR_USERNAME: ${{ secrets.ECCR_USERNAME }}
         run: printf '%s' "$ECCR_PASSWORD" | docker login eccr.ecmwf.int --username "$ECCR_USERNAME" --password-stdin
-
-      - name: Prepare repository token
-        env:
-          RAW_GH_TOKEN: ${{ secrets.GH_REPO_READ_TOKEN }}
-        run: |
-          token="$(printf '%s' "$RAW_GH_TOKEN" | tr -d '[:space:]')"
-          echo "::add-mask::$token"
-          echo "GH_TOKEN=$token" >> "$GITHUB_ENV"
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
-
-      - name: Install Skaffold
-        run: |
-          tool_dir="$RUNNER_TEMP/skaffold"
-          mkdir -p "$tool_dir"
-          curl -fsSL "https://storage.googleapis.com/skaffold/releases/${SKAFFOLD_VERSION}/skaffold-linux-amd64" -o "$tool_dir/skaffold"
-          echo "${SKAFFOLD_SHA256}  $tool_dir/skaffold" | sha256sum --check -
-          chmod +x "$tool_dir/skaffold"
-          echo "$tool_dir" >> "$GITHUB_PATH"
-
-      - name: Build ${{ matrix.name }} (no push)
-        env:
-          BUILDKIT_CACHE_MODE: ${{ github.event_name == 'push' && 'read-write' || 'read' }}
-        run: skaffold build --cache-artifacts=false --push=false --filename skaffold.yaml --profile buildx-cache --build-image "${{ matrix.image }}"
+      - name: Validate Dockerfile
+        run: docker buildx build --check --file "${{ matrix.dockerfile }}" .
