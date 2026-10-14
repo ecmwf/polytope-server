@@ -181,7 +181,8 @@ JSON/text results. See [docs/mcp.md](docs/mcp.md) and
 ### Releases
 
 The repository has a single version: the git tag of a GitHub release (semantic
-version without a prefix, e.g. `2.6.0`). Images are built only by the
+version without a prefix: `2.6.0`, or `2.6.0-rc1` for a pre-release; dotted
+suffixes such as `2.6.0.dev0` are not releases). Images are built only by the
 [`release.yaml`](.github/workflows/release.yaml) workflow, which runs when a
 semver tag is pushed. To cut a release, tag a commit on `main`:
 
