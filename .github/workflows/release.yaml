@@ -110,7 +110,7 @@ jobs:
           ECCR_USERNAME: ${{ secrets.ECCR_USERNAME }}
         run: printf '%s' "$ECCR_PASSWORD" | docker login eccr.ecmwf.int --username "$ECCR_USERNAME" --password-stdin
 
-      # Walk back through the release tags in this commit's history until one
+      # Walk the release tags in this commit's history, newest first, until one
       # carries a published release with an images.json. Drafts are never
       # carried forward from: they were not approved for deployment. If nothing
       # is found (first release under this scheme), every image is rebuilt.
@@ -122,16 +122,27 @@ jobs:
           TAG: ${{ github.ref_name }}
           COMMIT: ${{ steps.validate.outputs.commit }}
         run: |
+          # Several release tags can sit on one commit (a rejected draft re-tagged
+          # under the next version), so list the tags rather than walking parents
+          # with `git describe`, which would see only one of them.
+          mapfile -t tags < <(git tag --list '[0-9]*' --merged "$COMMIT" --sort=-creatordate | grep -vx "$TAG" || true)
           # Start of the generated changelog: the nearest release tag, published
           # or not.
-          echo "notes_base=$(git describe --tags --abbrev=0 --match '[0-9]*' --exclude "$TAG" "$COMMIT" 2>/dev/null || true)" >> "$GITHUB_OUTPUT"
-          ref="$COMMIT"
-          for _ in $(seq 1 20); do
-            prev=$(git describe --tags --abbrev=0 --match '[0-9]*' --exclude "$TAG" "$ref" 2>/dev/null) || break
-            ref="$prev^"
-            if [[ "$(gh release view "$prev" --repo "$REPO" --json isDraft --jq .isDraft 2>/dev/null)" != "false" ]]; then
-              echo "Skipping $prev: no published release"
+          echo "notes_base=${tags[0]:-}" >> "$GITHUB_OUTPUT"
+          for prev in "${tags[@]}"; do
+            if draft=$(gh release view "$prev" --repo "$REPO" --json isDraft --jq .isDraft 2>&1); then
+              if [[ "$draft" != "false" ]]; then
+                echo "Skipping $prev: draft release"
+                continue
+              fi
+            elif grep -qiE 'release not found|HTTP 404' <<<"$draft"; then
+              echo "Skipping $prev: no release"
               continue
+            else
+              # An API error must not read as "no release here": it would silently
+              # rebuild everything or carry forward from an older release.
+              echo "::error::could not look up release $prev: $draft" >&2
+              exit 1
             fi
             if gh release download "$prev" --repo "$REPO" --pattern images.json --output previous.json --clobber; then
               echo "previous=$prev" >> "$GITHUB_OUTPUT"
