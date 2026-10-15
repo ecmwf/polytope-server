@@ -37,21 +37,20 @@ class GarbageCollector:
         s_threshold = gc_config.get("threshold", "10G")
         s_age = gc_config.get("age", "24h")
         s_metric_age = gc_config.get("metric_age", "24h")
+        s_min_size = gc_config.get("min_size", "0K")
         self.interval = parse_time(s_interval).total_seconds()
         self.threshold = parse_bytes(s_threshold)
         self.age = parse_time(s_age)
         self.metric_age = parse_time(s_metric_age)
+        self.min_size = parse_bytes(s_min_size)
 
         logging.info(
-            "Garbage collector initialized:\n Interval: {} ({} secs) \n \
-             Threshold: {} ({} bytes)\n Age Limit: {} ({})".format(
-                s_interval,
-                self.interval,
-                s_threshold,
-                self.threshold,
-                s_age,
-                self.age,
-            )
+            "Garbage collector initialized:\n"
+            f"Interval: {s_interval} ({self.interval} secs) \n"
+            f"Threshold: {s_threshold} ({self.threshold} bytes)\n"
+            f"Age Limit: {s_age} ({self.age})\n"
+            f"Metric age limit: {s_metric_age} ({self.metric_age})\n"
+            f"Minumum object size: {s_min_size} ({self.min_size} bytes)"
         )
 
         self.request_store = create_request_store(config.get("request_store"), config.get("metric_store"))
@@ -123,6 +122,7 @@ class GarbageCollector:
         all_objects_by_age = {
             d.name: {"size": d.size, "last_modified": d.last_modified}
             for d in sorted(all_objects, key=lambda x: x.last_modified)
+            if d.size >= self.min_size
         }
         removed_requests = []
         for name, v in all_objects_by_age.items():
