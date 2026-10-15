@@ -190,11 +190,26 @@ def _save_cache(cache):
                 pass
 
 
-def _cache_key(req_georef):
-    try:
-        return json.dumps(req_georef, sort_keys=True, default=str)
-    except Exception:
-        return str(req_georef)
+# Axes that never change the grid; every other request key is part of the cache key.
+_GRID_INVARIANT_KEYS = frozenset({"step", "param", "levelist", "levtype"})
+
+
+def _canonical_value(value):
+    if isinstance(value, str):
+        value = value.split("/")
+    elif not isinstance(value, (list, tuple, set, frozenset)):
+        value = [value]
+    items = sorted({str(item).strip() for item in value})
+    return items[0] if len(items) == 1 else items
+
+
+def _cache_key(req):
+    canonical = {
+        str(key).strip().lower(): _canonical_value(value)
+        for key, value in req.items()
+        if str(key).strip().lower() not in _GRID_INVARIANT_KEYS
+    }
+    return json.dumps(canonical, sort_keys=True)
 
 
 def _get_cache_locked():
@@ -205,8 +220,9 @@ def _get_cache_locked():
 
 
 def lookup_grid_config_local(req):
-    req_georef = req["georef"]
-    cache_key = _cache_key(req_georef)
+    if "georef" not in req:
+        raise KeyError("georef")
+    cache_key = _cache_key(req)
     cache_enabled = _grid_cache_enabled()
 
     if cache_enabled:
