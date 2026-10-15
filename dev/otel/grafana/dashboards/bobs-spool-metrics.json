@@ -404,8 +404,8 @@
       },
       "targets": [
         {
-          "expr": "sum by (service_instance_id)(bobs_disk_usage_bytes{cluster=~\"$cluster\", namespace=~\"$namespace\"})",
-          "legendFormat": "{{service_instance_id}}",
+          "expr": "sum by (pod)(bobs_disk_usage_bytes{cluster=~\"$cluster\", namespace=~\"$namespace\"})",
+          "legendFormat": "{{pod}}",
           "datasource": {
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"

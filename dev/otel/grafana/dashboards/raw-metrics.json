@@ -28,7 +28,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "legendFormat": "accepted {{service_instance_id}}"
+          "legendFormat": "accepted {{pod}}"
         },
         {
           "expr": "polytope_broker_requests_finished_total{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
@@ -36,7 +36,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "legendFormat": "finished {{outcome}} {{service_instance_id}}"
+          "legendFormat": "finished {{outcome}} {{pod}}"
         }
       ],
       "fieldConfig": {
@@ -124,7 +124,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "legendFormat": "depth {{service_instance_id}}"
+          "legendFormat": "depth {{pod}}"
         },
         {
           "expr": "polytope_broker_dispatcher_queue_wait_seconds_bucket{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
@@ -132,7 +132,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "legendFormat": "wait bucket le={{le}} {{service_instance_id}}"
+          "legendFormat": "wait bucket le={{le}} {{pod}}"
         },
         {
           "expr": "polytope_broker_dispatcher_queue_wait_seconds_sum{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
@@ -140,7 +140,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "legendFormat": "wait sum {{service_instance_id}}"
+          "legendFormat": "wait sum {{pod}}"
         },
         {
           "expr": "polytope_broker_dispatcher_queue_wait_seconds_count{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
@@ -148,7 +148,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "legendFormat": "wait count {{service_instance_id}}"
+          "legendFormat": "wait count {{pod}}"
         }
       ],
       "fieldConfig": {
@@ -300,7 +300,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "legendFormat": "created {{collection}} {{service_instance_id}}"
+          "legendFormat": "created {{collection}} {{pod}}"
         },
         {
           "expr": "bobs_spools_completed_total{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
@@ -308,7 +308,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "legendFormat": "completed {{collection}} {{service_instance_id}}"
+          "legendFormat": "completed {{collection}} {{pod}}"
         },
         {
           "expr": "bobs_spools_deleted_total{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
@@ -316,7 +316,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "legendFormat": "deleted {{reason}} {{collection}} {{service_instance_id}}"
+          "legendFormat": "deleted {{reason}} {{collection}} {{pod}}"
         }
       ],
       "fieldConfig": {
@@ -356,7 +356,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "legendFormat": "read active {{collection}} {{service_instance_id}}"
+          "legendFormat": "read active {{collection}} {{pod}}"
         },
         {
           "expr": "bobs_spools_active{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
@@ -364,7 +364,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "legendFormat": "spools {{state}} {{service_instance_id}}"
+          "legendFormat": "spools {{state}} {{pod}}"
         }
       ],
       "fieldConfig": {
@@ -404,7 +404,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "legendFormat": "disk {{service_instance_id}}"
+          "legendFormat": "disk {{pod}}"
         },
         {
           "expr": "bobs_pages_cache_hits_total{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
@@ -412,7 +412,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "legendFormat": "cache hits {{service_instance_id}}"
+          "legendFormat": "cache hits {{pod}}"
         },
         {
           "expr": "bobs_pages_cache_misses_total{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
@@ -420,7 +420,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "legendFormat": "cache misses {{service_instance_id}}"
+          "legendFormat": "cache misses {{pod}}"
         }
       ],
       "fieldConfig": {
@@ -460,7 +460,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "legendFormat": "read {{mode}} {{collection}} {{service_instance_id}}"
+          "legendFormat": "read {{mode}} {{collection}} {{pod}}"
         },
         {
           "expr": "bobs_write_bytes_total{cluster=~\"$cluster\", namespace=~\"$namespace\"}",
@@ -468,7 +468,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "legendFormat": "write {{collection}} {{service_instance_id}}"
+          "legendFormat": "write {{collection}} {{pod}}"
         }
       ],
       "fieldConfig": {
