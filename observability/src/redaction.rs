@@ -22,6 +22,19 @@ fn bearer_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| Regex::new(r#"(?i)Bearer\s+[^\s,;\"'{}]+"#).unwrap())
 }
+fn authorization_re() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    R.get_or_init(|| {
+        Regex::new(
+            r#"(?i)(\bauthorization["']?\s*[:=]\s*["']?)(?:[a-z][a-z0-9_-]*\s+)?[^\s,;"'{}]+"#,
+        )
+        .unwrap()
+    })
+}
+fn emailkey_re() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    R.get_or_init(|| Regex::new(r#"(?i)\bEmailKey\s+[^\s,;"'{}]+"#).unwrap())
+}
 fn assignment_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| Regex::new(r#"(?i)\b(password|token|api_key)=([^\s,;\"'&]+)"#).unwrap())
@@ -37,6 +50,10 @@ fn url_userinfo_re() -> &'static Regex {
 
 pub fn redact_string(input: &str) -> String {
     let mut out = input.to_string();
+    out = authorization_re()
+        .replace_all(&out, format!("${{1}}{REDACTED}"))
+        .into_owned();
+    out = emailkey_re().replace_all(&out, REDACTED).into_owned();
     out = bearer_re().replace_all(&out, REDACTED).into_owned();
     out = assignment_re()
         .replace_all(&out, "$1=[REDACTED]")
@@ -103,6 +120,36 @@ mod tests {
             assert!(!out.contains(forbidden), "leaked {forbidden} in {out}");
         }
         assert!(out.contains(REDACTED));
+    }
+
+    #[test]
+    fn authorization_header_values_are_redacted_for_any_scheme() {
+        for (input, secret) in [
+            ("Authorization: Basic dXNlcjpwYXNz", "dXNlcjpwYXNz"),
+            ("authorization: basic dXNlcjpwYXNz trailing", "dXNlcjpwYXNz"),
+            ("Authorization: EmailKey me@example.org:abc123", "abc123"),
+            (r#"{"authorization": "Basic dXNlcjpwYXNz"}"#, "dXNlcjpwYXNz"),
+            ("headers: {\"Authorization\": \"Digest abcdef\"}", "abcdef"),
+            ("Authorization=Token s3cr3tvalue", "s3cr3tvalue"),
+            ("sent EmailKey me@example.org:abc123 to auth", "abc123"),
+        ] {
+            let out = redact_string(input);
+            assert!(!out.contains(secret), "leaked {secret} in {out}");
+            assert!(out.contains(REDACTED), "{out}");
+        }
+        let out = redact_string("Authorization: Basic dXNlcjpwYXNz, next=1");
+        assert_eq!(out, "Authorization: [REDACTED], next=1");
+    }
+
+    #[test]
+    fn ordinary_text_is_untouched() {
+        for input in [
+            "Basic configuration loaded",
+            "authorization succeeded for user",
+            "Duplicate values in date [20260927,20260927] 20260927",
+        ] {
+            assert_eq!(redact_string(input), input);
+        }
     }
 
     #[test]

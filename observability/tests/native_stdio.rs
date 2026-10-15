@@ -124,6 +124,15 @@ fn native_stdout_and_stderr_become_log_events() {
         assert!(body.len() <= 8 * 1024 && body.lines().all(|l| l.len() == 99));
     }
 
+    // Native text goes through the same redaction as any other log body.
+    let seen = logs.json_lines().len();
+    write_fd(1, "request failed, Authorization: Basic dXNlcjpwYXNz\n");
+    let events = wait_for_events(&logs, seen + 1);
+    assert_eq!(
+        events.last().unwrap()["body"],
+        "request failed, Authorization: [REDACTED]"
+    );
+
     // The returned handle is the real stdout, so JSON logs still have somewhere to go
     // and are not fed back through the pipe.
     let events_before = logs.json_lines().len();
