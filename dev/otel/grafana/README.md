@@ -19,7 +19,8 @@ Grafana instance, org or datasource UID.
   (see `dashboards.yaml` for the docker-compose dev stack).
 
 The saved default of the **Datasource** variable is a site-specific name; if it
-doesn't exist in your Grafana, just select yours (it is remembered per user).
+doesn't exist in your Grafana, select yours from the dropdown (the choice lives in the URL as
+`var-DS_PROMETHEUS=…`, or in the dashboard if you save it).
 
 ## What the dashboards expect from your metrics
 
@@ -35,4 +36,6 @@ doesn't exist in your Grafana, just select yours (it is remembered per user).
   limits) additionally needs kube-state-metrics and cadvisor series with the
   kube-prometheus-stack label conventions (`job="kubelet"`,
   `metrics_path="/metrics/cadvisor"`, `job="kube-state-metrics"`). Without them
-  those panels are simply empty.
+  those panels are simply empty. These panels aggregate on `instance`/`id`/`uid`
+  rather than `pod`, so they also stay correct when series are duplicated by a
+  metrics relay that rewrites the `pod` label.

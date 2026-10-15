@@ -852,7 +852,7 @@
       },
       "targets": [
         {
-          "expr": "sum(increase(kube_pod_container_status_restarts_total{cluster=~\"$cluster\", namespace=~\"$namespace\"}[$__range]))",
+          "expr": "sum(max by (cluster, namespace, container, uid) (increase(kube_pod_container_status_restarts_total{cluster=~\"$cluster\", namespace=~\"$namespace\"}[$__range])))",
           "instant": true,
           "datasource": {
             "type": "prometheus",
@@ -898,7 +898,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (cluster, container) (increase(kube_pod_container_status_restarts_total{cluster=~\"$cluster\", namespace=~\"$namespace\"}[$__range])) > 0",
+          "expr": "sum by (cluster, container) (max by (cluster, namespace, container, uid) (increase(kube_pod_container_status_restarts_total{cluster=~\"$cluster\", namespace=~\"$namespace\"}[$__range]))) > 0",
           "legendFormat": "{{cluster}} / {{container}}",
           "instant": true,
           "datasource": {
@@ -946,7 +946,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (cluster, namespace, container, reason) (kube_pod_container_status_last_terminated_reason{cluster=~\"$cluster\", namespace=~\"$namespace\", reason!=\"\"})",
+          "expr": "sum by (cluster, namespace, container, reason) (max by (cluster, namespace, container, reason, uid) (kube_pod_container_status_last_terminated_reason{cluster=~\"$cluster\", namespace=~\"$namespace\", reason!=\"\"}))",
           "format": "table",
           "instant": true,
           "datasource": {
@@ -1013,7 +1013,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (cluster, container) (max by (cluster, namespace, pod, container)(container_memory_working_set_bytes{job=\"kubelet\", metrics_path=\"/metrics/cadvisor\", cluster=~\"$cluster\", namespace=~\"$namespace\", container!=\"\", image!=\"\"}))",
+          "expr": "sum by (cluster, container) (max by (cluster, namespace, container, instance, id) (container_memory_working_set_bytes{job=\"kubelet\", metrics_path=\"/metrics/cadvisor\", cluster=~\"$cluster\", namespace=~\"$namespace\", container!=\"\", image!=\"\"}))",
           "legendFormat": "{{cluster}} / {{container}}",
           "datasource": {
             "type": "prometheus",
@@ -1053,7 +1053,7 @@
       },
       "targets": [
         {
-          "expr": "100 * sum by (cluster, container) (max by (cluster, namespace, pod, container)(container_memory_working_set_bytes{job=\"kubelet\", metrics_path=\"/metrics/cadvisor\", cluster=~\"$cluster\", namespace=~\"$namespace\", container!=\"\", image!=\"\"})) / sum by (cluster, container) (kube_pod_container_resource_limits{job=\"kube-state-metrics\", cluster=~\"$cluster\", namespace=~\"$namespace\", resource=\"memory\"}) > 1",
+          "expr": "100 * sum by (cluster, container) (max by (cluster, namespace, container, instance, id) (container_memory_working_set_bytes{job=\"kubelet\", metrics_path=\"/metrics/cadvisor\", cluster=~\"$cluster\", namespace=~\"$namespace\", container!=\"\", image!=\"\"})) / sum by (cluster, container) (max by (cluster, namespace, container, uid) (kube_pod_container_resource_limits{job=\"kube-state-metrics\", cluster=~\"$cluster\", namespace=~\"$namespace\", resource=\"memory\"})) > 1",
           "legendFormat": "{{cluster}} / {{container}}",
           "instant": true,
           "datasource": {
@@ -1102,7 +1102,7 @@
       },
       "targets": [
         {
-          "expr": "100 * sum by (cluster, container) (max by (cluster, namespace, pod, container)(sum by (cluster, namespace, pod, container)(rate(container_cpu_usage_seconds_total{job=\"kubelet\", metrics_path=\"/metrics/cadvisor\", cluster=~\"$cluster\", namespace=~\"$namespace\", container!=\"\", image!=\"\"}[5m])))) / sum by (cluster, container) (kube_pod_container_resource_limits{job=\"kube-state-metrics\", cluster=~\"$cluster\", namespace=~\"$namespace\", resource=\"cpu\"}) > 1",
+          "expr": "100 * sum by (cluster, container) (max by (cluster, namespace, container, instance, id) (rate(container_cpu_usage_seconds_total{job=\"kubelet\", metrics_path=\"/metrics/cadvisor\", cluster=~\"$cluster\", namespace=~\"$namespace\", container!=\"\", image!=\"\"}[5m]))) / sum by (cluster, container) (max by (cluster, namespace, container, uid) (kube_pod_container_resource_limits{job=\"kube-state-metrics\", cluster=~\"$cluster\", namespace=~\"$namespace\", resource=\"cpu\"})) > 1",
           "legendFormat": "{{cluster}} / {{container}}",
           "instant": true,
           "datasource": {
