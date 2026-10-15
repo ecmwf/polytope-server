@@ -20,7 +20,8 @@ kube = { version = "0.91", default-features = false, features = [
   "client",
   "rustls-tls",
 ] }
-mars-client = { git = "https://github.com/ecmwf/mars-client-cpp", rev = "d0670436490d1c62e916a04fc15d3291b98027e7" }
+log = { version = "0.4", features = ["std"] }
+mars-client = { package = "mars-client-rs", git = "https://github.com/ecmwf/mars-client-cpp", rev = "aa8009d469b0892bcc4cbb33067c8ab5ea9eb47c" }
 polytope-worker-common = { path = "../common" }
 reqwest = { version = "0.12", default-features = false, features = [
   "json",
@@ -39,3 +40,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # provide the symbol, so scope the dependency to the same cfg as its use.
 [target.'cfg(all(target_os = "linux", target_env = "gnu"))'.dependencies]
 libc = "0.2"
+
+# The wrapper ecosystem must share one native metkit and ecCodes instance.
+# Transitive manifests still reference the playground copy and metkit's binding branch.
+[patch."ssh://git@github.com/ecmwf/rust-wrappers-playground.git"]
+eccodes-sys = { git = "ssh://git@github.com/ecmwf/eccodes.git", branch = "develop" }
+
+[patch."ssh://git@github.com/ecmwf/metkit.git"]
+metkit-sys = { git = "https://github.com/ecmwf/metkit.git", rev = "26dfea4f" }

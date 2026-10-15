@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::ffi::{CStr, c_char, c_void};
 use std::fmt::Write;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -11,13 +10,6 @@ const CHUNK_INTERVAL: Duration = Duration::from_secs(60);
 const MAX_CHUNK_BYTES: usize = 64 * 1024;
 
 static BRIDGE: OnceLock<MarsLogBridge> = OnceLock::new();
-
-unsafe extern "C" {
-    fn eckit_install_log_bridge(
-        callback: unsafe extern "C" fn(*mut c_void, u8, *const c_char),
-        context: *mut c_void,
-    );
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum LogLevel {
@@ -28,12 +20,12 @@ enum LogLevel {
 }
 
 impl LogLevel {
-    fn from_native(level: u8) -> Self {
+    fn from_log(level: log::Level) -> Self {
         match level {
-            0 => Self::Debug,
-            1 => Self::Info,
-            2 => Self::Warn,
-            _ => Self::Error,
+            log::Level::Trace | log::Level::Debug => Self::Debug,
+            log::Level::Info => Self::Info,
+            log::Level::Warn => Self::Warn,
+            log::Level::Error => Self::Error,
         }
     }
 
@@ -283,17 +275,59 @@ impl Drop for RequestLogGuard {
     }
 }
 
-unsafe extern "C" fn eckit_log_callback(_context: *mut c_void, level: u8, message: *const c_char) {
-    if message.is_null() {
-        return;
+fn is_native_target(target: &str) -> bool {
+    matches!(
+        target.split("::").next().unwrap_or(target),
+        "eckit"
+            | "metkit"
+            | "mir"
+            | "eccodes"
+            | "mars"
+            | "mars-client"
+            | "fdb"
+            | "fdb5"
+            | "odc"
+            | "atlas"
+    )
+}
+
+impl log::Log for MarsLogBridge {
+    fn enabled(&self, _metadata: &log::Metadata<'_>) -> bool {
+        true
     }
-    let Some(bridge) = BRIDGE.get() else {
-        return;
-    };
-    // SAFETY: eckit invokes the callback with a non-null, NUL-terminated string
-    // that remains valid for the duration of this call.
-    let message = unsafe { CStr::from_ptr(message) }.to_string_lossy();
-    bridge.record(LogLevel::from_native(level), &message);
+
+    fn log(&self, record: &log::Record<'_>) {
+        if is_native_target(record.target()) {
+            self.record(
+                LogLevel::from_log(record.level()),
+                &record.args().to_string(),
+            );
+            return;
+        }
+        // Rust dependencies also use the process-wide logger. Keep their
+        // records out of native request chunks and apply the tracing filter.
+        match record.level() {
+            log::Level::Error => {
+                tracing::error!(target: "rust_log", log_target = record.target(), "{}", record.args())
+            }
+            log::Level::Warn => {
+                tracing::warn!(target: "rust_log", log_target = record.target(), "{}", record.args())
+            }
+            log::Level::Info => {
+                tracing::info!(target: "rust_log", log_target = record.target(), "{}", record.args())
+            }
+            log::Level::Debug => {
+                tracing::debug!(target: "rust_log", log_target = record.target(), "{}", record.args())
+            }
+            log::Level::Trace => {
+                tracing::trace!(target: "rust_log", log_target = record.target(), "{}", record.args())
+            }
+        }
+    }
+
+    fn flush(&self) {
+        self.flush(ChunkReason::Interval);
+    }
 }
 
 async fn emit_chunks(mut chunks: tokio::sync::mpsc::UnboundedReceiver<Chunk>) {
@@ -325,9 +359,8 @@ pub(crate) fn init() -> MarsLogBridge {
     tokio::spawn(emit_chunks(chunks));
     tokio::spawn(flush_periodically(bridge.clone(), CHUNK_INTERVAL));
 
-    // SAFETY: the callback has C ABI and remains valid for the process lifetime;
-    // it uses the process-lifetime BRIDGE rather than the null context pointer.
-    unsafe { eckit_install_log_bridge(eckit_log_callback, std::ptr::null_mut()) };
+    log::set_boxed_logger(Box::new(bridge.clone())).expect("install MARS log router");
+    log::set_max_level(log::LevelFilter::Trace);
 
     bridge
 }
@@ -361,6 +394,45 @@ mod tests {
             Ok(None) => panic!("MARS log chunk sender closed"),
             Err(_) => panic!("periodic MARS log flush timed out"),
         }
+    }
+
+    #[test]
+    fn native_log_records_keep_request_correlation() {
+        use log::Log;
+
+        let (bridge, mut chunks) = test_bridge(1024);
+        let guard = bridge.begin_request("native-request".to_string());
+        bridge.log(
+            &log::Record::builder()
+                .target("mir")
+                .level(log::Level::Warn)
+                .args(format_args!("interpolation warning"))
+                .build(),
+        );
+        drop(guard);
+
+        let chunk = take_chunk(&mut chunks);
+        assert_eq!(chunk.request_id.as_deref(), Some("native-request"));
+        assert_eq!(chunk.message, "[WARN] interpolation warning\n");
+        assert_eq!(chunk.max_level, LogLevel::Warn);
+    }
+
+    #[test]
+    fn rust_dependency_logs_do_not_enter_native_chunks() {
+        use log::Log;
+
+        let (bridge, mut chunks) = test_bridge(1024);
+        bridge.log(
+            &log::Record::builder()
+                .target("reqwest::connect")
+                .level(log::Level::Debug)
+                .args(format_args!("connecting"))
+                .build(),
+        );
+        bridge.flush(ChunkReason::Interval);
+        assert!(chunks.try_recv().is_err());
+        assert!(is_native_target("eckit::net"));
+        assert!(!is_native_target("eckit_other"));
     }
 
     #[test]
