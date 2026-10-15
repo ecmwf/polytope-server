@@ -9,8 +9,11 @@ use std::fmt;
 use tracing::{
     Event, Subscriber,
     field::{Field, Visit},
+    span,
 };
-use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields, format::Writer};
+use tracing_subscriber::fmt::{
+    FmtContext, FormatEvent, FormatFields, FormattedFields, format::Writer,
+};
 use tracing_subscriber::registry::LookupSpan;
 
 const REQUEST_PREFIX: &str = "__POLYTOPE_REQUEST__";
@@ -143,9 +146,6 @@ impl fmt::Debug for RequestValue<'_> {
 }
 
 #[derive(Default, Debug, Clone)]
-pub struct JsonFields(pub Map<String, Value>);
-
-#[derive(Default, Debug, Clone)]
 pub struct JsonFieldFormatter;
 
 impl<'writer> FormatFields<'writer> for JsonFieldFormatter {
@@ -157,6 +157,24 @@ impl<'writer> FormatFields<'writer> for JsonFieldFormatter {
         let mut visitor = JsonVisitor::default();
         fields.record(&mut visitor);
         write!(writer, "{}", Value::Object(visitor.fields))
+    }
+
+    // Span fields are stored as one JSON object per span; the default would
+    // append a second object on `Span::record`.
+    fn add_fields(
+        &self,
+        current: &'writer mut FormattedFields<Self>,
+        fields: &span::Record<'_>,
+    ) -> fmt::Result {
+        let mut visitor = JsonVisitor::default();
+        fields.record(&mut visitor);
+        let mut merged = match serde_json::from_str(&current.fields) {
+            Ok(Value::Object(map)) => map,
+            _ => Map::new(),
+        };
+        merged.extend(visitor.fields);
+        current.fields = Value::Object(merged).to_string();
+        Ok(())
     }
 }
 
@@ -238,10 +256,10 @@ where
         if let Some(scope) = ctx.event_scope() {
             for span in scope.from_root() {
                 let exts = span.extensions();
-                if let Some(fields) = exts.get::<JsonFields>() {
-                    for (k, v) in &fields.0 {
-                        attributes.entry(k.clone()).or_insert_with(|| v.clone());
-                    }
+                if let Some(formatted) = exts.get::<FormattedFields<N>>()
+                    && let Ok(Value::Object(fields)) = serde_json::from_str(&formatted.fields)
+                {
+                    attributes.extend(fields);
                 }
             }
         }
@@ -427,5 +445,46 @@ mod tests {
             bounded_request_with(&Value::String("ééé".to_string()), 2, 3, 1),
             Value::String("éé...<truncated>".to_string())
         );
+    }
+
+    #[test]
+    fn span_fields_reach_events_and_event_fields_win() {
+        let (layer, logs) = capturing_subscriber("svc");
+        let sub = tracing_subscriber::registry().with(layer);
+        let _guard = tracing::subscriber::set_default(sub);
+        let outer = tracing::info_span!("job", request.id = "job-1", user = "outer");
+        let _outer = outer.enter();
+        let inner = tracing::info_span!(
+            "inner",
+            user = "inner",
+            token = "Bearer FAKETOKEN_OBSERVABILITY_PROBE"
+        );
+        let _inner = inner.enter();
+        tracing::info!("in span");
+        tracing::info!(request.id = "explicit", "overridden");
+        let lines = logs.json_lines();
+        assert_eq!(lines[0]["attributes"]["request.id"], "job-1");
+        assert_eq!(lines[0]["attributes"]["user"], "inner");
+        assert_eq!(lines[1]["attributes"]["request.id"], "explicit");
+        assert!(
+            !logs
+                .raw_lines()
+                .join("\n")
+                .contains("FAKETOKEN_OBSERVABILITY_PROBE")
+        );
+    }
+
+    #[test]
+    fn recorded_span_fields_are_merged_into_one_object() {
+        let (layer, logs) = capturing_subscriber("svc");
+        let sub = tracing_subscriber::registry().with(layer);
+        let _guard = tracing::subscriber::set_default(sub);
+        let span = tracing::info_span!("job", request.id = "job-1", late = tracing::field::Empty);
+        span.record("late", 7_u64);
+        let _e = span.enter();
+        tracing::info!("after record");
+        let line = &logs.json_lines()[0];
+        assert_eq!(line["attributes"]["request.id"], "job-1");
+        assert_eq!(line["attributes"]["late"], 7);
     }
 }
