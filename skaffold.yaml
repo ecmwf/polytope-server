@@ -7,9 +7,9 @@
 # Required for private GitHub dependencies:
 #   GH_TOKEN                    GitHub token with repository read access
 #
-# C++ library stacks (metkit, fdb, fdb-gribjump, mars) are NOT built here.
-# fdb-worker and mars-worker pull pre-built library images from ECCR (pinned
-# via their *_LIBS_IMAGE build args; see docker/cpp-libs/ and cpp-libs.yaml).
+# fdb-worker pulls its pre-built C++ library stack from ECCR (pinned via
+# FDB_LIBS_IMAGE; see docker/cpp-libs/). mars-worker builds its native stack
+# through Cargo's locked -sys crates.
 # polytope-fe-worker uses PyPI manylinux wheels (pyfdb, pygribjump[binary])
 # that bundle their own C++ stack — no separate ECCR image required.
 # ──────────────────────────────────────────────────────────────────────────────

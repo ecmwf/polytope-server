@@ -170,7 +170,7 @@ JSON/text results. See [docs/mcp.md](docs/mcp.md) and
 `skaffold.yaml` builds separate images for the frontend, each worker, and the load generator from the same Rust workspace:
 
 | Image | Binary | Root crate |
-|---|---|---|
+| --- | --- | --- |
 | `eccr.ecmwf.int/polytope/frontend` | `polytope-server` | `frontend` |
 | `eccr.ecmwf.int/polytope/polytope-fe-worker` | `polytope-fe-worker` | `workers/polytope-fe-worker` |
 | `eccr.ecmwf.int/polytope/fdb-worker` | `fdb-worker` | `workers/fdb-worker` |
@@ -296,7 +296,10 @@ for example `eccr.ecmwf.int/polytope/build-cache:frontend-linux-amd64-v1`.
 
 ### C++ library images
 
-The fdb-worker, polytope-fe-worker, and mars-worker images depend on pre-built C++ library images (eckit, metkit, FDB, gribjump, MARS client). These are published separately and versioned independently of the app images — each has its own `TAG` file under `docker/cpp-libs/<name>/TAG`.
+The fdb-worker uses pre-built C++ library images published separately under
+`docker/cpp-libs/`. The MARS worker builds and packages its native stack through
+the locked upstream Rust wrappers; see [MARS Rust worker](docs/mars-rust-worker.md).
+The feature-extraction worker uses binary Python wheels.
 
 See [`docker/cpp-libs/README.md`](docker/cpp-libs/README.md) for the full list of images, how to build and publish them, and how to bump a C++ library version.
 
