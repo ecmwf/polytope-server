@@ -170,32 +170,33 @@ class DynamoDBMetricStore(MetricStore):
             f"Removing metrics with include_processed={include_processed}",
             extra={"deleted_metrics_request_ids": request_ids},
         )
-        ids = list({str(i) for i in request_ids})
+        ids = {str(i) for i in request_ids}
         if not ids:
             return 0
 
-        filter_expr = Attr("request_id").is_in(ids)
+        filter_expr = Attr("request_id").exists()
         if not include_processed:
             filter_expr = filter_expr & Attr("status").ne("processed")
 
-        to_delete = [
+        # stream the metrics to delete to avoid throttling
+        to_delete = (
             item["uuid"]
             for item in _iter_items(
                 self.table.scan,
                 FilterExpression=filter_expr,
-                ProjectionExpression="#u",
+                ProjectionExpression="#u,request_id",
                 ExpressionAttributeNames={"#u": "uuid"},
             )
-        ]
+            if item["request_id"] in ids
+        )
 
-        if not to_delete:
-            return 0
-
+        count = 0
         with self.table.batch_writer() as batch:
             for uuid in to_delete:
                 batch.delete_item(Key={"uuid": str(uuid)})
+                count += 1
 
-        return len(to_delete)
+        return count
 
     def get_metric(self, uuid):
         response = self.table.get_item(Key={"uuid": str(uuid)})
