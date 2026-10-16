@@ -190,11 +190,13 @@ class DynamoDBMetricStore(MetricStore):
             if item["request_id"] in ids
         )
 
+        count = 0
         with self.table.batch_writer() as batch:
             for uuid in to_delete:
                 batch.delete_item(Key={"uuid": str(uuid)})
+                count += 1
 
-        return len(to_delete)
+        return count
 
     def get_metric(self, uuid):
         response = self.table.get_item(Key={"uuid": str(uuid)})
