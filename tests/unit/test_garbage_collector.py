@@ -157,6 +157,7 @@ def test_remove_by_size_deletes_oldest_first():
     staging = Staging(objs)
 
     gc = _get_gc(store, staging)
+    gc.threshold = 80
     gc.remove_by_size()
 
     # total was 120 > 80 so deletes oldest (30) then second (50) to drop to 40
