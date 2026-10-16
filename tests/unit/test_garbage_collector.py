@@ -92,7 +92,7 @@ def mocked_aws():
 
 
 def _run_gc(request_store, staging):
-    gc = GarbageCollector.__new__(GarbageCollector)
+    gc = GarbageCollector()
     gc.request_store = request_store
     gc.staging = staging
     gc.remove_dangling_data()
@@ -155,7 +155,7 @@ def test_remove_by_size_deletes_oldest_first():
     ]
     staging = Staging(objs)
 
-    gc = GarbageCollector.__new__(GarbageCollector)
+    gc = GarbageCollector()
     gc.threshold = 80
     gc.staging = staging
     gc.request_store = store
