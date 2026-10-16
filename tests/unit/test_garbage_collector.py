@@ -10,7 +10,7 @@ from polytope_server.common.request_store.dynamodb_request_store import (
     DynamoDBRequestStore,
 )
 from polytope_server.common.request_store.mongodb_request_store import MongoRequestStore
-from polytope_server.garbage_collector.garbage_collector import GarbageCollector
+from polytope_server.garbage_collector import garbage_collector
 
 
 class _DummyData:
@@ -90,13 +90,12 @@ def mocked_aws():
         with mock_aws():
             yield
 
-
-def _run_gc(request_store, staging):
-    gc = GarbageCollector({})
-    gc.request_store = request_store
-    gc.staging = staging
-    gc.remove_dangling_data()
-    return staging
+@mock.patch.object(garbage_collector, "create_request_store")
+@mock.patch.object(garbage_collector, "create_staging")
+def _get_gc(request_store, staging, mock_create_staging, mock_create_request_store):
+    mock_create_request_store.return_value = request_store
+    mock_create_staging.return_value = staging
+    return garbage_collector.GarbageCollector({})
 
 
 def test_remove_dangling_data_mongo(mongo_store):
@@ -107,7 +106,8 @@ def test_remove_dangling_data_mongo(mongo_store):
 
     staging = _DummyStaging([keep_a.id, f"{keep_b.id}.bin", "orphan-file"])
 
-    _run_gc(mongo_store, staging)
+    gc = _get_gc(mongo_store, staging)
+    gc.remove_dangling_data()
 
     assert staging.deleted == ["orphan-file"]
     assert set(staging.names) == {keep_a.id, f"{keep_b.id}.bin"}
@@ -122,7 +122,8 @@ def test_remove_dangling_data_dynamo(mocked_aws):
 
     staging = _DummyStaging([f"{keep_a.id}.txt", keep_b.id, "dangling"])
 
-    _run_gc(store, staging)
+    gc = _get_gc(store, staging)
+    gc.remove_dangling_data()
 
     assert staging.deleted == ["dangling"]
     assert set(staging.names) == {f"{keep_a.id}.txt", keep_b.id}
@@ -155,11 +156,7 @@ def test_remove_by_size_deletes_oldest_first():
     ]
     staging = Staging(objs)
 
-    gc = GarbageCollector({})
-    gc.threshold = 80
-    gc.staging = staging
-    gc.request_store = store
-
+    gc = _get_gc(store, staging)
     gc.remove_by_size()
 
     # total was 120 > 80 so deletes oldest (30) then second (50) to drop to 40
