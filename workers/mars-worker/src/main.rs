@@ -7,7 +7,7 @@ use crate::k8s::NodePortManager;
 use async_trait::async_trait;
 use bytes::Bytes;
 use clap::Parser;
-use mars_client::{Error as MarsError, MarsClient};
+use mars_client::{Error as MarsError, MarsClient, MarsRequest};
 use polytope_worker_common::config::{DEFAULT_CONFIG_PATH, WorkerConfigFile};
 use polytope_worker_common::{
     ProcessResult, Processor, SourceError, WorkItem, WorkerConfig, run_worker_loop,
@@ -407,7 +407,9 @@ impl Processor for MarsProcessor {
                 std::env::set_var("MARS_DHS_LOCALPORT", generation.target_port().to_string());
             }
 
-            let mut client = match MarsClient::new(stream_queue_byte_limit) {
+            let queue_limit = std::num::NonZeroUsize::new(stream_queue_byte_limit)
+                .expect("stream queue byte limit validated at startup");
+            let mut client = match MarsClient::with_stream_queue_byte_limit(queue_limit) {
                 Ok(c) => c,
                 Err(e) => {
                     let raw = e.to_string();
@@ -416,15 +418,20 @@ impl Processor for MarsProcessor {
                     return;
                 }
             };
-            let mut stream = match client.retrieve(request_map, &mars_email, &mars_token) {
-                Ok(s) => s,
-                Err(e) => {
-                    let raw = e.to_string();
-                    record_mars_source_error(&source_error_for_task, &raw);
-                    let _ = tx.blocking_send(Err(std::io::Error::other(raw)));
-                    return;
-                }
-            };
+            let mut request = MarsRequest::create("retrieve");
+            for (key, values) in request_map {
+                request.pin_mut().set_values(&key, values);
+            }
+            let mut stream =
+                match client.retrieve_with_credentials(&request, &mars_email, &mars_token) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        let raw = e.to_string();
+                        record_mars_source_error(&source_error_for_task, &raw);
+                        let _ = tx.blocking_send(Err(std::io::Error::other(raw)));
+                        return;
+                    }
+                };
             let mut buf = vec![0u8; 256 * 1024];
             loop {
                 match stream.read_bytes(&mut buf) {
@@ -439,12 +446,14 @@ impl Processor for MarsProcessor {
                             return;
                         }
                     }
-                    Err(MarsError::Invalidated { offset }) => {
-                        // Invalidation is a normal mars-client protocol event (server
-                        // retried another store candidate), unlike a raw TCP exception:
-                        // fail the job but keep the worker process alive.
-                        warn!(offset, "mars stream invalidated — failing job, worker stays up");
-                        let raw = format!("stream invalidated at byte offset {offset}");
+                    Err(MarsError::Restarted { offset }) => {
+                        // Bytes already sent downstream cannot be rewound for a replay.
+                        // A protocol restart fails this job, not the worker process.
+                        warn!(
+                            offset,
+                            "mars stream restarted — failing job, worker stays up"
+                        );
+                        let raw = format!("stream restarted at byte offset {offset}");
                         source_error_for_task.set_once(invalidated_user_message());
                         let _ = tx.blocking_send(Err(std::io::Error::other(raw)));
                         break;
@@ -888,6 +897,29 @@ mod processor_tests {
             .await;
         assert!(matches!(result, ProcessResult::Error { .. }));
         relay.shutdown().await;
+    }
+
+    #[test]
+    fn native_request_preserves_json_values() {
+        let fields = convert::json_to_request(&json!({
+            "class": "od",
+            "param": ["t", "q"],
+            "step": {"start": 0, "end": 24, "step": 12},
+            "expver": "a,b=other"
+        }))
+        .unwrap();
+        let mut request = MarsRequest::create("retrieve");
+        for (key, values) in fields {
+            request.pin_mut().set_values(&key, values);
+        }
+
+        assert_eq!(request.verb(), "retrieve");
+        assert_eq!(request.values("param").unwrap(), ["t", "q"]);
+        assert_eq!(
+            request.values("step").unwrap(),
+            ["0", "to", "24", "by", "12"]
+        );
+        assert_eq!(request.values("expver").unwrap(), ["a,b=other"]);
     }
 
     #[test]
