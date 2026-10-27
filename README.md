@@ -204,7 +204,13 @@ The workflow then:
    release tag, and carries the previous tag + digest forward for the rest (an
    image that has disappeared from the registry is rebuilt instead);
 4. creates the GitHub release as a **draft** on the tag, with generated notes,
-   the image table and `images.json` attached.
+   the image table and `images.json` attached;
+5. copies the frontend, fdb-worker and polytope-fe-worker images, by digest and
+   under the same tag, to the public `eccr.ecmwf.int/polytope-pub` repository
+   (carried-forward images included; re-running is a no-op). This happens once
+   the draft exists, not after it is published, so a rejected draft leaves its
+   tags in `polytope-pub`. The ECCR credentials used by the workflow need push
+   access to that repository.
 
 A human reviews the draft and its `images.json` and publishes it from the
 release page (or `gh release edit 2.6.0 --draft=false`). Only a published
