@@ -23,6 +23,10 @@
 # notes): one entry per image with tag, digest, fingerprint, source revision
 # and whether this release rebuilt it. Deployment config should take image
 # tags from there.
+#
+# The frontend, fdb-worker and polytope-fe-worker images are additionally
+# copied (by digest) to the public eccr.ecmwf.int/polytope-pub repository, in
+# the last job, once the draft release exists.
 
 name: Release images
 
@@ -62,6 +66,7 @@ concurrency:
 
 env:
   REGISTRY: eccr.ecmwf.int/polytope
+  PUBLIC_REGISTRY: eccr.ecmwf.int/polytope-pub
   TAG: ${{ inputs.tag || github.ref_name }}
   DRY_RUN: ${{ github.event_name == 'workflow_dispatch' }}
 
@@ -405,4 +410,57 @@ jobs:
             echo "Review it and publish it from the release page (or \`gh release edit $TAG --draft=false\`). Only a published release is deployable."
             echo
             cat notes.md
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: images-json
+          path: images.json
+          retention-days: 7
+          overwrite: true
+
+  # Runs after the draft release exists, so every image has been built and
+  # images.json is complete. Copies the manifest by digest, so the public tag is
+  # byte-identical to the private one. Carried-forward images are copied too
+  # (under the tag of the release that built them), which makes the public
+  # repository complete from the first release onwards. Re-running is a no-op.
+  mirror:
+    name: Mirror ${{ matrix.artifact }} to polytope-pub
+    needs: manifest
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        artifact: [frontend, fdb-worker, polytope-fe-worker]
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: images-json
+
+      - name: Log in to ECCR
+        env:
+          ECCR_PASSWORD: ${{ secrets.ECCR_PASSWORD }}
+          ECCR_USERNAME: ${{ secrets.ECCR_USERNAME }}
+        run: printf '%s' "$ECCR_PASSWORD" | docker login eccr.ecmwf.int --username "$ECCR_USERNAME" --password-stdin
+
+      - name: Copy to ${{ env.PUBLIC_REGISTRY }}
+        env:
+          ARTIFACT: ${{ matrix.artifact }}
+        run: |
+          image=$(jq -er --arg a "$ARTIFACT" '.images[$a].image' images.json)
+          tag=$(jq -er --arg a "$ARTIFACT" '.images[$a].tag' images.json)
+          digest=$(jq -er --arg a "$ARTIFACT" '.images[$a].digest' images.json)
+          target="${PUBLIC_REGISTRY}/${ARTIFACT}:${tag}"
+          docker buildx imagetools create --tag "$target" "${image}@${digest}"
+          copied=$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "$target")
+          if [[ "$copied" != "$digest" ]]; then
+            echo "::error::$target has digest $copied, expected $digest" >&2
+            exit 1
+          fi
+          {
+            echo "### Mirrored $ARTIFACT"
+            echo
+            echo "- \`$target@$digest\`"
           } >> "$GITHUB_STEP_SUMMARY"
