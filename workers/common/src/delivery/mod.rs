@@ -82,7 +82,7 @@ pub async fn make_delivery(config: &DeliveryConfig) -> Box<dyn ResultDelivery> {
                 api_base,
                 create_client,
                 body_client,
-                policy: bobs::BobsPolicy::default(),
+                policy: bobs::BobsPolicy::from_config(config),
             })
         }
         DeliveryType::S3 => {

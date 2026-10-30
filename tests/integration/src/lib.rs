@@ -703,6 +703,8 @@ async fn bobs_delivery_pipeline() {
     let delivery = polytope_worker_common::delivery_config::DeliveryConfig {
         delivery_type: polytope_worker_common::delivery_config::DeliveryType::Bobs,
         bobs_url: Some(bobs_url.clone()),
+        bobs_create_attempts: None,
+        bobs_create_timeout_secs: None,
         s3_bucket: None,
         s3_region: None,
         s3_endpoint_url: None,
