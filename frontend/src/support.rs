@@ -4,10 +4,10 @@
 
 //! User-facing error enrichment.
 //!
-//! A single outer middleware derives the request ID from the URL path (for the
-//! endpoints that act on an existing request) or from the ID that BITS generated
-//! when it accepted a new job (surfaced by the handler via a response
-//! extension), and rewrites any
+//! A single outer middleware gives every API call a request ID -- taken from the
+//! URL path for the endpoints that act on an existing request, otherwise minted
+//! here and adopted by the job if the call submits one -- records it on a span
+//! so every log line of the call carries it, and rewrites any
 //! `>= 400` JSON response body into one self-contained, human-readable
 //! `{"message": ...}` field that tells the user what to do and where to raise a
 //! support ticket, quoting their request ID.
@@ -18,13 +18,15 @@
 //! value into its output and crashes on non-string values).
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use axum::body::Body;
 use axum::extract::{Request, State};
 use axum::http::{HeaderName, HeaderValue, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::Response;
-use serde_json::json;
+use serde_json::{Value, json};
+use tracing::Instrument;
 
 use crate::state::AppState;
 
@@ -36,6 +38,38 @@ const MAX_ERROR_BODY: usize = 64 * 1024;
 /// [`request_context_middleware`].
 #[derive(Clone, Debug)]
 pub struct RequestId(pub String);
+
+/// A request ID minted by [`request_context_middleware`] for a call that does
+/// not act on an existing request. Pass it to [`new_job`].
+#[derive(Clone, Debug)]
+pub struct MintedRequestId {
+    id: String,
+    claimed: Arc<AtomicBool>,
+}
+
+impl MintedRequestId {
+    fn new(id: String) -> Self {
+        Self {
+            id,
+            claimed: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn claim(&self) -> Option<String> {
+        (!self.claimed.swap(true, Ordering::AcqRel)).then(|| self.id.clone())
+    }
+}
+
+/// Create a job for the current call. The first job adopts the call's minted
+/// ID, so the ID quoted and logged for the call is the job's ID. Further jobs
+/// from the same call (e.g. openmeteo fan-out) get their own IDs from BITS, so
+/// two jobs never share one.
+pub fn new_job(minted: Option<&MintedRequestId>, request: Value) -> bits::Job {
+    match minted.and_then(MintedRequestId::claim) {
+        Some(id) => bits::Job::new_with_id(id, request),
+        None => bits::Job::new(request),
+    }
+}
 
 /// The support URL resolved for the authenticated user's realm. The auth
 /// middleware attaches this to the response when a request is authenticated; the
@@ -176,9 +210,11 @@ async fn transform_error(resp: Response, state: &AppState, request_id: &str) -> 
 /// Extract the Polytope request ID from the URL path, for the endpoints that act
 /// on an existing request. The ID is an opaque path segment; we do not parse or
 /// validate its internal structure (see docs/request-ids.md).
-fn request_id_from_path(path: &str) -> Option<String> {
+fn request_id_from_path(method: &axum::http::Method, path: &str) -> Option<String> {
     let segments: Vec<&str> = path.trim_matches('/').split('/').collect();
     let id = match segments.as_slice() {
+        // v1 submits are `POST /api/v1/requests/{collection}`.
+        ["api", "v1", "requests", _] if method == axum::http::Method::POST => return None,
         ["api", "v1" | "v2", "requests", id] => id,
         ["api", "v1", "downloads" | "uploads", id] => id,
         _ => return None,
@@ -187,35 +223,45 @@ fn request_id_from_path(path: &str) -> Option<String> {
     (!id.is_empty()).then(|| id.to_string())
 }
 
-/// Outer middleware: resolve the request ID (URL-derived, or BITS-generated and
-/// surfaced by the handler) and rewrite error bodies into the support-guidance
-/// shape, quoting the ID when one is available.
+fn mint_request_id(bits: &bits::Bits) -> Option<String> {
+    bits::request_id::encode(
+        bits.site(),
+        bits.env(),
+        bits.broker_slot(),
+        chrono::Utc::now(),
+    )
+    .inspect_err(|err| tracing::error!(error = %err, "failed to mint request ID"))
+    .ok()
+}
+
+/// Outer middleware: resolve or mint the call's request ID, run the call inside
+/// a span carrying it, and rewrite error bodies into the support-guidance shape
+/// quoting it. An inbound `X-Request-Id` header is never read.
 pub async fn request_context_middleware(
     State(state): State<Arc<AppState>>,
     mut req: Request,
     next: Next,
 ) -> Response {
-    // The request ID is derived from the URL path for the endpoints that act on
-    // an existing request. We never read it from an inbound header and never
-    // mint one here: the frontend only creates a request ID when BITS accepts a
-    // new job, and the handler surfaces that ID back through a response
-    // extension.
-    let url_request_id = request_id_from_path(req.uri().path());
-
-    // Expose the URL-derived ID to inner layers (e.g. auth audit logging).
-    if let Some(id) = &url_request_id {
+    let request_id = match request_id_from_path(req.method(), req.uri().path()) {
+        Some(id) => Some(id),
+        None => mint_request_id(&state.bits).inspect(|id| {
+            req.extensions_mut()
+                .insert(MintedRequestId::new(id.clone()));
+        }),
+    };
+    if let Some(id) = &request_id {
         req.extensions_mut().insert(RequestId(id.clone()));
     }
+    let request_id = request_id.unwrap_or_default();
 
+    let span = tracing::info_span!(
+        "api_call",
+        request.id = %request_id,
+        http.request.method = %req.method(),
+        url.path = %req.uri().path(),
+    );
     let preserve_native_error_shape = preserves_native_error_shape(req.uri().path());
-    let resp = next.run(req).await;
-
-    // Prefer the URL-derived ID; otherwise fall back to an ID that a handler
-    // (e.g. a submit that BITS accepted) surfaced via a response extension. When
-    // neither exists there is simply no ID to report.
-    let request_id = url_request_id
-        .or_else(|| resp.extensions().get::<RequestId>().map(|r| r.0.clone()))
-        .unwrap_or_default();
+    let resp = next.run(req).instrument(span).await;
 
     let mut resp = if resp.status().as_u16() >= 400 && !preserve_native_error_shape {
         transform_error(resp, &state, &request_id).await
@@ -311,6 +357,14 @@ mod tests {
         assert_eq!(extract_reason(br#"{"message":"m"}"#), "m");
         assert_eq!(extract_reason(br#"{"retryable":true}"#), "");
         assert_eq!(extract_reason(b"not json"), "");
+    }
+
+    #[test]
+    fn only_the_first_job_of_a_call_adopts_the_minted_id() {
+        let minted = MintedRequestId::new(RID.to_string());
+        assert_eq!(new_job(Some(&minted), json!({})).id, RID);
+        assert_ne!(new_job(Some(&minted), json!({})).id, RID);
+        assert_ne!(new_job(None, json!({})).id, RID);
     }
 
     #[test]

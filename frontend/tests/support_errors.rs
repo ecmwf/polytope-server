@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! End-to-end checks that user-facing errors carry support guidance (and a
-//! request ID when one is available), and that the error body stays a flat
+//! End-to-end checks that user-facing errors carry support guidance and the
+//! call's request ID, and that the error body stays a flat
 //! string→string object (so the Python `polytope-client`, which flattens every
 //! value and crashes on non-strings, renders it cleanly).
 
@@ -40,10 +40,20 @@ fn app() -> axum::Router {
 // A plausible opaque request ID (26-char Crockford base32; see docs/request-ids.md).
 const RID: &str = "3k7p9q2r5s8t1v4w6x0y2z5a8b";
 
+fn quoted_request_id(msg: &str) -> Option<&str> {
+    msg.split("quote your request ID ")
+        .nth(1)
+        .and_then(|rest| rest.split('.').next())
+}
+
+async fn message(resp: axum::response::Response) -> String {
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    v["message"].as_str().unwrap().to_string()
+}
+
 #[tokio::test]
-async fn error_without_a_request_id_omits_the_id() {
-    // `/api/v2/collections` has no request ID in the URL and is not a submit, so
-    // there is no ID to report: the message must not quote one.
+async fn error_body_is_a_single_string_field() {
     let resp = app()
         .oneshot(
             Request::get("/api/v2/collections")
@@ -69,7 +79,42 @@ async fn error_without_a_request_id_omits_the_id() {
     let msg = obj["message"].as_str().unwrap();
     assert!(msg.starts_with("Your request was not authorised"));
     assert!(msg.contains("https://support.ecmwf.int/")); // deployment default (no realm pre-auth)
-    assert!(!msg.contains("request ID"), "no ID to quote");
+}
+
+#[tokio::test]
+async fn rejected_submit_quotes_a_request_id() {
+    // A submit rejected before BITS sees it has no job, but still gets an ID.
+    let resp = app()
+        .oneshot(
+            Request::post("/api/v2/ecmwf/requests")
+                .header("Content-Type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let msg = message(resp).await;
+    let quoted = quoted_request_id(&msg).expect("a request ID is quoted");
+    bits::request_id::decode(quoted).expect("quoted ID is a BITS request ID");
+}
+
+#[tokio::test]
+async fn v1_submit_path_segment_is_not_taken_as_the_request_id() {
+    // `POST /api/v1/requests/{collection}` names a collection, not a request.
+    let resp = app()
+        .oneshot(
+            Request::post("/api/v1/requests/ecmwf")
+                .header("Content-Type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let msg = message(resp).await;
+    let quoted = quoted_request_id(&msg).expect("a request ID is quoted");
+    assert_ne!(quoted, "ecmwf");
+    bits::request_id::decode(quoted).expect("quoted ID is a BITS request ID");
 }
 
 #[tokio::test]
@@ -87,45 +132,6 @@ async fn error_on_a_request_path_quotes_the_url_derived_request_id() {
 
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 
-    let body = resp.into_body().collect().await.unwrap().to_bytes();
-    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    let msg = v["message"].as_str().unwrap();
-    assert!(msg.contains(&format!("quote your request ID {RID}")));
-}
-
-#[tokio::test]
-async fn error_quotes_the_bits_generated_id_surfaced_by_the_handler() {
-    // A client that sends no `X-Request-Id` (e.g. the Python polytope-client)
-    // submitting a request that BITS accepts but then fails: the handler surfaces
-    // the BITS-generated ID via a response extension exactly like
-    // `submit_collection`, and the middleware must quote that ID in the error.
-    async fn boom() -> axum::response::Response {
-        use axum::response::IntoResponse;
-        let mut resp = (
-            StatusCode::BAD_REQUEST,
-            axum::Json(serde_json::json!({ "error": "boom" })),
-        )
-            .into_response();
-        resp.extensions_mut()
-            .insert(polytope_server::support::RequestId(RID.to_string()));
-        resp
-    }
-
-    let (_full_app, state) = build_app(config()).expect("app builds");
-    let router = axum::Router::new()
-        .route("/boom", axum::routing::get(boom))
-        .layer(axum::middleware::from_fn_with_state(
-            state,
-            polytope_server::support::request_context_middleware,
-        ));
-
-    // No X-Request-Id header from the client.
-    let resp = router
-        .oneshot(Request::get("/boom").body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let body = resp.into_body().collect().await.unwrap().to_bytes();
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
     let msg = v["message"].as_str().unwrap();

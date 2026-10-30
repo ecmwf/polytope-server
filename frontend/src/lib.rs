@@ -214,8 +214,13 @@ impl polytope_edr::RequestSubmitter for BitsSubmitter {
         let state = self.state.clone();
         let collection = self.collection.clone();
         Box::pin(async move {
-            let mut job = bits::Job::new(request);
             let submission_context = auth::middleware::current_submission_context();
+            let mut job = support::new_job(
+                submission_context
+                    .as_ref()
+                    .and_then(|c| c.minted_request_id.as_ref()),
+                request,
+            );
 
             if let Some(context) = submission_context.as_ref() {
                 api::set_job_user_context(

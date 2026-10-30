@@ -166,7 +166,10 @@ impl PolytopeMcp {
             })));
         }
 
-        let mut job = Job::new(request);
+        let mut job = crate::support::new_job(
+            parts.extensions.get::<crate::support::MintedRequestId>(),
+            request,
+        );
         set_mcp_job_context(&mut job, parts, &self.state, &params.collection);
         let submitted_request = job.request.clone();
 
