@@ -121,7 +121,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let fdb_section = config.section("fdb").expect("config missing 'fdb' section");
     let fdb_config =
-        serde_yml::to_string(fdb_section).expect("failed to serialize fdb config section");
+        serde_yaml::to_string(fdb_section).expect("failed to serialize fdb config section");
 
     debug!(path = cli.config_path, "loaded fdb config section");
 

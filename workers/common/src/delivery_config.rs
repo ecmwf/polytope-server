@@ -89,13 +89,13 @@ impl Codec {
 impl DeliveryConfig {
     pub fn from_file(path: &str) -> std::io::Result<Self> {
         let contents = std::fs::read_to_string(path)?;
-        serde_yml::from_str(&contents)
+        serde_yaml::from_str(&contents)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
     }
 
-    /// Deserialize from a `serde_yml::Value` (e.g. a nested section of a larger config).
-    pub fn from_value(value: serde_yml::Value) -> Result<Self, serde_yml::Error> {
-        serde_yml::from_value(value)
+    /// Deserialize from a `serde_yaml::Value` (e.g. a nested section of a larger config).
+    pub fn from_value(value: serde_yaml::Value) -> Result<Self, serde_yaml::Error> {
+        serde_yaml::from_value(value)
     }
 }
 
@@ -111,7 +111,7 @@ bobs_url: "http://bobs.example.com"
 s3_bucket: null
 s3_region: null
 "#;
-        let config: DeliveryConfig = serde_yml::from_str(yaml).unwrap();
+        let config: DeliveryConfig = serde_yaml::from_str(yaml).unwrap();
         assert!(matches!(config.delivery_type, DeliveryType::Bobs));
         assert_eq!(config.bobs_url.as_deref(), Some("http://bobs.example.com"));
         assert_eq!(config.s3_key_prefix, "");
@@ -127,7 +127,7 @@ bobs_url: "http://bobs.example.com"
 bobs_create_attempts: 6
 bobs_create_timeout_secs: 12
 "#;
-        let config: DeliveryConfig = serde_yml::from_str(yaml).unwrap();
+        let config: DeliveryConfig = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(config.bobs_create_attempts, Some(6));
         assert_eq!(config.bobs_create_timeout_secs, Some(12));
     }
@@ -135,7 +135,7 @@ bobs_create_timeout_secs: 12
     #[test]
     fn delivery_config_defaults() {
         let yaml = "delivery_type: direct\n";
-        let config: DeliveryConfig = serde_yml::from_str(yaml).unwrap();
+        let config: DeliveryConfig = serde_yaml::from_str(yaml).unwrap();
         assert!(matches!(config.delivery_type, DeliveryType::Direct));
         assert_eq!(config.s3_key_prefix, "");
     }
@@ -149,7 +149,7 @@ s3_region: "us-east-1"
 s3_endpoint_url: "http://minio:9000"
 s3_force_path_style: true
 "#;
-        let config: DeliveryConfig = serde_yml::from_str(yaml).unwrap();
+        let config: DeliveryConfig = serde_yaml::from_str(yaml).unwrap();
 
         assert!(matches!(config.delivery_type, DeliveryType::S3));
         assert_eq!(config.s3_bucket.as_deref(), Some("example-bucket"));
@@ -169,7 +169,7 @@ s3_secret_access_key: "my-secret-key"
 s3_presigned_url_expiry_secs: 3600
 s3_public_url: "https://cdn.example.com"
 "#;
-        let config: DeliveryConfig = serde_yml::from_str(yaml).unwrap();
+        let config: DeliveryConfig = serde_yaml::from_str(yaml).unwrap();
 
         assert_eq!(config.s3_access_key_id.as_deref(), Some("my-access-key"));
         assert_eq!(
