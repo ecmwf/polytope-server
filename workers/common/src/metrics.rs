@@ -66,6 +66,7 @@ struct Instruments {
     polls: Counter<u64>,
     delivery_duration: Histogram<f64>,
     delivery_bytes: Counter<u64>,
+    source_wait: Histogram<f64>,
 }
 
 fn meter() -> Meter {
@@ -90,6 +91,9 @@ fn instruments() -> &'static Instruments {
                 .f64_histogram("polytope.worker.delivery.duration.seconds")
                 .build(),
             delivery_bytes: m.u64_counter("polytope.worker.delivery.bytes").build(),
+            source_wait: m
+                .f64_histogram("polytope.worker.source.wait.seconds")
+                .build(),
         }
     })
 }
@@ -129,6 +133,15 @@ pub fn record_job_started() {
     instruments().jobs_active.add(1, common_attrs());
 }
 
+/// Time from the start of result delivery until the source's first item.
+/// `outcome` is `data`, `empty` (stream ended with no bytes) or `error`.
+pub fn record_source_wait(outcome: &str, secs: f64) {
+    instruments().source_wait.record(
+        secs,
+        &attrs_with(&[KeyValue::new("outcome", outcome.to_owned())]),
+    );
+}
+
 pub fn record_job_finished(
     outcome: &str,
     duration_secs: f64,
@@ -160,6 +173,7 @@ mod tests {
         record_poll("empty");
         record_poll("error");
         record_job_started();
+        record_source_wait("data", 0.2);
         record_job_finished("success", 1.0, 0.5, 0.3, 1024);
     }
 

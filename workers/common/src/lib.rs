@@ -38,6 +38,34 @@ fn codec_from_accept_encoding(accept_encoding: Option<&str>) -> Codec {
 
 pub type RawStream = Box<dyn Stream<Item = Result<bytes::Bytes, std::io::Error>> + Send + Unpin>;
 
+enum FirstItem {
+    /// The first non-empty chunk, re-attached to the front of the rest of the stream.
+    Data(RawStream),
+    /// The stream ended without producing any bytes.
+    Empty,
+    /// The stream failed before producing any bytes.
+    Error(std::io::Error),
+}
+
+/// Waits until the result stream yields its first non-empty chunk, so that
+/// delivery (a BOBS spool, an S3 upload) is only opened once there is data to
+/// write. Sources like MARS can queue for longer than the BOBS writer-inactivity
+/// timeout before the first byte, and most source errors arrive before any data.
+async fn await_first_chunk(mut body: RawStream) -> FirstItem {
+    use futures::StreamExt;
+    loop {
+        match body.next().await {
+            Some(Ok(chunk)) if chunk.is_empty() => continue,
+            Some(Ok(chunk)) => {
+                let head = futures::stream::once(futures::future::ready(Ok(chunk)));
+                return FirstItem::Data(Box::new(head.chain(body)));
+            }
+            Some(Err(err)) => return FirstItem::Error(err),
+            None => return FirstItem::Empty,
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 struct SourceErrorState {
     message: Option<String>,
@@ -729,6 +757,7 @@ async fn worker_task<P: Processor + 'static>(
             let processing_duration = process_started.elapsed();
 
             let mut deliver_ms: u64 = 0;
+            let mut source_wait_ms: u64 = 0;
             // Counts post-encoding bytes as the result body streams to delivery.
             // None for non-Success outcomes (which do not emit worker.job.completed).
             let mut byte_counter: Option<Arc<AtomicU64>> = None;
@@ -740,12 +769,48 @@ async fn worker_task<P: Processor + 'static>(
                     source_error,
                 } => {
                     source_error_for_restart = source_error.clone();
+                    let deliver_started = Instant::now();
+                    let first = await_first_chunk(body).await;
+                    let source_wait = deliver_started.elapsed();
+                    source_wait_ms = source_wait.as_millis() as u64;
+                    let body: RawStream = match first {
+                        FirstItem::Data(body) => {
+                            metrics::record_source_wait("data", source_wait.as_secs_f64());
+                            body
+                        }
+                        FirstItem::Empty => {
+                            metrics::record_source_wait("empty", source_wait.as_secs_f64());
+                            Box::new(futures::stream::empty())
+                        }
+                        FirstItem::Error(err) => {
+                            metrics::record_source_wait("error", source_wait.as_secs_f64());
+                            let message = source_error
+                                .as_ref()
+                                .and_then(SourceError::message)
+                                .unwrap_or_else(|| err.to_string());
+                            if let (Some(enduser_id), Some(enduser_realm)) =
+                                (enduser_id, enduser_realm)
+                            {
+                                tracing::error!("event.name" = "worker.job.failed", outcome = "error", request.id = %work.job_id, error = %message, stream_error = %err, source_wait_ms, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "source failed before producing data; nothing delivered");
+                            } else {
+                                tracing::error!("event.name" = "worker.job.failed", outcome = "error", request.id = %work.job_id, error = %message, stream_error = %err, source_wait_ms, "source failed before producing data; nothing delivered");
+                            }
+                            return (
+                                Completion::Error { message },
+                                process_ms,
+                                processing_duration,
+                                deliver_ms,
+                                source_wait_ms,
+                                byte_counter,
+                                source_error_for_restart,
+                            );
+                        }
+                    };
                     let codec =
                         codec_from_accept_encoding(work.metadata["accept_encoding"].as_str());
                     let content_encoding = codec.content_encoding_header().map(str::to_string);
                     let (encoded, counter) = encode_stream_counted(body, &codec);
                     byte_counter = Some(counter);
-                    let deliver_started = Instant::now();
                     let completion = delivery
                         .deliver(
                             &content_type,
@@ -784,6 +849,7 @@ async fn worker_task<P: Processor + 'static>(
                 process_ms,
                 processing_duration,
                 deliver_ms,
+                source_wait_ms,
                 byte_counter,
                 source_error_for_restart,
             )
@@ -820,6 +886,7 @@ async fn worker_task<P: Processor + 'static>(
             process_ms,
             processing_duration,
             deliver_ms,
+            source_wait_ms,
             byte_counter,
             source_error_for_restart,
         ) = match processing {
@@ -987,9 +1054,9 @@ async fn worker_task<P: Processor + 'static>(
         );
         if matches!(outcome, "data" | "redirect") {
             if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
-                tracing::info!("event.name" = "worker.job.completed", outcome = "success", request.id = %work.job_id, bytes, poll_wait_ms, idle_ms, process_ms, deliver_ms, complete_ms, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "job completed");
+                tracing::info!("event.name" = "worker.job.completed", outcome = "success", request.id = %work.job_id, bytes, poll_wait_ms, idle_ms, process_ms, source_wait_ms, deliver_ms, complete_ms, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "job completed");
             } else {
-                tracing::info!("event.name" = "worker.job.completed", outcome = "success", request.id = %work.job_id, bytes, poll_wait_ms, idle_ms, process_ms, deliver_ms, complete_ms, "job completed");
+                tracing::info!("event.name" = "worker.job.completed", outcome = "success", request.id = %work.job_id, bytes, poll_wait_ms, idle_ms, process_ms, source_wait_ms, deliver_ms, complete_ms, "job completed");
             }
         }
         if response.status() != StatusCode::OK && response.status() != StatusCode::NOT_FOUND {
@@ -1561,6 +1628,62 @@ mod tests {
         }
     }
 
+    /// Fails before producing any bytes, like a MARS "data not found".
+    struct EarlyErrorProcessor {
+        restart_worker: bool,
+    }
+
+    #[async_trait]
+    impl Processor for EarlyErrorProcessor {
+        async fn process(&self, _work: WorkItem) -> ProcessResult {
+            let source_error = SourceError::new();
+            let message = "Some of the requested data is not available.";
+            if self.restart_worker {
+                source_error.set_unrecoverable_once(message);
+            } else {
+                source_error.set_once(message);
+            }
+            let stream = futures::stream::iter(vec![
+                Ok::<bytes::Bytes, std::io::Error>(bytes::Bytes::new()),
+                Err(std::io::Error::other("raw source failure")),
+            ]);
+            ProcessResult::success_with_source_error(
+                "application/octet-stream",
+                Box::new(stream),
+                source_error,
+            )
+        }
+    }
+
+    /// Produces its first bytes only after a delay, recording the moment into
+    /// the BOBS mock's call log so the test can check create came afterwards.
+    struct SlowFirstChunkProcessor {
+        bobs_state: Arc<BobsState>,
+    }
+
+    #[async_trait]
+    impl Processor for SlowFirstChunkProcessor {
+        async fn process(&self, _work: WorkItem) -> ProcessResult {
+            use futures::StreamExt;
+            let bobs_state = self.bobs_state.clone();
+            let first = Box::pin(futures::stream::once(async move {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                bobs_state
+                    .calls
+                    .lock()
+                    .unwrap()
+                    .push("first-chunk".to_string());
+                Ok::<bytes::Bytes, std::io::Error>(bytes::Bytes::from_static(b"abc"))
+            }));
+            let stream = futures::stream::iter(vec![Ok(bytes::Bytes::new())])
+                .chain(first)
+                .chain(futures::stream::iter(vec![Ok(bytes::Bytes::from_static(
+                    b"def",
+                ))]));
+            ProcessResult::success("application/octet-stream", Box::new(stream))
+        }
+    }
+
     struct RejectProcessor;
 
     #[async_trait]
@@ -2016,6 +2139,234 @@ mod tests {
             !calls.contains(&"complete".to_string()),
             "BOBS object must not be completed after source stream error"
         );
+    }
+
+    fn bobs_test_delivery_config(bobs_url: &str) -> DeliveryConfig {
+        DeliveryConfig {
+            delivery_type: delivery_config::DeliveryType::Bobs,
+            bobs_url: Some(bobs_url.to_string()),
+            ..direct_delivery_config()
+        }
+    }
+
+    /// Starts a BOBS mock and a broker mock; returns their state and the worker config.
+    async fn start_bobs_and_broker() -> (Arc<BobsState>, String, Arc<BrokerState>, WorkerConfig) {
+        let bobs_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let bobs_url = format!("http://{}", bobs_listener.local_addr().unwrap());
+        let bobs_state = Arc::new(BobsState {
+            write_base_url: format!("{bobs_url}/api/v1"),
+            calls: Mutex::new(vec![]),
+            writes: Mutex::new(vec![]),
+        });
+        let bobs_app = Router::new()
+            .route("/api/v1/create", put(bobs_create))
+            .route("/api/v1/write/{key}/{offset}", post(bobs_write))
+            .route("/api/v1/complete/{key}", post(bobs_complete))
+            .with_state(bobs_state.clone());
+        tokio::spawn(async move { axum::serve(bobs_listener, bobs_app).await.unwrap() });
+
+        let broker_state = Arc::new(BrokerState::default());
+        let broker_app = Router::new()
+            .route("/work", get(broker_work))
+            .route("/heartbeat/{job_id}", post(broker_heartbeat))
+            .route("/complete/data/{job_id}", post(broker_complete_data))
+            .route(
+                "/complete/redirect/{job_id}",
+                post(broker_complete_redirect),
+            )
+            .route("/complete/reject/{job_id}", post(broker_complete_reject))
+            .route("/complete/error/{job_id}", post(broker_complete_error))
+            .with_state(broker_state.clone());
+        let broker_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let broker_addr = broker_listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(broker_listener, broker_app).await.unwrap() });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        let config = WorkerConfig {
+            broker_url: format!("http://{broker_addr}"),
+            poll_timeout_ms: 10,
+            heartbeat_interval: Duration::from_millis(5),
+            retry_backoff: Duration::from_millis(5),
+            management_port: 0,
+            worker_concurrency: 1,
+        };
+        (bobs_state, bobs_url, broker_state, config)
+    }
+
+    async fn wait_for_completion(broker_state: &BrokerState) {
+        for _ in 0..100 {
+            if !broker_state.completions.lock().unwrap().is_empty() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn worker_with_bobs_delivery_skips_create_when_source_fails_before_first_byte() {
+        let (bobs_state, bobs_url, broker_state, config) = start_bobs_and_broker().await;
+
+        let run = tokio::spawn(run_worker_loop(
+            config,
+            bobs_test_delivery_config(&bobs_url),
+            EarlyErrorProcessor {
+                restart_worker: true,
+            },
+        ));
+        wait_for_completion(&broker_state).await;
+        tokio::time::timeout(Duration::from_secs(1), run)
+            .await
+            .expect("worker loop did not stop after unrecoverable source error")
+            .expect("worker task panicked")
+            .expect("worker loop returned an error");
+
+        let completions = broker_state.completions.lock().unwrap();
+        assert_eq!(completions.len(), 1);
+        assert_eq!(completions[0].0, "error");
+        let body: serde_json::Value = serde_json::from_slice(&completions[0].1).unwrap();
+        assert_eq!(
+            body["message"].as_str().unwrap(),
+            "Some of the requested data is not available."
+        );
+        assert!(
+            bobs_state.calls.lock().unwrap().is_empty(),
+            "no BOBS spool may be created when the source fails before any data"
+        );
+    }
+
+    #[tokio::test]
+    async fn worker_with_bobs_delivery_creates_spool_only_after_first_chunk() {
+        let (bobs_state, bobs_url, broker_state, config) = start_bobs_and_broker().await;
+
+        let run = tokio::spawn(run_worker_loop(
+            config,
+            bobs_test_delivery_config(&bobs_url),
+            SlowFirstChunkProcessor {
+                bobs_state: bobs_state.clone(),
+            },
+        ));
+        wait_for_completion(&broker_state).await;
+        run.abort();
+
+        let completions = broker_state.completions.lock().unwrap();
+        assert_eq!(completions.len(), 1);
+        assert_eq!(completions[0].0, "redirect");
+        drop(completions);
+        assert_eq!(
+            &*bobs_state.calls.lock().unwrap(),
+            &["first-chunk", "create", "write", "complete"]
+        );
+        assert_eq!(&*bobs_state.writes.lock().unwrap(), &[b"abcdef".to_vec()]);
+    }
+
+    #[tokio::test]
+    async fn worker_with_bobs_delivery_still_creates_empty_object_for_empty_stream() {
+        struct EmptyProcessor;
+
+        #[async_trait]
+        impl Processor for EmptyProcessor {
+            async fn process(&self, _work: WorkItem) -> ProcessResult {
+                let stream = futures::stream::iter(vec![Ok::<bytes::Bytes, std::io::Error>(
+                    bytes::Bytes::new(),
+                )]);
+                ProcessResult::success("application/octet-stream", Box::new(stream))
+            }
+        }
+
+        let (bobs_state, bobs_url, broker_state, config) = start_bobs_and_broker().await;
+        let run = tokio::spawn(run_worker_loop(
+            config,
+            bobs_test_delivery_config(&bobs_url),
+            EmptyProcessor,
+        ));
+        wait_for_completion(&broker_state).await;
+        run.abort();
+
+        let completions = broker_state.completions.lock().unwrap();
+        assert_eq!(completions.len(), 1);
+        assert_eq!(completions[0].0, "redirect");
+        drop(completions);
+        assert_eq!(
+            &*bobs_state.calls.lock().unwrap(),
+            &["create", "write", "complete"]
+        );
+        assert_eq!(&*bobs_state.writes.lock().unwrap(), &[Vec::<u8>::new()]);
+    }
+
+    #[tokio::test]
+    async fn worker_with_direct_delivery_posts_error_when_source_fails_before_first_byte() {
+        let (_bobs_state, _bobs_url, broker_state, config) = start_bobs_and_broker().await;
+
+        let run = tokio::spawn(run_worker_loop(
+            config,
+            direct_delivery_config(),
+            EarlyErrorProcessor {
+                restart_worker: false,
+            },
+        ));
+        wait_for_completion(&broker_state).await;
+        // A recoverable error keeps the worker polling.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            !run.is_finished(),
+            "recoverable error must not stop the worker"
+        );
+        run.abort();
+
+        let completions = broker_state.completions.lock().unwrap();
+        assert_eq!(completions.len(), 1);
+        assert_eq!(completions[0].0, "error");
+        let body: serde_json::Value = serde_json::from_slice(&completions[0].1).unwrap();
+        assert_eq!(
+            body["message"].as_str().unwrap(),
+            "Some of the requested data is not available."
+        );
+    }
+
+    async fn collect_raw(body: RawStream) -> Vec<u8> {
+        body.try_fold(Vec::new(), |mut acc, chunk| async move {
+            acc.extend_from_slice(&chunk);
+            Ok(acc)
+        })
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn await_first_chunk_skips_empty_chunks_and_keeps_all_data() {
+        let stream = futures::stream::iter(vec![
+            Ok::<bytes::Bytes, std::io::Error>(bytes::Bytes::new()),
+            Ok(bytes::Bytes::new()),
+            Ok(bytes::Bytes::from_static(b"ab")),
+            Ok(bytes::Bytes::new()),
+            Ok(bytes::Bytes::from_static(b"cd")),
+        ]);
+        match await_first_chunk(Box::new(stream)).await {
+            FirstItem::Data(body) => assert_eq!(collect_raw(body).await, b"abcd"),
+            _ => panic!("expected data"),
+        }
+    }
+
+    #[tokio::test]
+    async fn await_first_chunk_reports_empty_and_error() {
+        let empty =
+            futures::stream::iter(vec![
+                Ok::<bytes::Bytes, std::io::Error>(bytes::Bytes::new()),
+            ]);
+        assert!(matches!(
+            await_first_chunk(Box::new(empty)).await,
+            FirstItem::Empty
+        ));
+
+        let failing = futures::stream::iter(vec![
+            Ok::<bytes::Bytes, std::io::Error>(bytes::Bytes::new()),
+            Err(std::io::Error::other("boom")),
+            Ok(bytes::Bytes::from_static(b"never")),
+        ]);
+        match await_first_chunk(Box::new(failing)).await {
+            FirstItem::Error(err) => assert_eq!(err.to_string(), "boom"),
+            _ => panic!("expected error"),
+        }
     }
 
     #[tokio::test]
