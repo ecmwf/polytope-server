@@ -91,17 +91,30 @@ pub fn bounded_request_with(
                 })
                 .collect(),
         ),
-        Value::String(s) if s.chars().count() > max_string_length => {
-            // The limit is in Unicode scalar values, matching Python string slicing.
-            // Convert the character boundary back to a byte index before slicing UTF-8.
-            let byte_index = s
-                .char_indices()
-                .nth(max_string_length)
-                .map(|(index, _)| index)
-                .unwrap_or(s.len());
-            Value::String(format!("{}...<truncated>", &s[..byte_index]))
+        // MARS lists are often `/`-joined strings (metkit expansion always
+        // produces them); bound them by count like arrays, but keep a string,
+        // and keep the last value so the range end stays visible.
+        Value::String(s) if s.split('/').nth(max_list_length).is_some() => {
+            let values: Vec<&str> = s.split('/').collect();
+            let head = std::cmp::min(list_preview_length, max_list_length.saturating_sub(1));
+            let omitted = values.len() - head - 1;
+            let summary = format!(
+                "{}/...(+{omitted} more)/{}",
+                values[..head].join("/"),
+                values[values.len() - 1]
+            );
+            Value::String(truncate_chars(&summary, max_string_length))
         }
+        Value::String(s) => Value::String(truncate_chars(s, max_string_length)),
         other => other.clone(),
+    }
+}
+
+fn truncate_chars(s: &str, max_chars: usize) -> String {
+    // The limit is in Unicode scalar values, matching Python string slicing.
+    match s.char_indices().nth(max_chars) {
+        Some((byte_index, _)) => format!("{}...<truncated>", &s[..byte_index]),
+        None => s.to_string(),
     }
 }
 
@@ -436,6 +449,35 @@ mod tests {
         assert_eq!(
             bounded["outer"]["inner"]["preview"],
             serde_json::json!(["ab...<truncated>"])
+        );
+    }
+
+    #[test]
+    fn bounded_request_long_slash_list_is_summarised_as_a_string() {
+        assert_eq!(
+            bounded_request_with(&serde_json::json!("1/2/3"), 100, 3, 2),
+            serde_json::json!("1/2/3")
+        );
+        assert_eq!(
+            bounded_request_with(&serde_json::json!("1/2/3/4/5/6"), 100, 3, 2),
+            serde_json::json!("1/2/...(+3 more)/6")
+        );
+        // The head never swallows the whole list.
+        assert_eq!(
+            bounded_request_with(&serde_json::json!("1/2/3/4"), 100, 3, 10),
+            serde_json::json!("1/2/...(+1 more)/4")
+        );
+        let dates = (1..=150)
+            .map(|d| d.to_string())
+            .collect::<Vec<_>>()
+            .join("/");
+        assert_eq!(
+            bounded_request(&serde_json::json!(dates)),
+            serde_json::json!("1/2/3/4/5/6/7/8/9/10/...(+139 more)/150")
+        );
+        assert_eq!(
+            bounded_request_with(&serde_json::json!("aaaa/b/c/d"), 3, 3, 2),
+            serde_json::json!("aaa...<truncated>")
         );
     }
 

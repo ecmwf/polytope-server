@@ -665,9 +665,9 @@ async fn worker_task<P: Processor + 'static>(
         let _active_request = polytope_observability::active_request(&work.job_id);
         let (enduser_id, enduser_realm) = enduser_fields(&work.user);
         if let (Some(enduser_id), Some(enduser_realm)) = (enduser_id, enduser_realm) {
-            tracing::info!("event.name" = "worker.job.started", outcome = "success", request.id = %work.job_id, poll_wait_ms, idle_ms, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, "job started");
+            tracing::info!("event.name" = "worker.job.started", outcome = "success", request.id = %work.job_id, poll_wait_ms, idle_ms, "enduser.id" = %enduser_id, "enduser.realm" = %enduser_realm, polytope.request = %polytope_observability::request(&work.request), "job started");
         } else {
-            tracing::info!("event.name" = "worker.job.started", outcome = "success", request.id = %work.job_id, poll_wait_ms, idle_ms, "job started");
+            tracing::info!("event.name" = "worker.job.started", outcome = "success", request.id = %work.job_id, poll_wait_ms, idle_ms, polytope.request = %polytope_observability::request(&work.request), "job started");
         }
 
         metrics::record_poll("work");
