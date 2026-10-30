@@ -61,7 +61,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("config missing 'test' section");
 
     let test_config: TestConfig =
-        serde_yml::from_value(test_section).expect("failed to parse 'test' config section");
+        serde_yaml::from_value(test_section).expect("failed to parse 'test' config section");
 
     debug!(path = cli.config_path, behaviour = ?test_config.behaviour, content_type = test_config.content_type.as_str(), "loaded test config section");
 
@@ -221,7 +221,7 @@ mod tests {
 
     #[tokio::test]
     async fn dummy_default_count_is_10() {
-        let config: TestConfig = serde_yml::from_str("behaviour:\n  type: dummy\n").unwrap();
+        let config: TestConfig = serde_yaml::from_str("behaviour:\n  type: dummy\n").unwrap();
         let result = BehaviourProcessor { config }.process(dummy_work()).await;
         let (_, body) = collect_success_body(result).await;
         let parsed: Vec<u64> = serde_json::from_slice(&body).unwrap();

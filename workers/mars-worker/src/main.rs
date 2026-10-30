@@ -173,7 +173,7 @@ const CREDENTIAL_INERT_DATABASE_CLASSES: &[&str] =
 /// document, an empty list, or any entry with a missing or unrecognised
 /// `class` all default to `true` rather than silently permitting the lenient
 /// identity passthrough for something unaudited.
-fn requires_checked_mars_credentials_from_yaml(parsed: &serde_yml::Value) -> bool {
+fn requires_checked_mars_credentials_from_yaml(parsed: &serde_yaml::Value) -> bool {
     let Some(databases) = parsed.as_sequence() else {
         return true;
     };
@@ -207,7 +207,7 @@ fn requires_checked_mars_credentials(mars_home: &str) -> bool {
             return true;
         }
     };
-    match serde_yml::from_str::<serde_yml::Value>(&contents) {
+    match serde_yaml::from_str::<serde_yaml::Value>(&contents) {
         Ok(parsed) => requires_checked_mars_credentials_from_yaml(&parsed),
         Err(error) => {
             tracing::warn!(
@@ -673,8 +673,8 @@ mod tests {
         assert!(mars_credentials(false, &serde_json::json!({}), &serde_json::json!({})).is_err());
     }
 
-    fn parse_databases_yaml(yaml: &str) -> serde_yml::Value {
-        serde_yml::from_str(yaml).expect("valid test fixture yaml")
+    fn parse_databases_yaml(yaml: &str) -> serde_yaml::Value {
+        serde_yaml::from_str(yaml).expect("valid test fixture yaml")
     }
 
     // The chart renders databases.yaml as a bare YAML sequence
