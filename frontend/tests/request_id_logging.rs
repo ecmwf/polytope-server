@@ -5,9 +5,9 @@
 //! The request ID quoted in an error is the one carried by that call's logs,
 //! and is the job's ID when the call submitted one.
 //!
-//! A single test per binary: tracing caches callsite interest process-wide, so
-//! concurrent tests hitting the same callsites without a subscriber make
-//! scoped log capture unreliable.
+//! Kept in its own test binary: in the lib tests, other tests hit the same
+//! callsites with no subscriber installed, and tracing's process-wide callsite
+//! interest cache then made the scoped capture miss events.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -60,6 +60,20 @@ authentication:
 }
 
 fn failing_submit_app() -> axum::Router {
+    failing_submit_router(
+        axum::Router::new()
+            .route(
+                "/api/v2/{collection}/requests",
+                post(polytope_server::api::v2::submit_collection),
+            )
+            .route(
+                "/api/v1/requests/{collection}",
+                post(polytope_server::api::v1::submit_request),
+            ),
+    )
+}
+
+fn failing_submit_router(routes: axum::Router<Arc<AppState>>) -> axum::Router {
     let yaml = r#"bits:
   site: tst
   env: tst
@@ -83,11 +97,7 @@ targets:
         v1_poll_timeout: Duration::from_secs(30),
         v2_poll_timeout: Duration::from_secs(30),
     });
-    axum::Router::new()
-        .route(
-            "/api/v2/{collection}/requests",
-            post(polytope_server::api::v2::submit_collection),
-        )
+    routes
         .with_state(state.clone())
         .layer(axum::middleware::from_fn_with_state(
             state,
@@ -102,12 +112,18 @@ fn submit() -> Request<Body> {
         .unwrap()
 }
 
-#[tokio::test]
-async fn quoted_request_id_matches_the_logs() {
+fn capture() -> (
+    polytope_observability::test_helper::CapturedLogs,
+    tracing::subscriber::DefaultGuard,
+) {
     let (layer, logs) = capturing_subscriber("polytope-frontend");
-    let _guard = tracing::subscriber::set_default(tracing_subscriber::registry().with(layer));
+    let guard = tracing::subscriber::set_default(tracing_subscriber::registry().with(layer));
+    (logs, guard)
+}
 
-    // Rejected before a job exists: the auth rejection log carries the ID.
+#[tokio::test]
+async fn auth_rejection_is_logged_with_the_quoted_id() {
+    let (logs, _guard) = capture();
     let resp = rejecting_app().oneshot(submit()).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let id = quoted_request_id(resp).await;
@@ -115,10 +131,31 @@ async fn quoted_request_id_matches_the_logs() {
     assert_eq!(rejected["attributes"]["request.id"], id.as_str());
     assert_eq!(rejected["attributes"]["http.request.method"], "POST");
     assert_eq!(rejected["attributes"]["url.path"], "/api/v2/ecmwf/requests");
+}
 
-    // Accepted, then failed: the quoted ID is the job's ID.
+#[tokio::test]
+async fn failed_v2_submit_quotes_the_job_id() {
+    let (logs, _guard) = capture();
     let resp = failing_submit_app().oneshot(submit()).await.unwrap();
     assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let id = quoted_request_id(resp).await;
+    let submitted = event(&logs.json_lines(), "api.job.submitted");
+    assert_eq!(submitted["attributes"]["request.id"], id.as_str());
+}
+
+#[tokio::test]
+async fn failed_v1_submit_quotes_the_job_id() {
+    let (logs, _guard) = capture();
+    let resp = failing_submit_app()
+        .oneshot(
+            Request::post("/api/v1/requests/ecmwf")
+                .header("Content-Type", "application/json")
+                .body(Body::from(r#"{"verb": "retrieve", "request": {}}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(resp.status().is_server_error(), "{}", resp.status());
     let id = quoted_request_id(resp).await;
     let submitted = event(&logs.json_lines(), "api.job.submitted");
     assert_eq!(submitted["attributes"]["request.id"], id.as_str());
