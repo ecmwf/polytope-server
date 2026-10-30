@@ -17,6 +17,7 @@ fn worker_events_have_required_fields_and_redact() {
         request.id = "job-1",
         "enduser.id" = "alice",
         "enduser.realm" = "ecmwf",
+        polytope.request = %polytope_observability::request(&serde_json::json!({"param": "167"})),
         "job started"
     );
     tracing::debug!(
@@ -32,7 +33,7 @@ fn worker_events_have_required_fields_and_redact() {
     let started = logs.assert_event_emitted("worker.job.started");
     assert_eq!(started["attributes"]["enduser.id"], "alice");
     assert_eq!(started["attributes"]["enduser.realm"], "ecmwf");
-    assert!(started["attributes"].get("polytope.request").is_none());
+    assert_eq!(started["attributes"]["polytope.request"]["param"], "167");
     logs.assert_event_emitted("worker.delivery.completed");
     logs.assert_no_substring("FAKETOKEN_OBSERVABILITY_PROBE");
     logs.assert_no_substring("user:pass");
