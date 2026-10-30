@@ -28,7 +28,7 @@ pub(super) struct BobsPolicy {
 }
 
 impl BobsPolicy {
-    const DEFAULT_CREATE_ATTEMPTS: u32 = 4;
+    const DEFAULT_CREATE_ATTEMPTS: u32 = 3;
     const DEFAULT_CREATE_TIMEOUT_SECS: u64 = 30;
     const DISCARD_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -1004,7 +1004,7 @@ mod tests {
             s3_key_prefix: String::new(),
         };
         let policy = BobsPolicy::from_config(&config);
-        assert_eq!(policy.create_attempts, 4);
+        assert_eq!(policy.create_attempts, 3);
         assert_eq!(policy.create_attempt_timeout, Duration::from_secs(30));
 
         config.bobs_create_attempts = Some(7);

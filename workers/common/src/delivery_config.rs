@@ -23,7 +23,7 @@ pub struct DeliveryConfig {
 
     pub bobs_url: Option<String>,
 
-    /// Total BOBS create attempts, including the first (default 4, minimum 1).
+    /// Total BOBS create attempts, including the first (default 3, minimum 1).
     /// Retries are immediate: each one opens a new connection to the BOBS
     /// Service and so may land on a different pod.
     #[serde(default)]
