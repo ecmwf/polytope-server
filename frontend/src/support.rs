@@ -210,6 +210,11 @@ async fn transform_error(resp: Response, state: &AppState, request_id: &str) -> 
 /// Extract the Polytope request ID from the URL path, for the endpoints that act
 /// on an existing request. The ID is an opaque path segment; we do not parse or
 /// validate its internal structure (see docs/request-ids.md).
+/// A path segment longer than this is not taken as a request ID (a new one is
+/// minted instead); real IDs are 26 characters, and the segment is user input
+/// that would otherwise land on every log line of the call.
+const MAX_PATH_REQUEST_ID_LEN: usize = 64;
+
 fn request_id_from_path(method: &axum::http::Method, path: &str) -> Option<String> {
     let segments: Vec<&str> = path.trim_matches('/').split('/').collect();
     let id = match segments.as_slice() {
@@ -220,7 +225,7 @@ fn request_id_from_path(method: &axum::http::Method, path: &str) -> Option<Strin
         _ => return None,
     };
     let id = id.trim();
-    (!id.is_empty()).then(|| id.to_string())
+    (!id.is_empty() && id.len() <= MAX_PATH_REQUEST_ID_LEN).then(|| id.to_string())
 }
 
 fn mint_request_id(bits: &bits::Bits) -> Option<String> {
@@ -357,6 +362,37 @@ mod tests {
         assert_eq!(extract_reason(br#"{"message":"m"}"#), "m");
         assert_eq!(extract_reason(br#"{"retryable":true}"#), "");
         assert_eq!(extract_reason(b"not json"), "");
+    }
+
+    #[test]
+    fn request_id_from_path_only_takes_request_paths() {
+        use axum::http::Method;
+        let cases: &[(Method, &str, Option<&str>)] = &[
+            (Method::GET, "/api/v2/requests/abc", Some("abc")),
+            (Method::DELETE, "/api/v2/requests/abc", Some("abc")),
+            (Method::GET, "/api/v1/requests/abc/", Some("abc")),
+            (Method::DELETE, "/api/v1/requests/abc", Some("abc")),
+            (Method::GET, "/api/v1/downloads/abc", Some("abc")),
+            (Method::POST, "/api/v1/uploads/abc", Some("abc")),
+            // v1 submit: the segment is the collection.
+            (Method::POST, "/api/v1/requests/ecmwf", None),
+            (Method::POST, "/api/v2/ecmwf/requests", None),
+            (Method::GET, "/api/v2/requests/", None),
+            (Method::GET, "/api/v2/collections", None),
+            (Method::GET, "/api/v2/requests/abc/extra", None),
+        ];
+        for (method, path, expected) in cases {
+            assert_eq!(
+                request_id_from_path(method, path).as_deref(),
+                *expected,
+                "{method} {path}"
+            );
+        }
+        let long = format!(
+            "/api/v2/requests/{}",
+            "x".repeat(MAX_PATH_REQUEST_ID_LEN + 1)
+        );
+        assert_eq!(request_id_from_path(&Method::GET, &long), None);
     }
 
     #[test]
