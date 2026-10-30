@@ -23,19 +23,32 @@ pub(super) struct BobsPush {
 pub(super) struct BobsPolicy {
     /// Total create attempts, including the first.
     pub(super) create_attempts: u32,
-    /// Delay before the first retry; doubles on each further retry.
-    pub(super) create_retry_base_delay: Duration,
     pub(super) create_attempt_timeout: Duration,
     pub(super) discard_timeout: Duration,
 }
 
-impl Default for BobsPolicy {
-    fn default() -> Self {
+impl BobsPolicy {
+    const DEFAULT_CREATE_ATTEMPTS: u32 = 4;
+    const DEFAULT_CREATE_TIMEOUT_SECS: u64 = 30;
+    const DISCARD_TIMEOUT: Duration = Duration::from_secs(10);
+
+    pub(super) fn from_config(config: &crate::delivery_config::DeliveryConfig) -> Self {
+        let create_attempts = match config.bobs_create_attempts {
+            Some(0) => {
+                tracing::warn!("bobs_create_attempts must be at least 1; using 1");
+                1
+            }
+            Some(attempts) => attempts,
+            None => Self::DEFAULT_CREATE_ATTEMPTS,
+        };
         Self {
-            create_attempts: 4,
-            create_retry_base_delay: Duration::from_millis(250),
-            create_attempt_timeout: Duration::from_secs(30),
-            discard_timeout: Duration::from_secs(10),
+            create_attempts,
+            create_attempt_timeout: Duration::from_secs(
+                config
+                    .bobs_create_timeout_secs
+                    .unwrap_or(Self::DEFAULT_CREATE_TIMEOUT_SECS),
+            ),
+            discard_timeout: Self::DISCARD_TIMEOUT,
         }
     }
 }
@@ -181,7 +194,7 @@ impl BobsPush {
         create_body: &serde_json::Value,
         job_id: &str,
     ) -> Result<serde_json::Value, BoxError> {
-        let max_attempts = self.policy.create_attempts.max(1);
+        let max_attempts = self.policy.create_attempts;
         let mut attempt = 1;
         loop {
             let failure = match self.create_once(create_body, job_id).await {
@@ -196,22 +209,16 @@ impl BobsPush {
                 };
                 return Err(message.into());
             }
-            let delay = self
-                .policy
-                .create_retry_base_delay
-                .saturating_mul(1 << (attempt - 1).min(16));
             tracing::warn!(
                 "event.name" = "worker.delivery.create.retry",
                 outcome = "error",
                 request.id = %job_id,
                 attempt,
                 max_attempts,
-                delay_ms = delay.as_millis() as u64,
                 error = %failure.message,
                 "BOBS create failed; retrying"
             );
             metrics::record_bobs_create_retry(&failure.reason);
-            tokio::time::sleep(delay).await;
             attempt += 1;
         }
     }
@@ -327,7 +334,6 @@ mod tests {
     fn test_policy() -> BobsPolicy {
         BobsPolicy {
             create_attempts: 3,
-            create_retry_base_delay: Duration::from_millis(1),
             create_attempt_timeout: Duration::from_secs(5),
             discard_timeout: Duration::from_secs(5),
         }
@@ -978,6 +984,37 @@ mod tests {
             other => panic!("expected Error, got {other:?}"),
         }
         assert_eq!(state.count("delete:job-1"), 1);
+    }
+
+    #[test]
+    fn policy_reads_config_with_defaults() {
+        let mut config = crate::delivery_config::DeliveryConfig {
+            delivery_type: crate::delivery_config::DeliveryType::Bobs,
+            bobs_url: Some("http://bobs:3000".to_string()),
+            bobs_create_attempts: None,
+            bobs_create_timeout_secs: None,
+            s3_bucket: None,
+            s3_region: None,
+            s3_endpoint_url: None,
+            s3_force_path_style: None,
+            s3_access_key_id: None,
+            s3_secret_access_key: None,
+            s3_presigned_url_expiry_secs: None,
+            s3_public_url: None,
+            s3_key_prefix: String::new(),
+        };
+        let policy = BobsPolicy::from_config(&config);
+        assert_eq!(policy.create_attempts, 4);
+        assert_eq!(policy.create_attempt_timeout, Duration::from_secs(30));
+
+        config.bobs_create_attempts = Some(7);
+        config.bobs_create_timeout_secs = Some(9);
+        let policy = BobsPolicy::from_config(&config);
+        assert_eq!(policy.create_attempts, 7);
+        assert_eq!(policy.create_attempt_timeout, Duration::from_secs(9));
+
+        config.bobs_create_attempts = Some(0);
+        assert_eq!(BobsPolicy::from_config(&config).create_attempts, 1);
     }
 
     #[test]

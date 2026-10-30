@@ -23,6 +23,16 @@ pub struct DeliveryConfig {
 
     pub bobs_url: Option<String>,
 
+    /// Total BOBS create attempts, including the first (default 4, minimum 1).
+    /// Retries are immediate: each one opens a new connection to the BOBS
+    /// Service and so may land on a different pod.
+    #[serde(default)]
+    pub bobs_create_attempts: Option<u32>,
+
+    /// Timeout for a single BOBS create attempt, in seconds (default 30).
+    #[serde(default)]
+    pub bobs_create_timeout_secs: Option<u64>,
+
     /// S3 bucket name. Required when delivery_type = s3.
     pub s3_bucket: Option<String>,
 
@@ -105,6 +115,21 @@ s3_region: null
         assert!(matches!(config.delivery_type, DeliveryType::Bobs));
         assert_eq!(config.bobs_url.as_deref(), Some("http://bobs.example.com"));
         assert_eq!(config.s3_key_prefix, "");
+        assert_eq!(config.bobs_create_attempts, None);
+        assert_eq!(config.bobs_create_timeout_secs, None);
+    }
+
+    #[test]
+    fn delivery_config_deserializes_bobs_create_settings() {
+        let yaml = r#"
+delivery_type: bobs
+bobs_url: "http://bobs.example.com"
+bobs_create_attempts: 6
+bobs_create_timeout_secs: 12
+"#;
+        let config: DeliveryConfig = serde_yml::from_str(yaml).unwrap();
+        assert_eq!(config.bobs_create_attempts, Some(6));
+        assert_eq!(config.bobs_create_timeout_secs, Some(12));
     }
 
     #[test]
