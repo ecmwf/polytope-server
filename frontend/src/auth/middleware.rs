@@ -35,6 +35,7 @@ pub struct SubmissionContext {
     pub mock_roles_audit: Option<MockRolesAudit>,
     pub mock_time: Option<super::MockTime>,
     pub mock_time_audit: Option<MockTimeAudit>,
+    pub minted_request_id: Option<crate::support::MintedRequestId>,
 }
 
 impl SubmissionContext {
@@ -45,6 +46,10 @@ impl SubmissionContext {
             mock_roles_audit: req.extensions().get::<MockRolesAudit>().cloned(),
             mock_time: req.extensions().get::<super::MockTime>().cloned(),
             mock_time_audit: req.extensions().get::<MockTimeAudit>().cloned(),
+            minted_request_id: req
+                .extensions()
+                .get::<crate::support::MintedRequestId>()
+                .cloned(),
         }
     }
 }

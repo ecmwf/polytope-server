@@ -8,7 +8,7 @@ SPDX-License-Identifier: Apache-2.0
 
 Every error body is a single, self-contained, human-readable message that says
 what happened, what to do, and where to raise a support ticket — quoting the
-request ID when one is available.
+request ID.
 
 This is produced centrally by one outer middleware
 (`frontend/src/support.rs`), so no handler can forget it and the shape is
@@ -16,14 +16,16 @@ uniform across the whole API.
 
 ## The contract
 
-- **The request ID** identifies a request for support and log correlation. It
-  comes from the URL path for endpoints that act on an existing request (e.g.
-  `GET /api/v2/requests/{id}`), or is the ID that BITS generated when it accepted
-  a new job on a submit (also returned in the `Location` header). The frontend
-  never reads it from an inbound header and never mints one just to report it, so
-  requests with no associated ID (e.g. listing collections) have none. It is an
-  opaque string (see [request-ids.md](./request-ids.md)) and, when available, is
-  quoted inside the error `message` below.
+- **The request ID** identifies an API call for support and log correlation.
+  For endpoints that act on an existing request (e.g.
+  `GET /api/v2/requests/{id}`) it is the ID in the URL path. Every other call
+  gets a fresh ID from the outer middleware; if the call submits a job, the job
+  adopts that ID (it is also returned in the `Location` header), so calls
+  rejected before a job exists (missing credentials, malformed request,
+  overload) still have one. Every log line emitted while handling the call
+  carries it as `request.id`. An inbound `X-Request-Id` header is never read. It
+  is an opaque string (see [request-ids.md](./request-ids.md)) and is quoted
+  inside the error `message` below.
 - **Error responses** (HTTP status `>= 400`) have a JSON body of exactly:
 
   ```json
@@ -40,8 +42,7 @@ uniform across the whole API.
   Open-Meteo `{"error": true, "reason": "..."}` shape when that API is enabled.
   They still receive the security headers.
 
-Clients should display `message` verbatim; the request ID, when available, is
-inside the text.
+Clients should display `message` verbatim; the request ID is inside the text.
 
 ## Wording by error class
 

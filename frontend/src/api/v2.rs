@@ -12,7 +12,7 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use bits::{Job, JobResult, PollOutcome, SubmitOutcome};
+use bits::{JobResult, PollOutcome, SubmitOutcome};
 use serde_json::{Value, json};
 
 use crate::auth::{AuthUser, MockRolesAudit};
@@ -64,12 +64,14 @@ pub async fn list_collections(State(state): State<Arc<AppState>>) -> impl IntoRe
     (StatusCode::OK, Json(json!({"collections": names})))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn submit_collection(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     auth_user: Option<Extension<AuthUser>>,
     mock_audit: Option<Extension<MockRolesAudit>>,
     mock_time_extensions: super::MockTimeSubmissionExtensions,
+    minted_id: Option<Extension<crate::support::MintedRequestId>>,
     Path(collection): Path<String>,
     Json(mut body): Json<Value>,
 ) -> Response {
@@ -90,7 +92,7 @@ pub async fn submit_collection(
         return (StatusCode::BAD_REQUEST, Json(json!({"error": msg}))).into_response();
     }
 
-    let mut job = Job::new(body);
+    let mut job = crate::support::new_job(minted_id.as_ref().map(|Extension(m)| m), body);
     super::set_job_user_context(
         &mut job,
         &headers,
@@ -133,13 +135,7 @@ pub async fn submit_collection(
     super::audit_mock_time_job_submission(mock_time_extensions.mock_time_audit.as_ref(), &id);
 
     let timeout = state.v2_poll_timeout;
-    let mut response = poll_job_v2(&state, id.clone(), timeout).await;
-    // Surface the BITS-generated request ID so the outer middleware can quote it
-    // in error responses (helps correlate with logs).
-    response
-        .extensions_mut()
-        .insert(crate::support::RequestId(id));
-    response
+    poll_job_v2(&state, id, timeout).await
 }
 
 pub async fn public_poll(
@@ -445,11 +441,9 @@ targets:
     }
 
     #[tokio::test]
-    async fn post_that_fails_after_id_assignment_reports_the_id() {
-        // A POST that BITS accepts (so an ID is assigned) but that then fails
-        // downstream must surface that ID to the user, even though the client
-        // sent no `X-Request-Id`. This exercises the real `submit_collection`
-        // handler behind the support middleware end to end.
+    async fn post_that_fails_after_submit_quotes_a_request_id() {
+        // A POST that BITS accepts but that then fails quotes a request ID.
+        // That it is the job's ID is checked in `tests/request_id_logging.rs`.
         let (bits, handle) = make_bits_with_route("ecmwf");
         let mut collections = HashMap::new();
         collections.insert("ecmwf".to_string(), handle);
@@ -489,23 +483,15 @@ targets:
         // BITS accepted the job and assigned an ID; the request then failed.
         assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
 
-        // The assigned ID survives the error rewrite on the response extension...
-        let id = resp
-            .extensions()
-            .get::<crate::support::RequestId>()
-            .expect("assigned request ID present on the response")
-            .0
-            .clone();
-        assert!(!id.is_empty());
-
-        // ...and is quoted back to the user in the rewritten error message.
         let body = resp.into_body().collect().await.unwrap().to_bytes();
         let json: Value = serde_json::from_slice(&body).unwrap();
         let msg = json["message"].as_str().expect("error body has a message");
-        assert!(
-            msg.contains(&format!("quote your request ID {id}")),
-            "error message should quote the assigned ID; got: {msg}"
-        );
+        let quoted = msg
+            .split("quote your request ID ")
+            .nth(1)
+            .and_then(|rest| rest.split('.').next())
+            .unwrap_or_else(|| panic!("error message should quote an ID; got: {msg}"));
+        bits::request_id::decode(quoted).expect("quoted ID is a BITS request ID");
     }
 
     #[tokio::test]

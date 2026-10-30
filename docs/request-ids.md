@@ -6,7 +6,9 @@ SPDX-License-Identifier: Apache-2.0
 
 # Request IDs
 
-Polytope request IDs are opaque public identifiers returned by BITS. Clients and server code must store and pass them back exactly as received, without parsing structure from the string.
+Polytope request IDs are opaque public identifiers in the BITS request ID format. Clients and server code must store and pass them back exactly as received, without parsing structure from the string.
+
+Every API call that does not act on an existing request gets a request ID when it arrives at the frontend. If the call submits a job, the job adopts that ID; if it is rejected first (e.g. failed authentication), the ID still appears in the error message and the call's logs, but polling it returns 404. A call that submits several jobs (Open-Meteo fan-out) gives its ID to the first; the others get their own.
 
 The current IDs are 26-character lower-case Crockford base32 strings. They encode routing information for BITS internally, including the deployment `site`, `env`, broker slot, timestamp, and random bytes. That layout is an implementation detail: HTTP routes, clients, workers, logs, and authorization checks should not infer ownership, broker identity, creation order, or deployment from the visible text of an ID.
 

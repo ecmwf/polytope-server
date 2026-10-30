@@ -12,7 +12,7 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use bits::{ActiveJobSnapshot, Job, JobResult, PendingStatus, PollOutcome, SubmitOutcome};
+use bits::{ActiveJobSnapshot, JobResult, PendingStatus, PollOutcome, SubmitOutcome};
 use bytes::BytesMut;
 use futures::TryStreamExt;
 use serde::Deserialize;
@@ -392,12 +392,14 @@ pub async fn user_info(
     Json(json!({"live requests": live_requests.to_string()}))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn submit_request(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     auth_user: Option<Extension<AuthUser>>,
     mock_audit: Option<Extension<MockRolesAudit>>,
     mock_time_extensions: super::MockTimeSubmissionExtensions,
+    minted_id: Option<Extension<crate::support::MintedRequestId>>,
     Path(collection): Path<String>,
     Json(body): Json<SubmitBody>,
 ) -> Response {
@@ -430,7 +432,7 @@ pub async fn submit_request(
         return (StatusCode::BAD_REQUEST, Json(json!({"error": msg}))).into_response();
     }
 
-    let mut job = Job::new(request);
+    let mut job = crate::support::new_job(minted_id.as_ref().map(|Extension(m)| m), request);
     super::set_job_user_context(
         &mut job,
         &headers,

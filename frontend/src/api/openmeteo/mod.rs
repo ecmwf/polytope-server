@@ -17,7 +17,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use bits::{Job, JobResult, PollOutcome, SubmitOutcome};
+use bits::{JobResult, PollOutcome, SubmitOutcome};
 use bytes::BytesMut;
 use chrono::Utc;
 use futures::TryStreamExt;
@@ -58,6 +58,7 @@ async fn forecast(
     auth_user: Option<Extension<AuthUser>>,
     mock_audit: Option<Extension<MockRolesAudit>>,
     mock_time_extensions: super::MockTimeSubmissionExtensions,
+    minted_id: Option<Extension<crate::support::MintedRequestId>>,
     Query(params): Query<params::ForecastParams>,
 ) -> Response {
     let _ = (
@@ -153,7 +154,7 @@ async fn forecast(
             request["levelist"] = json!(level);
         }
 
-        let mut job = Job::new(request);
+        let mut job = crate::support::new_job(minted_id.as_ref().map(|Extension(m)| m), request);
         job.metadata = json!({"api": "openmeteo"}).into();
         super::set_job_user_context(
             &mut job,
