@@ -67,6 +67,8 @@ struct Instruments {
     delivery_duration: Histogram<f64>,
     delivery_bytes: Counter<u64>,
     source_wait: Histogram<f64>,
+    bobs_create_retries: Counter<u64>,
+    bobs_discards: Counter<u64>,
 }
 
 fn meter() -> Meter {
@@ -94,6 +96,8 @@ fn instruments() -> &'static Instruments {
             source_wait: m
                 .f64_histogram("polytope.worker.source.wait.seconds")
                 .build(),
+            bobs_create_retries: m.u64_counter("polytope.worker.bobs.create.retries").build(),
+            bobs_discards: m.u64_counter("polytope.worker.bobs.discards").build(),
         }
     })
 }
@@ -142,6 +146,24 @@ pub fn record_source_wait(outcome: &str, secs: f64) {
     );
 }
 
+/// A BOBS create attempt failed and will be retried. `reason` is the HTTP
+/// status code or `transport`.
+pub fn record_bobs_create_retry(reason: &str) {
+    instruments().bobs_create_retries.add(
+        1,
+        &attrs_with(&[KeyValue::new("reason", reason.to_owned())]),
+    );
+}
+
+/// A partially written BOBS spool was deleted (or the delete failed) after a
+/// failed delivery. `outcome` is `success` or `error`.
+pub fn record_bobs_discard(outcome: &str) {
+    instruments().bobs_discards.add(
+        1,
+        &attrs_with(&[KeyValue::new("outcome", outcome.to_owned())]),
+    );
+}
+
 pub fn record_job_finished(
     outcome: &str,
     duration_secs: f64,
@@ -174,6 +196,8 @@ mod tests {
         record_poll("error");
         record_job_started();
         record_source_wait("data", 0.2);
+        record_bobs_create_retry("503");
+        record_bobs_discard("success");
         record_job_finished("success", 1.0, 0.5, 0.3, 1024);
     }
 
