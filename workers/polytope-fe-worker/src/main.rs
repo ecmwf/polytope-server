@@ -134,16 +134,16 @@ impl Processor for PolytopeProcessor {
         let active = polytope_observability::active_request(&job_id);
         let result = tokio::task::spawn_blocking(move || {
             let _active = active;
-            Python::with_gil(|py| -> PyResult<(Vec<u8>, String)> {
+            Python::attach(|py| -> PyResult<(Vec<u8>, String)> {
                 let wrapper = py.import("run_polytope_worker")?;
                 let result = wrapper.call_method1("process", (&payload_str,))?;
-                let tuple = result.downcast::<PyTuple>().map_err(|e| {
+                let tuple = result.cast::<PyTuple>().map_err(|e| {
                     pyo3::exceptions::PyTypeError::new_err(format!(
                         "expected (bytes, str) from process(), got: {e}"
                     ))
                 })?;
                 let item0 = tuple.get_item(0)?;
-                let py_bytes = item0.downcast::<PyBytes>().map_err(|e| {
+                let py_bytes = item0.cast::<PyBytes>().map_err(|e| {
                     pyo3::exceptions::PyTypeError::new_err(format!(
                         "expected bytes at index 0, got: {e}"
                     ))
@@ -250,8 +250,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     debug!(python_path = %cli.python_path, config_path = %cli.config_path, "initializing python interpreter");
 
-    pyo3::prepare_freethreaded_python();
-    Python::with_gil(|py| -> PyResult<()> {
+    Python::initialize();
+    Python::attach(|py| -> PyResult<()> {
         let sys = py.import("sys")?;
         let path = sys.getattr("path")?;
         path.call_method1("insert", (0i32, &cli.python_path))?;
@@ -290,11 +290,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::StreamExt;
     use std::path::PathBuf;
 
-    fn temp_dir() -> PathBuf {
-        let mut path = std::env::temp_dir();
-        path.push(format!(
+    /// All tests share one embedded interpreter and import the same module
+    /// name (`run_polytope_worker`), so they must not overlap.
+    static PYTHON_MODULE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    struct TestModule {
+        dir: PathBuf,
+        _lock: tokio::sync::MutexGuard<'static, ()>,
+    }
+
+    impl Drop for TestModule {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.dir).ok();
+        }
+    }
+
+    /// Install `source` as the `run_polytope_worker` module seen by
+    /// `PolytopeProcessor::process`.
+    async fn install_worker_module(source: &str) -> TestModule {
+        let lock = PYTHON_MODULE_LOCK.lock().await;
+        let dir = std::env::temp_dir().join(format!(
             "polytope-worker-test-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -302,23 +320,80 @@ mod tests {
                 .unwrap()
                 .as_nanos(),
         ));
-        path
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("run_polytope_worker.py"), source).unwrap();
+
+        Python::initialize();
+        Python::attach(|py| {
+            let sys = py.import("sys").unwrap();
+            let modules = sys.getattr("modules").unwrap();
+            let _ = modules.call_method1("pop", ("run_polytope_worker",));
+            let path = sys.getattr("path").unwrap();
+            let path_list: Vec<String> = path.extract().unwrap();
+            for p in path_list.iter().rev() {
+                if p.contains("polytope-worker-test") {
+                    let _ = path.call_method1("remove", (p,));
+                }
+            }
+            path.call_method1("insert", (0i32, dir.display().to_string()))
+                .unwrap();
+        });
+
+        TestModule { dir, _lock: lock }
+    }
+
+    fn processor() -> PolytopeProcessor {
+        PolytopeProcessor {
+            config_path: "/tmp/unused.yaml".into(),
+        }
+    }
+
+    fn work_item(job_id: &str, metadata: serde_json::Value) -> WorkItem {
+        WorkItem {
+            job_id: job_id.into(),
+            request: json!({"class": "od"}),
+            user: json!({}),
+            metadata,
+            callback_url: None,
+        }
+    }
+
+    async fn expect_success_body(result: ProcessResult) -> Vec<u8> {
+        match result {
+            ProcessResult::Success {
+                content_type,
+                mut body,
+                ..
+            } => {
+                assert_eq!(content_type, "application/prs.coverage+json");
+                let mut out = Vec::new();
+                while let Some(chunk) = body.next().await {
+                    out.extend_from_slice(&chunk.unwrap());
+                }
+                out
+            }
+            ProcessResult::Reject { reason } => panic!("expected success, got reject: {reason}"),
+            ProcessResult::Error { message } => panic!("expected success, got error: {message}"),
+        }
+    }
+
+    fn expect_error(result: ProcessResult) -> String {
+        match result {
+            ProcessResult::Error { message } => message,
+            ProcessResult::Success { .. } => panic!("expected error, got success"),
+            ProcessResult::Reject { reason } => panic!("expected error, got reject: {reason}"),
+        }
     }
 
     #[tokio::test]
     async fn pyo3_round_trip() {
-        let dir = temp_dir();
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(
-            dir.join("run_polytope_worker.py"),
+        let _module = install_worker_module(
             r#"
 import json
 
 def process(payload_json):
     payload = json.loads(payload_json)
-    # Fail if metadata is not present
     assert "metadata" in payload, "metadata field missing from PyO3 payload"
-    # Fail if metadata value is not passed through
     assert payload["metadata"].get("test_key") == "test_value", "metadata content not preserved"
     output = json.dumps({"echo": payload["request"], "metadata": payload["metadata"]}).encode("utf-8")
     status = {
@@ -330,51 +405,23 @@ def process(payload_json):
     return (output, json.dumps(status))
 "#,
         )
-        .unwrap();
+        .await;
 
-        pyo3::prepare_freethreaded_python();
-        Python::with_gil(|py| {
-            let sys = py.import("sys").unwrap();
-            // Clear any previously cached module
-            let modules = sys.getattr("modules").unwrap();
-            let _ = modules.call_method1("pop", ("run_polytope_worker",));
-            let path = sys.getattr("path").unwrap();
-            path.call_method1("insert", (0i32, dir.display().to_string()))
-                .unwrap();
-        });
-
-        let processor = PolytopeProcessor {
-            config_path: "/tmp/unused.yaml".into(),
-        };
-
-        let result = processor
-            .process(WorkItem {
-                job_id: "job-1".into(),
-                request: json!({"class": "od"}),
-                user: json!({}),
-                metadata: json!({"test_key": "test_value"}),
-                callback_url: None,
-            })
+        let result = processor()
+            .process(work_item("job-1", json!({"test_key": "test_value"})))
             .await;
 
-        std::fs::remove_dir_all(&dir).ok();
-
-        match result {
-            ProcessResult::Success { content_type, .. } => {
-                assert_eq!(content_type, "application/prs.coverage+json");
-            }
-            ProcessResult::Reject { reason } => panic!("expected success, got reject: {reason}"),
-            ProcessResult::Error { message } => panic!("expected success, got error: {message}"),
-        }
+        let body: serde_json::Value =
+            serde_json::from_slice(&expect_success_body(result).await).unwrap();
+        assert_eq!(
+            body,
+            json!({"echo": {"class": "od"}, "metadata": {"test_key": "test_value"}})
+        );
     }
 
     #[tokio::test]
     async fn pyo3_error_handling() {
-        let dir = temp_dir();
-        std::fs::create_dir_all(&dir).unwrap();
-        // Use a different temp directory to ensure no module conflicts
-        std::fs::write(
-            dir.join("run_polytope_worker.py"),
+        let _module = install_worker_module(
             r#"
 import json
 
@@ -388,47 +435,102 @@ def process(payload_json):
     return (b"", json.dumps(status))
 "#,
         )
-        .unwrap();
+        .await;
 
-        pyo3::prepare_freethreaded_python();
-        Python::with_gil(|py| {
-            let sys = py.import("sys").unwrap();
-            let modules = sys.getattr("modules").unwrap();
-            let _ = modules.call_method1("pop", ("run_polytope_worker",));
-            // Remove old path entries
-            let path = sys.getattr("path").unwrap();
-            let path_list: Vec<String> = path.extract().unwrap();
-            for p in path_list.iter().rev() {
-                if p.contains("polytope-worker-test") {
-                    let _ = path.call_method1("remove", (p,));
-                }
-            }
-            path.call_method1("insert", (0i32, dir.display().to_string()))
-                .unwrap();
-        });
+        let result = processor().process(work_item("job-2", json!({}))).await;
 
-        let processor = PolytopeProcessor {
-            config_path: "/tmp/unused.yaml".into(),
-        };
+        assert_eq!(expect_error(result), "simulated failure");
+    }
 
-        let result = processor
-            .process(WorkItem {
-                job_id: "job-2".into(),
-                request: json!({"class": "od"}),
-                user: json!({}),
-                metadata: json!({}),
-                callback_url: None,
-            })
-            .await;
+    #[tokio::test]
+    async fn python_exception_becomes_job_error() {
+        let _module = install_worker_module(
+            r#"
+def process(payload_json):
+    raise ValueError("bad request: no such parameter")
+"#,
+        )
+        .await;
 
-        std::fs::remove_dir_all(&dir).ok();
+        let result = processor().process(work_item("job-3", json!({}))).await;
 
-        match result {
-            ProcessResult::Error { message } => {
-                assert_eq!(message, "simulated failure");
-            }
-            ProcessResult::Success { .. } => panic!("expected error, got success"),
-            ProcessResult::Reject { reason } => panic!("expected error, got reject: {reason}"),
+        assert_eq!(
+            expect_error(result),
+            "ValueError: bad request: no such parameter"
+        );
+    }
+
+    #[tokio::test]
+    async fn wrong_return_shape_is_a_protocol_error() {
+        let _module = install_worker_module(
+            r#"
+def process(payload_json):
+    return ["not", "a", "tuple"]
+"#,
+        )
+        .await;
+
+        let message = expect_error(processor().process(work_item("job-4", json!({}))).await);
+        assert!(
+            message.starts_with("TypeError: expected (bytes, str) from process()"),
+            "{message}"
+        );
+
+        drop(_module);
+        let _module = install_worker_module(
+            r#"
+import json
+
+def process(payload_json):
+    return ("not bytes", json.dumps({"ok": True}))
+"#,
+        )
+        .await;
+
+        let message = expect_error(processor().process(work_item("job-5", json!({}))).await);
+        assert!(
+            message.starts_with("TypeError: expected bytes at index 0"),
+            "{message}"
+        );
+    }
+
+    /// Production runs several jobs at once (`worker_concurrency`), each on
+    /// its own blocking thread attaching to the interpreter.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_requests_from_blocking_threads() {
+        let _module = install_worker_module(
+            r#"
+import json
+import time
+
+def process(payload_json):
+    payload = json.loads(payload_json)
+    time.sleep(0.05)
+    output = json.dumps({"job": payload["metadata"]["job"]}).encode("utf-8")
+    return (output, json.dumps({"ok": True, "timings": {}, "logs": [], "error": None}))
+"#,
+        )
+        .await;
+
+        let started = std::time::Instant::now();
+        let results = futures::future::join_all((0..8).map(|i| async move {
+            let result = processor()
+                .process(work_item(&format!("job-c{i}"), json!({"job": i})))
+                .await;
+            (i, expect_success_body(result).await)
+        }))
+        .await;
+
+        for (i, body) in results {
+            let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(body, json!({"job": i}));
         }
+        // time.sleep releases the GIL, so the 8 calls must overlap rather
+        // than run back to back (8 x 50ms).
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(350),
+            "calls did not overlap: {:?}",
+            started.elapsed()
+        );
     }
 }
