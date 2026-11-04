@@ -439,10 +439,11 @@ jobs:
         with:
           name: images-json
 
+      # Org-wide CI robot account; the one with push access to polytope-pub.
       - name: Log in to ECCR
         env:
-          ECCR_PASSWORD: ${{ secrets.ECCR_PASSWORD }}
-          ECCR_USERNAME: ${{ secrets.ECCR_USERNAME }}
+          ECCR_PASSWORD: ${{ secrets.ECMWF_DOCKER_REGISTRY_ACCESS_TOKEN }}
+          ECCR_USERNAME: ${{ secrets.ECMWF_DOCKER_REGISTRY_USERNAME }}
         run: printf '%s' "$ECCR_PASSWORD" | docker login eccr.ecmwf.int --username "$ECCR_USERNAME" --password-stdin
 
       - name: Copy to ${{ env.PUBLIC_REGISTRY }}
