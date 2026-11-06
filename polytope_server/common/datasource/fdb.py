@@ -19,6 +19,7 @@
 #
 
 import copy
+import importlib.metadata
 import json
 import logging
 import os
@@ -47,6 +48,11 @@ class FDBDataSource(datasource.DataSource):
         os.environ["FDB5_HOME"] = self.config.get("fdb_home", "/opt/fdb")
         os.environ["FDB_HOME"] = self.config.get("fdb_home", "/opt/fdb")
         import pyfdb
+
+        # result() uses the DataHandle API of pyfdb 5.x
+        pyfdb_version = importlib.metadata.version("pyfdb")
+        if int(pyfdb_version.split(".")[0]) < 5:
+            raise RuntimeError(f"The FDB datasource requires pyfdb>=5, but pyfdb {pyfdb_version} is installed")
 
         self.fdb = pyfdb.FDB()
 
