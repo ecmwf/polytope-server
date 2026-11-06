@@ -84,9 +84,11 @@ def get_first_grib_message(req):
         except StopIteration as exc:
             raise ValueError("FDB list returned no fields") from exc
 
-        with first_element.data_handle as dh:
-            if dh is None:
-                raise ValueError("List element has no data handle")
+        data_handle = first_element.data_handle
+        if data_handle is None:
+            raise ValueError("List element has no data handle")
+
+        with data_handle as dh:
             field_size = first_element.length()
             msg_bytes = read_first_grib_message(dh, field_size)
 
